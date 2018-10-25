@@ -54,7 +54,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later"
 
-dev: checklist check test
+dev: checklist test check
 
 build:
 	$(GOBUILD)
