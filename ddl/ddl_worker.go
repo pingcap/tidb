@@ -276,18 +276,20 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	switch job.Type {
-	case model.ActionAddIndex:
-		if job.State != model.JobStateRollbackDone {
-			break
+	if !job.IsCancelled() {
+		switch job.Type {
+		case model.ActionAddIndex:
+			if job.State != model.JobStateRollbackDone {
+				break
+			}
+			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+			err = w.deleteRange(job)
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition:
+			err = w.deleteRange(job)
 		}
-		// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-		err = w.deleteRange(job)
-	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition:
-		err = w.deleteRange(job)
-	}
-	if err != nil {
-		return errors.Trace(err)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	_, err = t.DeQueueDDLJob()
@@ -380,6 +382,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)
 			if job.IsCancelled() {
+				txn.Reset()
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
