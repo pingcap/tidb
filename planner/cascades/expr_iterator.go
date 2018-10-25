@@ -44,13 +44,12 @@ func (iter *ExprIter) Next() (found bool) {
 
 	// Iterate child firstly.
 	for i := len(iter.children) - 1; i >= 0; i-- {
-		iter.children[i].Next()
-		if !iter.children[i].Matched() {
+		if !iter.children[i].Next() {
 			continue
 		}
 
 		for j := i + 1; j < len(iter.children); j++ {
-			iter.children[j].Reset(iter.group)
+			iter.children[j].Reset(iter.children[j].group)
 		}
 		return true
 	}
