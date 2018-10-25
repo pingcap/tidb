@@ -153,7 +153,8 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || plannercore.Cacheable(stmt))
+	cacheable := plannercore.Cacheable(stmt)
+	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || cacheable)
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
@@ -164,7 +165,9 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	prepared.Plan = p
+	if cacheable {
+		prepared.Plan = p
+	}
 	if _, ok := stmt.(*ast.SelectStmt); ok {
 		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
 	}

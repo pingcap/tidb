@@ -196,7 +196,10 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	preparedPlan := prepared.Plan.(Plan)
+	var preparedPlan Plan
+	if prepared.Plan != nil {
+		preparedPlan = prepared.Plan.(Plan)
+	}
 	p, err := OptimizeAstNode(ctx, prepared.Stmt, is, preparedPlan)
 	if err != nil {
 		return nil, errors.Trace(err)
