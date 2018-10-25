@@ -643,7 +643,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	if er.ctx.GetSessionVars().AllowInSubqToJoinAndAgg && !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		er.b.optFlag |= flagEliminateAgg
-		er.b.optFlag |= flagEliminateProjection2
+		er.b.optFlag |= flagEliminateProjection
 		// Build distinct for the inner query.
 		agg := er.b.buildDistinct(np, np.Schema().Len())
 		for _, col := range agg.schema.Columns {
