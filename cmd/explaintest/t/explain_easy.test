@@ -83,3 +83,22 @@ rollback;
 
 explain SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
 explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)
+
+# https://github.com/pingcap/tidb/issues/7918
+drop table if exists t;
+create table t(a int, nb int not null, nc int not null);
+explain select ifnull(a, 0) from t;
+explain select ifnull(nb, 0) from t;
+explain select ifnull(nb, 0), ifnull(nc, 0) from t;
+explain select ifnull(a, 0), ifnull(nb, 0) from t;
+explain select ifnull(nb, 0), ifnull(nb, 0) from t;
+explain select 1+ifnull(nb, 0) from t;
+explain select 1+ifnull(a, 0) from t;
+drop table if exists t;
+drop table if exists t;
+create table t(a int);
+explain select * from t where _tidb_rowid = 0;
+explain select * from t where _tidb_rowid > 0;
+explain select a, _tidb_rowid from t where a > 0;
+explain select * from t where _tidb_rowid > 0 and a > 0;
+drop table if exists t;
