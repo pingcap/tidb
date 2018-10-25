@@ -19,12 +19,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -416,4 +416,25 @@ func isRangePartitionColUnsignedBigint(cols []*table.Column, pi *model.Partition
 		}
 	}
 	return false
+}
+
+// truncateTableByReassignPartitionIDs reassign a new partition ids.
+func truncateTableByReassignPartitionIDs(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo) error {
+	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
+	for _, def := range tblInfo.Partition.Definitions {
+		pid, err := t.GenGlobalID()
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return errors.Trace(err)
+		}
+		newDef := model.PartitionDefinition{
+			ID:       pid,
+			Name:     def.Name,
+			LessThan: def.LessThan,
+			Comment:  def.Comment,
+		}
+		newDefs = append(newDefs, newDef)
+	}
+	tblInfo.Partition.Definitions = newDefs
+	return nil
 }

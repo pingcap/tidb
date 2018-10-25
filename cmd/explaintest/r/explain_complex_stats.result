@@ -158,11 +158,11 @@ Projection_5	39.28	root	test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.
       └─TableScan_14	160.23	cop	table:st, keep order:false
 explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as cm, rr.gid as gid, rr.acd as acd, rr.t as t,dt.p1 as p1, dt.p2 as p2, dt.p3 as p3, dt.p4 as p4, dt.p5 as p5, dt.p6_md5 as p6, dt.p7_md5 as p7 from dt dt join rr rr on (rr.pt = 'ios' and rr.t > 1478185592 and dt.aid = rr.aid and dt.dic = rr.dic) where dt.pt = 'ios' and dt.t > 1478185592 and dt.bm = 0 limit 2000;
 id	count	task	operator info
-Projection_9	428.55	root	dt.id, dt.aid, dt.pt, dt.dic, dt.cm, rr.gid, rr.acd, rr.t, dt.p1, dt.p2, dt.p3, dt.p4, dt.p5, dt.p6_md5, dt.p7_md5
-└─Limit_12	428.55	root	offset:0, count:2000
-  └─IndexJoin_18	428.55	root	inner join, inner:IndexLookUp_17, outer key:dt.aid, dt.dic, inner key:rr.aid, rr.dic
-    ├─TableReader_42	428.55	root	data:Selection_41
-    │ └─Selection_41	428.55	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592)
+Projection_9	428.32	root	dt.id, dt.aid, dt.pt, dt.dic, dt.cm, rr.gid, rr.acd, rr.t, dt.p1, dt.p2, dt.p3, dt.p4, dt.p5, dt.p6_md5, dt.p7_md5
+└─Limit_12	428.32	root	offset:0, count:2000
+  └─IndexJoin_18	428.32	root	inner join, inner:IndexLookUp_17, outer key:dt.aid, dt.dic, inner key:rr.aid, rr.dic
+    ├─TableReader_42	428.32	root	data:Selection_41
+    │ └─Selection_41	428.32	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592)
     │   └─TableScan_40	2000.00	cop	table:dt, range:[0,+inf], keep order:false
     └─IndexLookUp_17	970.00	root	
       ├─IndexScan_14	1.00	cop	table:rr, index:aid, dic, range: decided by [dt.aid dt.dic], keep order:false
