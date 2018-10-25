@@ -43,9 +43,9 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	}{
 		{"select ?", false, parser.ErrSyntax},
 		{"select ?", true, nil},
-		{"create table `　emspace_end 　` (id int, x int)", true,
+		{"create table `　table_endwith_emspace 　` (id int, x int)", true,
 			errors.New("[ddl:1103]Incorrect table name '　emspace_end 　'")},
-		{"create table `　emspace_not_end` (id int, x int)", true, nil},
+		{"create table `　table_contains_emspace` (id int, x int)", true, nil},
 		{"create table t(id int not null auto_increment default 2, key (id))", true,
 			errors.New("Invalid default value for 'id'")},
 		{"create table t(id int not null default 2 auto_increment, key (id))", true,
