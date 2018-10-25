@@ -114,10 +114,12 @@ type Pattern struct {
 	children []*Pattern
 }
 
+// NewPattern creats a pattern node according to the operand.
 func NewPattern(operand Operand) *Pattern {
 	return &Pattern{operand: operand}
 }
 
+// SetChildren sets the children information for a pattern node.
 func (p *Pattern) SetChildren(children ...*Pattern) {
 	p.children = children
 }
