@@ -20,13 +20,13 @@ GOVERALLS := goveralls
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "vendor"
+PACKAGE_LIST  := go list ./...
 PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
-FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go" | grep -vE "vendor")
+FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
 
-GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor|_tools)" | xargs gofail enable)
-GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor|_tools)" | xargs gofail disable)
+GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs gofail enable)
+GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs gofail disable)
 
 LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
@@ -62,7 +62,8 @@ build:
 # The retool tools.json is setup from hack/retool-install.sh
 check-setup:
 	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
-	@GO111MODULES=off retool sync
+	@export GO111MODULE=off
+	@retool sync
 
 check: check-setup fmt lint vet
 
@@ -71,7 +72,7 @@ check-fail: goword check-static check-slow
 
 fmt:
 	@echo "gofmt (simplify)"
-	@gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | $(FAIL_ON_STDOUT)
+	@gofmt -s -l -w $(FILES) 2>&1 | grep -v "parser/parser.go" | $(FAIL_ON_STDOUT)
 
 goword:
 	retool do goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)

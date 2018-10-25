@@ -2,6 +2,7 @@ module github.com/pingcap/tidb
 
 require (
 	github.com/BurntSushi/toml v0.3.1
+	github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf // indirect
 	github.com/apache/thrift v0.0.0-20161221203622-b2a4d4ae21c7 // indirect
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470
 	github.com/cockroachdb/cmux v0.0.0-20170110192607-30d10be49292 // indirect
@@ -17,6 +18,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20181024230925-c65c006176ff // indirect
 	github.com/golang/protobuf v1.2.0
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c
+	github.com/google/shlex v0.0.0-20150127133951-6f45313302b9 // indirect
 	github.com/gorilla/mux v1.6.1
 	github.com/grpc-ecosystem/go-grpc-middleware v0.0.0-20171020063731-82921fcf811d
 	github.com/grpc-ecosystem/go-grpc-prometheus v0.0.0-20160910222444-6b7015e65d36
@@ -24,9 +26,11 @@ require (
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
+	github.com/nicksnyder/go-i18n v1.10.0 // indirect
 	github.com/onsi/gomega v1.4.2 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.0.2
+	github.com/pelletier/go-toml v1.2.0 // indirect
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
 	github.com/pingcap/errors v0.10.1
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
@@ -43,5 +47,7 @@ require (
 	golang.org/x/net v0.0.0-20180906233101-161cd47e91fd
 	golang.org/x/text v0.3.0
 	google.golang.org/grpc v1.12.2
+	gopkg.in/alecthomas/gometalinter.v2 v2.0.11 // indirect
+	gopkg.in/alecthomas/kingpin.v3-unstable v3.0.0-20180810215634-df19058c872c // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0-20170531160350-a96e63847dc3
 )
