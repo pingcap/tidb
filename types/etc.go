@@ -19,30 +19,21 @@ package types
 
 import (
 	"io"
-	"strings"
 
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
+	ast "github.com/pingcap/parser/types"
 	"github.com/pkg/errors"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.
-func IsTypeBlob(tp byte) bool {
-	switch tp {
-	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
-		return true
-	default:
-		return false
-	}
-}
+var IsTypeBlob = ast.IsTypeBlob
 
 // IsTypeChar returns a boolean indicating
 // whether the tp is the char type like a string type or a varchar type.
-func IsTypeChar(tp byte) bool {
-	return tp == mysql.TypeString || tp == mysql.TypeVarchar
-}
+var IsTypeChar = ast.IsTypeChar
 
 // IsTypeVarchar returns a boolean indicating
 // whether the tp is the varchar type like a varstring type or a varchar type.
@@ -113,36 +104,6 @@ func IsString(tp byte) bool {
 	return IsTypeChar(tp) || IsTypeBlob(tp) || IsTypeVarchar(tp) || IsTypeUnspecified(tp)
 }
 
-var type2Str = map[byte]string{
-	mysql.TypeBit:        "bit",
-	mysql.TypeBlob:       "text",
-	mysql.TypeDate:       "date",
-	mysql.TypeDatetime:   "datetime",
-	mysql.TypeDecimal:    "unspecified",
-	mysql.TypeNewDecimal: "decimal",
-	mysql.TypeDouble:     "double",
-	mysql.TypeEnum:       "enum",
-	mysql.TypeFloat:      "float",
-	mysql.TypeGeometry:   "geometry",
-	mysql.TypeInt24:      "mediumint",
-	mysql.TypeJSON:       "json",
-	mysql.TypeLong:       "int",
-	mysql.TypeLonglong:   "bigint",
-	mysql.TypeLongBlob:   "longtext",
-	mysql.TypeMediumBlob: "mediumtext",
-	mysql.TypeNull:       "null",
-	mysql.TypeSet:        "set",
-	mysql.TypeShort:      "smallint",
-	mysql.TypeString:     "char",
-	mysql.TypeDuration:   "time",
-	mysql.TypeTimestamp:  "timestamp",
-	mysql.TypeTiny:       "tinyint",
-	mysql.TypeTinyBlob:   "tinytext",
-	mysql.TypeVarchar:    "varchar",
-	mysql.TypeVarString:  "var_string",
-	mysql.TypeYear:       "year",
-}
-
 var kind2Str = map[byte]string{
 	KindNull:          "null",
 	KindInt64:         "bigint",
@@ -166,9 +127,7 @@ var kind2Str = map[byte]string{
 }
 
 // TypeStr converts tp to a string.
-func TypeStr(tp byte) (r string) {
-	return type2Str[tp]
-}
+var TypeStr = ast.TypeStr
 
 // KindStr converts kind to a string.
 func KindStr(kind byte) (r string) {
@@ -181,18 +140,7 @@ func KindStr(kind byte) (r string) {
 // Args:
 //	tp: type enum
 //	cs: charset
-func TypeToStr(tp byte, cs string) (r string) {
-	ts := type2Str[tp]
-	if cs != charset.CharsetBin {
-		return ts
-	}
-	if IsTypeBlob(tp) {
-		ts = strings.Replace(ts, "text", "blob", 1)
-	} else if IsTypeChar(tp) {
-		ts = strings.Replace(ts, "char", "binary", 1)
-	}
-	return ts
-}
+var TypeToStr = ast.TypeToStr
 
 // EOFAsNil filtrates errors,
 // If err is equal to io.EOF returns nil.
