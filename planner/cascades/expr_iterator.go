@@ -49,7 +49,7 @@ func (iter *ExprIter) Next() (found bool) {
 		}
 
 		for j := i + 1; j < len(iter.children); j++ {
-			iter.children[j].Reset(iter.children[j].group)
+			iter.children[j].Reset()
 		}
 		return true
 	}
@@ -77,7 +77,8 @@ func (iter *ExprIter) Next() (found bool) {
 
 		allMatched := true
 		for i := range iter.children {
-			if !iter.children[i].Reset(expr.children[i]) {
+			iter.children[i].group = expr.children[i]
+			if !iter.children[i].Reset() {
 				allMatched = false
 				break
 			}
@@ -97,8 +98,8 @@ func (iter *ExprIter) Matched() bool {
 }
 
 // Reset resets the iterator to the first matched group expression.
-func (iter *ExprIter) Reset(g *Group) (findMatch bool) {
-	iter.element, findMatch = g.firstExpr[iter.operand]
+func (iter *ExprIter) Reset() (findMatch bool) {
+	iter.element, findMatch = iter.group.firstExpr[iter.operand]
 	return findMatch
 }
 
