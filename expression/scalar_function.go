@@ -166,8 +166,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		res    interface{}
 		isNull bool
 	)
-	tp := sf.GetType()
-	switch tp.EvalType() {
+	switch tp, evalType := sf.GetType(), sf.GetType().EvalType(); evalType {
 	case types.ETInt:
 		var intRes int64
 		intRes, isNull, err = sf.EvalInt(sf.GetCtx(), row)
@@ -195,9 +194,6 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		return d, errors.Trace(err)
 	}
 	d.SetValue(res)
-	if tp.Tp == mysql.TypeFloat && d.Kind() != types.KindFloat32 {
-		d, err = d.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, tp)
-	}
 	return
 }
 

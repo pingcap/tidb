@@ -156,7 +156,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
-			newRow, err1 := e.composeNewRow(globalRowIdx, datumRow)
+			newRow, err1 := e.composeNewRow(globalRowIdx, datumRow, fields)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -181,7 +181,7 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 	return errors.Trace(err)
 }
 
-func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Datum, error) {
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, fields []*types.FieldType) ([]types.Datum, error) {
 	newRowData := types.CopyRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList {
@@ -194,6 +194,12 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
 			return nil, err1
 		}
+
+		val, err = val.ConvertTo(e.ctx.GetSessionVars().StmtCtx, fields[assign.Col.Index])
+		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
+			return nil, err1
+		}
+
 		newRowData[assign.Col.Index] = *val.Copy()
 		e.evalBuffer.SetDatum(assign.Col.Index, val)
 	}
