@@ -333,24 +333,19 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.tableFilters = ds.pushedDownConds
 	var pkCol *expression.Column
-	if ds.tableInfo.PKIsHandle {
+	columnLen := len(ds.schema.Columns)
+	if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
+		pkCol = ds.schema.Columns[columnLen-1]
+	} else if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
 	}
 	if pkCol == nil {
 		path.ranges = ranger.FullIntRange(false)
-		if len(ds.Columns) > 0 {
-			extraHandleCol := ds.Columns[len(ds.Columns)-1]
-			if extraHandleCol.ID == model.ExtraHandleID {
-				pkCol = expression.ColInfo2Col(ds.schema.Columns, extraHandleCol)
-			} else {
-				return false, nil
-			}
-		} else {
-			return false, nil
-		}
+		return false, nil
 	}
+
 	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
 	if len(ds.pushedDownConds) == 0 {
 		return false, nil
