@@ -15,8 +15,8 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 )
 

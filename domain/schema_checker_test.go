@@ -17,7 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/terror"
 )
 
 func (s *testSuite) TestSchemaCheckerSimple(c *C) {
