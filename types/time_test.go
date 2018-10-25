@@ -18,7 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -62,6 +62,8 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 		{"170102036", "2017-01-02 03:06:00"},
 		{"170102039.", "2017-01-02 03:09:00"},
 		{"170102037.11", "2017-01-02 03:07:11.00"},
+		{"2018-01-01 18", "2018-01-01 18:00:00"},
+		{"18-01-01 18", "2018-01-01 18:00:00"},
 	}
 
 	for _, test := range table {

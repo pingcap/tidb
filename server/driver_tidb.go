@@ -18,16 +18,17 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -344,7 +345,7 @@ func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
 }
 
 type tidbResultSet struct {
-	recordSet ast.RecordSet
+	recordSet sqlexec.RecordSet
 	columns   []*ColumnInfo
 	rows      []chunk.Row
 	closed    bool

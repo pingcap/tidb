@@ -14,8 +14,8 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -61,6 +61,8 @@ var (
 	_ builtinFunc = &builtinJSONRemoveSig{}
 	_ builtinFunc = &builtinJSONMergeSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
+	_ builtinFunc = &builtinJSONKeysSig{}
+	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
 )
 
@@ -766,7 +768,88 @@ type jsonKeysFunctionClass struct {
 }
 
 func (c *jsonKeysFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_KEYS")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := []types.EvalType{types.ETJson}
+	if len(args) == 2 {
+		argTps = append(argTps, types.ETString)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
+	var sig builtinFunc
+	switch len(args) {
+	case 1:
+		sig = &builtinJSONKeysSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonKeysSig)
+	case 2:
+		sig = &builtinJSONKeys2ArgsSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonKeys2ArgsSig)
+	}
+	return sig, nil
+}
+
+type builtinJSONKeysSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONKeysSig) Clone() builtinFunc {
+	newSig := &builtinJSONKeysSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONKeysSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	if res.TypeCode != json.TypeCodeObject {
+		return res, true, json.ErrInvalidJSONData
+	}
+	return res.GetKeys(), false, nil
+}
+
+type builtinJSONKeys2ArgsSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONKeys2ArgsSig) Clone() builtinFunc {
+	newSig := &builtinJSONKeys2ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinJSONKeys2ArgsSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	if res.TypeCode != json.TypeCodeObject {
+		return res, true, json.ErrInvalidJSONData
+	}
+
+	path, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+
+	pathExpr, err := json.ParseJSONPathExpr(path)
+	if err != nil {
+		return res, true, errors.Trace(err)
+	}
+	if pathExpr.ContainsAnyAsterisk() {
+		return res, true, json.ErrInvalidJSONPathWildcard
+	}
+
+	res, exists := res.Extract([]json.PathExpression{pathExpr})
+	if !exists {
+		return res, true, nil
+	}
+	if res.TypeCode != json.TypeCodeObject {
+		return res, true, json.ErrInvalidJSONData
+	}
+
+	return res.GetKeys(), false, nil
 }
 
 type jsonLengthFunctionClass struct {

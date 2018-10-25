@@ -18,11 +18,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
@@ -134,6 +134,24 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	tblInfo.ID = tblInfo.ID + 1
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
 
+}
+
+func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
+	store := testCreateStore(c, "test_invalid_ddl_job_type_error")
+	defer store.Close()
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	defer d.Stop()
+	ctx := testNewContext(d)
+
+	job := &model.Job{
+		SchemaID:   0,
+		TableID:    0,
+		Type:       model.ActionNone,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err.Error(), Equals, "[ddl:3]invalid ddl job type: none")
 }
 
 func (s *testDDLSuite) TestForeignKeyError(c *C) {

@@ -23,9 +23,9 @@ import (
 	gotime "time"
 	"unicode"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -682,6 +682,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
+	case 4:
+		// YYYY-MM-DD HH
+		err = scanTimeArgs(seps, &year, &month, &day, &hour)
 	case 5:
 		// YYYY-MM-DD HH-MM
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute)

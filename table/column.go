@@ -21,15 +21,15 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -286,7 +286,7 @@ func CheckOnce(cols []*Column) error {
 
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
 func (c *Column) CheckNotNull(data types.Datum) error {
-	if mysql.HasNotNullFlag(c.Flag) && data.IsNull() {
+	if (mysql.HasNotNullFlag(c.Flag) && data.IsNull() || mysql.HasPreventNullInsertFlag(c.Flag)) && data.IsNull() {
 		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
 	}
 	return nil

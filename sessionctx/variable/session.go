@@ -22,15 +22,15 @@ import (
 	"time"
 
 	"github.com/klauspost/cpuid"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
@@ -308,6 +308,9 @@ type SessionVars struct {
 	// HashJoin.
 	EnableRadixJoin bool
 
+	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
+	ConstraintCheckInPlace bool
+
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
 }
@@ -573,6 +576,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
+	case TiDBConstraintCheckInPlace:
+		s.ConstraintCheckInPlace = TiDBOptOn(val)
 	case TiDBBatchInsert:
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:

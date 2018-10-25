@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
@@ -50,7 +49,7 @@ type Context struct {
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
-func (c *Context) Execute(ctx context.Context, sql string) ([]ast.RecordSet, error) {
+func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Support.")
 }
 

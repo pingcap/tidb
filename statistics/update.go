@@ -21,9 +21,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"
@@ -199,7 +199,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	s.Lock()
 	defer s.Unlock()
 	isIndex := q.tp == indexType
-	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
+	s.rateMap.update(q.physicalID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
 	}
@@ -367,7 +367,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		if fb.tp == pkType {
 			err = h.dumpFeedbackToKV(fb)
 		} else {
-			t, ok := h.statsCache.Load().(statsCache)[fb.tableID]
+			t, ok := h.statsCache.Load().(statsCache)[fb.physicalID]
 			if ok {
 				err = dumpFeedbackForIndex(h, fb, t)
 			}
@@ -392,7 +392,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		isIndex = 1
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
-		"(%d, %d, %d, X'%X')", fb.tableID, fb.hist.ID, isIndex, vals)
+		"(%d, %d, %d, X'%X')", fb.physicalID, fb.hist.ID, isIndex, vals)
 	h.mu.Lock()
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	h.mu.Unlock()
@@ -416,11 +416,13 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 	}
 	h.listHead.Unlock()
 	for _, fb := range h.feedback {
-		table, ok := is.TableByID(fb.tableID)
+		h.mu.Lock()
+		table, ok := h.getTableByPhysicalID(is, fb.physicalID)
+		h.mu.Unlock()
 		if !ok {
 			continue
 		}
-		tblStats := h.GetTableStats(table.Meta())
+		tblStats := h.GetPartitionStats(table.Meta(), fb.physicalID)
 		newTblStats := tblStats.copy()
 		if fb.tp == indexType {
 			idx, ok := tblStats.Indices[fb.hist.ID]
@@ -455,11 +457,11 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	h.mu.Lock()
 	tbls := make([]*Table, 0, len(h.mu.rateMap))
 	for id, item := range h.mu.rateMap {
-		table, ok := is.TableByID(id)
+		table, ok := h.getTableByPhysicalID(is, id)
 		if !ok {
 			continue
 		}
-		tbl := h.GetTableStats(table.Meta()).copy()
+		tbl := h.GetPartitionStats(table.Meta(), id).copy()
 		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
 			col := *tbl.Columns[item.PkID]
 			col.ErrorRate.merge(item.PkErrorRate)
@@ -557,10 +559,6 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		if err1 != nil {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
-	}
-	// Update the NDV of primary key column.
-	if table.Meta().PKIsHandle && q.tp == pkType {
-		hist.NDV = int64(hist.totalRowCount())
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
 	return errors.Trace(err)

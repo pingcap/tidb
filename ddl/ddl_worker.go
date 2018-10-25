@@ -20,13 +20,13 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -482,7 +482,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(t, job)
 	case model.ActionModifyColumn:
-		ver, err = onModifyColumn(t, job)
+		ver, err = w.onModifyColumn(t, job)
 	case model.ActionSetDefaultValue:
 		ver, err = onSetDefaultValue(t, job)
 	case model.ActionAddIndex:
@@ -510,7 +510,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
-		err = errInvalidDDLJob.GenWithStack("invalid ddl job %v", job)
+		err = errInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
 	// Save errors in job, so that others can know errors happened.
@@ -519,7 +519,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if job.State != model.JobStateCancelled {
 			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
 		} else {
-			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, errors.ErrorStack(err))
+			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, err)
 		}
 
 		job.Error = toTError(err)

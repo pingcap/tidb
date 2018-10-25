@@ -23,9 +23,9 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -48,18 +48,18 @@ type feedback struct {
 // QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
 // in each range.
 type QueryFeedback struct {
-	tableID  int64
-	hist     *Histogram
-	tp       int
-	feedback []feedback
-	expected int64 // expected is the expected scan count of corresponding query.
-	actual   int64 // actual is the actual scan count of corresponding query.
-	valid    bool  // valid represents the whether this query feedback is still valid.
-	desc     bool  // desc represents the corresponding query is desc scan.
+	physicalID int64
+	hist       *Histogram
+	tp         int
+	feedback   []feedback
+	expected   int64 // expected is the expected scan count of corresponding query.
+	actual     int64 // actual is the actual scan count of corresponding query.
+	valid      bool  // valid represents the whether this query feedback is still valid.
+	desc       bool  // desc represents the corresponding query is desc scan.
 }
 
 // NewQueryFeedback returns a new query feedback.
-func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool) *QueryFeedback {
+func NewQueryFeedback(physicalID int64, hist *Histogram, expected int64, desc bool) *QueryFeedback {
 	if hist != nil && hist.Len() == 0 {
 		hist = nil
 	}
@@ -68,12 +68,12 @@ func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool)
 		tp = indexType
 	}
 	return &QueryFeedback{
-		tableID:  tableID,
-		valid:    true,
-		tp:       tp,
-		hist:     hist,
-		expected: expected,
-		desc:     desc,
+		physicalID: physicalID,
+		valid:      true,
+		tp:         tp,
+		hist:       hist,
+		expected:   expected,
+		desc:       desc,
 	}
 }
 
@@ -243,12 +243,71 @@ type BucketFeedback struct {
 	upper    *types.Datum // The upper bound of the new bucket.
 }
 
+// outOfRange checks if the `val` is between `min` and `max`.
+func outOfRange(sc *stmtctx.StatementContext, min, max, val *types.Datum) (int, error) {
+	result, err := val.CompareDatum(sc, min)
+	if err != nil {
+		return 0, err
+	}
+	if result < 0 {
+		return result, nil
+	}
+	result, err = val.CompareDatum(sc, max)
+	if err != nil {
+		return 0, err
+	}
+	if result > 0 {
+		return result, nil
+	}
+	return 0, nil
+}
+
+// adjustFeedbackBoundaries adjust the feedback boundaries according to the `min` and `max`.
+// If the feedback has no intersection with `min` and `max`, we could just skip this feedback.
+func (f *feedback) adjustFeedbackBoundaries(sc *stmtctx.StatementContext, min, max *types.Datum) (bool, error) {
+	result, err := outOfRange(sc, min, max, f.lower)
+	if err != nil {
+		return false, err
+	}
+	if result > 0 {
+		return true, nil
+	}
+	if result < 0 {
+		f.lower = min
+	}
+	result, err = outOfRange(sc, min, max, f.upper)
+	if err != nil {
+		return false, err
+	}
+	if result < 0 {
+		return true, nil
+	}
+	if result > 0 {
+		f.upper = max
+	}
+	return false, nil
+}
+
 // buildBucketFeedback build the feedback for each bucket from the histogram feedback.
 func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*BucketFeedback, int) {
 	bktID2FB := make(map[int]*BucketFeedback)
+	if len(feedback.feedback) == 0 {
+		return bktID2FB, 0
+	}
 	total := 0
-	for _, ran := range feedback.feedback {
-		idx, _ := h.Bounds.LowerBound(0, ran.lower)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	kind := feedback.feedback[0].lower.Kind()
+	min, max := getMinValue(kind, h.tp), getMaxValue(kind, h.tp)
+	for _, fb := range feedback.feedback {
+		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
+		if err != nil {
+			log.Debugf("adjust feedback boundaries failed, err: %v", errors.ErrorStack(err))
+			continue
+		}
+		if skip {
+			continue
+		}
+		idx, _ := h.Bounds.LowerBound(0, fb.lower)
 		bktIdx := 0
 		// The last bucket also stores the feedback that falls outside the upper bound.
 		if idx >= h.Bounds.NumRows()-2 {
@@ -256,7 +315,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		} else {
 			bktIdx = idx / 2
 			// Make sure that this feedback lies within the bucket.
-			if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, ran.upper) < 0 {
+			if chunk.Compare(h.Bounds.GetRow(2*bktIdx+1), 0, fb.upper) < 0 {
 				continue
 			}
 		}
@@ -266,23 +325,23 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 			bkt = &BucketFeedback{lower: h.GetLower(bktIdx), upper: h.GetUpper(bktIdx)}
 			bktID2FB[bktIdx] = bkt
 		}
-		bkt.feedback = append(bkt.feedback, ran)
+		bkt.feedback = append(bkt.feedback, fb)
 		// Update the bound if necessary.
-		res, err := bkt.lower.CompareDatum(nil, ran.lower)
+		res, err := bkt.lower.CompareDatum(nil, fb.lower)
 		if err != nil {
-			log.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, errors.ErrorStack(err))
+			log.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, fb.lower, errors.ErrorStack(err))
 			continue
 		}
 		if res > 0 {
-			bkt.lower = ran.lower
+			bkt.lower = fb.lower
 		}
-		res, err = bkt.upper.CompareDatum(nil, ran.upper)
+		res, err = bkt.upper.CompareDatum(nil, fb.upper)
 		if err != nil {
-			log.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, errors.ErrorStack(err))
+			log.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, fb.upper, errors.ErrorStack(err))
 			continue
 		}
 		if res < 0 {
-			bkt.upper = ran.upper
+			bkt.upper = fb.upper
 		}
 	}
 	return bktID2FB, total
@@ -528,7 +587,12 @@ func splitBuckets(h *Histogram, feedback *QueryFeedback) ([]bucket, []bool, int6
 func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 	buckets, isNewBuckets, totalCount := splitBuckets(h, feedback)
 	buckets = mergeBuckets(buckets, isNewBuckets, float64(totalCount))
-	return buildNewHistogram(h, buckets)
+	hist := buildNewHistogram(h, buckets)
+	// Update the NDV of primary key column.
+	if feedback.tp == pkType {
+		hist.NDV = int64(hist.totalRowCount())
+	}
+	return hist
 }
 
 // UpdateCMSketch updates the CMSketch by feedback.
@@ -738,7 +802,7 @@ func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
 
 // recalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
 func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
-	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
+	t, ok := h.statsCache.Load().(statsCache)[q.physicalID]
 	if !ok {
 		return nil
 	}
@@ -893,7 +957,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 }
 
 func (q *QueryFeedback) logDetailedInfo(h *Handle) {
-	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
+	t, ok := h.statsCache.Load().(statsCache)[q.physicalID]
 	if !ok {
 		return
 	}
@@ -969,7 +1033,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeCount float64
-		rangeFB := &QueryFeedback{tableID: q.tableID}
+		rangeFB := &QueryFeedback{physicalID: q.physicalID}
 		// prefer index stats over column stats
 		if idx := t.indexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
 			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{&rang})
@@ -1077,13 +1141,13 @@ func supportColumnType(k byte) bool {
 func getMaxValue(k byte, ft *types.FieldType) (max types.Datum) {
 	switch k {
 	case types.KindInt64:
-		max.SetInt64(math.MaxInt64)
+		max.SetInt64(types.SignedUpperBound[ft.Tp])
 	case types.KindUint64:
-		max.SetUint64(math.MaxUint64)
+		max.SetUint64(types.UnsignedUpperBound[ft.Tp])
 	case types.KindFloat32:
-		max.SetFloat32(math.MaxFloat32)
+		max.SetFloat32(float32(types.GetMaxFloat(ft.Flen, ft.Decimal)))
 	case types.KindFloat64:
-		max.SetFloat64(math.MaxFloat64)
+		max.SetFloat64(types.GetMaxFloat(ft.Flen, ft.Decimal))
 	case types.KindString, types.KindBytes:
 		val := types.MaxValueDatum()
 		bytes, err := codec.EncodeKey(nil, nil, val)
@@ -1093,7 +1157,7 @@ func getMaxValue(k byte, ft *types.FieldType) (max types.Datum) {
 		}
 		max.SetBytes(bytes)
 	case types.KindMysqlDecimal:
-		max.SetMysqlDecimal(types.NewMaxOrMinDec(false, mysql.MaxDecimalWidth, 0))
+		max.SetMysqlDecimal(types.NewMaxOrMinDec(false, ft.Flen, ft.Decimal))
 	case types.KindMysqlDuration:
 		max.SetMysqlDuration(types.Duration{Duration: math.MaxInt64})
 	case types.KindMysqlTime:
@@ -1109,13 +1173,13 @@ func getMaxValue(k byte, ft *types.FieldType) (max types.Datum) {
 func getMinValue(k byte, ft *types.FieldType) (min types.Datum) {
 	switch k {
 	case types.KindInt64:
-		min.SetInt64(math.MinInt64)
+		min.SetInt64(types.SignedLowerBound[ft.Tp])
 	case types.KindUint64:
 		min.SetUint64(0)
 	case types.KindFloat32:
-		min.SetFloat32(-math.MaxFloat32)
+		min.SetFloat32(float32(-types.GetMaxFloat(ft.Flen, ft.Decimal)))
 	case types.KindFloat64:
-		min.SetFloat64(-math.MaxFloat64)
+		min.SetFloat64(-types.GetMaxFloat(ft.Flen, ft.Decimal))
 	case types.KindString, types.KindBytes:
 		val := types.MinNotNullDatum()
 		bytes, err := codec.EncodeKey(nil, nil, val)
@@ -1125,7 +1189,7 @@ func getMinValue(k byte, ft *types.FieldType) (min types.Datum) {
 		}
 		min.SetBytes(bytes)
 	case types.KindMysqlDecimal:
-		min.SetMysqlDecimal(types.NewMaxOrMinDec(true, mysql.MaxDecimalWidth, 0))
+		min.SetMysqlDecimal(types.NewMaxOrMinDec(true, ft.Flen, ft.Decimal))
 	case types.KindMysqlDuration:
 		min.SetMysqlDuration(types.Duration{Duration: math.MinInt64})
 	case types.KindMysqlTime:
