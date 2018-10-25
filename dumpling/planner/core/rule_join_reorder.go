@@ -16,7 +16,7 @@ package core
 import (
 	"sort"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"

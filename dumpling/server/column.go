@@ -14,7 +14,7 @@
 package server
 
 import (
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 )
 
 // ColumnInfo contains information of a column
