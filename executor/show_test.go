@@ -655,6 +655,25 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
 }
 
+func (s *testSuite) TestShowTableStatusCaseInsensitive(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint);`)
+
+	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
+	rs, err := tk.Exec("SHOW TABLE STATUS like 'T';")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rs, NotNil)
+	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	err = rs.Close()
+	c.Assert(errors.ErrorStack(err), Equals, "")
+
+	c.Assert(rows[0].GetString(0), Equals, "t")
+}
+
 func (s *testSuite) TestShowSlow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// The test result is volatile, because
