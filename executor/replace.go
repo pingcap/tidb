@@ -42,6 +42,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
 	}
+	e.initEvalBuffer()
 	return nil
 }
 
@@ -178,13 +179,8 @@ func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
 // Next implements the Executor Next interface.
 func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	cols, err := e.getColumns(e.Table.Cols())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	if len(e.children) > 0 && e.children[0] != nil {
-		return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
+		return e.insertRowsFromSelect(ctx, e.exec)
 	}
-	return errors.Trace(e.insertRows(cols, e.exec))
+	return e.insertRows(e.exec)
 }

@@ -42,6 +42,7 @@ type UpdateExec struct {
 	// columns2Handle stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see executor.cols2Handle
 	columns2Handle cols2HandleSlice
+	evalBuffer     chunk.MutRow
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
@@ -141,6 +142,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	fields := e.children[0].retTypes()
 	globalRowIdx := 0
 	chk := e.children[0].newFirstChunk()
+	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
@@ -181,17 +183,19 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Datum, error) {
 	newRowData := types.CopyRow(oldRow)
+	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList {
 		handleIdx, handleFound := e.columns2Handle.findHandle(int32(assign.Col.Index))
 		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
 			continue
 		}
-		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())
+		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
 
 		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
-			return nil, errors.Trace(err1)
+			return nil, err1
 		}
-		newRowData[assign.Col.Index] = val
+		newRowData[assign.Col.Index] = *val.Copy()
+		e.evalBuffer.SetDatum(assign.Col.Index, val)
 	}
 	return newRowData, nil
 }
