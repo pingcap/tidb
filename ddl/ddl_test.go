@@ -20,14 +20,14 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -39,6 +39,8 @@ import (
 type DDLForTest interface {
 	// SetHook sets the hook.
 	SetHook(h Callback)
+	// GetHook gets the hook.
+	GetHook() Callback
 	// SetInterceptoror sets the interceptor.
 	SetInterceptoror(h Interceptor)
 }
@@ -49,6 +51,14 @@ func (d *ddl) SetHook(h Callback) {
 	defer d.mu.Unlock()
 
 	d.mu.hook = h
+}
+
+// GetHook implements DDL.GetHook interface.
+func (d *ddl) GetHook() Callback {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.mu.hook
 }
 
 // SetInterceptoror implements DDL.SetInterceptoror interface.
