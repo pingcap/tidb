@@ -2051,6 +2051,8 @@ func (s *testParserSuite) TestMysqlDump(c *C) {
 
 func (s *testParserSuite) TestIndexHint(c *C) {
 	table := []testCase{
+		{`select * from t use index (primary)`, true},
+		{"select * from t use index (`primary`)", true},
 		{`select * from t use index ();`, true},
 		{`select * from t use index (idx);`, true},
 		{`select * from t use index (idx1, idx2);`, true},
