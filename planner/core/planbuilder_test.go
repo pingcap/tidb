@@ -15,8 +15,8 @@ package core
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})

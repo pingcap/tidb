@@ -20,11 +20,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pkg/errors"
 )
@@ -464,7 +464,7 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
 	defer testleak.AfterTest(c)()
 	v := TypeToStr(mysql.TypeUnspecified, "not binary")
-	c.Assert(v, Equals, type2Str[mysql.TypeUnspecified])
+	c.Assert(v, Equals, TypeStr(mysql.TypeUnspecified))
 	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
 	c.Assert(v, Equals, "blob")
 	v = TypeToStr(mysql.TypeString, charset.CharsetBin)

@@ -21,19 +21,19 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -477,6 +477,8 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("100 123 123 120"))
 	result = tk.MustQuery("SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);")
 	result.Check(testkit.Rows("100 123.45 123.4 123.456 1.230000000000000000000000000000 123.45"))
+	result = tk.MustQuery("SELECT truncate(9223372036854775807, -7), truncate(9223372036854775808, -10), truncate(cast(-1 as unsigned), -10);")
+	result.Check(testkit.Rows("9223372036850000000 9223372030000000000 18446744070000000000"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a date, b datetime, c timestamp, d varchar(20));`)
@@ -3366,6 +3368,15 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$[*]')
 	`)
 	r.Check(testkit.Rows("1 0 1 0"))
+
+	r = tk.MustQuery(`select
+
+		json_keys('{}'),
+		json_keys('{"a": 1, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}', "$.a")
+	`)
+	r.Check(testkit.Rows(`[] ["a", "b"] ["a", "b"] ["c"]`))
 
 	r = tk.MustQuery(`select
 		json_length('1'),

@@ -19,7 +19,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/parser/model"
 	stats "github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"

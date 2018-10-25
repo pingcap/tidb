@@ -21,9 +21,9 @@ import (
 	"net/http/pprof"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
@@ -117,7 +117,7 @@ func (s *Server) startHTTPServer() {
 	})
 
 	log.Infof("Listening on %v for status and metrics report.", addr)
-	s.statusServer = &http.Server{Addr: addr, Handler: serverMux}
+	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
 		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
