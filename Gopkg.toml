@@ -95,9 +95,13 @@ required = ["github.com/golang/protobuf/jsonpb"]
 
 [[constraint]]
   name = "github.com/pkg/errors"
-  version = "0.9.0"
+  version = "0.11.0"
   source = "https://github.com/pingcap/errors.git"
 
 [[constraint]]
   branch = "master"
   name = "github.com/pingcap/parser"
+
+[[constraint]]
+  name = "github.com/pingcap/tidb-tools"
+  revision = "80371800075f0fbc4c1680bd9132a26991727e70"
