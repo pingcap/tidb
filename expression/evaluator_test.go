@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"testing"
 	"time"
 
@@ -545,25 +546,41 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 
 func (s *testEvaluatorSuite) TestLike(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
+
+	lower_case_table_names_values := []string{"0" , "2"}
+
+	case_tests := [2][]struct {
 		input   string
 		pattern string
 		match   int
 	}{
-		{"a", "", 0},
-		{"a", "a", 1},
-		{"a", "b", 0},
-		{"aA", "Aa", 0},
-		{"aAb", `Aa%`, 0},
-		{"aAb", "aA_", 1},
-	}
-	for _, tt := range tests {
-		fc := funcs[ast.Like]
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
-		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
+		{
+			{"a", "", 0},
+			{"a", "a", 1},
+			{"a", "b", 0},
+			{"aA", "Aa", 0},
+			{"aAb", `Aa%`, 0},
+			{"aAb", "aA_", 1},
+		}, {
+			{"a", "", 0},
+			{"a", "a", 1},
+			{"a", "b", 0},
+			{"aA", "Aa", 1},
+			{"aAb", `Aa%`, 1},
+			{"aAb", "aA_", 1},
+		}}
+
+	for index, lower_case_table_names_value := range lower_case_table_names_values{
+		variable.SysVars["lower_case_table_names"].Value = lower_case_table_names_value
+		tests := &case_tests[index]
+		for _, tt := range *tests {
+			fc := funcs[ast.Like]
+			f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
+			c.Assert(err, IsNil)
+			r, err := evalBuiltinFunc(f, chunk.Row{})
+			c.Assert(err, IsNil)
+			c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
+		}
 	}
 }
 
