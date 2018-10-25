@@ -49,7 +49,7 @@ server-admin-check: server_check buildsucc
 buildsucc:
 	@echo Build TiDB Server successfully!
 
-all: dev server benchkv
+all: check dev server benchkv
 
 parser:
 	@echo "remove this command later"
@@ -61,8 +61,8 @@ build:
 
 # The retool tools.json is setup from hack/retool-install.sh
 check-setup:
-	@which retool >/dev/null 2>&1 || $(GO) get github.com/twitchtv/retool
-	@retool sync
+	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
+	@GO111MODULES=off retool sync
 
 check: check-setup fmt lint vet
 
