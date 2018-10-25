@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// Pool is the column pool.
 type Pool struct {
 	varLenColPool   *colPool
 	fixLenColPool4  *colPool
@@ -29,6 +30,7 @@ type Pool struct {
 	fixLenColPool40 *colPool
 }
 
+// NewPool creates a new Pool.
 func NewPool(maxChunkSize int) *Pool {
 	numShards := 8
 	return &Pool{
@@ -40,6 +42,7 @@ func NewPool(maxChunkSize int) *Pool {
 	}
 }
 
+// GetChunk gets a Chunk from the Pool.
 func (p *Pool) GetChunk(fields []*types.FieldType, cap int) *Chunk {
 	chk := new(Chunk)
 	chk.columns = make([]*column, 0, len(fields))
@@ -62,6 +65,7 @@ func (p *Pool) GetChunk(fields []*types.FieldType, cap int) *Chunk {
 	return chk
 }
 
+// PutChunk puts a Chunk back to the Pool.
 func (p *Pool) PutChunk(fields []*types.FieldType, chk *Chunk) {
 	for i, f := range fields {
 		switch elemLen := getFixedLen(f); elemLen {
