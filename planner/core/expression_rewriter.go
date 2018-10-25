@@ -759,8 +759,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack = append(er.ctxStack, value)
 	case *driver.ParamMarkerExpr:
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		//types.DefaultParamTypeForValue(v.GetValue(), tp)
-		v.GetValue()
+		types.DefaultParamTypeForValue(v.GetValue(), tp)
 		value := &expression.Constant{Value: v.Datum, RetType: tp}
 		er.ctx.GetSessionVars().PreparedParams[v.Order] = v.Datum
 		value.DeferredExpr = er.getParamExpression(v)
