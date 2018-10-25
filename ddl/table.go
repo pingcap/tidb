@@ -200,6 +200,13 @@ func (d *ddl) onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error)
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	// gofail: var truncateTableErr bool
+	// if truncateTableErr {
+	//  job.State = model.JobStateCancelled
+	//  return ver, errors.New("occur an error after dropping table.")
+	// }
+
 	tblInfo.ID = newTableID
 	err = t.CreateTable(schemaID, tblInfo)
 	if err != nil {
@@ -313,6 +320,11 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	// gofail: var renameTableErr bool
+	// if renameTableErr {
+	//	job.State = model.JobStateCancelled
+	//	return ver, errors.New("occur an error after renaming table.")
+	// }
 	tblInfo.Name = tableName
 	err = t.CreateTable(newSchemaID, tblInfo)
 	if err != nil {
