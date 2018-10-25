@@ -82,4 +82,11 @@ explain select * from ta where a = 1;
 rollback;
 
 explain SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
-explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)
+explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a);
+
+drop table if exists t;
+create table t(a int);
+explain select * from t where _tidb_rowid = 0;
+explain select * from t where _tidb_rowid > 0;
+explain select a, _tidb_rowid from t where a > 0;
+explain select * from t where _tidb_rowid > 0 and a > 0;

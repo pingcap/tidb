@@ -390,7 +390,7 @@ Sort_13	2.00	root	a:asc
     └─HashAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
       └─Projection_27	1.00	root	1
         └─TableDual_28	1.00	root	rows:1
-explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)
+explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a);
 id	count	task	operator info
 HashAgg_15	2.00	root	group by:a, funcs:firstrow(join_agg_0)
 └─Union_16	2.00	root	
@@ -400,3 +400,26 @@ HashAgg_15	2.00	root	group by:a, funcs:firstrow(join_agg_0)
   └─StreamAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
     └─Projection_31	1.00	root	1
       └─TableDual_32	1.00	root	rows:1
+drop table if exists t;
+create table t(a int);
+explain select * from t where _tidb_rowid = 0;
+id	count	task	operator info
+Projection_4	8000.00	root	test.t.a
+└─TableReader_6	10000.00	root	data:TableScan_5
+  └─TableScan_5	10000.00	cop	table:t, range:[0,0], keep order:false, stats:pseudo
+explain select * from t where _tidb_rowid > 0;
+id	count	task	operator info
+Projection_4	8000.00	root	test.t.a
+└─TableReader_6	10000.00	root	data:TableScan_5
+  └─TableScan_5	10000.00	cop	table:t, range:(0,+inf], keep order:false, stats:pseudo
+explain select a, _tidb_rowid from t where a > 0;
+id	count	task	operator info
+TableReader_7	3333.33	root	data:Selection_6
+└─Selection_6	3333.33	cop	gt(test.t.a, 0)
+  └─TableScan_5	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t where _tidb_rowid > 0 and a > 0;
+id	count	task	operator info
+Projection_4	2666.67	root	test.t.a
+└─TableReader_7	2666.67	root	data:Selection_6
+  └─Selection_6	2666.67	cop	gt(test.t.a, 0)
+    └─TableScan_5	3333.33	cop	table:t, range:(0,+inf], keep order:false, stats:pseudo
