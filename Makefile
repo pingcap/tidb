@@ -49,12 +49,12 @@ server-admin-check: server_check buildsucc
 buildsucc:
 	@echo Build TiDB Server successfully!
 
-all: check dev server benchkv
+all: dev server benchkv
 
 parser:
 	@echo "remove this command later"
 
-dev: checklist test check
+dev: checklist check test
 
 build:
 	$(GOBUILD)
