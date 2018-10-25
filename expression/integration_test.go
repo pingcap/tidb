@@ -2302,7 +2302,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	likeTests := []testCase{
 		{"a", "a", 1},
 		{"a", "b", 0},
-		{"aA", "Aa", 0},
+		{"aA", "Aa", 1},
 		{`aA%`, "aAab", 1},
 		{"aA_", "Aaab", 0},
 		{"Aa_", "Aab", 1},
