@@ -297,7 +297,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	total := 0
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	kind := feedback.feedback[0].lower.Kind()
-	min, max := getMinValue(kind, h.tp), getMaxValue(kind, h.tp)
+	min, max := getMinValue(kind, h.Tp), getMaxValue(kind, h.Tp)
 	for _, fb := range feedback.feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
