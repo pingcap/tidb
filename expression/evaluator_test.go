@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"testing"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -547,7 +547,7 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 func (s *testEvaluatorSuite) TestLike(c *C) {
 	defer testleak.AfterTest(c)()
 
-	lower_case_table_names_values := []string{"0" , "2"}
+	lower_case_table_names_values := []string{"0", "2"}
 
 	case_tests := [2][]struct {
 		input   string
@@ -570,7 +570,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 			{"aAb", "aA_", 1},
 		}}
 
-	for index, lower_case_table_names_value := range lower_case_table_names_values{
+	for index, lower_case_table_names_value := range lower_case_table_names_values {
 		variable.SysVars["lower_case_table_names"].Value = lower_case_table_names_value
 		tests := &case_tests[index]
 		for _, tt := range *tests {
