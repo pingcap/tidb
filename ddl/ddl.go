@@ -478,11 +478,6 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 }
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	// For every DDL, we must commit current transaction.
-	if err := ctx.NewTxn(); err != nil {
-		return errors.Trace(err)
-	}
-
 	// Get a global job ID and put the DDL job in the queue.
 	err := d.addDDLJob(ctx, job)
 	if err != nil {
