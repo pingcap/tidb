@@ -343,16 +343,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	}
 	if pkCol == nil {
 		path.ranges = ranger.FullIntRange(false)
-		if len(ds.Columns) > 0 {
-			extraHandleCol := ds.Columns[len(ds.Columns)-1]
-			if extraHandleCol.ID == model.ExtraHandleID {
-				pkCol = expression.ColInfo2Col(ds.schema.Columns, extraHandleCol)
-			} else {
-				return false, nil
-			}
-		} else {
-			return false, nil
-		}
+		return false, nil
 	}
 
 	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
