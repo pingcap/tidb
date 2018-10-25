@@ -755,7 +755,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
 	case *driver.ValueExpr:
-		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
+		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}	//要改也只能这里改了，这个地方把sql中的那个大写字母改成小写
 		er.ctxStack = append(er.ctxStack, value)
 	case *driver.ParamMarkerExpr:
 		tp := types.NewFieldType(mysql.TypeUnspecified)

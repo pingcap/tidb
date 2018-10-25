@@ -61,25 +61,25 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 
-	// gofail: var tikvStoreSendReqResult string
-	// switch tikvStoreSendReqResult {
-	// case "timeout":
-	// 	 return nil, errors.New("timeout")
-	// case "GCNotLeader":
-	// 	 if req.Type == tikvrpc.CmdGC {
-	//		 return &tikvrpc.Response{
-	//			 Type:   tikvrpc.CmdGC,
-	//			 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-	//		 }, nil
-	//	 }
-	// case "GCServerIsBusy":
-	//	 if req.Type == tikvrpc.CmdGC {
-	//		 return &tikvrpc.Response{
-	//			 Type: tikvrpc.CmdGC,
-	//			 GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
-	//		 }, nil
-	//	 }
-	// }
+	if vtikvStoreSendReqResult, __fpErr := __fp_tikvStoreSendReqResult.Acquire(); __fpErr == nil { defer __fp_tikvStoreSendReqResult.Release(); tikvStoreSendReqResult, __fpTypeOK := vtikvStoreSendReqResult.(string); if !__fpTypeOK { goto __badTypetikvStoreSendReqResult} 
+		 switch tikvStoreSendReqResult {
+		 case "timeout":
+		 	 return nil, errors.New("timeout")
+		 case "GCNotLeader":
+		 	 if req.Type == tikvrpc.CmdGC {
+				 return &tikvrpc.Response{
+					 Type:   tikvrpc.CmdGC,
+					 GC: &kvrpcpb.GCResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+				 }, nil
+			 }
+		 case "GCServerIsBusy":
+			 if req.Type == tikvrpc.CmdGC {
+				 return &tikvrpc.Response{
+					 Type: tikvrpc.CmdGC,
+					 GC:   &kvrpcpb.GCResponse{RegionError: &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}},
+				 }, nil
+			 }
+		 }; __badTypetikvStoreSendReqResult: __fp_tikvStoreSendReqResult.BadType(vtikvStoreSendReqResult, "string"); };
 
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)

@@ -261,7 +261,7 @@ func (s *Server) Run() error {
 			terror.Log(errors.Trace(err))
 			break
 		}
-		go s.onConn(conn)
+		/*go*/ s.onConn(conn)
 	}
 	err := s.listener.Close()
 	terror.Log(errors.Trace(err))

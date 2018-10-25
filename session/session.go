@@ -1123,7 +1123,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	dom := domain.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
-	if err != nil {
+/*	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1141,7 +1141,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-	}
+	}*/
 
 	return dom, errors.Trace(err)
 }

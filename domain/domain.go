@@ -617,10 +617,10 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	}
 
 	var watchCh clientv3.WatchChan
-	duration := 5 * time.Minute
+	duration := 5000 * time.Minute
 	if do.etcdClient != nil {
 		watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
-		duration = 10 * time.Minute
+		duration = 100000 * time.Minute
 	}
 
 	go func() {
