@@ -17,8 +17,8 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 )
 
