@@ -16,8 +16,8 @@ package expression
 import (
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pkg/errors"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.

@@ -1,7 +1,4 @@
 bin
-/interpreter/interpreter
-/interpreter/test
-/parser/parser.go
 /tidb-server/tidb-server
 /tidb-server/debug
 coverage.out

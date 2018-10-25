@@ -14,12 +14,12 @@
 package planner
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pkg/errors"
 )
 
 // Optimize does optimization and creates a Plan.

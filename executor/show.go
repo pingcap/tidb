@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

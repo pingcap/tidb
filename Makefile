@@ -11,7 +11,7 @@ CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
-GO        := go
+GO        := GO111MODULE=on go
 GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 OVERALLS  := CGO_ENABLED=1 overalls
@@ -25,8 +25,8 @@ PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go" | grep -vE "vendor")
 
-GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail enable)
-GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail disable)
+GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor|_tools)" | xargs gofail enable)
+GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor|_tools)" | xargs gofail disable)
 
 LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
@@ -96,7 +96,7 @@ lint:
 
 vet:
 	@echo "vet"
-	@go vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
+	$(GO) vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
 clean:
 	$(GO) clean -i ./...
@@ -114,7 +114,7 @@ explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest:
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."

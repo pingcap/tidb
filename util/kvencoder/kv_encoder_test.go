@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testKvEncoderSuite{})

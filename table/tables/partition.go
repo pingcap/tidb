@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

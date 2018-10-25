@@ -22,12 +22,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pkg/errors"
 )
 
 func truncateStr(str string, flen int) string {

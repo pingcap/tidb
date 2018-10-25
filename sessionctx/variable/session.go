@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/klauspost/cpuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pkg/errors"
 )
 
 const (
