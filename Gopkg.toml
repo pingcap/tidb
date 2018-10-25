@@ -102,6 +102,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
   branch = "master"
   name = "github.com/pingcap/parser"
 
+
 [[constraint]]
   name = "github.com/pingcap/tidb-tools"
-  revision = "80371800075f0fbc4c1680bd9132a26991727e70"
+  revision = "5db58e3b7e6613456551c40d011806a346b2f44a"
