@@ -33,7 +33,7 @@ type testJoinReorderDPSuite struct {
 	statsMap map[int]*property.StatsInfo
 }
 
-func (s *testJoinReorderDPSuite) SetUpSuite(c *C) {
+func (s *testJoinReorderDPSuite) SetUpTest(c *C) {
 	s.ctx = mockContext()
 	s.ctx.GetSessionVars().PlanID = -1
 }
