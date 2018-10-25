@@ -14,7 +14,7 @@
 package planner
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"

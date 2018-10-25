@@ -13,9 +13,9 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
