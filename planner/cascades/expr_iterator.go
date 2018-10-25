@@ -105,10 +105,6 @@ func (iter *ExprIter) Reset() (findMatch bool) {
 
 // NewExprIterFromGroupExpr creates the iterator on the group expression.
 func NewExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
-	if !p.operand.match(GetOperand(expr.exprNode)) {
-		return nil
-	}
-
 	if len(p.children) != len(expr.children) {
 		return nil
 	}
@@ -127,7 +123,11 @@ func NewExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
 // NewExprIterFromGroup creates the iterator on the group.
 func NewExprIterFromGroup(g *Group, p *Pattern) *ExprIter {
 	for elem := g.GetFirstElem(p.operand); elem != nil; elem = elem.Next() {
-		iter := NewExprIterFromGroupExpr(elem.Value.(*GroupExpr), p)
+		expr := elem.Value.(*GroupExpr)
+		if !p.operand.match(GetOperand(expr.exprNode)) {
+			return nil
+		}
+		iter := NewExprIterFromGroupExpr(expr, p)
 		if iter != nil {
 			iter.group, iter.element = g, elem
 			return iter

@@ -90,6 +90,9 @@ func exploreGroup(g *Group) error {
 func findMoreEquiv(expr *GroupExpr, g *Group) (eraseCur bool, err error) {
 	for _, rule := range GetTransformationRules(expr.exprNode) {
 		pattern := rule.GetPattern()
+		if !pattern.operand.match(GetOperand(expr.exprNode)) {
+			continue
+		}
 		// Create a binding of the current group expression and the pattern of
 		// the transformation rule to enumerate all the possible expressions.
 		iter := NewExprIterFromGroupExpr(expr, pattern)

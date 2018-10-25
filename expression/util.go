@@ -503,3 +503,15 @@ func ColumnSliceIsIntersect(s1, s2 []*Column) bool {
 	}
 	return false
 }
+
+func GetCols(expr Expression, result []int64) []int64 {
+	switch v := expr.(type) {
+	case *Column:
+		result = append(result, v.UniqueID)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = GetCols(arg, result)
+		}
+	}
+	return result
+}

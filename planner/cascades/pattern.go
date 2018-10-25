@@ -114,6 +114,14 @@ type Pattern struct {
 	children []*Pattern
 }
 
+func NewPattern(operand Operand) *Pattern {
+	return &Pattern{operand: operand}
+}
+
+func (p *Pattern) SetChildren(children ...*Pattern) {
+	p.children = children
+}
+
 // BuildPattern builds a Pattern from Operand and child Patterns.
 // Used in GetPattern() of Transformation interface to generate a Pattern.
 func BuildPattern(operand Operand, children ...*Pattern) *Pattern {
