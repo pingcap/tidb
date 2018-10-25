@@ -20,10 +20,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -485,6 +485,9 @@ func (s *testEvaluatorSuite) TestTruncate(c *C) {
 		{[]interface{}{newDec("23.298"), -100}, newDec("0")},
 		{[]interface{}{newDec("23.298"), 100}, newDec("23.298")},
 		{[]interface{}{nil, 2}, nil},
+		{[]interface{}{uint64(9223372036854775808), -10}, 9223372030000000000},
+		{[]interface{}{9223372036854775807, -7}, 9223372036850000000},
+		{[]interface{}{uint64(18446744073709551615), -10}, uint64(18446744070000000000)},
 	}
 
 	Dtbl := tblToDtbl(tbl)
