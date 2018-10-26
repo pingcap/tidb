@@ -567,7 +567,6 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	callback = &ddl.TestDDLCallback{}
 	d.(ddl.DDLForTest).SetHook(callback)
 
-	_, err = s.se.Execute(context.Background(), "set @@tidb_enable_table_partition = 1")
 	c.Assert(err, IsNil)
 
 	_, err = s.se.Execute(context.Background(), `create table tr(
