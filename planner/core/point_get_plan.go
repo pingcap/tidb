@@ -331,16 +331,24 @@ func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePa
 		}
 		return nvPairs
 	} else if binOp.Op == opcode.EQ {
-		colName, ok := binOp.L.(*ast.ColumnNameExpr)
-		if !ok {
-			return nil
-		}
 		var d types.Datum
-		switch x := binOp.R.(type) {
-		case *driver.ValueExpr:
-			d = x.Datum
-		case *driver.ParamMarkerExpr:
-			d = x.Datum
+		var colName *ast.ColumnNameExpr
+		if colName, ok := binOp.L.(*ast.ColumnNameExpr); ok {
+			switch x := binOp.R.(type) {
+			case *driver.ValueExpr:
+				d = x.Datum
+			case *driver.ParamMarkerExpr:
+				d = x.Datum
+			}
+		} else if colName, ok := binOp.R.(*ast.ColumnNameExpr); ok {
+			switch x := binOp.L.(type) {
+			case *driver.ValueExpr:
+				d = x.Datum
+			case *driver.ParamMarkerExpr:
+				d = x.Datum
+			}
+		} else {
+			return nil
 		}
 		if d.IsNull() {
 			return nil
