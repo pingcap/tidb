@@ -60,8 +60,8 @@ func (iter *ExprIter) Next() (found bool) {
 	}
 
 	// Otherwise, iterate itself to find more matched equivalent expressions.
-	for iter.element.Next(); iter.element != nil; iter.element.Next() {
-		expr := iter.element.Value.(*GroupExpr)
+	for elem := iter.element.Next(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*GroupExpr)
 		exprOperand := GetOperand(expr.exprNode)
 
 		if !iter.operand.match(exprOperand) {
@@ -85,6 +85,7 @@ func (iter *ExprIter) Next() (found bool) {
 		}
 
 		if allMatched {
+			iter.element = elem
 			return true
 		}
 	}
@@ -100,18 +101,32 @@ func (iter *ExprIter) Matched() bool {
 // Reset resets the iterator to the first matched group expression.
 func (iter *ExprIter) Reset() (findMatch bool) {
 	iter.element = iter.group.GetFirstElem(iter.operand)
-	return iter.element != nil
+	iter.matched = iter.element != nil
+	return iter.matched
 }
 
-// NewExprIterFromGroupExpr creates the iterator on the group expression.
-func NewExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
+// NewExprIterFromGroupElem creates the iterator on the group element.
+func NewExprIterFromGroupElem(elem *list.Element, p *Pattern) *ExprIter {
+	expr := elem.Value.(*GroupExpr)
+	if !p.operand.match(GetOperand(expr.exprNode)) {
+		return nil
+	}
+	iter := newExprIterFromGroupExpr(expr, p)
+	if iter != nil {
+		iter.element = elem
+	}
+	return iter
+}
+
+// newExprIterFromGroupExpr creates the iterator on the group expression.
+func newExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
 	if len(p.children) != len(expr.children) {
 		return nil
 	}
 
 	iter := &ExprIter{operand: p.operand, matched: true}
 	for i := range p.children {
-		childIter := NewExprIterFromGroup(expr.children[i], p.children[i])
+		childIter := newExprIterFromGroup(expr.children[i], p.children[i])
 		if childIter == nil {
 			return nil
 		}
@@ -120,14 +135,14 @@ func NewExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
 	return iter
 }
 
-// NewExprIterFromGroup creates the iterator on the group.
-func NewExprIterFromGroup(g *Group, p *Pattern) *ExprIter {
+// newExprIterFromGroup creates the iterator on the group.
+func newExprIterFromGroup(g *Group, p *Pattern) *ExprIter {
 	for elem := g.GetFirstElem(p.operand); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*GroupExpr)
 		if !p.operand.match(GetOperand(expr.exprNode)) {
 			return nil
 		}
-		iter := NewExprIterFromGroupExpr(expr, p)
+		iter := newExprIterFromGroupExpr(expr, p)
 		if iter != nil {
 			iter.group, iter.element = g, elem
 			return iter

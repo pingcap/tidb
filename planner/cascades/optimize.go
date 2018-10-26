@@ -14,6 +14,8 @@
 package cascades
 
 import (
+	"container/list"
+
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pkg/errors"
@@ -73,7 +75,7 @@ func exploreGroup(g *Group) error {
 			curExpr.explored = curExpr.explored && childGroup.explored
 		}
 
-		eraseCur, err := findMoreEquiv(curExpr, g)
+		eraseCur, err := findMoreEquiv(g, elem)
 		if err != nil {
 			return err
 		}
@@ -87,7 +89,8 @@ func exploreGroup(g *Group) error {
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func findMoreEquiv(expr *GroupExpr, g *Group) (eraseCur bool, err error) {
+func findMoreEquiv(g *Group, elem *list.Element) (eraseCur bool, err error) {
+	expr := elem.Value.(*GroupExpr)
 	for _, rule := range GetTransformationRules(expr.exprNode) {
 		pattern := rule.GetPattern()
 		if !pattern.operand.match(GetOperand(expr.exprNode)) {
@@ -95,7 +98,7 @@ func findMoreEquiv(expr *GroupExpr, g *Group) (eraseCur bool, err error) {
 		}
 		// Create a binding of the current group expression and the pattern of
 		// the transformation rule to enumerate all the possible expressions.
-		iter := NewExprIterFromGroupExpr(expr, pattern)
+		iter := NewExprIterFromGroupElem(elem, pattern)
 		for ; iter != nil && iter.Matched(); iter.Next() {
 			if !rule.Match(iter) {
 				continue
