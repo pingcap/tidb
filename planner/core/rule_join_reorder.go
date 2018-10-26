@@ -16,7 +16,7 @@ package core
 import (
 	"sort"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
@@ -219,7 +219,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.init(e.ctx)
+	}.Init(e.ctx)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	return join

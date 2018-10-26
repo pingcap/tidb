@@ -19,15 +19,15 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -1247,8 +1247,8 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 func (s *testPlanSuite) TestAllocID(c *C) {
 	ctx := mockContext()
-	pA := DataSource{}.init(ctx)
-	pB := DataSource{}.init(ctx)
+	pA := DataSource{}.Init(ctx)
+	pB := DataSource{}.Init(ctx)
 	c.Assert(pA.id+1, Equals, pB.id)
 }
 

@@ -47,10 +47,10 @@ explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
 Projection_6	2481.25	root	test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c1, test.t2.c2
 └─MergeJoin_7	2481.25	root	left outer join, left key:test.t1.c2, right key:test.t2.c1
-  ├─IndexLookUp_17	1999.00	root	
-  │ ├─Selection_16	1999.00	cop	gt(test.t1.c1, 1)
+  ├─IndexLookUp_17	1998.00	root	
+  │ ├─Selection_16	1998.00	cop	gt(test.t1.c1, 1)
   │ │ └─IndexScan_14	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:true
-  │ └─TableScan_15	1999.00	cop	table:t1, keep order:false
+  │ └─TableScan_15	1998.00	cop	table:t1, keep order:false
   └─IndexLookUp_21	1985.00	root	
     ├─IndexScan_19	1985.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true
     └─TableScan_20	1985.00	cop	table:t2, keep order:false
