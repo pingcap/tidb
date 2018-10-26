@@ -401,7 +401,6 @@ func (s *testBinlogSuite) TestPartitionedTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().BinlogClient = s.client
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int) partition by range (id) (
 			partition p0 values less than (1),
