@@ -424,7 +424,11 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	for _, col := range idx.Columns {
 		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)
 		if colFound == nil {
-			colFound = &expression.Column{ColName: col.Name, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()}
+			colFound = &expression.Column{
+				ColName:  col.Name,
+				RetType:  &is.Table.Columns[col.Offset].FieldType,
+				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+			}
 		} else {
 			colFound = colFound.Clone().(*expression.Column)
 		}
