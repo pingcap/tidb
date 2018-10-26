@@ -99,8 +99,8 @@ func (iter *ExprIter) Matched() bool {
 
 // Reset resets the iterator to the first matched group expression.
 func (iter *ExprIter) Reset() (findMatch bool) {
-	iter.element, findMatch = iter.group.firstExpr[iter.operand]
-	return findMatch
+	iter.element = iter.group.GetFirstElem(iter.operand)
+	return iter.element != nil
 }
 
 // NewExprIterFromGroupExpr creates the iterator on the group expression.
