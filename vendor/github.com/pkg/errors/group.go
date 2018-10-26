@@ -6,6 +6,15 @@ type ErrorGroup interface {
 	Errors() []error
 }
 
+// Errors uses the ErrorGroup interface to return a slice of errors.
+// If the ErrorGroup interface is not implemented it returns an array containing just the given error.
+func Errors(err error) []error {
+	if eg, ok := err.(ErrorGroup); ok {
+		return eg.Errors()
+	}
+	return []error{err}
+}
+
 // WalkDeep does a depth-first traversal of all errors.
 // Any ErrorGroup is traversed (after going deep).
 // The visitor function can return true to end the traversal early
