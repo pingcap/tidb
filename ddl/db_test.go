@@ -1531,19 +1531,21 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 	c.Assert(err, NotNil)
 
 	// test for enum column
-	failSQL := "create table t_enum (a enum(\"e\",\"e\"));"
+	failSQL := "create table t_enum (a enum('e','e'));"
 	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a enum(\"e\",\"E\"));"
+	failSQL = "create table t_enum (a enum('e','E'));"
 	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a enum(\"abc\",\"Abc\"));"
+	failSQL = "create table t_enum (a enum('abc','Abc'));"
 	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
 	// test for set column
-	failSQL = "create table t_enum (a set(\"e\",\"e\"));"
+	failSQL = "create table t_enum (a set('e','e'));"
 	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a set(\"e\",\"E\"));"
+	failSQL = "create table t_enum (a set('e','E'));"
 	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
-	failSQL = "create table t_enum (a set(\"abc\",\"Abc\"));"
+	failSQL = "create table t_enum (a set('abc','Abc'));"
 	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	_, err = s.tk.Exec("create table t_enum (a enum('B','b'));")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
 }
 
 func (s *testDBSuite) TestTableForeignKey(c *C) {
