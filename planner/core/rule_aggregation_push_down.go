@@ -247,7 +247,7 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		groupByCols:  gbyCols,
-	}.init(ctx)
+	}.Init(ctx)
 	aggLen := len(aggFuncs) + len(gbyCols)
 	newAggFuncDescs := make([]*aggregation.AggFuncDesc, 0, aggLen)
 	schema := expression.NewSchema(make([]*expression.Column, 0, aggLen)...)
@@ -277,7 +277,7 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 	newAgg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs)),
 		GroupByItems: make([]expression.Expression, 0, len(agg.GroupByItems)),
-	}.init(ctx)
+	}.Init(ctx)
 	newAgg.SetSchema(agg.schema.Clone())
 	for _, aggFunc := range agg.AggFuncs {
 		newAggFunc := aggFunc.Clone()
