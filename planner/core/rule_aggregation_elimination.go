@@ -56,7 +56,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 func (a *aggregationEliminateChecker) convertAggToProj(agg *LogicalAggregation) *LogicalProjection {
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.init(agg.ctx)
+	}.Init(agg.ctx)
 	for _, fun := range agg.AggFuncs {
 		expr := a.rewriteExpr(agg.ctx, fun)
 		proj.Exprs = append(proj.Exprs, expr)
