@@ -36,18 +36,21 @@ import (
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
 	basePlan
-	schema      *expression.Schema
-	TblInfo     *model.TableInfo
-	IndexInfo   *model.IndexInfo
-	Handle      int64
-	IndexValues []types.Datum
-	expr        expression.Expression
-	ctx         sessionctx.Context
+	schema           *expression.Schema
+	TblInfo          *model.TableInfo
+	IndexInfo        *model.IndexInfo
+	Handle           int64
+	HandleParam      *driver.ParamMarkerExpr
+	IndexValues      []types.Datum
+	IndexValueParams []*driver.ParamMarkerExpr
+	expr             expression.Expression
+	ctx              sessionctx.Context
 }
 
 type nameValuePair struct {
 	colName string
 	value   types.Datum
+	param   *driver.ParamMarkerExpr
 }
 
 // Schema implements the Plan interface.
@@ -117,10 +120,6 @@ func (p *PointGetPlan) ResolveIndices() {}
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
-	if PreparedPlanCacheEnabled() {
-		// Do not support plan cache.
-		return nil
-	}
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		fp := tryPointGetPlan(ctx, x)
@@ -185,8 +184,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if pairs == nil {
 		return nil
 	}
-	handleDatum := findPKHandle(tbl, pairs)
-	if handleDatum.Kind() != types.KindNull {
+	handlePair := findPKHandle(tbl, pairs)
+	if handlePair.value.Kind() != types.KindNull {
 		if len(pairs) != 1 {
 			return nil
 		}
@@ -196,10 +195,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		}
 		p := newPointGetPlan(ctx, schema, tbl)
 		var err error
-		p.Handle, err = handleDatum.ToInt64(ctx.GetSessionVars().StmtCtx)
+		p.Handle, err = handlePair.value.ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
 			return nil
 		}
+		p.HandleParam = handlePair.param
 		return p
 	}
 	for _, idxInfo := range tbl.Indices {
@@ -209,7 +209,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
-		idxValues := getIndexValues(idxInfo, pairs)
+		idxValues, idxValueParams := getIndexValues(idxInfo, pairs)
 		if idxValues == nil {
 			continue
 		}
@@ -220,6 +220,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p := newPointGetPlan(ctx, schema, tbl)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
+		p.IndexValueParams = idxValueParams
 		return p
 	}
 	return nil
@@ -333,19 +334,23 @@ func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePa
 	} else if binOp.Op == opcode.EQ {
 		var d types.Datum
 		var colName *ast.ColumnNameExpr
-		if colName, ok := binOp.L.(*ast.ColumnNameExpr); ok {
+		var param *driver.ParamMarkerExpr
+		var ok bool
+		if colName, ok = binOp.L.(*ast.ColumnNameExpr); ok {
 			switch x := binOp.R.(type) {
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
 				d = x.Datum
+				param = x
 			}
-		} else if colName, ok := binOp.R.(*ast.ColumnNameExpr); ok {
+		} else if colName, ok = binOp.R.(*ast.ColumnNameExpr); ok {
 			switch x := binOp.L.(type) {
 			case *driver.ValueExpr:
 				d = x.Datum
 			case *driver.ParamMarkerExpr:
 				d = x.Datum
+				param = x
 			}
 		} else {
 			return nil
@@ -353,46 +358,48 @@ func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePa
 		if d.IsNull() {
 			return nil
 		}
-		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d})
+		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param})
 	}
 	return nil
 }
 
-func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (d types.Datum) {
+func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair) {
 	if !tblInfo.PKIsHandle {
-		return d
+		return handlePair
 	}
 	for _, col := range tblInfo.Columns {
 		if mysql.HasPriKeyFlag(col.Flag) {
 			i := findInPairs(col.Name.L, pairs)
 			if i == -1 {
-				return d
+				return handlePair
 			}
-			return pairs[i].value
+			return pairs[i]
 		}
 	}
-	return d
+	return handlePair
 }
 
-func getIndexValues(idxInfo *model.IndexInfo, pairs []nameValuePair) []types.Datum {
+func getIndexValues(idxInfo *model.IndexInfo, pairs []nameValuePair) ([]types.Datum, []*driver.ParamMarkerExpr) {
 	idxValues := make([]types.Datum, 0, 4)
+	idxValueParams := make([]*driver.ParamMarkerExpr, 0, 4)
 	if len(idxInfo.Columns) != len(pairs) {
-		return nil
+		return nil, nil
 	}
 	if idxInfo.HasPrefixIndex() {
-		return nil
+		return nil, nil
 	}
 	for _, idxCol := range idxInfo.Columns {
 		i := findInPairs(idxCol.Name.L, pairs)
 		if i == -1 {
-			return nil
+			return nil, nil
 		}
 		idxValues = append(idxValues, pairs[i].value)
+		idxValueParams = append(idxValueParams, pairs[i].param)
 	}
 	if len(idxValues) > 0 {
-		return idxValues
+		return idxValues, idxValueParams
 	}
-	return nil
+	return nil, nil
 }
 
 func findInPairs(colName string, pairs []nameValuePair) int {
