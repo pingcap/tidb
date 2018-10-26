@@ -16,10 +16,10 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -56,7 +56,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 func (a *aggregationEliminateChecker) convertAggToProj(agg *LogicalAggregation) *LogicalProjection {
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.init(agg.ctx)
+	}.Init(agg.ctx)
 	for _, fun := range agg.AggFuncs {
 		expr := a.rewriteExpr(agg.ctx, fun)
 		proj.Exprs = append(proj.Exprs, expr)

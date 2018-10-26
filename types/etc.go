@@ -20,11 +20,11 @@ package types
 import (
 	"io"
 
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
-	ast "github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
+	ast "github.com/pingcap/parser/types"
 	"github.com/pkg/errors"
 )
 

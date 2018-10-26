@@ -16,8 +16,8 @@ package executor
 import (
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
