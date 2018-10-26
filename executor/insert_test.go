@@ -15,8 +15,8 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
