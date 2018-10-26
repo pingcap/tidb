@@ -24,20 +24,20 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -478,11 +478,6 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 }
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	// For every DDL, we must commit current transaction.
-	if err := ctx.NewTxn(); err != nil {
-		return errors.Trace(err)
-	}
-
 	// Get a global job ID and put the DDL job in the queue.
 	err := d.addDDLJob(ctx, job)
 	if err != nil {
