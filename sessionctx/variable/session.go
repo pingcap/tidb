@@ -288,7 +288,7 @@ type SessionVars struct {
 	OptimizerSelectivityLevel int
 
 	// EnableTablePartition enables table partition feature.
-	EnableTablePartition bool
+	EnableTablePartition string
 
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
@@ -618,7 +618,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
-		s.EnableTablePartition = TiDBOptOn(val)
+		s.EnableTablePartition = val
 	case TiDBDDLReorgWorkerCount:
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgPriority:
