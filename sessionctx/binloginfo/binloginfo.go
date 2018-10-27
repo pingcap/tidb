@@ -39,8 +39,6 @@ func init() {
 	pumpcli.Logger.Out = ioutil.Discard
 }
 
-var binlogWriteTimeout = 15 * time.Second
-
 // pumpsClient is the client to write binlog, it is opened on server start and never close,
 // shared by all sessions.
 var pumpsClient *pumpcli.PumpsClient
@@ -58,15 +56,6 @@ func GetPumpsClient() *pumpcli.PumpsClient {
 	client := pumpsClient
 	pumpsClientLock.RUnlock()
 	return client
-}
-
-// SetGRPCTimeout sets grpc timeout for writing binlog.
-func SetGRPCTimeout(timeout time.Duration) {
-	if timeout < 300*time.Millisecond {
-		log.Warnf("set binlog grpc timeout %s ignored, use default value %s", timeout, binlogWriteTimeout)
-		return // Avoid invalid value
-	}
-	binlogWriteTimeout = timeout
 }
 
 // SetPumpsClient sets the pumps client instance.
@@ -119,7 +108,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 		return errors.New("pumps client is nil")
 	}
 
-	// will retry in PumpsClient if write binlog fail.
+	// it will retry in PumpsClient if write binlog fail.
 	err := info.Client.WriteBinlog(info.Data)
 	if err != nil {
 		log.Errorf("write binlog fail %v", errors.ErrorStack(err))
@@ -201,7 +190,7 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 		Pumps:              pumpInfos,
 		Selector:           pumpcli.NewSelector(pumpcli.Range),
 		RetryTime:          1,
-		BinlogWriteTimeout: binlogWriteTimeout,
+		BinlogWriteTimeout: 15 * time.Second,
 	}
 	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
 
