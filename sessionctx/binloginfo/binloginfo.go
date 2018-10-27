@@ -14,6 +14,7 @@
 package binloginfo
 
 import (
+	"time"
 	"io/ioutil"
 	"regexp"
 	"strings"
@@ -189,6 +190,7 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 		Pumps:              pumpInfos,
 		Selector:           pumpcli.NewSelector(pumpcli.Range),
 		RetryTime:          1,
+		BinlogWriteTimeout: 15 * time.Second,
 	}
 	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
 
