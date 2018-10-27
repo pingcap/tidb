@@ -196,11 +196,15 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	builder := prepared.PlanBuilder.(*PlanBuilder)
+	var builder *PlanBuilder
+	if prepared.PlanBuilder != nil {
+		builder = prepared.PlanBuilder.(*PlanBuilder)
+	}
 	p, err := OptimizeAstNode(ctx, prepared.Stmt, is, builder)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	prepared.PlanBuilder = nil
 	if prepared.UseCache {
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
 	}
