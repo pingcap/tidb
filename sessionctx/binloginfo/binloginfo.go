@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
@@ -38,8 +37,6 @@ func init() {
 	// don't need output pumps client's log
 	pumpcli.Logger.Out = ioutil.Discard
 }
-
-var binlogWriteTimeout = 15 * time.Second
 
 // pumpsClient is the client to write binlog, it is opened on server start and never close,
 // shared by all sessions.
@@ -65,15 +62,6 @@ func SetPumpsClient(client *pumpcli.PumpsClient) {
 	pumpsClientLock.Lock()
 	pumpsClient = client
 	pumpsClientLock.Unlock()
-}
-
-// SetGRPCTimeout sets grpc timeout for writing binlog.
-func SetGRPCTimeout(timeout time.Duration) {
-	if timeout < 300*time.Millisecond {
-		log.Warnf("set binlog grpc timeout %s ignored, use default value %s", timeout, binlogWriteTimeout)
-		return // Avoid invalid value
-	}
-	binlogWriteTimeout = timeout
 }
 
 // GetPrewriteValue gets binlog prewrite value in the context.
@@ -119,7 +107,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 		return errors.New("pumps client is nil")
 	}
 
-	// will retry in PumpsClient if write binlog fail.
+	// it will retry in PumpsClient if write binlog fail.
 	err := info.Client.WriteBinlog(info.Data)
 	if err != nil {
 		log.Errorf("write binlog fail %v", errors.ErrorStack(err))
@@ -201,7 +189,6 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 		Pumps:              pumpInfos,
 		Selector:           pumpcli.NewSelector(pumpcli.Range),
 		RetryTime:          1,
-		BinlogWriteTimeout: binlogWriteTimeout,
 	}
 	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
 
