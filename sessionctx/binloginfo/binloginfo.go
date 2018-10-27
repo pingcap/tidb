@@ -14,12 +14,12 @@
 package binloginfo
 
 import (
-	"time"
 	"io/ioutil"
 	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
