@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -130,7 +131,7 @@ func (s *testSessionSuite) TestForCoverage(c *C) {
 	tk.MustExec("admin check table t")
 
 	// Cover dirty table operations in StateTxn.
-	tk.Se.GetSessionVars().BinlogClient = &mockBinlogPump{}
+	tk.Se.GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&mockBinlogPump{})
 	tk.MustExec("begin")
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert t values ()")
