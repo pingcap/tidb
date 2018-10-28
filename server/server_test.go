@@ -495,7 +495,9 @@ func runTestLoadData(c *C, server *Server) {
 
 func runTestConcurrentUpdate(c *C) {
 	// TODO: Should be runTestsOnNewDB. See #4205.
-	runTests(c, nil, func(dbt *DBTest) {
+	runTests(c, func(config *mysql.Config) {
+		config.Strict = false
+	}, func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test2")
 		dbt.mustExec("create table test2 (a int, b int)")
 		dbt.mustExec("insert test2 values (1, 1)")
@@ -712,7 +714,9 @@ func runTestDBNameEscape(c *C) {
 }
 
 func runTestResultFieldTableIsNull(c *C) {
-	runTestsOnNewDB(c, nil, "ResultFieldTableIsNull", func(dbt *DBTest) {
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.Strict = false
+	}, "ResultFieldTableIsNull", func(dbt *DBTest) {
 		dbt.mustExec("drop table if exists test;")
 		dbt.mustExec("create table test (c int);")
 		dbt.mustExec("explain select * from test;")
