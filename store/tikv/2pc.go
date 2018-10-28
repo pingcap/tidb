@@ -531,12 +531,12 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 }
 
 func (c *twoPhaseCommitter) prewriteKeys(bo *Backoffer, keys [][]byte) error {
-	log.Info("conn:%d 2pc prewrite, start ts = %d", c.connID, c.startTS)
+	log.Infof("conn:%d 2pc prewrite, start ts = %d", c.connID, c.startTS)
 	return c.doActionOnKeys(bo, actionPrewrite, keys)
 }
 
 func (c *twoPhaseCommitter) commitKeys(bo *Backoffer, keys [][]byte) error {
-	log.Info("conn:%d 2pc commit, commit ts = %d", c.connID, c.commitTS)
+	log.Infof("conn:%d 2pc commit, commit ts = %d", c.connID, c.commitTS)
 	return c.doActionOnKeys(bo, actionCommit, keys)
 }
 
