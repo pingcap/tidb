@@ -86,15 +86,19 @@
   revision = "3955978caca48c1658a4bb7a9c6a0f084e326af3"
 
 [[projects]]
-  digest = "1:38e684375ef5b55e812332266d63f9fc5b6329ab303067c4cdda051db6d29ca4"
+  digest = "1:700c0988d24fac04439828af2aab8e7d1638cea3bc91ff20d2a2befc970ff165"
   name = "github.com/gogo/protobuf"
-  packages = ["proto"]
+  packages = [
+    "gogoproto",
+    "proto",
+    "protoc-gen-gogo/descriptor",
+  ]
   pruneopts = "NUT"
   revision = "636bf0302bc95575d69441b25a2603156ffdddf1"
   version = "v1.1.1"
 
 [[projects]]
-  digest = "1:6aef947ba53156da1a66ee891d70d61835e0dcfc9f0d728ae1132db651e81c22"
+  digest = "1:9b117ac202b9de210a7093bca0c29d0d2424e4c9235c9e025ae0d6ef6b121c82"
   name = "github.com/golang/protobuf"
   packages = [
     "jsonpb",
@@ -107,8 +111,8 @@
     "ptypes/timestamp",
   ]
   pruneopts = "NUT"
-  revision = "b4deda0973fb4c70b50d226b1af49f3da59f5265"
-  version = "v1.1.0"
+  revision = "aa810b61a9c79d51363740d207bb46cf8e620ed5"
+  version = "v1.2.0"
 
 [[projects]]
   digest = "1:c6dfb6c55c1989f1d89622b3c45b786127f76f47322c50e487585f823cb12543"
@@ -260,8 +264,8 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
-  branch = "master"
-  digest = "1:84db0209caf3c48beaec43d15bd22ca6256d958b807c2ac626e2425e232e92c4"
+  branch = "misono/add-end-key"
+  digest = "1:74fee443fa1ea35bae6c976bb6576940beafdb89319441a92447f5500ed0e902"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -274,7 +278,8 @@
     "pkg/tikvpb",
   ]
   pruneopts = "NUT"
-  revision = "529c652955d8fa74faf56f91b2f428d5779fd7d5"
+  revision = "53f20daae5e3207abf4ea41f8b4cdaa7b04e2b5a"
+  source = "https://github.com/MyonKeminta/kvproto"
 
 [[projects]]
   branch = "master"
@@ -574,6 +579,7 @@
     "github.com/pingcap/parser/terror",
     "github.com/pingcap/parser/types",
     "github.com/pingcap/pd/client",
+    "github.com/pingcap/tidb-tools/tidb-binlog/node",
     "github.com/pingcap/tidb-tools/tidb-binlog/pump_client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
