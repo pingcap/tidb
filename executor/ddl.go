@@ -250,8 +250,12 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			return errors.Trace(err)
 		}
 	}
-	if len(notExistTables) > 0 && !s.IfExists {
-		return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
+	if len(notExistTables) > 0 {
+		if !s.IfExists {
+			return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
+		} else {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ",")))
+		}
 	}
 	return nil
 }

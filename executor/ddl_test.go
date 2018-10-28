@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
 )
 
@@ -169,6 +170,13 @@ func (s *testSuite) TestCreateDropIndex(c *C) {
 	tk.MustExec("create index idx_a on drop_test (a)")
 	tk.MustExec("drop index idx_a on drop_test")
 	tk.MustExec("drop table drop_test")
+}
+
+func (s *testSuite) TestDropTableIfExists(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists drop_if_exists_test")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.drop_if_exists_test'"))
 }
 
 func (s *testSuite) TestAlterTableAddColumn(c *C) {
