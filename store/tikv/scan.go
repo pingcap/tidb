@@ -31,9 +31,10 @@ type Scanner struct {
 	idx          int
 	nextStartKey []byte
 	eof          bool
+	upperBound   *kv.Key
 }
 
-func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int) (*Scanner, error) {
+func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int, upperBound *kv.Key) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
@@ -43,6 +44,7 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int) (*Scanne
 		batchSize:    batchSize,
 		valid:        true,
 		nextStartKey: startKey,
+		upperBound:   upperBound,
 	}
 	err := scanner.Next()
 	if kv.IsErrNotFound(err) {
@@ -135,10 +137,18 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 }
 
 func (s *Scanner) getData(bo *Backoffer) error {
-	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
+	log.Debugf("txn getData nextStartKey[%q], txn %d, upperBound %q", s.nextStartKey, s.startTS(), s.upperBound)
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {
+		if s.upperBound != nil {
+			if kv.Key(s.nextStartKey).Cmp(*s.upperBound) >= 0 {
+				// nextStartKey >= upperBound
+				s.eof = true
+				return nil
+			}
+		}
+
 		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextStartKey)
 		if err != nil {
 			return errors.Trace(err)

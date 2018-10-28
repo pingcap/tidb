@@ -50,7 +50,7 @@ func (s *testDeleteRangeSuite) TearDownTest(c *C) {
 func (s *testDeleteRangeSuite) checkData(c *C, expectedData map[string]string) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	it, err := txn.Seek([]byte("a"))
+	it, err := txn.Seek([]byte("a"), nil)
 	c.Assert(err, IsNil)
 
 	// Scan all data and save into a map

@@ -76,7 +76,7 @@ func valToStr(c *C, iter Iterator) string {
 func checkNewIterator(c *C, buffer MemBuffer) {
 	for i := startIndex; i < testCount; i++ {
 		val := encodeInt(i * indexStep)
-		iter, err := buffer.Seek(val)
+		iter, err := buffer.Seek(val, nil)
 		c.Assert(err, IsNil)
 		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(decodeInt([]byte(valToStr(c, iter))), Equals, i*indexStep)
@@ -86,7 +86,7 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 	// Test iterator Next()
 	for i := startIndex; i < testCount-1; i++ {
 		val := encodeInt(i * indexStep)
-		iter, err := buffer.Seek(val)
+		iter, err := buffer.Seek(val, nil)
 		c.Assert(err, IsNil)
 		c.Assert([]byte(iter.Key()), BytesEquals, val)
 		c.Assert(valToStr(c, iter), Equals, string(val))
@@ -102,7 +102,7 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 	}
 
 	// Non exist and beyond maximum seek test
-	iter, err := buffer.Seek(encodeInt(testCount * indexStep))
+	iter, err := buffer.Seek(encodeInt(testCount*indexStep), nil)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsFalse)
 
@@ -110,7 +110,7 @@ func checkNewIterator(c *C, buffer MemBuffer) {
 	// it returns the smallest key that larger than the one we are seeking
 	inBetween := encodeInt((testCount-1)*indexStep - 1)
 	last := encodeInt((testCount - 1) * indexStep)
-	iter, err = buffer.Seek(inBetween)
+	iter, err = buffer.Seek(inBetween, nil)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Valid(), IsTrue)
 	c.Assert([]byte(iter.Key()), Not(BytesEquals), inBetween)
@@ -140,7 +140,7 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 	defer testleak.AfterTest(c)()
 	for _, buffer := range s.bs {
 		// should be invalid
-		iter, err := buffer.Seek(nil)
+		iter, err := buffer.Seek(nil, nil)
 		c.Assert(err, IsNil)
 		c.Assert(iter.Valid(), IsFalse)
 
@@ -155,7 +155,7 @@ func (s *testKVSuite) TestIterNextUntil(c *C) {
 	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
 	insertData(c, buffer)
 
-	iter, err := buffer.Seek(nil)
+	iter, err := buffer.Seek(nil, nil)
 	c.Assert(err, IsNil)
 
 	err = NextUntil(iter, func(k Key) bool {
@@ -168,7 +168,7 @@ func (s *testKVSuite) TestIterNextUntil(c *C) {
 func (s *testKVSuite) TestBasicNewIterator(c *C) {
 	defer testleak.AfterTest(c)()
 	for _, buffer := range s.bs {
-		it, err := buffer.Seek([]byte("2"))
+		it, err := buffer.Seek([]byte("2"), nil)
 		c.Assert(err, IsNil)
 		c.Assert(it.Valid(), IsFalse)
 	}
@@ -193,7 +193,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 		}
 
 		cnt := 0
-		it, err := buffer.Seek(nil)
+		it, err := buffer.Seek(nil, nil)
 		c.Assert(err, IsNil)
 		for it.Valid() {
 			cnt++
@@ -201,7 +201,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 		}
 		c.Assert(cnt, Equals, 6)
 
-		it, err = buffer.Seek([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"))
+		it, err = buffer.Seek([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"), nil)
 		c.Assert(err, IsNil)
 		c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 	}
@@ -294,7 +294,7 @@ func benchIterator(b *testing.B, buffer MemBuffer) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		iter, err := buffer.Seek(nil)
+		iter, err := buffer.Seek(nil, nil)
 		if err != nil {
 			b.Error(err)
 		}

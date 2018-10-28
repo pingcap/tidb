@@ -40,7 +40,7 @@ func (s *testScanSuite) SetUpSuite(c *C) {
 
 func (s *testScanSuite) TearDownSuite(c *C) {
 	txn := s.beginTxn(c)
-	scanner, err := txn.Seek(encodeKey(s.prefix, ""))
+	scanner, err := txn.Seek(encodeKey(s.prefix, ""), nil)
 	c.Assert(err, IsNil)
 	c.Assert(scanner, NotNil)
 	for scanner.Valid() {
@@ -76,7 +76,7 @@ func (s *testScanSuite) TestSeek(c *C) {
 		val, err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, valueBytes(0))
-		scan, err := txn2.Seek(encodeKey(s.prefix, ""))
+		scan, err := txn2.Seek(encodeKey(s.prefix, ""), nil)
 		c.Assert(err, IsNil)
 
 		for i := 0; i < rowNum; i++ {
@@ -95,7 +95,7 @@ func (s *testScanSuite) TestSeek(c *C) {
 
 		txn3 := s.beginTxn(c)
 		txn3.SetOption(kv.KeyOnly, true)
-		scan, err = txn3.Seek(encodeKey(s.prefix, ""))
+		scan, err = txn3.Seek(encodeKey(s.prefix, ""), nil)
 		c.Assert(err, IsNil)
 
 		for i := 0; i < rowNum; i++ {
@@ -112,7 +112,7 @@ func (s *testScanSuite) TestSeek(c *C) {
 
 		// Restore KeyOnly to false
 		txn3.SetOption(kv.KeyOnly, false)
-		scan, err = txn3.Seek(encodeKey(s.prefix, ""))
+		scan, err = txn3.Seek(encodeKey(s.prefix, ""), nil)
 		c.Assert(err, IsNil)
 
 		for i := 0; i < rowNum; i++ {

@@ -115,12 +115,12 @@ func (txn *tikvTxn) String() string {
 	return fmt.Sprintf("%d", txn.StartTS())
 }
 
-func (txn *tikvTxn) Seek(k kv.Key) (kv.Iterator, error) {
+func (txn *tikvTxn) Seek(k kv.Key, upperBound *kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek").Inc()
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("seek").Observe(time.Since(start).Seconds()) }()
 
-	return txn.us.Seek(k)
+	return txn.us.Seek(k, upperBound)
 }
 
 // SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
