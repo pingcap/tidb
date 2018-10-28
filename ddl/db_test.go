@@ -1877,7 +1877,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	hasOldTableData := true
 	for i := 0; i < waitForCleanDataRound; i++ {
 		err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-			it, err1 := txn.Seek(tablePrefix, nil)
+			it, err1 := txn.Iter(tablePrefix, nil)
 			if err1 != nil {
 				return err1
 			}
@@ -2893,7 +2893,7 @@ func checkPartitionDelRangeDone(c *C, s *testDBSuite, partitionPrefix kv.Key) bo
 	hasOldPartitionData := true
 	for i := 0; i < waitForCleanDataRound; i++ {
 		err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-			it, err := txn.Seek(partitionPrefix, nil)
+			it, err := txn.Iter(partitionPrefix, nil)
 			if err != nil {
 				return err
 			}

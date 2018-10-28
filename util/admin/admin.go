@@ -642,7 +642,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
 
-	it, err := retriever.Seek(startKey, keyUpperBound)
+	it, err := retriever.Iter(startKey, keyUpperBound)
 	if err != nil {
 		return errors.Trace(err)
 	}

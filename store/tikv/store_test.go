@@ -229,7 +229,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	// Cover Seek request.
 	client.priority = pb.CommandPri_High
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	iter, err := txn.Seek([]byte("key"), nil)
+	iter, err := txn.Iter([]byte("key"), nil)
 	c.Assert(err, IsNil)
 	for iter.Valid() {
 		c.Assert(iter.Next(), IsNil)

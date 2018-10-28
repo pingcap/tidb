@@ -159,26 +159,26 @@ func (st *TxnState) Delete(k kv.Key) error {
 	return st.buf.Delete(k)
 }
 
-// Seek overrides the Transaction interface.
-func (st *TxnState) Seek(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.Seek(k, upperBound)
+// Iter overrides the Transaction interface.
+func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.Seek(k, upperBound)
+	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekReverse overrides the Transaction interface.
-func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.SeekReverse(k)
+// IterReverse overrides the Transaction interface.
+func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.SeekReverse(k)
+	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

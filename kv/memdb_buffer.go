@@ -50,8 +50,8 @@ func NewMemDbBuffer(cap int) MemBuffer {
 	}
 }
 
-// Seek creates an Iterator.
-func (m *memDbBuffer) Seek(k Key, upperBound Key) (Iterator, error) {
+// Iter creates an Iterator.
+func (m *memDbBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
 	var i Iterator
 	if k == nil {
 		i = &memDbIter{iter: m.db.NewIterator(&util.Range{}), reverse: false}
@@ -69,7 +69,7 @@ func (m *memDbBuffer) SetCap(cap int) {
 
 }
 
-func (m *memDbBuffer) SeekReverse(k Key) (Iterator, error) {
+func (m *memDbBuffer) IterReverse(k Key) (Iterator, error) {
 	var i *memDbIter
 	if k == nil {
 		i = &memDbIter{iter: m.db.NewIterator(&util.Range{}), reverse: true}
@@ -161,7 +161,7 @@ func (i *memDbIter) Close() {
 
 // WalkMemBuffer iterates all buffered kv pairs in memBuf
 func WalkMemBuffer(memBuf MemBuffer, f func(k Key, v []byte) error) error {
-	iter, err := memBuf.Seek(nil, nil)
+	iter, err := memBuf.Iter(nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
