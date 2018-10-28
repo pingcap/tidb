@@ -75,7 +75,7 @@ func (s *BufferStore) Get(k Key) ([]byte, error) {
 }
 
 // Seek implements the Retriever interface.
-func (s *BufferStore) Seek(k Key, upperBound *Key) (Iterator, error) {
+func (s *BufferStore) Seek(k Key, upperBound Key) (Iterator, error) {
 	bufferIt, err := s.MemBuffer.Seek(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)

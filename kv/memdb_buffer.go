@@ -51,7 +51,7 @@ func NewMemDbBuffer(cap int) MemBuffer {
 }
 
 // Seek creates an Iterator.
-func (m *memDbBuffer) Seek(k Key, upperBound *Key) (Iterator, error) {
+func (m *memDbBuffer) Seek(k Key, upperBound Key) (Iterator, error) {
 	var i Iterator
 	if k == nil {
 		i = &memDbIter{iter: m.db.NewIterator(&util.Range{}), reverse: false}

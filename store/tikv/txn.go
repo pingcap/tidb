@@ -115,7 +115,7 @@ func (txn *tikvTxn) String() string {
 	return fmt.Sprintf("%d", txn.StartTS())
 }
 
-func (txn *tikvTxn) Seek(k kv.Key, upperBound *kv.Key) (kv.Iterator, error) {
+func (txn *tikvTxn) Seek(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek").Inc()
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("seek").Observe(time.Since(start).Seconds()) }()

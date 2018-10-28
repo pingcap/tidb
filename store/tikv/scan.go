@@ -30,11 +30,11 @@ type Scanner struct {
 	cache        []*pb.KvPair
 	idx          int
 	nextStartKey []byte
+	endKey       []byte
 	eof          bool
-	upperBound   *kv.Key
 }
 
-func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int, upperBound *kv.Key) (*Scanner, error) {
+func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
@@ -44,7 +44,7 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int, upperBou
 		batchSize:    batchSize,
 		valid:        true,
 		nextStartKey: startKey,
-		upperBound:   upperBound,
+		endKey:       endKey,
 	}
 	err := scanner.Next()
 	if kv.IsErrNotFound(err) {
@@ -141,15 +141,6 @@ func (s *Scanner) getData(bo *Backoffer) error {
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {
-		if s.upperBound != nil {
-			log.Debugf("txn getData upperBound = %q, nextStartKey = %q", *s.upperBound, s.nextStartKey)
-			if kv.Key(s.nextStartKey).Cmp(*s.upperBound) >= 0 {
-				// nextStartKey >= upperBound
-				s.eof = true
-				return nil
-			}
-		}
-
 		loc, err := s.snapshot.store.regionCache.LocateKey(bo, s.nextStartKey)
 		if err != nil {
 			return errors.Trace(err)
@@ -158,6 +149,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			Type: tikvrpc.CmdScan,
 			Scan: &pb.ScanRequest{
 				StartKey: s.nextStartKey,
+				EndKey:   s.endKey,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 				KeyOnly:  s.snapshot.keyOnly,
@@ -210,7 +202,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			// No more data in current Region. Next getData() starts
 			// from current Region's endKey.
 			s.nextStartKey = loc.EndKey
-			if len(loc.EndKey) == 0 {
+			if len(loc.EndKey) == 0 || (s.endKey != nil && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0) {
 				// Current Region is the last one.
 				s.eof = true
 			}

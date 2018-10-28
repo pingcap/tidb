@@ -127,7 +127,7 @@ func (lmb *lazyMemBuffer) Delete(k Key) error {
 	return lmb.mb.Delete(k)
 }
 
-func (lmb *lazyMemBuffer) Seek(k Key, upperBound *Key) (Iterator, error) {
+func (lmb *lazyMemBuffer) Seek(k Key, upperBound Key) (Iterator, error) {
 	if lmb.mb == nil {
 		return invalidIterator{}, nil
 	}

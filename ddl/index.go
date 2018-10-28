@@ -1217,7 +1217,7 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	}
 	firstKey := t.RecordKey(seekHandle)
 	upperBound := firstKey.PrefixNext()
-	it, err := snap.Seek(firstKey, &upperBound)
+	it, err := snap.Seek(firstKey, upperBound)
 	if err != nil {
 		return errors.Trace(err)
 	}
