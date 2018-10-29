@@ -218,6 +218,7 @@ func (s *testSuite) TestMeta(c *C) {
 	err = t.SetSchemaDiff(schemaDiff)
 	c.Assert(err, IsNil)
 	readDiff, err := t.GetSchemaDiff(schemaDiff.Version)
+	c.Assert(err, IsNil)
 	c.Assert(readDiff, DeepEquals, schemaDiff)
 
 	err = txn.Commit(context.Background())
