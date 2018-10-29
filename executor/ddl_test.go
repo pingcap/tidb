@@ -226,6 +226,9 @@ func (s *testSuite) TestDropTableIfExists(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists drop_if_exists_test")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.drop_if_exists_test'"))
+	tk.MustExec("create table if not exists t1(c1 int)")
+	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2'", "Note|1051|Unknown table 'test.t3'"))
 }
 
 func (s *testSuite) TestAlterTableAddColumn(c *C) {
