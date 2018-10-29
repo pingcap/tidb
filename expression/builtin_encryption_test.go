@@ -257,6 +257,7 @@ func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
 		str := types.NewDatum(tt.origin)
 		hashLength := types.NewDatum(tt.hashLength)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, hashLength}))
+		c.Assert(err, IsNil)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		if tt.validCase {
