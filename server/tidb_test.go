@@ -443,6 +443,7 @@ func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
 	_, err = qctx.Execute(ctx, testSQL)
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show tables")
+	c.Assert(err, IsNil)
 	chk := rs[0].NewChunk()
 	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
