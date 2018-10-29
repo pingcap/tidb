@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -465,6 +466,10 @@ func (hg *Histogram) totalRowCount() float64 {
 	return float64(hg.Buckets[hg.Len()-1].Count + hg.NullCount)
 }
 
+func (hg *Histogram) notNullRowCount() float64 {
+	return float64(hg.Buckets[hg.Len()-1].Count)
+}
+
 // mergeBuckets is used to merge every two neighbor buckets.
 func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	curBuck := 0
@@ -684,6 +689,153 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 	}
 	return chunk.Compare(hg.Bounds.GetRow(0), 0, &val) > 0 ||
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
+}
+
+// MergeHistogramForInnerJoin merges two histogram into one for inner join.
+func MergeHistogramForInnerJoin(lSide *Histogram, rSide *Histogram, tp *types.FieldType) *Histogram {
+	cmpFunc := chunk.GetCompareFunc(tp)
+	calcOverlapFunc := getOverlapCalculateFunc(tp)
+	lAvgPerVal := lSide.notNullRowCount() / float64(lSide.NDV)
+	rAvgPerVal := rSide.notNullRowCount() / float64(rSide.NDV)
+	logrus.Warnf("left avg: %v, right avg: %v", lAvgPerVal, rAvgPerVal)
+	totCnt := int64(0)
+	totNdv := float64(0)
+	newHist := NewHistogram(0, 0, 0, 0, tp, 256, 0)
+	for i, j := 0, 0; i < lSide.Bounds.NumRows() && j < rSide.Bounds.NumRows(); {
+		lLow := lSide.Bounds.GetRow(i)
+		lHigh := lSide.Bounds.GetRow(i + 1)
+		rLow := rSide.Bounds.GetRow(j)
+		rHigh := rSide.Bounds.GetRow(j + 1)
+		// If [lLow, lHigh] is totally behind [rLow, rHigh], move r point.
+		if cmpFunc(lLow, 0, rHigh, 0) > 0 {
+			j += 2
+			continue
+		}
+		// If [rLow, rHigh] is totally behind [lLow, lHigh], move l point.
+		if cmpFunc(rLow, 0, lHigh, 0) > 0 {
+			i += 2
+			continue
+		}
+		var overlapLow, overLapHigh chunk.Row
+		if cmpFunc(lLow, 0, rLow, 0) > 0 {
+			overlapLow = lLow
+		} else {
+			overlapLow = rLow
+		}
+		if cmpFunc(lHigh, 0, rHigh, 0) > 0 {
+			overLapHigh = rHigh
+		} else {
+			overLapHigh = lHigh
+		}
+		// Calculate overlap ratio.
+		leftOverLap := calcOverlapFunc(lLow, lHigh, overlapLow, overLapHigh)
+		rightOverLap := calcOverlapFunc(rLow, rHigh, overlapLow, overLapHigh)
+		lCount := float64(lSide.bucketCount(i/2)) * leftOverLap
+		rCount := float64(rSide.bucketCount(j/2)) * rightOverLap
+		lNdv := lCount / lAvgPerVal
+		rNdv := rCount / rAvgPerVal
+		// bucketCount is lCount/lNdv * rCount/rNdv * finalNdv, where finalNdv is min(lNdv, rNdv).
+		bucketCount := lCount * rCount / math.Max(lNdv, rNdv)
+		// Update histogram.
+		totCnt += int64(bucketCount)
+		newHist.Bounds.AppendRow(overlapLow)
+		newHist.Bounds.AppendRow(overLapHigh)
+		newHist.Buckets = append(newHist.Buckets, Bucket{Count: totCnt, Repeat: int64(bucketCount / math.Min(lNdv, rNdv))})
+		totNdv += math.Min(lNdv, rNdv)
+		// Move i and j by compare result.
+		switch cmpFunc(lHigh, 0, rHigh, 0) {
+		case -1:
+			i += 2
+		case 0:
+			i += 2
+			j += 2
+		case 1:
+			j += 2
+		}
+	}
+	newHist.NDV = int64(totNdv)
+	return newHist
+}
+
+func getOverlapCalculateFunc(tp *types.FieldType) func(l, r, lInner, rInner chunk.Row) float64 {
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		if mysql.HasUnsignedFlag(tp.Flag) {
+			return calculateUintOverlap
+		}
+		return calculateIntOverlap
+	case mysql.TypeFloat:
+		return calculateFloat32Overlap
+	case mysql.TypeDouble:
+		return calculateFloat64Overlap
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return calculateStringOverlap
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return calculateTimeOverlap
+	case mysql.TypeDuration:
+		return calculateDurationOverlap
+	case mysql.TypeNewDecimal:
+		return calculateDecimalOverlap
+
+		// case mysql.TypeSet, mysql.TypeEnum, mysql.TypeBit, mysql.TypeJSON:
+	}
+	return calculateOverlapDefault
+}
+
+func calculateOverlapDefault(_, _, _, _ chunk.Row) float64 {
+	return 0.5
+}
+
+func calculateIntOverlap(left, right, lInner, rInner chunk.Row) float64 {
+	return float64(rInner.GetInt64(0)-lInner.GetInt64(0)+1) / float64(right.GetInt64(0)-left.GetInt64(0)+1)
+}
+
+func calculateUintOverlap(left, right, lInner, rInner chunk.Row) float64 {
+	return float64(rInner.GetUint64(0)-lInner.GetUint64(0)+1) / float64(right.GetUint64(0)-left.GetUint64(0)+1)
+}
+
+func calculateFloat32Overlap(left, right, lInner, rInner chunk.Row) float64 {
+	return float64(rInner.GetFloat32(0)-lInner.GetFloat32(0)) / float64(right.GetFloat32(0)-left.GetFloat32(0))
+}
+
+func calculateFloat64Overlap(left, right, lInner, rInner chunk.Row) float64 {
+	return rInner.GetFloat64(0) - lInner.GetFloat64(0)/right.GetFloat64(0) - left.GetFloat64(0)
+}
+
+func calculateStringOverlap(left, right, lInner, rInner chunk.Row) float64 {
+	common := commonPrefixLength(left.GetBytes(0), right.GetBytes(0))
+	return (convertBytesToScalar(right.GetBytes(0)[common:]) - convertBytesToScalar(left.GetBytes(0)[common:])) / (convertBytesToScalar(rInner.GetBytes(0)[common:]) - convertBytesToScalar(lInner.GetBytes(0)[common:]))
+}
+
+func calculateTimeOverlap(left, right, lInner, rInner chunk.Row) float64 {
+	lTime, rTime := left.GetTime(0), right.GetTime(0)
+	lInnerTime, rInnerTime := lInner.GetTime(0), rInner.GetTime(0)
+	return (convertTimeToScalar(&rInnerTime) - convertTimeToScalar(&lInnerTime)) / (convertTimeToScalar(&rTime) - convertTimeToScalar(&lTime))
+}
+
+func calculateDurationOverlap(left, right, lInner, rInner chunk.Row) float64 {
+	return float64(rInner.GetDuration(0, 0).Duration-lInner.GetDuration(0, 0).Duration) / float64(right.GetDuration(0, 0).Duration-left.GetDuration(0, 0).Duration)
+}
+
+func calculateDecimalOverlap(left, right, lInner, rInner chunk.Row) float64 {
+	lDec, err := left.GetMyDecimal(0).ToFloat64()
+	if err != nil {
+		return 0
+	}
+	rDec, err := right.GetMyDecimal(0).ToFloat64()
+	if err != nil {
+		return 0
+	}
+	lInnerDec, err := lInner.GetMyDecimal(0).ToFloat64()
+	if err != nil {
+		return 0
+	}
+	rInnerDec, err := rInner.GetMyDecimal(0).ToFloat64()
+	if err != nil {
+		return 0
+	}
+	return (rInnerDec - lInnerDec) / (rDec - lDec)
 }
 
 // ErrorRate is the error rate of estimate row count by bucket and cm sketch.

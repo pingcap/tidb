@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -278,6 +279,9 @@ func (p *LogicalJoin) deriveStats() (*property.StatsInfo, error) {
 		leftKeys = append(leftKeys, eqCond.GetArgs()[0].(*expression.Column))
 		rightKeys = append(rightKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
+	if p.JoinType == InnerJoin && p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
+		return p.deriveInnerJoinStatsWithHist(leftKeys, rightKeys)
+	}
 	leftKeyCardinality := getCardinality(leftKeys, p.children[0].Schema(), leftProfile)
 	rightKeyCardinality := getCardinality(rightKeys, p.children[1].Schema(), rightProfile)
 	count := leftProfile.RowCount * rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
@@ -295,6 +299,94 @@ func (p *LogicalJoin) deriveStats() (*property.StatsInfo, error) {
 	p.stats = &property.StatsInfo{
 		RowCount:    count,
 		Cardinality: cardinality,
+	}
+	return p.stats, nil
+}
+
+func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expression.Column) (*property.StatsInfo, error) {
+	leftChild, rightChild := p.children[0], p.children[1]
+	leftProfile, rightProfile := leftChild.statsInfo(), rightChild.statsInfo()
+
+	cardinality := make([]float64, 0, p.schema.Len())
+	cardinality = append(cardinality, leftProfile.Cardinality...)
+	cardinality = append(cardinality, rightProfile.Cardinality...)
+
+	ndv, leftNdv, rightNdv := float64(1), float64(1), float64(1)
+	idxHistID := int64(0)
+	newColID2Hist := make(map[int64]*statistics.Column)
+	newIdxID2Hist := make(map[int64]*statistics.Index)
+	leftIndexReLabel := make(map[int64]int64)
+	rightIndexReLabel := make(map[int64]int64)
+	newIdx2ColumnIDs := make(map[int64][]int64)
+
+	// TODO: Support using index histogram to calculate the NDV after join and the final row count.
+	for i := range leftKeys {
+		leftHist, ok1 := leftChild.statsInfo().HistColl.Columns[leftKeys[i].UniqueID]
+		rightHist, ok2 := rightChild.statsInfo().HistColl.Columns[rightKeys[i].UniqueID]
+		lPos := leftChild.Schema().ColumnIndex(leftKeys[i])
+		rPos := rightChild.Schema().ColumnIndex(rightKeys[i])
+		leftNdv *= leftProfile.Cardinality[lPos]
+		rightNdv *= rightProfile.Cardinality[rPos]
+		if ok1 && ok2 {
+			newHist := statistics.MergeHistogramForInnerJoin(&leftHist.Histogram, &rightHist.Histogram, leftKeys[i].RetType)
+			leftCol := &statistics.Column{Info: leftHist.Info, Histogram: *newHist}
+			rightCol := &statistics.Column{Info: rightHist.Info, Histogram: *newHist}
+			ndv *= float64(newHist.NDV)
+			lPosNew := p.schema.ColumnIndex(leftKeys[i])
+			rPosNew := p.schema.ColumnIndex(rightKeys[i])
+			cardinality[lPosNew] = ndv
+			cardinality[rPosNew] = ndv
+			newColID2Hist[leftKeys[i].UniqueID] = leftCol
+			newColID2Hist[rightKeys[i].UniqueID] = rightCol
+			continue
+		}
+		keyNdv := math.Min(leftChild.statsInfo().Cardinality[lPos], rightChild.statsInfo().Cardinality[rPos])
+		ndv *= keyNdv
+	}
+	count := leftProfile.RowCount / leftNdv * rightProfile.RowCount / rightNdv * ndv
+
+	for uniqID, colHist := range leftProfile.HistColl.Columns {
+		_, ok := newColID2Hist[uniqID]
+		if ok {
+			continue
+		}
+		newColID2Hist[uniqID] = colHist
+	}
+
+	for oldID, idxHist := range leftProfile.HistColl.Indices {
+		newIdxID2Hist[idxHistID] = idxHist
+		leftIndexReLabel[oldID] = idxHistID
+		newIdx2ColumnIDs[idxHistID] = leftProfile.HistColl.Idx2ColumnIDs[oldID]
+		idxHistID++
+	}
+
+	for oldID, idxHist := range rightProfile.HistColl.Indices {
+		newIdxID2Hist[idxHistID] = idxHist
+		leftIndexReLabel[oldID] = idxHistID
+		newIdx2ColumnIDs[idxHistID] = rightProfile.HistColl.Idx2ColumnIDs[oldID]
+		idxHistID++
+	}
+
+	newColID2IdxID := make(map[int64]int64)
+
+	for colID, oldIdxID := range leftProfile.HistColl.ColID2IdxID {
+		newColID2IdxID[colID] = leftIndexReLabel[oldIdxID]
+	}
+	for colID, oldIdxID := range rightProfile.HistColl.ColID2IdxID {
+		newColID2IdxID[colID] = rightIndexReLabel[oldIdxID]
+	}
+
+	newHistColl := statistics.HistColl{
+		Count:         int64(count),
+		Columns:       newColID2Hist,
+		Indices:       newIdxID2Hist,
+		Idx2ColumnIDs: newIdx2ColumnIDs,
+		ColID2IdxID:   newColID2IdxID,
+	}
+	p.stats = &property.StatsInfo{
+		RowCount:    count,
+		Cardinality: cardinality,
+		HistColl:    newHistColl,
 	}
 	return p.stats, nil
 }
