@@ -130,6 +130,7 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 			args = append(args, types.NewDatum(param))
 		}
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(str, DeepEquals, types.NewDatum(tt.origin))
