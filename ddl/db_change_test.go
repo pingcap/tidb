@@ -588,6 +588,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	result, err = s.execQuery(tk, "show index from tr;")
 	c.Assert(err, IsNil)
 	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
+	c.Assert(err, IsNil)
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
