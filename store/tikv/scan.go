@@ -202,7 +202,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			// No more data in current Region. Next getData() starts
 			// from current Region's endKey.
 			s.nextStartKey = loc.EndKey
-			if len(loc.EndKey) == 0 || (s.endKey != nil && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0) {
+			if len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0) {
 				// Current Region is the last one.
 				s.eof = true
 			}

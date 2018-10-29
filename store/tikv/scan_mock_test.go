@@ -48,4 +48,12 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 		c.Assert(scanner.Next(), IsNil)
 	}
 	c.Assert(scanner.Valid(), IsFalse)
+
+	scanner, err = newScanner(snapshot, []byte("a"), []byte("i"), 10)
+	c.Assert(err, IsNil)
+	for ch := byte('a'); ch <= byte('h'); ch++ {
+		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))
+		c.Assert(scanner.Next(), IsNil)
+	}
+	c.Assert(scanner.Valid(), IsFalse)
 }
