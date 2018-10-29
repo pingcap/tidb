@@ -87,6 +87,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 			Endpoints:   endpoints,
 			DialTimeout: dialTimeout,
 		})
+		c.Assert(err, IsNil)
 		defer func() {
 			if cli != nil {
 				cli.Close()
