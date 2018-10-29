@@ -1619,7 +1619,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			names = []string{fmt.Sprintf("Grants for %s", s.User)}
 		} else {
 			// Don't know the name yet, so just say "user"
-			names = []string{fmt.Sprintf("Grants for User")}
+			names = []string{"Grants for User"}
 		}
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
