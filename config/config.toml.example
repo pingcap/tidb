@@ -227,8 +227,9 @@ grpc-keepalive-timeout = 3
 commit-timeout = "41s"
 
 [binlog]
-# enable to write binlog.
-enable = false
+
+# Socket file to write binlog.
+binlog-socket = ""
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
 write-timeout = "15s"

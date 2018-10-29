@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -225,7 +224,7 @@ type SessionVars struct {
 	SnapshotInfoschema interface{}
 
 	// BinlogClient is used to write binlog.
-	BinlogClient *pumpcli.PumpsClient
+	BinlogClient interface{}
 
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
