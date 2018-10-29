@@ -196,9 +196,7 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 
 // WithVars sets the kv.Variables to the Backoffer and return it.
 func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
-	if vars == nil {
-		b.vars = kv.DefaultVars
-	} else {
+	if vars != nil {
 		b.vars = vars
 	}
 	return b
