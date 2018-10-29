@@ -2357,6 +2357,7 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	for _, t := range tests {
 		now := time.Now().In(sv.TimeZone)
 		f, err := funcs[t.method].getFunction(s.ctx, s.datumsToConstants(t.Input))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		result := t.convertToTime(d, sv.TimeZone)
