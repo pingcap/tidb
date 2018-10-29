@@ -735,8 +735,9 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	c.Assert(err, IsNil)
 
 	se1, err1 := session.CreateSession(s.store)
-	_, err = se1.Execute(context.Background(), "use test_db_state")
 	c.Assert(err1, IsNil)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
 
 	var err2, err3 error
 	wg := sync.WaitGroup{}
