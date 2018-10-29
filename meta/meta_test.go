@@ -332,6 +332,7 @@ func (s *testSuite) TestDDL(c *C) {
 
 	// Test GetAllDDLJobsInQueue.
 	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
 	job1 := &model.Job{ID: 2}
 	err = t.EnQueueDDLJob(job1)
 	c.Assert(err, IsNil)
