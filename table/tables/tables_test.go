@@ -345,6 +345,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	c.Assert(p0.Name, Equals, model.NewCIStr("p0"))
