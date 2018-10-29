@@ -69,6 +69,7 @@ func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
 		cryptStr := fromHex(test.crypt)
 
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, password}))
+		c.Assert(err, IsNil)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 
 		c.Assert(err, IsNil)
