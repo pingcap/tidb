@@ -24,8 +24,8 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/ast"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"

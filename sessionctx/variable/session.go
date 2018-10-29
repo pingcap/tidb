@@ -21,8 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/ast"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
