@@ -52,12 +52,8 @@ func NewMemDbBuffer(cap int) MemBuffer {
 
 // Iter creates an Iterator.
 func (m *memDbBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
-	var i Iterator
-	if k == nil {
-		i = &memDbIter{iter: m.db.NewIterator(&util.Range{}), reverse: false}
-	} else {
-		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Start: []byte(k)}), reverse: false}
-	}
+	i := &memDbIter{iter: m.db.NewIterator(&util.Range{Start: []byte(k), Limit: []byte(upperBound)}), reverse: false}
+
 	err := i.Next()
 	if err != nil {
 		return nil, errors.Trace(err)
