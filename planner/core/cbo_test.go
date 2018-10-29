@@ -716,6 +716,31 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 		))
 }
 
+func (s *testAnalyzeSuite) TestJoinWithHistogram(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, index idx(b))")
+	tk.MustExec("create table tt(a int primary key, b int, index idx(b))")
+	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (5, 2), (6, 2), (7, 3), (8, 4), (9, 5)")
+	tk.MustExec("insert into tt values(1, 1), (3, 1), (5, 1), (7, 2), (9, 3), (15, 4)")
+	tk.MustExec("analyze table t, tt")
+	tk.MustExec("set @@session.tidb_optimizer_selectivity_level=1")
+	tk.MustQuery("explain select * from t t1 join tt t2 where t1.a=t2.a").Check(testkit.Rows(
+		"IndexJoin_14 5.00 root inner join, inner:TableReader_13, outer key:t2.a, inner key:t1.a",
+		"├─TableReader_13 1.00 root data:TableScan_12",
+		"│ └─TableScan_12 1.00 cop table:t1, range: decided by [t2.a], keep order:false",
+		"└─TableReader_24 6.00 root data:TableScan_23",
+		"  └─TableScan_23 6.00 cop table:t2, range:[-inf,+inf], keep order:false",
+	))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {

@@ -51,25 +51,7 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		return scalar
 	case types.KindMysqlTime:
 		valueTime := value.GetMysqlTime()
-		var minTime types.Time
-		switch valueTime.Type {
-		case mysql.TypeDate:
-			minTime = types.Time{
-				Time: types.MinDatetime,
-				Type: mysql.TypeDate,
-				Fsp:  types.DefaultFsp,
-			}
-		case mysql.TypeDatetime:
-			minTime = types.Time{
-				Time: types.MinDatetime,
-				Type: mysql.TypeDatetime,
-				Fsp:  types.DefaultFsp,
-			}
-		case mysql.TypeTimestamp:
-			minTime = types.MinTimestamp
-		}
-		sc := &stmtctx.StatementContext{TimeZone: types.BoundTimezone}
-		return float64(valueTime.Sub(sc, &minTime).Duration)
+		return convertTimeToScalar(&valueTime)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
@@ -80,6 +62,28 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		// do not know how to convert
 		return 0
 	}
+}
+
+func convertTimeToScalar(t *types.Time) float64 {
+	var minTime types.Time
+	switch t.Type {
+	case mysql.TypeDate:
+		minTime = types.Time{
+			Time: types.MinDatetime,
+			Type: mysql.TypeDate,
+			Fsp:  types.DefaultFsp,
+		}
+	case mysql.TypeDatetime:
+		minTime = types.Time{
+			Time: types.MinDatetime,
+			Type: mysql.TypeDatetime,
+			Fsp:  types.DefaultFsp,
+		}
+	case mysql.TypeTimestamp:
+		minTime = types.MinTimestamp
+	}
+	sc := &stmtctx.StatementContext{TimeZone: types.BoundTimezone}
+	return float64(t.Sub(sc, &minTime).Duration)
 }
 
 // PreCalculateScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also
