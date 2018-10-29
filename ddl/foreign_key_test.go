@@ -78,7 +78,9 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := s.d.doDDLJob(s.ctx, job)
+	err := s.ctx.NewTxn()
+	c.Assert(err, IsNil)
+	err = s.d.doDDLJob(s.ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }
