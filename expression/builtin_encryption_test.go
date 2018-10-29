@@ -54,6 +54,7 @@ func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
 		password := types.NewDatum(tt.password)
 
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, password}))
+		c.Assert(err, IsNil)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
