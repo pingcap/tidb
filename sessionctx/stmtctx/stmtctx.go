@@ -232,15 +232,6 @@ func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
 	return err
 }
 
-// ResetForRetry resets the changed states during execution.
-func (sc *StatementContext) ResetForRetry() {
-	sc.mu.Lock()
-	sc.mu.affectedRows = 0
-	sc.mu.foundRows = 0
-	sc.mu.warnings = nil
-	sc.mu.Unlock()
-}
-
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails) {
