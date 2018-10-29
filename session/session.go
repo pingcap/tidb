@@ -468,6 +468,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 	nh := GetHistory(s)
 	var err error
 	var schemaVersion int64
+	orgStartTS := s.GetSessionVars().TxnCtx.StartTS
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
@@ -497,6 +498,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 			s.StmtCommit()
 		}
+		log.Warnf("con:%d txn(%d) has retried txn(%d)", connID, s.GetSessionVars().TxnCtx.StartTS, orgStartTS)
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
 			hook.(func())()
