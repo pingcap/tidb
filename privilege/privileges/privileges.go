@@ -145,5 +145,4 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		return mysqlPrivilege.showGrants(user.AuthUsername, user.AuthHostname), nil
 	}
 	return mysqlPrivilege.showGrants(user.Username, user.Hostname), nil
-
 }
