@@ -33,6 +33,7 @@ const (
 	DefaultLogMaxSize = 300 // MB
 	defaultLogFormat  = "text"
 	defaultLogLevel   = log.InfoLevel
+	DefaultSlowThreshold = 300
 )
 
 // FileLogConfig serializes file log related config in toml/json.
