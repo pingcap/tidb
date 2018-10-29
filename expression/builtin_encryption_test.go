@@ -145,11 +145,13 @@ func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, argNull}))
+	c.Assert(err, IsNil)
 	crypt, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull, arg}))
+	c.Assert(err, IsNil)
 	crypt, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
