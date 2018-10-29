@@ -254,7 +254,9 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 		if !s.IfExists {
 			return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
 		}
-		e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ",")))
+		for _, tb := range notExistTables {
+			e.ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableDropExists.GenWithStackByArgs(tb))
+		}
 	}
 	return nil
 }
