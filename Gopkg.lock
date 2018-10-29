@@ -298,6 +298,18 @@
   revision = "eb892dda1e33a0b76191d39894ad4a806f313f6e"
 
 [[projects]]
+  digest = "1:ef1a3a4694f068c0f914a809fbfa48e0a44d50dc1154d72e85b15be01facda23"
+  name = "github.com/pingcap/tidb-tools"
+  packages = [
+    "pkg/etcd",
+    "pkg/utils",
+    "tidb-binlog/node",
+    "tidb-binlog/pump_client",
+  ]
+  pruneopts = "NUT"
+  revision = "5db58e3b7e6613456551c40d011806a346b2f44a"
+
+[[projects]]
   branch = "master"
   digest = "1:14d83225e335cfa449b1f74d03c03ed70db64bf6af83a6e04c43e6e0021d6b94"
   name = "github.com/pingcap/tipb"
@@ -310,13 +322,13 @@
   revision = "371b48b15d93924a3a5375019e42b4420bc13d17"
 
 [[projects]]
-  digest = "1:91fee14a873676b2118c54e08c2e04897ea5c141b55a9b9fb8cf0721458d0d85"
+  digest = "1:4b96ce0f151b10c52b1d6876c179e9a6d2329f98939c4cf8148daaf27f981413"
   name = "github.com/pkg/errors"
   packages = ["."]
   pruneopts = "NUT"
-  revision = "9316aeb006f59424c65ff505c217f90c43d6445d"
+  revision = "1176802fff62540cc87d289bd40c52a2d6b2ea16"
   source = "https://github.com/pingcap/errors.git"
-  version = "v0.9.0"
+  version = "v0.11.0"
 
 [[projects]]
   digest = "1:1ef3c4d6e78616bd3d1b5b7d8899febb9aa1b83d3373fbbdc2804408c7977b57"
@@ -549,6 +561,7 @@
     "github.com/pingcap/kvproto/pkg/metapb",
     "github.com/pingcap/kvproto/pkg/tikvpb",
     "github.com/pingcap/pd/client",
+    "github.com/pingcap/tidb-tools/tidb-binlog/pump_client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
     "github.com/pkg/errors",
