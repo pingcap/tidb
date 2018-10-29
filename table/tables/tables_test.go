@@ -393,6 +393,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
 	tbInfo = tb.Meta()
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
