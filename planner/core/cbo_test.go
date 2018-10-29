@@ -586,6 +586,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 
 		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, sql)
+		c.Assert(err, IsNil)
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
