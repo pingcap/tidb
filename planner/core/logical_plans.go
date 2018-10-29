@@ -16,11 +16,11 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -333,7 +333,10 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.tableFilters = ds.pushedDownConds
 	var pkCol *expression.Column
-	if ds.tableInfo.PKIsHandle {
+	columnLen := len(ds.schema.Columns)
+	if columnLen > 0 && ds.schema.Columns[columnLen-1].ID == model.ExtraHandleID {
+		pkCol = ds.schema.Columns[columnLen-1]
+	} else if ds.tableInfo.PKIsHandle {
 		if pkColInfo := ds.tableInfo.GetPkColInfo(); pkColInfo != nil {
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
@@ -342,6 +345,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 		path.ranges = ranger.FullIntRange(false)
 		return false, nil
 	}
+
 	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
 	if len(ds.pushedDownConds) == 0 {
 		return false, nil

@@ -14,7 +14,7 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types/parser_driver"
 )
@@ -43,7 +43,7 @@ type cacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.VariableExpr, *ast.ExistsSubqueryExpr:
+	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
 		checker.cacheable = false
 		return in, true
 	case *ast.FuncCallExpr:

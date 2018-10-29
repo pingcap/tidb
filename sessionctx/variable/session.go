@@ -22,15 +22,16 @@ import (
 	"time"
 
 	"github.com/klauspost/cpuid"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
@@ -238,7 +239,7 @@ type SessionVars struct {
 	SnapshotInfoschema interface{}
 
 	// BinlogClient is used to write binlog.
-	BinlogClient interface{}
+	BinlogClient *pumpcli.PumpsClient
 
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
@@ -287,7 +288,7 @@ type SessionVars struct {
 	OptimizerSelectivityLevel int
 
 	// EnableTablePartition enables table partition feature.
-	EnableTablePartition bool
+	EnableTablePartition string
 
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
@@ -617,7 +618,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
-		s.EnableTablePartition = TiDBOptOn(val)
+		s.EnableTablePartition = val
 	case TiDBDDLReorgWorkerCount:
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgPriority:
