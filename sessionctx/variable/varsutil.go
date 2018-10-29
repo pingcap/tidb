@@ -244,6 +244,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, 2, vars)
 	case InnodbLockWaitTimeout:
 		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
+	case MaxAllowedPacket:
+		return checkUInt64SystemVar(name , value , 1024, 1073741824 , vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
