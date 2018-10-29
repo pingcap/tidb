@@ -731,6 +731,7 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 
 func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 
