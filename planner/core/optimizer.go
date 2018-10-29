@@ -37,12 +37,12 @@ const (
 	flagDecorrelate
 	flagEliminateAgg
 	flagEliminateProjection
+	flagEliminateOuterJoin
 	flagMaxMinEliminate
 	flagPredicatePushDown
 	flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
-	flagEliminateOuterJoin
 )
 
 var optRuleList = []logicalOptRule{

@@ -32,9 +32,6 @@ type outerJoinEliminator struct {
 //    only use the columns from left table with 'distinct' label. The left outer join can
 //    be eliminated.
 func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin) LogicalPlan {
-	if len(p.children) != 2 {
-		return nil
-	}
 	switch p.JoinType {
 	case LeftOuterJoin:
 		return o.doEliminate(p, 1)
@@ -51,7 +48,8 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, isLeft int) LogicalPla
 		cols := o.cols[o.hasDistinct-1]
 		allColsInSchema := true
 		for _, col := range cols {
-			if !p.children[1^isLeft].Schema().Contains(col) {
+			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
+			if c, _ := p.children[1^isLeft].Schema().FindColumn(columnName); c == nil {
 				allColsInSchema = false
 				break
 			}
@@ -63,7 +61,7 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, isLeft int) LogicalPla
 
 	// outer join elimination without distinct
 	// first, check whether the parent's schema columns are all in left or right
-	if len(o.schemas) < 1 {
+	if len(o.schemas) == 0 {
 		return nil
 	}
 	for _, col := range o.schemas[len(o.schemas)-1].Columns {
