@@ -791,7 +791,6 @@ func (s *testSuite) TestReplace(c *C) {
 func (s *testSuite) TestPartitionedTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	testSQL := `drop table if exists replace_test;
 		    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
 			partition by range (id) (
@@ -1086,7 +1085,6 @@ func (s *testSuite) TestUpdate(c *C) {
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int not null default 1, name varchar(255))
@@ -1333,7 +1331,6 @@ func (s *testSuite) TestPartitionedTableDelete(c *C) {
 			  PARTITION p3 VALUES LESS THAN (21))`
 
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(createTable)
