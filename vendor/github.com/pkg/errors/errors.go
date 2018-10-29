@@ -152,7 +152,8 @@ func (f *fundamental) Format(s fmt.State, verb rune) {
 // WithStack annotates err with a stack trace at the point WithStack was called.
 // If err is nil, WithStack returns nil.
 //
-// Deprecated: use AddStack
+// For most use cases this is deprecated and AddStack should be used (which will ensure just one stack trace).
+// However, one may want to use this in some situations, for example to create a 2nd trace across a goroutine.
 func WithStack(err error) error {
 	if err == nil {
 		return nil
@@ -171,22 +172,6 @@ func AddStack(err error) error {
 		return err
 	}
 	return WithStack(err)
-}
-
-// GetStackTracer will return the first StackTracer in the causer chain.
-// This function is used by AddStack to avoid creating redundant stack traces.
-//
-// You can also use the StackTracer interface on the returned error to get the stack trace.
-func GetStackTracer(origErr error) StackTracer {
-	var stacked StackTracer
-	WalkDeep(origErr, func(err error) bool {
-		if stackTracer, ok := err.(StackTracer); ok {
-			stacked = stackTracer
-			return true
-		}
-		return false
-	})
-	return stacked
 }
 
 type withStack struct {
@@ -213,10 +198,11 @@ func (w *withStack) Format(s fmt.State, verb rune) {
 }
 
 // Wrap returns an error annotating err with a stack trace
-// at the point Annotate is called, and the supplied message.
-// If err is nil, Annotate returns nil.
+// at the point Wrap is called, and the supplied message.
+// If err is nil, Wrap returns nil.
 //
-// Deprecated: use Annotate instead
+// For most use cases this is deprecated in favor of Annotate.
+// Annotate avoids creating duplicate stack traces.
 func Wrap(err error, message string) error {
 	if err == nil {
 		return nil
@@ -234,10 +220,11 @@ func Wrap(err error, message string) error {
 }
 
 // Wrapf returns an error annotating err with a stack trace
-// at the point Annotatef is call, and the format specifier.
-// If err is nil, Annotatef returns nil.
+// at the point Wrapf is call, and the format specifier.
+// If err is nil, Wrapf returns nil.
 //
-// Deprecated: use Annotatef instead
+// For most use cases this is deprecated in favor of Annotatef.
+// Annotatef avoids creating duplicate stack traces.
 func Wrapf(err error, format string, args ...interface{}) error {
 	if err == nil {
 		return nil
