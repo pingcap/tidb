@@ -82,6 +82,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
 		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
 		tk1 := testkit.NewTestKitWithInit(c, s.store)
 		tk1.MustExec("insert prepare_test (c1) values (3)")
 		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
@@ -91,6 +92,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
 		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
 		c.Assert(err, IsNil)
 		tk1.MustExec("insert prepare_test (c1) values (3)")
@@ -101,6 +103,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 in (select c1 from prepare_test where c1 = ?)"
 		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
 		c.Assert(err, IsNil)
 		tk1.MustExec("insert prepare_test (c1) values (3)")
@@ -145,6 +148,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		// Drop a column so the prepared statement become invalid.
 		query = "select c1, c2 from prepare_test where c1 = ?"
 		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
 		tk.MustExec("alter table prepare_test drop column c2")
 
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 1)
