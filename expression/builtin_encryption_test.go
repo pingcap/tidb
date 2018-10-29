@@ -111,6 +111,7 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 			args = append(args, types.NewDatum(param))
 		}
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
