@@ -19,12 +19,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -42,9 +42,22 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if s.Partition == nil {
 		return nil, nil
 	}
+	var enable bool
+	switch ctx.GetSessionVars().EnableTablePartition {
+	case "on":
+		enable = true
+	case "off":
+		enable = false
+	default:
+		// When tidb_enable_table_partition = 'auto',
+		// Partition by range expression is enabled by default.
+		if s.Partition.Tp == model.PartitionTypeRange && s.Partition.ColumnNames == nil {
+			enable = true
+		}
+	}
 	pi := &model.PartitionInfo{
 		Type:   s.Partition.Tp,
-		Enable: ctx.GetSessionVars().EnableTablePartition,
+		Enable: enable,
 	}
 	if s.Partition.Expr != nil {
 		buf := new(bytes.Buffer)

@@ -22,6 +22,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -29,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -81,7 +82,7 @@ type testBinlogSuite struct {
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
-	client   binlog.PumpClient
+	client   *pumpcli.PumpsClient
 	ddl      ddl.DDL
 }
 
@@ -112,7 +113,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
-	s.client = binlog.NewPumpClient(clientCon)
+	s.client = binloginfo.MockPumpsClient(binlog.NewPumpClient(clientCon))
 	s.ddl.SetBinlogClient(s.client)
 }
 
@@ -401,7 +402,6 @@ func (s *testBinlogSuite) TestPartitionedTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().BinlogClient = s.client
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int) partition by range (id) (
 			partition p0 values less than (1),

@@ -17,9 +17,9 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -84,7 +84,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(autoid, Greater, int64(0))
 
 	ctx := ts.se
-	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpClient()
+	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpsClient()
 	ctx.GetSessionVars().InRestrictedSQL = false
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
@@ -339,9 +339,7 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 
-	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	_, err := ts.se.Execute(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
@@ -408,9 +406,7 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 
-	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
+	_, err := ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
@@ -428,7 +424,6 @@ PARTITION BY RANGE ( id ) (
 func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	_, err := ts.se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)

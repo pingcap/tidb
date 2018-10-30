@@ -26,7 +26,7 @@ import (
 
 	"flag"
 	"github.com/go-sql-driver/mysql"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
