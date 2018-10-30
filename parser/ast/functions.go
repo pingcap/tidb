@@ -482,6 +482,10 @@ const (
 	AggFuncBitXor = "bit_xor"
 	// AggFuncBitAnd is the name of bit_and function.
 	AggFuncBitAnd = "bit_and"
+	// AggFuncStddevPop is the name of stddev_pop function
+	AggFuncStddevPop = "stddev_pop"
+	// AggFuncStddevSamp is the name of stddev_samp function
+	AggFuncStddevSamp = "stddev_samp"
 )
 
 // AggregateFuncExpr represents aggregate function expression.
