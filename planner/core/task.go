@@ -17,13 +17,13 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
@@ -208,15 +208,15 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		cst: t.cst,
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
-		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(ctx)
+		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.Init(ctx)
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(ctx)
+		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx)
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
-		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(ctx)
+		p := PhysicalTableReader{tablePlan: t.tablePlan}.Init(ctx)
 		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	}
@@ -258,7 +258,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		// If the table/index scans data by order and applies a double read, the limit cannot be pushed to the table side.
 		if !cop.keepOrder || !cop.indexPlanFinished || cop.indexPlan == nil {
 			// When limit be pushed down, it should remove its offset.
-			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.init(p.ctx, p.stats)
+			pushedDownLimit := PhysicalLimit{Count: p.Offset + p.Count}.Init(p.ctx, p.stats)
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 		}
 		t = finishCopTask(p.ctx, cop)
@@ -315,7 +315,7 @@ func (p *PhysicalTopN) getPushedDownTopN() *PhysicalTopN {
 	topN := PhysicalTopN{
 		ByItems: newByItems,
 		Count:   p.Offset + p.Count,
-	}.init(p.ctx, p.stats)
+	}.Init(p.ctx, p.stats)
 	return topN
 }
 

@@ -112,7 +112,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.init(ds.context())
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())
 		tableDual.schema = ds.Schema()
 		return tableDual, nil
 	}
@@ -120,7 +120,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// No need for the union all.
 		return children[0], nil
 	}
-	unionAll := LogicalUnionAll{}.init(ds.context())
+	unionAll := LogicalUnionAll{}.Init(ds.context())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema)
 	return unionAll, nil
