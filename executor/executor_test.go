@@ -1081,6 +1081,13 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t value(1 ,2)")
 	tk.MustQuery("select a, b from (select a, 0 as d, b from t union all select a, 0 as d, b from t) test;").Check(testkit.Rows("1 2", "1 2"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 value(1, 1), (2, 2)")
+	tk.MustExec("insert into t2 value(1, 1), (2, 2)")
+	tk.MustQuery("select sum(c) from (select t1.a as a, t1.a as c, length(t1.b) from t1  union select a, b, b from t2) t;").Check(testkit.Rows("5"))
 }
 
 func (s *testSuite) TestIn(c *C) {
