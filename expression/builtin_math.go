@@ -1847,7 +1847,7 @@ type builtinTruncateUintSig struct {
 
 // evalInt evals a TRUNCATE(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
-func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinTruncateUintSig) evalInt(row types.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
