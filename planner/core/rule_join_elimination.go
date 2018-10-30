@@ -42,20 +42,20 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin) LogicalPla
 	}
 }
 
-func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, isLeft int) LogicalPlan {
+func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, innerChildIdx int) LogicalPlan {
 	// outer join elimination with distinct
 	if o.hasDistinct > 0 {
 		cols := o.cols[o.hasDistinct-1]
 		allColsInSchema := true
 		for _, col := range cols {
 			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-			if c, _ := p.children[1^isLeft].Schema().FindColumn(columnName); c == nil {
+			if c, _ := p.children[1^innerChildIdx].Schema().FindColumn(columnName); c == nil {
 				allColsInSchema = false
 				break
 			}
 		}
 		if allColsInSchema == true {
-			return p.children[1^isLeft]
+			return p.children[1^innerChildIdx]
 		}
 	}
 
@@ -66,15 +66,16 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, isLeft int) LogicalPla
 	}
 	for _, col := range o.schemas[len(o.schemas)-1].Columns {
 		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-		if c, _ := p.children[1^isLeft].Schema().FindColumn(columnName); c == nil {
+		if c, _ := p.children[1^innerChildIdx].Schema().FindColumn(columnName); c == nil {
 			return nil
 		}
 	}
+	p.children[innerChildIdx].buildKeyInfo()
 	// second, check whether the other side join keys are unique keys
-	for _, keyInfo := range p.children[isLeft].Schema().Keys {
+	for _, keyInfo := range p.children[innerChildIdx].Schema().Keys {
 		keyInfoContainAllCols := true
 		var joinKeys []*expression.Column
-		if isLeft > 0 {
+		if innerChildIdx > 0 {
 			joinKeys = p.RightJoinKeys
 		} else {
 			joinKeys = p.LeftJoinKeys
@@ -87,7 +88,7 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, isLeft int) LogicalPla
 			}
 		}
 		if keyInfoContainAllCols {
-			return p.children[1^isLeft]
+			return p.children[1^innerChildIdx]
 		}
 	}
 
@@ -99,7 +100,9 @@ func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	if agg, ok := p.(*LogicalAggregation); ok && len(agg.groupByCols) > 0 {
 		isDistinctAgg := true
 		for _, aggDesc := range agg.AggFuncs {
-			if aggDesc.Name != ast.AggFuncFirstRow {
+			if aggDesc.Name != ast.AggFuncFirstRow &&
+				aggDesc.Name != ast.AggFuncMax &&
+				aggDesc.Name != ast.AggFuncMin {
 				isDistinctAgg = false
 				break
 			}
