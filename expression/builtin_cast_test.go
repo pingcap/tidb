@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -1016,7 +1017,7 @@ func (s *testEvaluatorSuite) TestCastJSONAsDecimalSig(c *C) {
 	}()
 
 	col := &Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0}
-	decFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, []Expression{col}), false)
+	decFunc := newBaseBuiltinFunc(ctx, []Expression{col})
 	decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 	decFunc.tp.Flen = 60
 	decFunc.tp.Decimal = 2
