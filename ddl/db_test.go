@@ -3009,7 +3009,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	c.Assert(hasOldPartitionData, IsFalse)
 	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
 
-	// Test truncate table partition reassign a new partitionIDs.
+	// Test truncate table partition reassigns new partitionIDs.
 	s.tk.MustExec("drop table if exists t5;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t5(
