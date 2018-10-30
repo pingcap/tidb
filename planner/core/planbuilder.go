@@ -1615,7 +1615,12 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
-		names = []string{fmt.Sprintf("Grants for %s", s.User)}
+		if s.User != nil {
+			names = []string{fmt.Sprintf("Grants for %s", s.User)}
+		} else {
+			// Don't know the name yet, so just say "user"
+			names = []string{"Grants for User"}
+		}
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",
