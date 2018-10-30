@@ -9,6 +9,7 @@ load stats 's/explain_easy_stats_t3.json';
 create table index_prune(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c tinyint(4) NOT NULL, primary key(a, b), index idx_b_c_a(b, c, a));
 load stats 's/explain_easy_stats_index_prune.json';
 set @@session.tidb_opt_agg_push_down = 1;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;
 
 
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
@@ -56,3 +57,4 @@ explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
 
 drop table if exists t1, t2, t3, index_prune;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;

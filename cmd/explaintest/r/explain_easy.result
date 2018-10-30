@@ -6,6 +6,7 @@ insert into t2 values(1, 0), (2, 1);
 create table t3 (a bigint, b bigint, c bigint, d bigint);
 create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
 set @@session.tidb_opt_agg_push_down = 1;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	count	task	operator info
 Projection_12	8000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d
@@ -452,3 +453,4 @@ Projection_4	2666.67	root	test.t.a
   └─Selection_6	2666.67	cop	gt(test.t.a, 0)
     └─TableScan_5	3333.33	cop	table:t, range:(0,+inf], keep order:false, stats:pseudo
 drop table if exists t;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;
