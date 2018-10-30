@@ -78,12 +78,12 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 
 	for i, expr := range exprs {
 		switch x := expr.(type) {
-		case *Column:
-			if e.columnEvaluator == nil {
-				e.columnEvaluator = &columnEvaluator{inputIdxToOutputIdxes: make(map[int][]int)}
-			}
-			inputIdx, outputIdx := x.Index, i
-			e.columnEvaluator.inputIdxToOutputIdxes[inputIdx] = append(e.columnEvaluator.inputIdxToOutputIdxes[inputIdx], outputIdx)
+		//case *Column:
+		//	if e.columnEvaluator == nil {
+		//		e.columnEvaluator = &columnEvaluator{inputIdxToOutputIdxes: make(map[int][]int)}
+		//	}
+		//	inputIdx, outputIdx := x.Index, i
+		//	e.columnEvaluator.inputIdxToOutputIdxes[inputIdx] = append(e.columnEvaluator.inputIdxToOutputIdxes[inputIdx], outputIdx)
 		default:
 			if e.defaultEvaluator == nil {
 				e.defaultEvaluator = &defaultEvaluator{
