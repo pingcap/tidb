@@ -428,6 +428,10 @@ import (
 	now			"NOW"
 	position		"POSITION"
 	recent			"RECENT"
+	std	            "STD"
+	stddev			"STDDEV"
+	stddevPop		"STDDEV_POP"
+	stddevSamp		"STDDEV_SAMP"
 	subDate			"SUBDATE"
 	sum			"SUM"
 	substring		"SUBSTRING"
@@ -469,11 +473,12 @@ import (
 	builtinMin
 	builtinNow
 	builtinPosition
-	builtinStddevPop
 	builtinSubDate
 	builtinSubstring
 	builtinSum
 	builtinSysDate
+	builtinStddevPop
+	builtinStddevSamp
 	builtinTrim
 	builtinUser
 	builtinVarPop
@@ -2882,8 +2887,9 @@ TiDBKeyword:
 "ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
- "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "INPLACE" | "INTERNAL" 
-|"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM"
+ "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
+| "INPLACE" | "INTERNAL" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" 
+| "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM" 
 
 /************************************************************************************
  *
@@ -3844,6 +3850,14 @@ SumExpr:
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
 |	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+	}
+|	builtinStddevPop '(' BuggyDefaultFalseDistinctOpt Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: ast.AggFuncStddevPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+	}
+|	builtinStddevSamp '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
