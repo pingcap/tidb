@@ -337,6 +337,14 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	_, err = tk.Exec("set @@global.max_connections='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
+	tk.MustExec("set @@global.max_allowed_packet=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '-1'"))
+	result = tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("1024"))
+
+	_, err = tk.Exec("set @@global.max_allowed_packet='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
 	tk.MustExec("set @@global.max_connect_errors=18446744073709551615")
 
 	tk.MustExec("set @@global.max_connect_errors=-1")
