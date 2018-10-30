@@ -23,15 +23,15 @@ To simplify the design, the entire system allows only one node to make schema ch
 To dive deep into DDL processing, you need to understand the overall architecture of the DDL module. This module is operated on the TiDB Server, but it also involves the use of two other components of the TiDB cluster (PD Server and TiKV Server).
 ### Preparation
 #### Concept overview
-DDL jobs have multiple state changes during processing. All TiDBs servers in a cluster have at most two states at the same time. Then the cluster is in this scenario when the owner just modified state to TiKV. So before entering the next state change, we should make sure that all currently available TiDB servers are synchronized to the current state.
+DDL jobs have multiple state changes during processing. All TiDB servers in a cluster have at most two states at the same time. Then the cluster is in this scenario when the owner just modified the state to TiKV. So before entering the next state change, we should make sure that all currently available TiDB servers are synchronized to the current state.
 So you can simply think that each TiDB server needs two modules to ensure that this condition is met. 
 * One is the load schema module. In order to process SQL normally, each TiDB server needs to be loaded into the latest schema within a lease. 
-* The other one is the handle DDL job module. This module is executed only after the current TiDB server is elected to the owner. Process the job and change the schema. After the owner writes the currently changed schema state to TiKV, we can assume that all TiDBs in the cluster that can handle SQL after waiting for 2*lease have been updated to this schema.
-![figure 1 structure flow chart](./structure-flow-chart.png)
+* The other one is the handle DDL job module. This module is executed only after the current TiDB server is elected to the owner. Process the job and change the schema. After the owner writes the currently changed schema state to TiKV, we can assume that all TiDB servers in the cluster that can handle SQL after waiting for 2*lease have been updated to this schema.
+![Figure 1: Structure flow chart](./structure-flow-chart.png)
 
-<font size=1 face="黑体"><center>figure 1 structure flow chart</center></font>
+<font size=1 face="黑体"><center>Figure 1: Structure flow chart</center></font>
 #### Initial configuration
-The TiDB server which starts first establishes a latest version information path in PD, which contains the latest schema version number.
+The TiDB server which starts first establishes the latest version of information path in PD, which contains the latest schema version number.
 All TiDB servers need to do the following when starting up:
 * Register your DDL ID (which ensures a unique ID) and the initial self version number to PD.
 * Perform a load schema operation and update the self version number after successful execution.
@@ -55,9 +55,9 @@ There are many operations in DDL that need to delete data, such as drop table re
 ### Parallel flow
 Currently, only the add index operation in TiDB takes a long time to execute, so an add index operation may block other DDL operations. In order to solve this problem preliminarily and steadily, we have implemented the parallel operation between the general operation and the add index operation between the tables. That is, between different tables, the general operation and the add index operation can be performed in parallel.
 
-![figure 2 owner detail flow chart](./owner-detail-flow-chart.png)
+![Figure 2: Owner detail flow chart](./owner-detail-flow-chart.png)
 
-<font size=1 face="黑体"><center>figure 2 owner detailed flow chart</center></font>
+<font size=1 face="黑体"><center>Figure 2: Owner detailed flow chart</center></font>
 ## Optimization function
 ### General DDL operation
 #### Add column operation
@@ -68,7 +68,7 @@ In order to reduce the execution time of this operation and facilitate the opera
 This operation requires writing the corresponding column data in the table to the new index records. This function is actually divided into two parts, the first part is to read data from the corresponding column. The second part is to backfill the data into the index. In order to speed up this operation, we handle this operation in batches concurrently. The simple steps are as follows:
 * Acquire the range of handles corresponding to this table, namely start handle and end handle.
 * Split the range into multiple small ranges by the Region (the basic unit of data actually stored).
-* Each goroutine sweeps the data within the corresponding small range and then writes the data to the index. If a goroutine fails to process a small range, the previous small range will be recorded. The last successful end handle is the start handle for the next backfill of the data. By default, there are 16 goroutines  to handle this step  concurrently.
+* Each goroutine sweeps the data within the corresponding small range and then writes the data to the index. If a goroutine fails to process a small range, the previous small range will be recorded. The last successful end handle is the start handle for the next backfill of the data. By default, there are 16 goroutines to handle this step concurrently.
 
 To reduce the impact on other read and write operations, its default priority is low.
 
