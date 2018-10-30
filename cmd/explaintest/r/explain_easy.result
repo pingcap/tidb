@@ -186,6 +186,7 @@ HashAgg_18	24000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
     └─IndexReader_67	8000.00	root	index:StreamAgg_57
       └─StreamAgg_57	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
         └─IndexScan_65	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(5_aux_0)

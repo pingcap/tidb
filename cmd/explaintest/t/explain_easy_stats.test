@@ -37,6 +37,8 @@ explain select * from information_schema.columns;
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 explain select * from t1 order by c1 desc limit 1;
 
+set @@session.tidb_opt_insubq_to_join_and_agg=0;
+
 # explain select sum(t1.c1 in (select c1 from t2)) from t1;
 explain select 1 in (select c2 from t2) from t1;
 # explain select sum(6 in (select c2 from t2)) from t1;
