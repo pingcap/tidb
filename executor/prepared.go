@@ -125,6 +125,10 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if _, ok := stmt.(ast.DDLNode); ok {
 		return ErrPrepareDDL
 	}
+	err = ResetContextOfStmt(e.ctx, stmt)
+	if err != nil {
+		return err
+	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
@@ -160,6 +164,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(0)
 	}
 	var p plannercore.Plan
+	vars.StmtCtx.UseCache = false
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
 		return errors.Trace(err)
