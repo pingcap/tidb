@@ -72,7 +72,7 @@ func (s *testEncryptSuite) TestSQLEncode(c *C) {
 
 	for _, t := range tests {
 		crypted, err := SQLDecode(t.str, t.passwd)
-		c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
 		uncrypte, err := SQLEncode(crypted, t.passwd)
 		if t.isError {
 			c.Assert(err, NotNil, Commentf("%v", t))
