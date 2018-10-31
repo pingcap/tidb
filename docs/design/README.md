@@ -5,7 +5,6 @@ A proposal template: [TEMPLATE.md](./TEMPLATE.md)
 ## Proposed
 
 - [Proposal: A new command to restore dropped table](./2018-08-10-restore-dropped-table.md)
-- [Proposal: Support Window Functions](./2018-10-31-window-functions.md)
 
 ## In Progress
 
@@ -15,6 +14,7 @@ A proposal template: [TEMPLATE.md](./TEMPLATE.md)
 - [Proposal: Implement Radix Hash Join](./2018-09-21-radix-hashjoin.md)
 - [Proposal: Maintaining histograms in plan](./2018-09-04-histograms-in-plan.md)
 - [Proposal: Support a Global Column Pool](./2018-10-22-the-column-pool.md)
+- [Proposal: Support Window Functions](./2018-10-31-window-functions.md)
 
 ## Completed
 
