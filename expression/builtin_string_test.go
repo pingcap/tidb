@@ -1909,6 +1909,7 @@ func (s *testEvaluatorSuite) TestExportSet(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		exportSetRes, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
 		res, err := exportSetRes.ToString()
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, t.res)

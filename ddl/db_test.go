@@ -3043,8 +3043,8 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 
 	s.tk.MustExec("truncate table t5;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	c.Assert(err, IsNil)
 	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
 	c.Assert(oldPID != newPID, IsTrue)
 }
