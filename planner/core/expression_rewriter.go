@@ -17,16 +17,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pkg/errors"
 )
@@ -36,10 +37,10 @@ var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx sessionctx.C
 
 // evalAstExpr evaluates ast expression directly.
 func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
-	if val, ok := expr.(*ast.ValueExpr); ok {
+	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	b := &planBuilder{
+	b := &PlanBuilder{
 		ctx:       ctx,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
@@ -53,7 +54,7 @@ func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 	return newExpr.Eval(chunk.Row{})
 }
 
-func (b *planBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -77,7 +78,7 @@ func (b *planBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mock
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
-func (b *planBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
 	expr, resultPlan, err := b.rewriteWithPreprocess(exprNode, p, aggMapper, asScalar, nil)
 	return expr, resultPlan, errors.Trace(err)
 }
@@ -85,7 +86,7 @@ func (b *planBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper ma
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
-func (b *planBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -106,7 +107,7 @@ func (b *planBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan
 	return expr, resultPlan, errors.Trace(err)
 }
 
-func (b *planBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expressionRewriter) {
+func (b *PlanBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
 			rewriter.schema = p.Schema()
@@ -129,7 +130,7 @@ func (b *planBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expression
 	return
 }
 
-func (b *planBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
 	exprNode.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
@@ -153,7 +154,7 @@ type expressionRewriter struct {
 	schema   *expression.Schema
 	err      error
 	aggrMap  map[*ast.AggregateFuncExpr]int
-	b        *planBuilder
+	b        *PlanBuilder
 	ctx      sessionctx.Context
 
 	// asScalar indicates the return value must be a scalar value.
@@ -392,7 +393,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 // handleOtherComparableSubq handles the queries like < any, < max, etc. For example, if the query is t.id < any (select s.id from s),
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
-	plan4Agg := LogicalAggregation{}.init(er.ctx)
+	plan4Agg := LogicalAggregation{}.Init(er.ctx)
 	plan4Agg.SetChildren(np)
 
 	// Create a "max" or "min" aggregation.
@@ -467,7 +468,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	joinSchema := er.p.Schema()
 	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
-	}.init(er.ctx)
+	}.Init(er.ctx)
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
@@ -488,7 +489,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
-	}.init(er.ctx)
+	}.Init(er.ctx)
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -514,7 +515,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
-	}.init(er.ctx)
+	}.Init(er.ctx)
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -546,13 +547,13 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.popExistsSubPlan(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, false)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
-		physicalPlan, err := doOptimize(er.b.optFlag, np)
+		physicalPlan, err := DoOptimize(er.b.optFlag, np)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
@@ -562,7 +563,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		if len(rows) > 0 {
+		if (len(rows) > 0 && !v.Not) || (len(rows) == 0 && v.Not) {
 			er.ctxStack = append(er.ctxStack, expression.One.Clone())
 		} else {
 			er.ctxStack = append(er.ctxStack, expression.Zero.Clone())
@@ -583,7 +584,7 @@ out:
 			p = p.Children()[0]
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
-				p = LogicalTableDual{RowCount: 1}.init(er.ctx)
+				p = LogicalTableDual{RowCount: 1}.Init(er.ctx)
 				break out
 			}
 			p = p.Children()[0]
@@ -617,38 +618,6 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 		return v, true
 	}
-	// Sometimes we can unfold the in subquery. For example, a in (select * from t) can rewrite to `a in (1,2,3,4)`.
-	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
-	// We will improve our CBO framework in future.
-	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
-		physicalPlan, err1 := doOptimize(er.b.optFlag, np)
-		if err1 != nil {
-			er.err = errors.Trace(err1)
-			return v, true
-		}
-		rows, err1 := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
-		if err1 != nil {
-			er.err = errors.Trace(err1)
-			return v, true
-		}
-		for _, row := range rows {
-			con := &expression.Constant{
-				Value:   row[0],
-				RetType: np.Schema().Columns[0].GetType(),
-			}
-			er.ctxStack = append(er.ctxStack, con)
-		}
-		listLen := len(rows)
-		if listLen == 0 {
-			er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
-				Value:   types.NewDatum(v.Not),
-				RetType: types.NewFieldType(mysql.TypeTiny),
-			}
-		} else {
-			er.inToExpression(listLen, v.Not, &v.Type)
-		}
-		return v, true
-	}
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
@@ -670,9 +639,40 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
-	if er.err != nil {
-		return v, true
+	// If it's not the form of `not in (SUBQUERY)`, has no correlated column and don't need to append a scalar value. We can rewrite it to inner join.
+	if er.ctx.GetSessionVars().AllowInSubqToJoinAndAgg && !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
+		// We need to try to eliminate the agg and the projection produced by this operation.
+		er.b.optFlag |= flagEliminateAgg
+		er.b.optFlag |= flagEliminateProjection
+		// Build distinct for the inner query.
+		agg := er.b.buildDistinct(np, np.Schema().Len())
+		for _, col := range agg.schema.Columns {
+			col.IsAggOrSubq = true
+		}
+		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg, false, false)
+		// Build inner join above the aggregation.
+		join := LogicalJoin{
+			JoinType:        InnerJoin,
+			EqualConditions: eq,
+			LeftConditions:  left,
+			RightConditions: right,
+			OtherConditions: other,
+		}.Init(er.ctx)
+		join.SetChildren(er.p, agg)
+		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
+		// Set join hint for this join.
+		if er.b.TableHints() != nil {
+			er.err = join.setPreferredJoinType(er.b.TableHints())
+			if er.err != nil {
+				return v, true
+			}
+		}
+		er.p = join
+	} else {
+		er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
+		if er.err != nil {
+			return v, true
+		}
 	}
 
 	if asScalar {
@@ -709,7 +709,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		}
 		return v, true
 	}
-	physicalPlan, err := doOptimize(er.b.optFlag, np)
+	physicalPlan, err := DoOptimize(er.b.optFlag, np)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
@@ -753,10 +753,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
-	case *ast.ValueExpr:
+	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
-	case *ast.ParamMarkerExpr:
+	case *driver.ParamMarkerExpr:
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		types.DefaultParamTypeForValue(v.GetValue(), tp)
 		value := &expression.Constant{Value: v.Datum, RetType: tp}
@@ -820,7 +820,7 @@ func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
 }
 
-func (er *expressionRewriter) getParamExpression(v *ast.ParamMarkerExpr) expression.Expression {
+func (er *expressionRewriter) getParamExpression(v *driver.ParamMarkerExpr) expression.Expression {
 	f, err := expression.NewFunction(er.ctx,
 		ast.GetParam,
 		&v.Type,

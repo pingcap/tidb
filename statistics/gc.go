@@ -48,8 +48,8 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	return nil
 }
 
-func (h *Handle) gcTableStats(is infoschema.InfoSchema, tableID int64) error {
-	sql := fmt.Sprintf("select is_index, hist_id from mysql.stats_histograms where table_id = %d", tableID)
+func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {
+	sql := fmt.Sprintf("select is_index, hist_id from mysql.stats_histograms where table_id = %d", physicalID)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -57,13 +57,15 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, tableID int64) error {
 	// The table has already been deleted in stats and acknowledged to all tidb,
 	// we can safely remove the meta info now.
 	if len(rows) == 0 {
-		sql := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", tableID)
+		sql := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", physicalID)
 		_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 		return errors.Trace(err)
 	}
-	tbl, ok := is.TableByID(tableID)
+	h.mu.Lock()
+	tbl, ok := h.getTableByPhysicalID(is, physicalID)
+	h.mu.Unlock()
 	if !ok {
-		return errors.Trace(h.DeleteTableStatsFromKV(tableID))
+		return errors.Trace(h.DeleteTableStatsFromKV(physicalID))
 	}
 	tblInfo := tbl.Meta()
 	for _, row := range rows {
@@ -85,7 +87,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, tableID int64) error {
 			}
 		}
 		if !find {
-			if err := h.deleteHistStatsFromKV(tblInfo.ID, histID, int(isIndex)); err != nil {
+			if err := h.deleteHistStatsFromKV(physicalID, histID, int(isIndex)); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -94,7 +96,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, tableID int64) error {
 }
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
-func (h *Handle) deleteHistStatsFromKV(tableID int64, histID int64, isIndex int) (err error) {
+func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
@@ -106,22 +108,22 @@ func (h *Handle) deleteHistStatsFromKV(tableID int64, histID int64, isIndex int)
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), tableID))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), physicalID))
 	if err != nil {
 		return
 	}
 	// delete histogram meta
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d", physicalID, histID, isIndex))
 	if err != nil {
 		return
 	}
 	// delete all buckets
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and hist_id = %d and is_index = %d", physicalID, histID, isIndex))
 	return
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
-func (h *Handle) DeleteTableStatsFromKV(id int64) (err error) {
+func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
@@ -133,15 +135,15 @@ func (h *Handle) DeleteTableStatsFromKV(id int64) (err error) {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 	// We only update the version so that other tidb will know that this table is deleted.
-	sql := fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), id)
+	sql := fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), physicalID)
 	_, err = exec.Execute(context.Background(), sql)
 	if err != nil {
 		return
 	}
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", id))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", physicalID))
 	if err != nil {
 		return
 	}
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", id))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", physicalID))
 	return
 }

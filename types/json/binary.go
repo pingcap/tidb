@@ -25,7 +25,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pkg/errors"
 )
@@ -167,6 +167,16 @@ func (bj BinaryJSON) GetString() []byte {
 		strLen, lenLen = binary.Uvarint(bj.Value)
 	}
 	return bj.Value[lenLen : lenLen+int(strLen)]
+}
+
+// GetKeys gets the keys of the object
+func (bj BinaryJSON) GetKeys() BinaryJSON {
+	count := bj.GetElemCount()
+	ret := make([]BinaryJSON, 0, count)
+	for i := 0; i < count; i++ {
+		ret = append(ret, CreateBinary(string(bj.objectGetKey(i))))
+	}
+	return buildBinaryArray(ret)
 }
 
 // GetElemCount gets the count of Object or Array.

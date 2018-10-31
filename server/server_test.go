@@ -27,8 +27,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	log "github.com/sirupsen/logrus"
@@ -590,6 +590,29 @@ func checkErrorCode(c *C, e error, codes ...uint16) {
 	c.Assert(isMatchCode, IsTrue, Commentf("got err %v, expected err codes %v", me, codes))
 }
 
+func runTestShowProcessList(c *C) {
+	runTests(c, nil, func(dbt *DBTest) {
+		fullSQL := "show                                                                                        full processlist"
+		simpSQL := "show                                                                                        processlist"
+		rows := dbt.mustQuery(fullSQL)
+		c.Assert(rows.Next(), IsTrue)
+		var outA, outB, outC, outD, outE, outF, outG, outH, outI string
+		err := rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
+		c.Assert(err, IsNil)
+		c.Assert(outE, Equals, "Query")
+		c.Assert(outF, Equals, "0")
+		c.Assert(outG, Equals, "2")
+		c.Assert(outH, Equals, fullSQL)
+		rows = dbt.mustQuery(simpSQL)
+		err = rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
+		c.Assert(err, IsNil)
+		c.Assert(outE, Equals, "Query")
+		c.Assert(outF, Equals, "0")
+		c.Assert(outG, Equals, "2")
+		c.Assert(outH, Equals, simpSQL[:100])
+	})
+}
+
 func runTestAuth(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
@@ -606,6 +629,7 @@ func runTestAuth(c *C) {
 		config.User = "authtest"
 		config.Passwd = "456"
 	}))
+	c.Assert(err, IsNil)
 	_, err = db.Query("USE mysql;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()

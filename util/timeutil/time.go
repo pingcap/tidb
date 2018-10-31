@@ -14,7 +14,6 @@
 package timeutil
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,7 +104,7 @@ func inferTZNameFromFileName(path string) (string, error) {
 	if idx := strings.Index(path, substr); idx != -1 {
 		return string(path[idx+len(substr)+1:]), nil
 	}
-	return "", errors.New(fmt.Sprintf("path %s is not supported", path))
+	return "", fmt.Errorf("path %s is not supported", path)
 }
 
 // SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.
@@ -117,9 +116,13 @@ func SystemLocation() *time.Location {
 	return loc
 }
 
+var setSysTZOnce sync.Once
+
 // SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
-	systemTZ = name
+	setSysTZOnce.Do(func() {
+		systemTZ = name
+	})
 }
 
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call

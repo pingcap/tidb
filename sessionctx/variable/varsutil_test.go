@@ -19,9 +19,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -77,6 +77,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
 	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
 	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
+	c.Assert(vars.EnableRadixJoin, Equals, DefTiDBUseRadixJoin)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
@@ -216,11 +217,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "3")
 	c.Assert(v.RetryLimit, Equals, int64(3))
 
-	c.Assert(v.EnableTablePartition, IsFalse)
-	err = SetSessionSystemVar(v, TiDBEnableTablePartition, types.NewStringDatum("1"))
+	c.Assert(v.EnableTablePartition, Equals, "")
+	err = SetSessionSystemVar(v, TiDBEnableTablePartition, types.NewStringDatum("on"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBEnableTablePartition)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "1")
-	c.Assert(v.EnableTablePartition, IsTrue)
+	c.Assert(val, Equals, "on")
+	c.Assert(v.EnableTablePartition, Equals, "on")
 }

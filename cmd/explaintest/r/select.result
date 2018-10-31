@@ -328,3 +328,7 @@ Point_Get_1	1.00	root	table:t, handle:1
 desc select * from t where a = '1';
 id	count	task	operator info
 Point_Get_1	1.00	root	table:t, handle:1
+desc select sysdate(), sleep(1), sysdate();
+id	count	task	operator info
+Projection_3	1.00	root	sysdate(), sleep(1), sysdate()
+└─TableDual_4	1.00	root	rows:1

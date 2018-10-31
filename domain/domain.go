@@ -24,20 +24,21 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/tidb/ast"
+	"github.com/ngaut/sync2"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -54,6 +55,7 @@ type Domain struct {
 	privHandle      *privileges.Handle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
+	statsUpdating   sync2.AtomicInt32
 	ddl             ddl.DDL
 	info            *InfoSyncer
 	m               sync.Mutex
@@ -335,6 +337,12 @@ func (do *Domain) Reload() error {
 
 // LogSlowQuery keeps topN recent slow queries in domain.
 func (do *Domain) LogSlowQuery(query *SlowQueryInfo) {
+	do.slowQuery.mu.RLock()
+	defer do.slowQuery.mu.RUnlock()
+	if do.slowQuery.mu.closed {
+		return
+	}
+
 	select {
 	case do.slowQuery.ch <- query:
 	default:
@@ -457,8 +465,8 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
-	do.slowQuery.Close()
 	do.sysSessionPool.Close()
+	do.slowQuery.Close()
 	do.wg.Wait()
 	log.Info("[domain] close")
 }
@@ -523,6 +531,11 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoHandle:      infoschema.NewHandle(store),
 		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7, 500),
 	}
+}
+
+// ResetHandle resets the domain's infoschema handle. It is used for testing.
+func (do *Domain) ResetHandle(store kv.Storage) {
+	do.infoHandle = infoschema.NewHandle(store)
 }
 
 // Init initializes a domain.
@@ -664,6 +677,20 @@ func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
+// StatsUpdating checks if the stats worker is updating.
+func (do *Domain) StatsUpdating() bool {
+	return do.statsUpdating.Get() > 0
+}
+
+// SetStatsUpdating sets the value of stats updating.
+func (do *Domain) SetStatsUpdating(val bool) {
+	if val {
+		do.statsUpdating.Set(1)
+	} else {
+		do.statsUpdating.Set(0)
+	}
+}
+
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 
@@ -680,6 +707,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	owner := do.newStatsOwner()
 	do.wg.Add(1)
+	do.SetStatsUpdating(true)
 	go do.updateStatsWorker(ctx, owner)
 	if RunAutoAnalyze {
 		do.wg.Add(1)
@@ -729,6 +757,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
 	defer func() {
+		do.SetStatsUpdating(false)
 		recoverInDomain("updateStatsWorker", false)
 		do.wg.Done()
 	}()

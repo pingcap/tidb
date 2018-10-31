@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
@@ -73,12 +73,13 @@ type StatementContext struct {
 	}
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone     *time.Location
-	Priority     mysql.PriorityEnum
-	NotFillCache bool
-	MemTracker   *memory.Tracker
-	TableIDs     []int64
-	IndexIDs     []int64
+	TimeZone         *time.Location
+	Priority         mysql.PriorityEnum
+	NotFillCache     bool
+	MemTracker       *memory.Tracker
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
+	TableIDs         []int64
+	IndexIDs         []int64
 }
 
 // AddAffectedRows adds affected rows.

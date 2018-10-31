@@ -16,7 +16,7 @@ package expression
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -771,8 +771,7 @@ func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, erro
 	}
 	v := sessionVars.PreparedParams[idx]
 
-	dt := v.(types.Datum)
-	str, err := (&dt).ToString()
+	str, err := v.ToString()
 	if err != nil {
 		return "", true, nil
 	}

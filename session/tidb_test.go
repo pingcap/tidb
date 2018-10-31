@@ -22,18 +22,16 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
-	"google.golang.org/grpc"
 )
 
 func TestT(t *testing.T) {
@@ -125,21 +123,6 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }
 
-func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
-	retryDialPumpClientMustFail := func(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
-		return util.RunWithRetry(maxRetries, 10, func() (bool, error) {
-			// Assume that it'll always return an error.
-			return true, errors.New("must fail")
-		})
-	}
-	begin := time.Now()
-	err := retryDialPumpClientMustFail("", nil, 3, nil)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "must fail")
-	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), GreaterEqual, uint64(6*10*time.Millisecond))
-}
-
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
 	defer dom.Close()
@@ -195,7 +178,7 @@ func removeStore(c *C, dbPath string) {
 	os.RemoveAll(dbPath)
 }
 
-func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
+func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
 	if len(args) == 0 {
 		rs, err := se.Execute(ctx, sql)
@@ -215,7 +198,7 @@ func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 	return rs, nil
 }
 
-func mustExecSQL(c *C, se Session, sql string, args ...interface{}) ast.RecordSet {
+func mustExecSQL(c *C, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	c.Assert(err, IsNil)
 	return rs

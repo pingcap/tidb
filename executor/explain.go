@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
 )
@@ -23,18 +24,39 @@ import (
 type ExplainExec struct {
 	baseExecutor
 
-	rows   [][]string
-	cursor int
+	explain     *core.Explain
+	analyzeExec Executor
+	rows        [][]string
+	cursor      int
+}
+
+// Open implements the Executor Open interface.
+func (e *ExplainExec) Open(ctx context.Context) error {
+	if e.analyzeExec != nil {
+		return e.analyzeExec.Open(ctx)
+	}
+	return nil
 }
 
 // Close implements the Executor Close interface.
 func (e *ExplainExec) Close() error {
+	if e.analyzeExec != nil {
+		e.analyzeExec.Close()
+	}
 	e.rows = nil
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.rows == nil {
+		var err error
+		e.rows, err = e.generateExplainInfo(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.rows) {
 		return nil
@@ -48,4 +70,24 @@ func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	e.cursor += numCurRows
 	return nil
+}
+
+func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, error) {
+	if e.analyzeExec != nil {
+		chk := e.analyzeExec.newFirstChunk()
+		for {
+			err := e.analyzeExec.Next(ctx, chk)
+			if err != nil {
+				return nil, err
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+	}
+	e.explain.RenderResult()
+	if e.analyzeExec != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	}
+	return e.explain.Rows, nil
 }

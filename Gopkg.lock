@@ -56,13 +56,6 @@
   version = "v3.2.18"
 
 [[projects]]
-  digest = "1:883ab1d72c3c5851413baad190ebe3ceaf31bb8dece09a943ac07f9e722f811c"
-  name = "github.com/cznic/golex"
-  packages = ["lex"]
-  pruneopts = "NUT"
-  revision = "da5a7153a51074477ecac5c45a7e5182a0c72448"
-
-[[projects]]
   digest = "1:f80ed82cae006d02025cd63bd7cbe63a7e593de2714db785ea36d6323cc995eb"
   name = "github.com/cznic/mathutil"
   packages = ["."]
@@ -71,33 +64,11 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:a7e4a0d213c4c29e79a0da8fe9d16bbcedce561763ff643bff252ea14260f61c"
-  name = "github.com/cznic/parser"
-  packages = ["yacc"]
-  pruneopts = "NUT"
-  revision = "31edd927e5b19d1c4a260c41a397e7f81d6694d9"
-
-[[projects]]
-  branch = "master"
   digest = "1:809006f9378a46bcc70bc4330d14f43c1a7818ae9d93c09cab062e575d7e95a2"
   name = "github.com/cznic/sortutil"
   packages = ["."]
   pruneopts = "NUT"
   revision = "4c7342852e65c2088c981288f2c5610d10b9f7f4"
-
-[[projects]]
-  digest = "1:5799bcff29ed827fa851b40b2f650bc777df4b67fd9b8a3041d9d89b9eb2fd86"
-  name = "github.com/cznic/strutil"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "1eb03e3cc9d345307a45ec82bd3016cde4bd4464"
-
-[[projects]]
-  digest = "1:71705901e4a356cde002ae6f0052fb661f59971c12262c12006b25cec40025b1"
-  name = "github.com/cznic/y"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "9fdf92d4aac058959f814606bb729ed50f5e4240"
 
 [[projects]]
   branch = "master"
@@ -190,6 +161,14 @@
   version = "v1.1"
 
 [[projects]]
+  digest = "1:5e55a8699c9ff7aba1e4c8952aeda209685d88d4cb63a8766c338e333b8e65d6"
+  name = "github.com/klauspost/cpuid"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "ae7887de9fa5d2db4eaa8174a7eff2c1ac00f2da"
+  version = "v1.1"
+
+[[projects]]
   branch = "master"
   digest = "1:5985ef4caf91ece5d54817c11ea25f182697534f8ae6521eadcd628c142ac4b6"
   name = "github.com/matttproud/golang_protobuf_extensions"
@@ -253,6 +232,14 @@
   revision = "1c287c953996ab3a0bf535dba9d53d809d3dc0b6"
 
 [[projects]]
+  digest = "1:677ff2ee188099669fbecf583de8c23111020adee48d71a6f60c733f6b2fea7a"
+  name = "github.com/pingcap/errors"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "31ffda8a65b0f910c6d65f1fef40e761fd606384"
+  version = "v0.10.1"
+
+[[projects]]
   digest = "1:8fd099a567b1e9b3a7e1f66d8547a0d2b1852427e86a0dae96fa59e9583e13e6"
   name = "github.com/pingcap/goleveldb"
   packages = [
@@ -291,15 +278,46 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:2c64fe28351dc49da088194d80faceb34186e080a60c649694d094b2ccccacf5"
-  name = "github.com/pingcap/pd"
-  packages = ["pd-client"]
+  digest = "1:5c94c36f7291e82207aff9f34fcdf0382a7d7d78a85a7d21f30ee1b54637d843"
+  name = "github.com/pingcap/parser"
+  packages = [
+    ".",
+    "ast",
+    "auth",
+    "charset",
+    "format",
+    "model",
+    "mysql",
+    "opcode",
+    "terror",
+    "types",
+  ]
   pruneopts = "NUT"
-  revision = "b5992e356ff447a6fdaa450b3f5ea33afbd11680"
+  revision = "53ac409ed043f89a850043d2440aaaa7dd863a1c"
 
 [[projects]]
   branch = "master"
-  digest = "1:14d83225e335cfa449b1f74d03c03ed70db64bf6af83a6e04c43e6e0021d6b94"
+  digest = "1:8f576565a8479071ca1951bf678519b1c32480aad8dec2379a64858c31d9e6a9"
+  name = "github.com/pingcap/pd"
+  packages = ["client"]
+  pruneopts = "NUT"
+  revision = "eb892dda1e33a0b76191d39894ad4a806f313f6e"
+
+[[projects]]
+  digest = "1:ef1a3a4694f068c0f914a809fbfa48e0a44d50dc1154d72e85b15be01facda23"
+  name = "github.com/pingcap/tidb-tools"
+  packages = [
+    "pkg/etcd",
+    "pkg/utils",
+    "tidb-binlog/node",
+    "tidb-binlog/pump_client",
+  ]
+  pruneopts = "NUT"
+  revision = "5db58e3b7e6613456551c40d011806a346b2f44a"
+
+[[projects]]
+  branch = "master"
+  digest = "1:9d9d9bf758fc9bbf1a4976534c1622dbca61a8da53d98416dbb711e309e379f7"
   name = "github.com/pingcap/tipb"
   packages = [
     "go-binlog",
@@ -307,16 +325,16 @@
     "sharedbytes",
   ]
   pruneopts = "NUT"
-  revision = "371b48b15d93924a3a5375019e42b4420bc13d17"
+  revision = "11e33c750323a0267a6aee335eaaeb7831bdae67"
 
 [[projects]]
-  digest = "1:91fee14a873676b2118c54e08c2e04897ea5c141b55a9b9fb8cf0721458d0d85"
+  digest = "1:4b96ce0f151b10c52b1d6876c179e9a6d2329f98939c4cf8148daaf27f981413"
   name = "github.com/pkg/errors"
   packages = ["."]
   pruneopts = "NUT"
-  revision = "9316aeb006f59424c65ff505c217f90c43d6445d"
+  revision = "1176802fff62540cc87d289bd40c52a2d6b2ea16"
   source = "https://github.com/pingcap/errors.git"
-  version = "v0.9.0"
+  version = "v0.11.0"
 
 [[projects]]
   digest = "1:1ef3c4d6e78616bd3d1b5b7d8899febb9aa1b83d3373fbbdc2804408c7977b57"
@@ -465,7 +483,7 @@
   revision = "6b7d9516179cd47f4714cfeb0103ad1dede756c4"
 
 [[projects]]
-  digest = "1:a893d24a604ae6f45f2d6e00ae9e817476e110e2dd5455152b35bb720ca2f626"
+  digest = "1:7cd8d3d0020bbbe235958c87a2c042c4a8505e401b6e0496880990228fc34f4b"
   name = "google.golang.org/grpc"
   packages = [
     ".",
@@ -495,9 +513,9 @@
     "transport",
   ]
   pruneopts = "NUT"
-  revision = "41344da2231b913fa3d983840a57a6b1b7b631a1"
+  revision = "7a6a684ca69eb4cae85ad0a484f2e531598c047b"
   source = "https://github.com/grpc/grpc-go.git"
-  version = "v1.12.0"
+  version = "v1.12.2"
 
 [[projects]]
   digest = "1:7d95d61ff5828a65cf072a46f3c68d67daffdd11e97d758b0af2176cde717fcd"
@@ -518,10 +536,7 @@
     "github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes",
     "github.com/coreos/etcd/mvcc/mvccpb",
     "github.com/cznic/mathutil",
-    "github.com/cznic/parser/yacc",
     "github.com/cznic/sortutil",
-    "github.com/cznic/strutil",
-    "github.com/cznic/y",
     "github.com/etcd-io/gofail/runtime",
     "github.com/go-sql-driver/mysql",
     "github.com/golang/protobuf/jsonpb",
@@ -531,7 +546,9 @@
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing",
     "github.com/grpc-ecosystem/go-grpc-prometheus",
+    "github.com/klauspost/cpuid",
     "github.com/ngaut/pools",
+    "github.com/ngaut/sync2",
     "github.com/opentracing/basictracer-go",
     "github.com/opentracing/opentracing-go",
     "github.com/pingcap/check",
@@ -547,7 +564,17 @@
     "github.com/pingcap/kvproto/pkg/kvrpcpb",
     "github.com/pingcap/kvproto/pkg/metapb",
     "github.com/pingcap/kvproto/pkg/tikvpb",
-    "github.com/pingcap/pd/pd-client",
+    "github.com/pingcap/parser",
+    "github.com/pingcap/parser/ast",
+    "github.com/pingcap/parser/auth",
+    "github.com/pingcap/parser/charset",
+    "github.com/pingcap/parser/model",
+    "github.com/pingcap/parser/mysql",
+    "github.com/pingcap/parser/opcode",
+    "github.com/pingcap/parser/terror",
+    "github.com/pingcap/parser/types",
+    "github.com/pingcap/pd/client",
+    "github.com/pingcap/tidb-tools/tidb-binlog/pump_client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
     "github.com/pkg/errors",
@@ -558,13 +585,6 @@
     "github.com/twinj/uuid",
     "github.com/uber/jaeger-client-go/config",
     "golang.org/x/net/context",
-    "golang.org/x/text/encoding",
-    "golang.org/x/text/encoding/charmap",
-    "golang.org/x/text/encoding/japanese",
-    "golang.org/x/text/encoding/korean",
-    "golang.org/x/text/encoding/simplifiedchinese",
-    "golang.org/x/text/encoding/traditionalchinese",
-    "golang.org/x/text/encoding/unicode",
     "golang.org/x/text/transform",
     "google.golang.org/grpc",
     "google.golang.org/grpc/codes",

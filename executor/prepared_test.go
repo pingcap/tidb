@@ -18,9 +18,9 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -82,7 +82,30 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
 		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
 		tk1 := testkit.NewTestKitWithInit(c, s.store)
+		tk1.MustExec("insert prepare_test (c1) values (3)")
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+
+		tk.MustExec("delete from prepare_test")
+		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk1.MustExec("insert prepare_test (c1) values (3)")
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+
+		tk.MustExec("delete from prepare_test")
+		query = "select c1 from prepare_test where c1 in (select c1 from prepare_test where c1 = ?)"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
 		tk1.MustExec("insert prepare_test (c1) values (3)")
 		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
 		c.Assert(err, IsNil)
@@ -125,6 +148,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		// Drop a column so the prepared statement become invalid.
 		query = "select c1, c2 from prepare_test where c1 = ?"
 		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
 		tk.MustExec("alter table prepare_test drop column c2")
 
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 1)
@@ -321,4 +345,47 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 		placeholders = append(placeholders, "(?)")
 	}
 	return "insert into t values " + strings.Join(placeholders, ","), params
+}
+
+func (s *testSuite) TestPreparedIssue7579(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, index a_idx(a))")
+		tk.MustExec("insert into t values (1,1), (2,2), (null,3)")
+
+		r := tk.MustQuery("select a, b from t order by b asc;")
+		r.Check(testkit.Rows("1 1", "2 2", "<nil> 3"))
+
+		tk.MustExec(`prepare stmt from 'select a, b from t where ? order by b asc'`)
+
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(nil)
+
+		tk.MustExec(`set @param = true`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(testkit.Rows("1 1", "2 2", "<nil> 3"))
+
+		tk.MustExec(`set @param = false`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(nil)
+
+		tk.MustExec(`set @param = 1`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(testkit.Rows("1 1", "2 2", "<nil> 3"))
+
+		tk.MustExec(`set @param = 0`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(nil)
+	}
 }

@@ -21,9 +21,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"
@@ -199,7 +199,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	s.Lock()
 	defer s.Unlock()
 	isIndex := q.tp == indexType
-	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
+	s.rateMap.update(q.physicalID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
 	}
@@ -367,7 +367,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		if fb.tp == pkType {
 			err = h.dumpFeedbackToKV(fb)
 		} else {
-			t, ok := h.statsCache.Load().(statsCache)[fb.tableID]
+			t, ok := h.statsCache.Load().(statsCache)[fb.physicalID]
 			if ok {
 				err = dumpFeedbackForIndex(h, fb, t)
 			}
@@ -392,7 +392,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		isIndex = 1
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
-		"(%d, %d, %d, X'%X')", fb.tableID, fb.hist.ID, isIndex, vals)
+		"(%d, %d, %d, X'%X')", fb.physicalID, fb.hist.ID, isIndex, vals)
 	h.mu.Lock()
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	h.mu.Unlock()
@@ -416,11 +416,13 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 	}
 	h.listHead.Unlock()
 	for _, fb := range h.feedback {
-		table, ok := is.TableByID(fb.tableID)
+		h.mu.Lock()
+		table, ok := h.getTableByPhysicalID(is, fb.physicalID)
+		h.mu.Unlock()
 		if !ok {
 			continue
 		}
-		tblStats := h.GetTableStats(table.Meta())
+		tblStats := h.GetPartitionStats(table.Meta(), fb.physicalID)
 		newTblStats := tblStats.copy()
 		if fb.tp == indexType {
 			idx, ok := tblStats.Indices[fb.hist.ID]
@@ -455,11 +457,11 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	h.mu.Lock()
 	tbls := make([]*Table, 0, len(h.mu.rateMap))
 	for id, item := range h.mu.rateMap {
-		table, ok := is.TableByID(id)
+		table, ok := h.getTableByPhysicalID(is, id)
 		if !ok {
 			continue
 		}
-		tbl := h.GetTableStats(table.Meta()).copy()
+		tbl := h.GetPartitionStats(table.Meta(), id).copy()
 		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
 			col := *tbl.Columns[item.PkID]
 			col.ErrorRate.merge(item.PkErrorRate)
@@ -557,10 +559,6 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		if err1 != nil {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
-	}
-	// Update the NDV of primary key column.
-	if table.Meta().PKIsHandle && q.tp == pkType {
-		hist.NDV = int64(hist.totalRowCount())
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
 	return errors.Trace(err)
@@ -707,29 +705,50 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
-			statsTbl := h.GetTableStats(tblInfo)
-			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
+			pi := tblInfo.GetPartitionInfo()
+			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
+			if pi == nil {
+				statsTbl := h.GetTableStats(tblInfo)
+				sql := fmt.Sprintf("analyze table %s", tblName)
+				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				if analyzed {
+					return err
+				}
 				continue
 			}
-			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
-			if NeedAnalyzeTable(statsTbl, 20*h.Lease, autoAnalyzeRatio, start, end, time.Now()) {
-				sql := fmt.Sprintf("analyze table %s", tblName)
-				log.Infof("[stats] auto analyze table %s now", tblName)
-				return errors.Trace(h.execAutoAnalyze(sql))
-			}
-			for _, idx := range tblInfo.Indices {
-				if idx.State != model.StatePublic {
-					continue
+			for _, def := range pi.Definitions {
+				sql := fmt.Sprintf("analyze table %s partition `%s`", tblName, def.Name.O)
+				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
+				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				if analyzed {
+					return err
 				}
-				if _, ok := statsTbl.Indices[idx.ID]; !ok {
-					sql := fmt.Sprintf("analyze table %s index `%s`", tblName, idx.Name.O)
-					log.Infof("[stats] auto analyze index `%s` for table %s now", idx.Name.O, tblName)
-					return errors.Trace(h.execAutoAnalyze(sql))
-				}
+				continue
 			}
 		}
 	}
 	return nil
+}
+
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, start, end time.Time, ratio float64, sql string) (bool, error) {
+	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
+		return false, nil
+	}
+	if NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()) {
+		log.Infof("[stats] auto %s now", sql)
+		return true, h.execAutoAnalyze(sql)
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if _, ok := statsTbl.Indices[idx.ID]; !ok {
+			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
+			log.Infof("[stats] auto %s now", sql)
+			return true, h.execAutoAnalyze(sql)
+		}
+	}
+	return false, nil
 }
 
 func (h *Handle) execAutoAnalyze(sql string) error {

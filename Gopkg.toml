@@ -22,15 +22,11 @@ required = ["github.com/golang/protobuf/jsonpb"]
 [[constraint]]
   name = "google.golang.org/grpc"
   source = "https://github.com/grpc/grpc-go.git"
-  version = "1.12.0"
+  version = "=1.12.2"
 
 [[constraint]]
   version = "1.1.0"
   name = "github.com/golang/protobuf"
-
-[[constraint]]
-  branch = "master"
-  name = "github.com/cznic/parser"
 
 [[constraint]]
   branch = "master"
@@ -99,6 +95,14 @@ required = ["github.com/golang/protobuf/jsonpb"]
 
 [[constraint]]
   name = "github.com/pkg/errors"
-  version = "0.9.0"
+  version = "0.11.0"
   source = "https://github.com/pingcap/errors.git"
 
+[[constraint]]
+  branch = "master"
+  name = "github.com/pingcap/parser"
+
+
+[[constraint]]
+  name = "github.com/pingcap/tidb-tools"
+  revision = "5db58e3b7e6613456551c40d011806a346b2f44a"
