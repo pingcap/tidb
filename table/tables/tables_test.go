@@ -317,6 +317,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(), IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	tbInfo.Columns[0].GeneratedExprString = "test"
 	tables.TableFromMeta(nil, tbInfo)
@@ -344,6 +345,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	c.Assert(p0.Name, Equals, model.NewCIStr("p0"))
@@ -391,6 +393,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
 	tbInfo = tb.Meta()
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
@@ -411,6 +414,7 @@ PARTITION BY RANGE ( id ) (
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	ps := tbInfo.GetPartitionInfo()
 	c.Assert(ps, NotNil)
