@@ -101,3 +101,8 @@ explain select a, _tidb_rowid from t where a > 0;
 explain select * from t where _tidb_rowid > 0 and a > 0;
 drop table if exists t;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
+create table t(a bigint(20) NOT NULL AUTO_INCREMENT, b bigint(20) NOT NULL, primary key(a, b));
+explain select * from t WHERE a = 1 AND b = 2;
+explain select * from t WHERE a = 1;
+explain select * from t where  b = 2;
+drop table if exists t;
