@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"bytes"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/parser/ast"
@@ -57,31 +55,6 @@ func (s *Schema) String() string {
 		ukStrs = append(ukStrs, "["+strings.Join(ukColStrs, ",")+"]")
 	}
 	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
-}
-
-func (s *Schema) DebugString() string {
-	buffer := bytes.NewBufferString("")
-	for i, col := range s.Columns {
-		fmt.Fprintf(buffer, "{unique:%v}", col.UniqueID)
-		if i < len(s.Columns)-1 {
-			buffer.WriteString(", ")
-		}
-	}
-	if len(s.TblID2Handle) <= 0 {
-		return buffer.String()
-	}
-
-	for key, val := range s.TblID2Handle {
-		fmt.Fprintf(buffer, ", tblId2Handle: %v->{", key)
-		for i := range val {
-			fmt.Fprintf(buffer, "unique:%v,index:%v", val[i].UniqueID, val[i].Index)
-			if i < len(val)-1 {
-				fmt.Fprintf(buffer, ", ")
-			}
-		}
-		fmt.Fprintf(buffer, "}")
-	}
-	return buffer.String()
 }
 
 // Clone copies the total schema.

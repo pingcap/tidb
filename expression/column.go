@@ -163,10 +163,6 @@ type Column struct {
 	hashcode []byte
 }
 
-func (col *Column) DebugString() string {
-	return fmt.Sprintf("(name:%v,unique:%v,index:%v)", col.ColName.O, col.UniqueID, col.Index)
-}
-
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
