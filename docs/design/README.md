@@ -5,6 +5,7 @@ A proposal template: [TEMPLATE.md](./TEMPLATE.md)
 ## Proposed
 
 - [Proposal: A new command to restore dropped table](./2018-08-10-restore-dropped-table.md)
+- [Proposal: Support Window Functions](./2018-10-31-window-functions.md)
 
 ## In Progress
 
