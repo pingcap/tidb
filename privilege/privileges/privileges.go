@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/parser/auth"
@@ -139,10 +140,17 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error) {
+func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) (grants []string, err error) {
 	mysqlPrivilege := p.Handle.Get()
+	u := user.Username
+	h := user.Hostname
 	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
-		return mysqlPrivilege.showGrants(user.AuthUsername, user.AuthHostname), nil
+		u = user.AuthUsername
+		h = user.AuthHostname
 	}
-	return mysqlPrivilege.showGrants(user.Username, user.Hostname), nil
+	grants = mysqlPrivilege.showGrants(u,h)
+	if len(grants) == 0 {
+		err = fmt.Errorf("There is no such grant defined for user '%s' on host '%s'", u, h);
+	}
+	return
 }
