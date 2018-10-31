@@ -418,6 +418,33 @@ func (s *testSuite) TestShow(c *C) {
 			"  `val` tinyint(10) UNSIGNED ZEROFILL DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+
+	// Test show columns with different types of default value
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(
+		c0 int default 1,
+		c1 int default b'010',
+		c2 bigint default x'A7',
+		c3 bit(8) default b'00110001',
+		c4 varchar(6) default b'00110001',
+		c5 varchar(6) default '\'C6\'',
+		c6 enum('s', 'm', 'l', 'xl') default 'xl',
+		c7 set('a', 'b', 'c', 'd') default 'a,c,c',
+		c8 datetime default current_timestamp on update current_timestamp,
+		c9 year default '2014'
+	);`)
+	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep("|",
+		"c0|int(11)|YES||1|",
+		"c1|int(11)|YES||2|",
+		"c2|bigint(20)|YES||167|",
+		"c3|bit(8)|YES||b'110001'|",
+		"c4|varchar(6)|YES||1|",
+		"c5|varchar(6)|YES||'C6'|",
+		"c6|enum('s','m','l','xl')|YES||xl|",
+		"c7|set('a','b','c','d')|YES||a,c,c|",
+		"c8|datetime|YES||CURRENT_TIMESTAMP|on update CURRENT_TIMESTAMP",
+		"c9|year|YES||2014|",
+	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
