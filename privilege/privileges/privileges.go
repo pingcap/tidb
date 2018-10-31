@@ -148,9 +148,9 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	grants = mysqlPrivilege.showGrants(u,h)
+	grants = mysqlPrivilege.showGrants(u, h)
 	if len(grants) == 0 {
-		err = fmt.Errorf("There is no such grant defined for user '%s' on host '%s'", u, h);
+		err = fmt.Errorf("There is no such grant defined for user '%s' on host '%s'", u, h)
 	}
 	return
 }
