@@ -240,8 +240,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	mustExec(c, se, `DROP USER 'show'@'localhost'`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	c.Assert(err, IsNil)
 	c.Assert(gs, HasLen, 0)
-
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
