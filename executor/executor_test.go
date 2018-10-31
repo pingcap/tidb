@@ -3274,6 +3274,10 @@ func (s *testSuite) TestRowID(c *C) {
 	tk.MustExec(`create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
+	tk.MustQuery(`select b, _tidb_rowid from t use index(idx) where a = 'a';`).Check(testkit.Rows(
+		`b 1`,
+		`b 2`,
+	))
 	tk.MustExec(`begin;`)
 	tk.MustExec(`select * from t for update`)
 	tk.MustQuery(`select distinct b from t use index(idx) where a = 'a';`).Check(testkit.Rows(`b`))
