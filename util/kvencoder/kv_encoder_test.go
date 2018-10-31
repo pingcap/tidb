@@ -434,6 +434,7 @@ func (s *testKvEncoderSuite) TestAllocatorRebase(c *C) {
 	alloc := NewAllocator()
 	var tableID int64 = 1
 	encoder, err := New("test", alloc)
+	c.Assert(err, IsNil)
 	err = alloc.Rebase(tableID, 100, false)
 	c.Assert(err, IsNil)
 	defer encoder.Close()

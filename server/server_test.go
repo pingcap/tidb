@@ -629,6 +629,7 @@ func runTestAuth(c *C) {
 		config.User = "authtest"
 		config.Passwd = "456"
 	}))
+	c.Assert(err, IsNil)
 	_, err = db.Query("USE mysql;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()
