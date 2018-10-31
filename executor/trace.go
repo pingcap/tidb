@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"fmt"
 	"github.com/pingcap/tidb/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -57,11 +58,11 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	e.st.TracePlanStart(ctx, actualSql)
 	stmtPlan, err := plannercore.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
 	e.st.TracePlanEnd(ctx, err)
-	//pp, ok := stmtPlan.(plannercore.PhysicalPlan)
-	//fmt.Printf("plan is %#v", stmtPlan)
-	//if !ok {
-	//	return errors.New("cannot cast logical plan to physical plan")
-	//}
+	// TODO(zhexuany) need revisit this later.
+	pp, ok := stmtPlan.(plannercore.PhysicalPlan)
+	if !ok {
+		return errors.New("cannot cast logical plan to physical plan")
+	}
 	//append select executor to trace executor
 	ctx, _ = tracing.ChildSpan(ctx, "execution recording")
 	e.st.TraceExecStart(ctx, "tidb")
