@@ -14,7 +14,6 @@
 package privileges
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/parser/auth"
@@ -33,11 +32,13 @@ var SkipWithGrant = false
 const (
 	codeInvalidPrivilegeType  terror.ErrCode = 1
 	codeInvalidUserNameFormat                = 2
+	codeNoSuchGrant                          = 1141
 )
 
 var (
 	errInvalidPrivilegeType  = terror.ClassPrivilege.New(codeInvalidPrivilegeType, "unknown privilege type")
 	errInvalidUserNameFormat = terror.ClassPrivilege.New(codeInvalidUserNameFormat, "wrong username format")
+	errNoSuchGrant           = terror.ClassPrivilege.New(codeNoSuchGrant, "There is no such grant defined for user '%s' on host '%s'")
 )
 
 var _ privilege.Manager = (*UserPrivileges)(nil)
@@ -150,7 +151,8 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	}
 	grants = mysqlPrivilege.showGrants(u, h)
 	if len(grants) == 0 {
-		err = fmt.Errorf("There is no such grant defined for user '%s' on host '%s'", u, h)
+		err = errNoSuchGrant.GenWithStackByArgs(u, h)
 	}
+
 	return
 }

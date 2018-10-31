@@ -627,6 +627,9 @@ func (s *testSuite) TestShow2(c *C) {
 
 	tk.MustQuery("show grants for current_user()").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
+
+	tk.MustQuery("SHOW GRANTS FOR 'missinguser'").Check(testutil.RowsWithSep("|", "Error|1141|There is no such grant defined for user 'missinguser' on host '%'"))
+
 }
 
 func (s *testSuite) TestCollation(c *C) {
