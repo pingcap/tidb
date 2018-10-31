@@ -3266,3 +3266,15 @@ func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
 	c.Assert(strings.Split(b, ".")[1], Equals, "00")
 	c.Assert(len(strings.Split(d, ".")[1]), Equals, 3)
 }
+
+func (s *testSuite) TestRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a varchar(1), b varchar(1), c varchar(1), index idx(a, b))`)
+	tk.MustExec(`insert into t values('a', 'b', 'c')`)
+	tk.MustQuery(`select a, _tidb_rowid from t use index(idx) where a = 'a'`).Check(testkit.Rows(
+		`a 1`,
+	))
+}
