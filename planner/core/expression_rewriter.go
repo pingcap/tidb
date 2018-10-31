@@ -393,7 +393,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 // handleOtherComparableSubq handles the queries like < any, < max, etc. For example, if the query is t.id < any (select s.id from s),
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
-	plan4Agg := LogicalAggregation{}.init(er.ctx)
+	plan4Agg := LogicalAggregation{}.Init(er.ctx)
 	plan4Agg.SetChildren(np)
 
 	// Create a "max" or "min" aggregation.
@@ -468,7 +468,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	joinSchema := er.p.Schema()
 	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
-	}.init(er.ctx)
+	}.Init(er.ctx)
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
@@ -489,7 +489,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
-	}.init(er.ctx)
+	}.Init(er.ctx)
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -515,7 +515,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
-	}.init(er.ctx)
+	}.Init(er.ctx)
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -584,7 +584,7 @@ out:
 			p = p.Children()[0]
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
-				p = LogicalTableDual{RowCount: 1}.init(er.ctx)
+				p = LogicalTableDual{RowCount: 1}.Init(er.ctx)
 				break out
 			}
 			p = p.Children()[0]
@@ -618,38 +618,6 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 		return v, true
 	}
-	// Sometimes we can unfold the in subquery. For example, a in (select * from t) can rewrite to `a in (1,2,3,4)`.
-	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
-	// We will improve our CBO framework in future.
-	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
-		physicalPlan, err1 := DoOptimize(er.b.optFlag, np)
-		if err1 != nil {
-			er.err = errors.Trace(err1)
-			return v, true
-		}
-		rows, err1 := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
-		if err1 != nil {
-			er.err = errors.Trace(err1)
-			return v, true
-		}
-		for _, row := range rows {
-			con := &expression.Constant{
-				Value:   row[0],
-				RetType: np.Schema().Columns[0].GetType(),
-			}
-			er.ctxStack = append(er.ctxStack, con)
-		}
-		listLen := len(rows)
-		if listLen == 0 {
-			er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
-				Value:   types.NewDatum(v.Not),
-				RetType: types.NewFieldType(mysql.TypeTiny),
-			}
-		} else {
-			er.inToExpression(listLen, v.Not, &v.Type)
-		}
-		return v, true
-	}
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
@@ -671,9 +639,40 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
-	if er.err != nil {
-		return v, true
+	// If it's not the form of `not in (SUBQUERY)`, has no correlated column and don't need to append a scalar value. We can rewrite it to inner join.
+	if er.ctx.GetSessionVars().AllowInSubqToJoinAndAgg && !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
+		// We need to try to eliminate the agg and the projection produced by this operation.
+		er.b.optFlag |= flagEliminateAgg
+		er.b.optFlag |= flagEliminateProjection
+		// Build distinct for the inner query.
+		agg := er.b.buildDistinct(np, np.Schema().Len())
+		for _, col := range agg.schema.Columns {
+			col.IsAggOrSubq = true
+		}
+		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg, false, false)
+		// Build inner join above the aggregation.
+		join := LogicalJoin{
+			JoinType:        InnerJoin,
+			EqualConditions: eq,
+			LeftConditions:  left,
+			RightConditions: right,
+			OtherConditions: other,
+		}.Init(er.ctx)
+		join.SetChildren(er.p, agg)
+		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
+		// Set join hint for this join.
+		if er.b.TableHints() != nil {
+			er.err = join.setPreferredJoinType(er.b.TableHints())
+			if er.err != nil {
+				return v, true
+			}
+		}
+		er.p = join
+	} else {
+		er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
+		if er.err != nil {
+			return v, true
+		}
 	}
 
 	if asScalar {

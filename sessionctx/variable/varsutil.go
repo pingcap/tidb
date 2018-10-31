@@ -244,6 +244,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, 2, vars)
 	case InnodbLockWaitTimeout:
 		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
+	// See "https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_allowed_packet"
+	case MaxAllowedPacket:
+		return checkUInt64SystemVar(name, value, 1024, 1073741824, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
@@ -289,7 +292,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
-		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
+		TiDBOptInSubqToJoinAndAgg, TiDBEnableTablePartition,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBEnableCascadesPlanner:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {

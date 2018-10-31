@@ -125,6 +125,10 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if _, ok := stmt.(ast.DDLNode); ok {
 		return ErrPrepareDDL
 	}
+	err = ResetContextOfStmt(e.ctx, stmt)
+	if err != nil {
+		return err
+	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
