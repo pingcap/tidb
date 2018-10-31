@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	_ "github.com/golang/protobuf/jsonpb"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
