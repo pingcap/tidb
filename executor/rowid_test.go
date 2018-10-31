@@ -18,6 +18,9 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
+/*
+Insert, update and replace statements for _tidb_rowid are not support now.
+After we support it, the following operations can be passed.
 func (s *testSuite) TestExportRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -38,15 +41,45 @@ func (s *testSuite) TestExportRowID(c *C) {
 	tk.MustQuery("select *, _tidb_rowid from t").
 		Check(testkit.Rows("1 7 1", "2 2 2", "1 9 3", "5 5 5"))
 
-	// If PK is handle, _tidb_rowid is unknown column.
-	tk.MustExec("create table s (a int primary key)")
-	tk.MustExec("insert s values (1)")
-	_, err := tk.Exec("insert s (a, _tidb_rowid) values (1, 2)")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec("select _tidb_rowid from s")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec("update s set a = 2 where _tidb_rowid = 1")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec("delete from s where _tidb_rowid = 1")
-	c.Assert(err, NotNil)
+	 // If PK is handle, _tidb_rowid is unknown column.
+	 tk.MustExec("create table s (a int primary key)")
+	 tk.MustExec("insert s values (1)")
+	 _, err := tk.Exec("insert s (a, _tidb_rowid) values (1, 2)")
+	 c.Assert(err, NotNil)
+	 _, err = tk.Exec("select _tidb_rowid from s")
+	 c.Assert(err, NotNil)
+	 _, err = tk.Exec("update s set a = 2 where _tidb_rowid = 1")
+	 c.Assert(err, NotNil)
+	 _, err = tk.Exec("delete from s where _tidb_rowid = 1")
+	 c.Assert(err, NotNil)
+}
+*/
+
+func (s *testSuite) TestRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tt(id binary(10), c int, primary key(id));")
+	tk.MustExec("insert tt values (1, 10);")
+
+	// select statement
+	tk.MustQuery("select *, _tidb_rowid from tt").
+		Check(testkit.Rows("1\x00\x00\x00\x00\x00\x00\x00\x00\x00 10 1"))
+	// insert statement
+	_, err := tk.Exec("insert into tt (id, c, _tidb_rowid) values(30000,10,1);")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not support.")
+	// replace statement
+	_, err = tk.Exec("replace into tt (id, c, _tidb_rowid) values(30000,10,1);")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not support.")
+	// update statement
+	_, err = tk.Exec("update tt set id = 2, _tidb_rowid = 1 where _tidb_rowid = 1")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not support.")
+	tk.MustExec("update tt set id = 2 where _tidb_rowid = 1")
+
+	tk.MustExec("admin check table tt;")
+	tk.MustExec("drop table tt")
+
+	// Insert, update and replace statements for _tidb_rowid are not support now.
+	// After we support it, the following operations must be passed.
+	//	tk.MustExec("insert into tt (id, c, _tidb_rowid) values(30000,10,1);")
+	//	tk.MustExec("admin check table tt;")
 }
