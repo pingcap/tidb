@@ -14,42 +14,32 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"errors"
 )
 
 // Ping implements driver.Pinger interface
-func (mc *mysqlConn) Ping(ctx context.Context) error {
+func (mc *mysqlConn) Ping(ctx context.Context) (err error) {
 	if mc.closed.IsSet() {
 		errLog.Print(ErrInvalidConn)
 		return driver.ErrBadConn
 	}
 
-	if err := mc.watchCancel(ctx); err != nil {
-		return err
+	if err = mc.watchCancel(ctx); err != nil {
+		return
 	}
 	defer mc.finish()
 
-	if err := mc.writeCommandPacket(comPing); err != nil {
-		return err
-	}
-	if _, err := mc.readResultOK(); err != nil {
-		return err
+	if err = mc.writeCommandPacket(comPing); err != nil {
+		return
 	}
 
-	return nil
+	return mc.readResultOK()
 }
 
 // BeginTx implements driver.ConnBeginTx interface
 func (mc *mysqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
-	if opts.ReadOnly {
-		// TODO: support read-only transactions
-		return nil, errors.New("mysql: read-only transactions not supported")
-	}
-
 	if err := mc.watchCancel(ctx); err != nil {
 		return nil, err
 	}
-
 	defer mc.finish()
 
 	if sql.IsolationLevel(opts.Isolation) != sql.LevelDefault {
@@ -63,7 +53,7 @@ func (mc *mysqlConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver
 		}
 	}
 
-	return mc.Begin()
+	return mc.begin(opts.ReadOnly)
 }
 
 func (mc *mysqlConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
@@ -201,4 +191,18 @@ func (mc *mysqlConn) startWatcher() {
 			}
 		}
 	}()
+}
+
+func (mc *mysqlConn) CheckNamedValue(nv *driver.NamedValue) (err error) {
+	nv.Value, err = converter{}.ConvertValue(nv.Value)
+	return
+}
+
+// ResetSession implements driver.SessionResetter.
+// (From Go 1.10)
+func (mc *mysqlConn) ResetSession(ctx context.Context) error {
+	if mc.closed.IsSet() {
+		return driver.ErrBadConn
+	}
+	return nil
 }

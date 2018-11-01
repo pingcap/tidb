@@ -11,15 +11,9 @@ package mysql
 import (
 	"database/sql/driver"
 	"io"
+	"math"
+	"reflect"
 )
-
-type mysqlField struct {
-	tableName string
-	name      string
-	flags     fieldFlag
-	fieldType byte
-	decimals  byte
-}
 
 type resultSet struct {
 	columns     []mysqlField
@@ -63,6 +57,44 @@ func (rows *mysqlRows) Columns() []string {
 
 	rows.rs.columnNames = columns
 	return columns
+}
+
+func (rows *mysqlRows) ColumnTypeDatabaseTypeName(i int) string {
+	return rows.rs.columns[i].typeDatabaseName()
+}
+
+// func (rows *mysqlRows) ColumnTypeLength(i int) (length int64, ok bool) {
+// 	return int64(rows.rs.columns[i].length), true
+// }
+
+func (rows *mysqlRows) ColumnTypeNullable(i int) (nullable, ok bool) {
+	return rows.rs.columns[i].flags&flagNotNULL == 0, true
+}
+
+func (rows *mysqlRows) ColumnTypePrecisionScale(i int) (int64, int64, bool) {
+	column := rows.rs.columns[i]
+	decimals := int64(column.decimals)
+
+	switch column.fieldType {
+	case fieldTypeDecimal, fieldTypeNewDecimal:
+		if decimals > 0 {
+			return int64(column.length) - 2, decimals, true
+		}
+		return int64(column.length) - 1, decimals, true
+	case fieldTypeTimestamp, fieldTypeDateTime, fieldTypeTime:
+		return decimals, decimals, true
+	case fieldTypeFloat, fieldTypeDouble:
+		if decimals == 0x1f {
+			return math.MaxInt64, math.MaxInt64, true
+		}
+		return math.MaxInt64, decimals, true
+	}
+
+	return 0, 0, false
+}
+
+func (rows *mysqlRows) ColumnTypeScanType(i int) reflect.Type {
+	return rows.rs.columns[i].scanType()
 }
 
 func (rows *mysqlRows) Close() (err error) {

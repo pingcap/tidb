@@ -22,7 +22,7 @@ const (
 // Most tracers have them encoded as keys with 'traceid' and 'spanid':
 // https://github.com/openzipkin/zipkin-go-opentracing/blob/594640b9ef7e5c994e8d9499359d693c032d738c/propagation_ot.go#L29
 // https://github.com/opentracing/basictracer-go/blob/1b32af207119a14b1b231d451df3ed04a72efebf/propagation_ot.go#L26
-func hackyInjectOpentracingIdsToTags(span opentracing.Span, tags *grpc_ctxtags.Tags) {
+func hackyInjectOpentracingIdsToTags(span opentracing.Span, tags grpc_ctxtags.Tags) {
 	if err := span.Tracer().Inject(span.Context(), opentracing.HTTPHeaders, &hackyTagsCarrier{tags}); err != nil {
 		grpclog.Printf("grpc_opentracing: failed extracting trace info into ctx %v", err)
 	}
@@ -30,7 +30,7 @@ func hackyInjectOpentracingIdsToTags(span opentracing.Span, tags *grpc_ctxtags.T
 
 // hackyTagsCarrier is a really hacky way of
 type hackyTagsCarrier struct {
-	*grpc_ctxtags.Tags
+	grpc_ctxtags.Tags
 }
 
 func (t *hackyTagsCarrier) Set(key, val string) {

@@ -27,7 +27,6 @@ const (
 var (
 	ErrProxyProtocolV1HeaderInvalid = errors.New("PROXY Protocol v1 header is invalid")
 	ErrProxyProtocolV2HeaderInvalid = errors.New("PROXY Protocol v2 header is invalid")
-	ErrProxyAddressNotAllowed       = errors.New("Proxy address is not allowed")
 	ErrHeaderReadTimeout            = errors.New("Header read timeout")
 	proxyProtocolV2Sig              = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A}
 
@@ -52,7 +51,6 @@ type proxyProtocolListener struct {
 func IsProxyProtocolError(err error) bool {
 	return err == ErrProxyProtocolV1HeaderInvalid ||
 		err == ErrProxyProtocolV2HeaderInvalid ||
-		err == ErrProxyAddressNotAllowed ||
 		err == ErrHeaderReadTimeout
 }
 
@@ -142,8 +140,8 @@ func (l *proxyProtocolListener) acceptLoop() {
 		if err != nil {
 			l.acceptQueue <- &connErr{conn, err}
 		} else if !l.checkAllowed(conn.RemoteAddr()) && l.running() {
-			conn.Close()
-			l.acceptQueue <- &connErr{nil, ErrProxyAddressNotAllowed}
+			// do not parse proxy protocol header
+			l.acceptQueue <- &connErr{conn, nil}
 		} else {
 			go l.wrapConn(conn)
 		}
@@ -162,8 +160,8 @@ func (l *proxyProtocolListener) wrapConn(conn net.Conn) {
 // Accept new connection
 // You should check error instead of panic it.
 // As PROXY protocol SPEC wrote, if invalid PROXY protocol header
-// received or connection's address not allowed, Accept function
-// will return an error and close this connection.
+// received, or valid header received but connection's address not
+// allowed, Accept function will return an error and close this connection.
 func (l *proxyProtocolListener) Accept() (net.Conn, error) {
 	ce := <-l.acceptQueue
 	if opErr, ok := ce.err.(*net.OpError); ok {

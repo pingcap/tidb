@@ -14,6 +14,7 @@
 package pd
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"io/ioutil"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )

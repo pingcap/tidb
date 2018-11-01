@@ -2,6 +2,7 @@ package errors
 
 import (
 	"fmt"
+	"strings"
 )
 
 // ==================== juju adaptor start ========================
@@ -61,6 +62,11 @@ func ErrorStack(err error) string {
 	return fmt.Sprintf("%+v", err)
 }
 
+// IsNotFound reports whether err was not found error.
+func IsNotFound(err error) bool {
+	return strings.Contains(err.Error(), "not found")
+}
+
 // NotFoundf represents an error with not found message.
 func NotFoundf(format string, args ...interface{}) error {
 	return Errorf(format+" not found", args...)
@@ -74,6 +80,21 @@ func BadRequestf(format string, args ...interface{}) error {
 // NotSupportedf represents an error with not supported message.
 func NotSupportedf(format string, args ...interface{}) error {
 	return Errorf(format+" not supported", args...)
+}
+
+// NotValidf represents an error with not valid message.
+func NotValidf(format string, args ...interface{}) error {
+	return Errorf(format+" not valid", args...)
+}
+
+// IsAlreadyExists reports whether err was already exists error.
+func IsAlreadyExists(err error) bool {
+	return strings.Contains(err.Error(), "already exists")
+}
+
+// AlreadyExistsf represents an error with already exists message.
+func AlreadyExistsf(format string, args ...interface{}) error {
+	return Errorf(format+" already exists", args...)
 }
 
 // ==================== juju adaptor end ========================

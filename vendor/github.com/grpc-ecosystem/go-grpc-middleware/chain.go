@@ -31,7 +31,9 @@ func ChainUnaryServer(interceptors ...grpc.UnaryServerInterceptor) grpc.UnarySer
 					return handler(currentCtx, currentReq)
 				}
 				curI++
-				return interceptors[curI](currentCtx, currentReq, info, chainHandler)
+				resp, err := interceptors[curI](currentCtx, currentReq, info, chainHandler)
+				curI--
+				return resp, err
 			}
 
 			return interceptors[0](ctx, req, info, chainHandler)
@@ -69,7 +71,9 @@ func ChainStreamServer(interceptors ...grpc.StreamServerInterceptor) grpc.Stream
 					return handler(currentSrv, currentStream)
 				}
 				curI++
-				return interceptors[curI](currentSrv, currentStream, info, chainHandler)
+				err := interceptors[curI](currentSrv, currentStream, info, chainHandler)
+				curI--
+				return err
 			}
 
 			return interceptors[0](srv, stream, info, chainHandler)
@@ -106,7 +110,9 @@ func ChainUnaryClient(interceptors ...grpc.UnaryClientInterceptor) grpc.UnaryCli
 					return invoker(currentCtx, currentMethod, currentReq, currentRepl, currentConn, currentOpts...)
 				}
 				curI++
-				return interceptors[curI](currentCtx, currentMethod, currentReq, currentRepl, currentConn, chainHandler, currentOpts...)
+				err := interceptors[curI](currentCtx, currentMethod, currentReq, currentRepl, currentConn, chainHandler, currentOpts...)
+				curI--
+				return err
 			}
 
 			return interceptors[0](ctx, method, req, reply, cc, chainHandler, opts...)
@@ -143,7 +149,9 @@ func ChainStreamClient(interceptors ...grpc.StreamClientInterceptor) grpc.Stream
 					return streamer(currentCtx, currentDesc, currentConn, currentMethod, currentOpts...)
 				}
 				curI++
-				return interceptors[curI](currentCtx, currentDesc, currentConn, currentMethod, chainHandler, currentOpts...)
+				stream, err := interceptors[curI](currentCtx, currentDesc, currentConn, currentMethod, chainHandler, currentOpts...)
+				curI--
+				return stream, err
 			}
 
 			return interceptors[0](ctx, desc, cc, method, chainHandler, opts...)

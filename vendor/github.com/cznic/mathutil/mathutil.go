@@ -5,7 +5,25 @@
 // Package mathutil provides utilities supplementing the standard 'math' and
 // 'math/rand' packages.
 //
-// Compatibility issues
+// Release history and compatibility issues
+//
+// 2018-10-21 Added BinaryLog
+//
+// 2018-04-25: New functions for determinig Max/Min of nullable values. Ex:
+//  func MaxPtr(a, b *int) *int {
+//  func MinPtr(a, b *int) *int {
+//  func MaxBytePtr(a, b *byte) *byte {
+//  func MinBytePtr(a, b *byte) *byte {
+//  ...
+//
+// 2017-10-14: New variadic functions for Max/Min. Ex:
+//  func MaxVal(val int, vals ...int) int {
+//  func MinVal(val int, vals ...int) int {
+//  func MaxByteVal(val byte, vals ...byte) byte {
+//  func MinByteVal(val byte, vals ...byte) byte {
+//  ...
+//
+// 2016-10-10: New functions QuadPolyDiscriminant and QuadPolyFactors.
 //
 // 2013-12-13: The following functions have been REMOVED
 //
@@ -68,8 +86,9 @@ const (
 )
 
 var (
-	_1 = big.NewInt(1)
-	_2 = big.NewInt(2)
+	_m1 = big.NewInt(-1)
+	_1  = big.NewInt(1)
+	_2  = big.NewInt(2)
 )
 
 // GCDByte returns the greatest common divisor of a and b. Based on:
@@ -89,7 +108,7 @@ func GCDUint16(a, b uint16) uint16 {
 	return a
 }
 
-// GCD returns the greatest common divisor of a and b.
+// GCDUint32 returns the greatest common divisor of a and b.
 func GCDUint32(a, b uint32) uint32 {
 	for b != 0 {
 		a, b = b, a%b
@@ -97,7 +116,7 @@ func GCDUint32(a, b uint32) uint32 {
 	return a
 }
 
-// GCD64 returns the greatest common divisor of a and b.
+// GCDUint64 returns the greatest common divisor of a and b.
 func GCDUint64(a, b uint64) uint64 {
 	for b != 0 {
 		a, b = b, a%b
@@ -257,7 +276,7 @@ func ModPowByte(b, e, m byte) byte {
 	return byte(r)
 }
 
-// ModPowByte computes (b^e)%m. It panics for m == 0 || b == e == 0.
+// ModPowUint16 computes (b^e)%m. It panics for m == 0 || b == e == 0.
 func ModPowUint16(b, e, m uint16) uint16 {
 	if b == 0 && e == 0 {
 		panic(0)
@@ -360,7 +379,7 @@ func AddUint128_64(a, b uint64) (hi uint64, lo uint64) {
 	if lo < a {
 		hi = 1
 	}
-	return
+	return hi, lo
 }
 
 // MulUint128_64 returns the uint128 bit product of uint64 a and b.
@@ -382,7 +401,7 @@ func MulUint128_64(a, b uint64) (hi, lo uint64) {
 	mid2 := ahi * blo
 	c1, lo := AddUint128_64(lo, mid1<<w)
 	c2, lo := AddUint128_64(lo, mid2<<w)
-	_, hi = AddUint128_64(ahi*bhi, mid1>>w+mid2>>w+uint64(c1+c2))
+	_, hi = AddUint128_64(ahi*bhi, mid1>>w+mid2>>w+c1+c2)
 	return
 }
 
@@ -629,6 +648,63 @@ func Min(a, b int) int {
 	return b
 }
 
+// MaxPtr returns a pointer to the larger of a and b, or nil.
+func MaxPtr(a, b *int) *int {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// MinPtr returns a pointer to the smaller of a and b, or nil.
+func MinPtr(a, b *int) *int {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// MaxVal returns the largest argument passed.
+func MaxVal(val int, vals ...int) int {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// MinVal returns the smallest argument passed.
+func MinVal(val int, vals ...int) int {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// Clamp returns a value restricted between lo and hi.
+func Clamp(v, lo, hi int) int {
+	return Min(Max(v, lo), hi)
+}
+
 // UMax returns the larger of a and b.
 func UMax(a, b uint) uint {
 	if a > b {
@@ -645,6 +721,63 @@ func UMin(a, b uint) uint {
 	}
 
 	return b
+}
+
+// UMaxPtr returns a pointer to the larger of a and b, or nil.
+func UMaxPtr(a, b *uint) *uint {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// UMinPtr returns a pointer to the smaller of a and b, or nil.
+func UMinPtr(a, b *uint) *uint {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// UMaxVal returns the largest argument passed.
+func UMaxVal(val uint, vals ...uint) uint {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// UMinVal returns the smallest argument passed.
+func UMinVal(val uint, vals ...uint) uint {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// UClamp returns a value restricted between lo and hi.
+func UClamp(v, lo, hi uint) uint {
+	return UMin(UMax(v, lo), hi)
 }
 
 // MaxByte returns the larger of a and b.
@@ -665,6 +798,63 @@ func MinByte(a, b byte) byte {
 	return b
 }
 
+// MaxBytePtr returns a pointer to the larger of a and b, or nil.
+func MaxBytePtr(a, b *byte) *byte {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// MinBytePtr returns a pointer to the smaller of a and b, or nil.
+func MinBytePtr(a, b *byte) *byte {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// MaxByteVal returns the largest argument passed.
+func MaxByteVal(val byte, vals ...byte) byte {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// MinByteVal returns the smallest argument passed.
+func MinByteVal(val byte, vals ...byte) byte {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// ClampByte returns a value restricted between lo and hi.
+func ClampByte(v, lo, hi byte) byte {
+	return MinByte(MaxByte(v, lo), hi)
+}
+
 // MaxInt8 returns the larger of a and b.
 func MaxInt8(a, b int8) int8 {
 	if a > b {
@@ -681,6 +871,63 @@ func MinInt8(a, b int8) int8 {
 	}
 
 	return b
+}
+
+// MaxInt8Ptr returns a pointer to the larger of a and b, or nil.
+func MaxInt8Ptr(a, b *int8) *int8 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// MinInt8Ptr returns a pointer to the smaller of a and b, or nil.
+func MinInt8Ptr(a, b *int8) *int8 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// MaxInt8Val returns the largest argument passed.
+func MaxInt8Val(val int8, vals ...int8) int8 {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// MinInt8Val returns the smallest argument passed.
+func MinInt8Val(val int8, vals ...int8) int8 {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// ClampInt8 returns a value restricted between lo and hi.
+func ClampInt8(v, lo, hi int8) int8 {
+	return MinInt8(MaxInt8(v, lo), hi)
 }
 
 // MaxUint16 returns the larger of a and b.
@@ -701,6 +948,63 @@ func MinUint16(a, b uint16) uint16 {
 	return b
 }
 
+// MaxUint16Ptr returns a pointer to the larger of a and b, or nil.
+func MaxUint16Ptr(a, b *uint16) *uint16 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// MinUint16Ptr returns a pointer to the smaller of a and b, or nil.
+func MinUint16Ptr(a, b *uint16) *uint16 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// MaxUint16Val returns the largest argument passed.
+func MaxUint16Val(val uint16, vals ...uint16) uint16 {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// MinUint16Val returns the smallest argument passed.
+func MinUint16Val(val uint16, vals ...uint16) uint16 {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// ClampUint16 returns a value restricted between lo and hi.
+func ClampUint16(v, lo, hi uint16) uint16 {
+	return MinUint16(MaxUint16(v, lo), hi)
+}
+
 // MaxInt16 returns the larger of a and b.
 func MaxInt16(a, b int16) int16 {
 	if a > b {
@@ -717,6 +1021,63 @@ func MinInt16(a, b int16) int16 {
 	}
 
 	return b
+}
+
+// MaxInt16Ptr returns a pointer to the larger of a and b, or nil.
+func MaxInt16Ptr(a, b *int16) *int16 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// MinInt16Ptr returns a pointer to the smaller of a and b, or nil.
+func MinInt16Ptr(a, b *int16) *int16 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// MaxInt16Val returns the largest argument passed.
+func MaxInt16Val(val int16, vals ...int16) int16 {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// MinInt16Val returns the smallest argument passed.
+func MinInt16Val(val int16, vals ...int16) int16 {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// ClampInt16 returns a value restricted between lo and hi.
+func ClampInt16(v, lo, hi int16) int16 {
+	return MinInt16(MaxInt16(v, lo), hi)
 }
 
 // MaxUint32 returns the larger of a and b.
@@ -737,6 +1098,63 @@ func MinUint32(a, b uint32) uint32 {
 	return b
 }
 
+// MaxUint32Ptr returns a pointer to the larger of a and b, or nil.
+func MaxUint32Ptr(a, b *uint32) *uint32 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// MinUint32Ptr returns a pointer to the smaller of a and b, or nil.
+func MinUint32Ptr(a, b *uint32) *uint32 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// MaxUint32Val returns the largest argument passed.
+func MaxUint32Val(val uint32, vals ...uint32) uint32 {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// MinUint32Val returns the smallest argument passed.
+func MinUint32Val(val uint32, vals ...uint32) uint32 {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// ClampUint32 returns a value restricted between lo and hi.
+func ClampUint32(v, lo, hi uint32) uint32 {
+	return MinUint32(MaxUint32(v, lo), hi)
+}
+
 // MaxInt32 returns the larger of a and b.
 func MaxInt32(a, b int32) int32 {
 	if a > b {
@@ -753,6 +1171,63 @@ func MinInt32(a, b int32) int32 {
 	}
 
 	return b
+}
+
+// MaxInt32Ptr returns a pointer to the larger of a and b, or nil.
+func MaxInt32Ptr(a, b *int32) *int32 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// MinInt32Ptr returns a pointer to the smaller of a and b, or nil.
+func MinInt32Ptr(a, b *int32) *int32 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// MaxInt32Val returns the largest argument passed.
+func MaxInt32Val(val int32, vals ...int32) int32 {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// MinInt32Val returns the smallest argument passed.
+func MinInt32Val(val int32, vals ...int32) int32 {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// ClampInt32 returns a value restricted between lo and hi.
+func ClampInt32(v, lo, hi int32) int32 {
+	return MinInt32(MaxInt32(v, lo), hi)
 }
 
 // MaxUint64 returns the larger of a and b.
@@ -773,6 +1248,63 @@ func MinUint64(a, b uint64) uint64 {
 	return b
 }
 
+// MaxUint64Ptr returns a pointer to the larger of a and b, or nil.
+func MaxUint64Ptr(a, b *uint64) *uint64 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// MinUint64Ptr returns a pointer to the smaller of a and b, or nil.
+func MinUint64Ptr(a, b *uint64) *uint64 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// MaxUint64Val returns the largest argument passed.
+func MaxUint64Val(val uint64, vals ...uint64) uint64 {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// MinUint64Val returns the smallest argument passed.
+func MinUint64Val(val uint64, vals ...uint64) uint64 {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// ClampUint64 returns a value restricted between lo and hi.
+func ClampUint64(v, lo, hi uint64) uint64 {
+	return MinUint64(MaxUint64(v, lo), hi)
+}
+
 // MaxInt64 returns the larger of a and b.
 func MaxInt64(a, b int64) int64 {
 	if a > b {
@@ -789,6 +1321,63 @@ func MinInt64(a, b int64) int64 {
 	}
 
 	return b
+}
+
+// MaxInt64Ptr returns a pointer to the larger of a and b, or nil.
+func MaxInt64Ptr(a, b *int64) *int64 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a > *b {
+		return a
+	}
+
+	return b
+}
+
+// MinInt64Ptr returns a pointer to the smaller of a and b, or nil.
+func MinInt64Ptr(a, b *int64) *int64 {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if *a < *b {
+		return a
+	}
+
+	return b
+}
+
+// MaxInt64Val returns the largest argument passed.
+func MaxInt64Val(val int64, vals ...int64) int64 {
+	res := val
+	for _, v := range vals {
+		if v > res {
+			res = v
+		}
+	}
+	return res
+}
+
+// MinInt64Val returns the smallest argument passed.
+func MinInt64Val(val int64, vals ...int64) int64 {
+	res := val
+	for _, v := range vals {
+		if v < res {
+			res = v
+		}
+	}
+	return res
+}
+
+// ClampInt64 returns a value restricted between lo and hi.
+func ClampInt64(v, lo, hi int64) int64 {
+	return MinInt64(MaxInt64(v, lo), hi)
 }
 
 // ToBase produces n in base b. For example

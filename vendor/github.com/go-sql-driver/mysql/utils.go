@@ -9,7 +9,6 @@
 package mysql
 
 import (
-	"crypto/sha1"
 	"crypto/tls"
 	"database/sql/driver"
 	"encoding/binary"
@@ -21,15 +20,17 @@ import (
 	"time"
 )
 
+// Registry for custom tls.Configs
 var (
 	tlsConfigLock     sync.RWMutex
-	tlsConfigRegister map[string]*tls.Config // Register for custom tls.Configs
+	tlsConfigRegistry map[string]*tls.Config
 )
 
 // RegisterTLSConfig registers a custom tls.Config to be used with sql.Open.
 // Use the key as a value in the DSN where tls=value.
 //
-// Note: The tls.Config provided to needs to be exclusively owned by the driver after registering.
+// Note: The provided tls.Config is exclusively owned by the driver after
+// registering it.
 //
 //  rootCertPool := x509.NewCertPool()
 //  pem, err := ioutil.ReadFile("/path/ca-cert.pem")
@@ -57,11 +58,11 @@ func RegisterTLSConfig(key string, config *tls.Config) error {
 	}
 
 	tlsConfigLock.Lock()
-	if tlsConfigRegister == nil {
-		tlsConfigRegister = make(map[string]*tls.Config)
+	if tlsConfigRegistry == nil {
+		tlsConfigRegistry = make(map[string]*tls.Config)
 	}
 
-	tlsConfigRegister[key] = config
+	tlsConfigRegistry[key] = config
 	tlsConfigLock.Unlock()
 	return nil
 }
@@ -69,15 +70,15 @@ func RegisterTLSConfig(key string, config *tls.Config) error {
 // DeregisterTLSConfig removes the tls.Config associated with key.
 func DeregisterTLSConfig(key string) {
 	tlsConfigLock.Lock()
-	if tlsConfigRegister != nil {
-		delete(tlsConfigRegister, key)
+	if tlsConfigRegistry != nil {
+		delete(tlsConfigRegistry, key)
 	}
 	tlsConfigLock.Unlock()
 }
 
 func getTLSConfigClone(key string) (config *tls.Config) {
 	tlsConfigLock.RLock()
-	if v, ok := tlsConfigRegister[key]; ok {
+	if v, ok := tlsConfigRegistry[key]; ok {
 		config = cloneTLSConfig(v)
 	}
 	tlsConfigLock.RUnlock()
@@ -96,119 +97,6 @@ func readBool(input string) (value bool, valid bool) {
 
 	// Not a valid bool value
 	return
-}
-
-/******************************************************************************
-*                             Authentication                                  *
-******************************************************************************/
-
-// Encrypt password using 4.1+ method
-func scramblePassword(scramble, password []byte) []byte {
-	if len(password) == 0 {
-		return nil
-	}
-
-	// stage1Hash = SHA1(password)
-	crypt := sha1.New()
-	crypt.Write(password)
-	stage1 := crypt.Sum(nil)
-
-	// scrambleHash = SHA1(scramble + SHA1(stage1Hash))
-	// inner Hash
-	crypt.Reset()
-	crypt.Write(stage1)
-	hash := crypt.Sum(nil)
-
-	// outer Hash
-	crypt.Reset()
-	crypt.Write(scramble)
-	crypt.Write(hash)
-	scramble = crypt.Sum(nil)
-
-	// token = scrambleHash XOR stage1Hash
-	for i := range scramble {
-		scramble[i] ^= stage1[i]
-	}
-	return scramble
-}
-
-// Encrypt password using pre 4.1 (old password) method
-// https://github.com/atcurtis/mariadb/blob/master/mysys/my_rnd.c
-type myRnd struct {
-	seed1, seed2 uint32
-}
-
-const myRndMaxVal = 0x3FFFFFFF
-
-// Pseudo random number generator
-func newMyRnd(seed1, seed2 uint32) *myRnd {
-	return &myRnd{
-		seed1: seed1 % myRndMaxVal,
-		seed2: seed2 % myRndMaxVal,
-	}
-}
-
-// Tested to be equivalent to MariaDB's floating point variant
-// http://play.golang.org/p/QHvhd4qved
-// http://play.golang.org/p/RG0q4ElWDx
-func (r *myRnd) NextByte() byte {
-	r.seed1 = (r.seed1*3 + r.seed2) % myRndMaxVal
-	r.seed2 = (r.seed1 + r.seed2 + 33) % myRndMaxVal
-
-	return byte(uint64(r.seed1) * 31 / myRndMaxVal)
-}
-
-// Generate binary hash from byte string using insecure pre 4.1 method
-func pwHash(password []byte) (result [2]uint32) {
-	var add uint32 = 7
-	var tmp uint32
-
-	result[0] = 1345345333
-	result[1] = 0x12345671
-
-	for _, c := range password {
-		// skip spaces and tabs in password
-		if c == ' ' || c == '\t' {
-			continue
-		}
-
-		tmp = uint32(c)
-		result[0] ^= (((result[0] & 63) + add) * tmp) + (result[0] << 8)
-		result[1] += (result[1] << 8) ^ result[0]
-		add += tmp
-	}
-
-	// Remove sign bit (1<<31)-1)
-	result[0] &= 0x7FFFFFFF
-	result[1] &= 0x7FFFFFFF
-
-	return
-}
-
-// Encrypt password using insecure pre 4.1 method
-func scrambleOldPassword(scramble, password []byte) []byte {
-	if len(password) == 0 {
-		return nil
-	}
-
-	scramble = scramble[:8]
-
-	hashPw := pwHash(password)
-	hashSc := pwHash(scramble)
-
-	r := newMyRnd(hashPw[0]^hashSc[0], hashPw[1]^hashSc[1])
-
-	var out [8]byte
-	for i := range out {
-		out[i] = r.NextByte() + 64
-	}
-
-	mask := r.NextByte()
-	for i := range out {
-		out[i] ^= mask
-	}
-
-	return out[:]
 }
 
 /******************************************************************************
@@ -537,7 +425,7 @@ func readLengthEncodedString(b []byte) ([]byte, bool, int, error) {
 
 	// Check data length
 	if len(b) >= n {
-		return b[n-int(num) : n], false, n, nil
+		return b[n-int(num) : n : n], false, n, nil
 	}
 	return nil, false, n, io.EOF
 }
@@ -566,8 +454,8 @@ func readLengthEncodedInteger(b []byte) (uint64, bool, int) {
 	if len(b) == 0 {
 		return 0, true, 1
 	}
-	switch b[0] {
 
+	switch b[0] {
 	// 251: NULL
 	case 0xfb:
 		return 0, true, 1
@@ -800,7 +688,7 @@ func (ab *atomicBool) TrySet(value bool) bool {
 	return atomic.SwapUint32(&ab.value, 0) > 0
 }
 
-// atomicBool is a wrapper for atomically accessed error values
+// atomicError is a wrapper for atomically accessed error values
 type atomicError struct {
 	_noCopy noCopy
 	value   atomic.Value

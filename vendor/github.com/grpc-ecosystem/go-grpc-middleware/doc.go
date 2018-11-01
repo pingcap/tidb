@@ -40,6 +40,8 @@ Here's an example for client side chaining:
 
 These interceptors will be executed from left to right: monitoring and then retry logic.
 
+The retry interceptor will call every interceptor that follows it whenever when a retry happens.
+
 Writing Your Own
 
 Implementing your own interceptor is pretty trivial: there are interfaces for that. But the interesting

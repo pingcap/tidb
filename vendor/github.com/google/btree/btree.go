@@ -103,12 +103,16 @@ func (f *FreeList) newNode() (n *node) {
 	return
 }
 
-func (f *FreeList) freeNode(n *node) {
+// freeNode adds the given node to the list, returning true if it was added
+// and false if it was discarded.
+func (f *FreeList) freeNode(n *node) (out bool) {
 	f.mu.Lock()
 	if len(f.freelist) < cap(f.freelist) {
 		f.freelist = append(f.freelist, n)
+		out = true
 	}
 	f.mu.Unlock()
+	return
 }
 
 // ItemIterator allows callers of Ascend* to iterate in-order over portions of
@@ -496,13 +500,14 @@ const (
 // thus creating a "greaterOrEqual" or "lessThanEqual" rather than just a
 // "greaterThan" or "lessThan" queries.
 func (n *node) iterate(dir direction, start, stop Item, includeStart bool, hit bool, iter ItemIterator) (bool, bool) {
-	var ok bool
+	var ok, found bool
+	var index int
 	switch dir {
 	case ascend:
-		for i := 0; i < len(n.items); i++ {
-			if start != nil && n.items[i].Less(start) {
-				continue
-			}
+		if start != nil {
+			index, _ = n.items.find(start)
+		}
+		for i := index; i < len(n.items); i++ {
 			if len(n.children) > 0 {
 				if hit, ok = n.children[i].iterate(dir, start, stop, includeStart, hit, iter); !ok {
 					return hit, false
@@ -526,7 +531,15 @@ func (n *node) iterate(dir direction, start, stop Item, includeStart bool, hit b
 			}
 		}
 	case descend:
-		for i := len(n.items) - 1; i >= 0; i-- {
+		if start != nil {
+			index, found = n.items.find(start)
+			if !found {
+				index = index - 1
+			}
+		} else {
+			index = len(n.items) - 1
+		}
+		for i := index; i >= 0; i-- {
 			if start != nil && !n.items[i].Less(start) {
 				if !includeStart || hit || start.Less(n.items[i]) {
 					continue
@@ -635,13 +648,30 @@ func (c *copyOnWriteContext) newNode() (n *node) {
 	return
 }
 
-func (c *copyOnWriteContext) freeNode(n *node) {
+type freeType int
+
+const (
+	ftFreelistFull freeType = iota // node was freed (available for GC, not stored in freelist)
+	ftStored                       // node was stored in the freelist for later use
+	ftNotOwned                     // node was ignored by COW, since it's owned by another one
+)
+
+// freeNode frees a node within a given COW context, if it's owned by that
+// context.  It returns what happened to the node (see freeType const
+// documentation).
+func (c *copyOnWriteContext) freeNode(n *node) freeType {
 	if n.cow == c {
 		// clear to allow GC
 		n.items.truncate(0)
 		n.children.truncate(0)
 		n.cow = nil
-		c.freelist.freeNode(n)
+		if c.freelist.freeNode(n) {
+			return ftStored
+		} else {
+			return ftFreelistFull
+		}
+	} else {
+		return ftNotOwned
 	}
 }
 
@@ -810,6 +840,45 @@ func (t *BTree) Has(key Item) bool {
 // Len returns the number of items currently in the tree.
 func (t *BTree) Len() int {
 	return t.length
+}
+
+// Clear removes all items from the btree.  If addNodesToFreelist is true,
+// t's nodes are added to its freelist as part of this call, until the freelist
+// is full.  Otherwise, the root node is simply dereferenced and the subtree
+// left to Go's normal GC processes.
+//
+// This can be much faster
+// than calling Delete on all elements, because that requires finding/removing
+// each element in the tree and updating the tree accordingly.  It also is
+// somewhat faster than creating a new tree to replace the old one, because
+// nodes from the old tree are reclaimed into the freelist for use by the new
+// one, instead of being lost to the garbage collector.
+//
+// This call takes:
+//   O(1): when addNodesToFreelist is false, this is a single operation.
+//   O(1): when the freelist is already full, it breaks out immediately
+//   O(freelist size):  when the freelist is empty and the nodes are all owned
+//       by this tree, nodes are added to the freelist until full.
+//   O(tree size):  when all nodes are owned by another tree, all nodes are
+//       iterated over looking for nodes to add to the freelist, and due to
+//       ownership, none are.
+func (t *BTree) Clear(addNodesToFreelist bool) {
+	if t.root != nil && addNodesToFreelist {
+		t.root.reset(t.cow)
+	}
+	t.root, t.length = nil, 0
+}
+
+// reset returns a subtree to the freelist.  It breaks out immediately if the
+// freelist is full, since the only benefit of iterating is to fill that
+// freelist up.  Returns true if parent reset call should continue.
+func (n *node) reset(c *copyOnWriteContext) bool {
+	for _, child := range n.children {
+		if !child.reset(c) {
+			return false
+		}
+	}
+	return c.freeNode(n) != ftFreelistFull
 }
 
 // Int implements the Item interface for integers.
