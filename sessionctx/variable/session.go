@@ -253,8 +253,8 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
-	// AllowInSubqueryUnFolding can be set to true to fold in subquery
-	AllowInSubqueryUnFolding bool
+	// AllowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
+	AllowInSubqToJoinAndAgg bool
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -335,6 +335,7 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
+		AllowInSubqToJoinAndAgg:   DefOptInSubqToJoinAndAgg,
 		EnableRadixJoin:           false,
 		L2CacheSize:               cpuid.CPU.Cache.L2,
 		CommandValue:              uint32(mysql.ComSleep),
@@ -553,8 +554,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
-	case TiDBOptInSubqUnFolding:
-		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
+	case TiDBOptInSubqToJoinAndAgg:
+		s.AllowInSubqToJoinAndAgg = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:

@@ -176,3 +176,20 @@ func (s *testSuite) TestSchemataCharacterSet(c *C) {
 		testkit.Rows("utf8mb4 utf8_bin"))
 
 }
+
+func (s *testSuite) TestProfiling(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	session.SetStatsLease(0)
+	do, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer do.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows())
+	tk.MustExec("set @@profiling=1")
+	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows("0 0  0 0 0 0 0 0 0 0 0 0 0 0   0"))
+}

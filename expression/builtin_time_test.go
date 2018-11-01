@@ -1514,6 +1514,7 @@ func (s *testEvaluatorSuite) TestTimestampDiff(c *C) {
 		types.NewStringDatum("2017-01-01")}))
 	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
@@ -2357,6 +2358,7 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	for _, t := range tests {
 		now := time.Now().In(sv.TimeZone)
 		f, err := funcs[t.method].getFunction(s.ctx, s.datumsToConstants(t.Input))
+		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		result := t.convertToTime(d, sv.TimeZone)

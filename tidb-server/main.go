@@ -399,7 +399,8 @@ func setGlobalVars() {
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 
-	plannercore.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
+	// For CI environment we default enable prepare-plan-cache.
+	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
 	if plannercore.PreparedPlanCacheEnabled() {
 		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
