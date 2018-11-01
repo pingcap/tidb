@@ -372,7 +372,7 @@ func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Const
 	retMapper := make(map[int]*Constant)
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, true)
 	if retMapper == nil {
-		// Filter is constant false or error occured, enforce early termination.
+		// Filter is constant false or error occurred, enforce early termination.
 		return nil
 	}
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, false)
