@@ -1197,11 +1197,11 @@ func checkColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 	for _, constraint := range col.Options {
 		switch constraint.Tp {
 		case ast.ColumnOptionAutoIncrement:
-			return errUnsupportedAddColumn.GenWithStack("unsupported add column constraint AUTO_INCREMENT when altering '%s.%s'", ti.Schema, ti.Name)
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
 		case ast.ColumnOptionPrimaryKey:
-			return errUnsupportedAddColumn.GenWithStack("unsupported add column constraint PRIMARY KEY when altering '%s.%s'", ti.Schema, ti.Name)
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint PRIMARY KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
 		case ast.ColumnOptionUniqKey:
-			return errUnsupportedAddColumn.GenWithStack("unsupported add column constraint UNIQUE KEY when altering '%s.%s'", ti.Schema, ti.Name)
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint UNIQUE KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
 		}
 	}
 
