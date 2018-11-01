@@ -701,17 +701,23 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 	// Process each child and add a projection above original child.
 	// So the schema of `UnionAll` can be the same with its children's.
 	for childID, child := range u.children {
-		childProj, isChildProj := child.(*LogicalProjection)
+		// uniqueID2OutputOrdinals is introduced because that different
+		// Projection.Exprs may refer to the same Column, so we need to keep the
+		// equality relation between the specified expressions in the
+		// newly-build Projection.
+		uniqueID2OutputOrdinals := make(map[int64][]int)
+		if p, ok := child.(*LogicalProjection); ok {
+			for i, expr := range p.Exprs {
+				col, ok1 := expr.(*expression.Column)
+				if !ok1 {
+					continue
+				}
+				uniqueID := col.UniqueID
+				uniqueID2OutputOrdinals[uniqueID] = append(uniqueID2OutputOrdinals[uniqueID], i)
+			}
+		}
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		for i, srcCol := range child.Schema().Columns {
-			if isChildProj {
-				// Note: After this, the parent Projection.Expr[i], child
-				// Projection.Schema.Column[i], child Projection.Expr[i] will
-				// share the same UniqueID if the i_th expression is *Column.
-				if exprCol, isCol := childProj.Exprs[i].(*expression.Column); isCol {
-					srcCol.UniqueID = exprCol.UniqueID
-				}
-			}
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
@@ -720,6 +726,15 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 				exprs[i] = srcCol
 			}
 		}
+		for _, outputOrdinals := range uniqueID2OutputOrdinals {
+			if len(outputOrdinals) <= 1 {
+				continue
+			}
+			for i := 1; i < len(outputOrdinals); i++ {
+				exprs[outputOrdinals[i]] = exprs[outputOrdinals[0]]
+			}
+		}
+
 		b.optFlag |= flagEliminateProjection
 		proj := LogicalProjection{Exprs: exprs}.Init(b.ctx)
 		proj.SetSchema(u.schema.Clone())
