@@ -701,19 +701,14 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 	// Process each child and add a projection above original child.
 	// So the schema of `UnionAll` can be the same with its children's.
 	for childID, child := range u.children {
-		uniqueIDToOutputIdxes := make(map[int][]int)
-		if p, ok := child.(*LogicalProjection); ok {
-			for i, expr := range p.Exprs {
-				col, ok1 := expr.(*expression.Column)
-				if !ok1 {
-					continue
-				}
-				uniqueID := int(col.UniqueID)
-				uniqueIDToOutputIdxes[uniqueID] = append(uniqueIDToOutputIdxes[uniqueID], i)
-			}
-		}
+		childProj, isChildProj := child.(*LogicalProjection)
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		for i, srcCol := range child.Schema().Columns {
+			if isChildProj {
+				if exprCol, isCol := childProj.Exprs[i].(*expression.Column); isCol{
+					srcCol.UniqueID = exprCol.UniqueID
+				}
+			}
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
@@ -722,15 +717,6 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 				exprs[i] = srcCol
 			}
 		}
-		for _, outputIdxes := range uniqueIDToOutputIdxes {
-			if len(outputIdxes) <= 1 {
-				continue
-			}
-			for i := 1; i < len(outputIdxes); i++ {
-				exprs[outputIdxes[i]] = exprs[outputIdxes[0]]
-			}
-		}
-
 		b.optFlag |= flagEliminateProjection
 		proj := LogicalProjection{Exprs: exprs}.Init(b.ctx)
 		proj.SetSchema(u.schema.Clone())
