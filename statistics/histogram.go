@@ -628,8 +628,9 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 type Column struct {
 	Histogram
 	*CMSketch
-	Count int64
-	Info  *model.ColumnInfo
+	Count    int64
+	Info     *model.ColumnInfo
+	isHandle bool
 }
 
 func (c *Column) String() string {

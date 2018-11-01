@@ -149,7 +149,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 				return 0, errors.Trace(err)
 			}
 			sets = append(sets, &exprSet{tp: colType, ID: col.ID, mask: maskCovered, ranges: ranges})
-			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
+			if colInfo.isHandle {
 				sets[len(sets)-1].tp = pkType
 			}
 		}
