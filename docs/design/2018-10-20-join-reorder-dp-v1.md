@@ -82,7 +82,7 @@ First, extract the join nodes. If the number of nodes is less than x, we go into
 
 For DP-SUB:
 
-1. Enlarge its edges by constant propagation.
+1. Enlarge its edges by constant propagation. i.e. If we have `t1.a=t2.a and  t2.a=t3.a`, we should get `t1.a=t3.a`.
 2. Number join node from 0 to n. Construct a hash map `pair<int, int> to join key filters`.
 3. Do the core dp algo.
 4. Get the final result.

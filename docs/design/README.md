@@ -13,6 +13,7 @@ A proposal template: [TEMPLATE.md](./TEMPLATE.md)
 - [Proposal: A SQL Planner based on the Volcano/Cascades model](./2018-08-29-new-planner.md)
 - [Proposal: Implement Radix Hash Join](./2018-09-21-radix-hashjoin.md)
 - [Proposal: Support a Global Column Pool](./2018-10-22-the-column-pool.md)
+- [Proposal: Join Reorder Design v1](./2018-10-20-join-reorder-dp-v1.md)
 
 ## Completed
 
