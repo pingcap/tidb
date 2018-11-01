@@ -73,6 +73,7 @@ github.com/fsnotify/fsnotify v1.4.7/go.mod h1:jwhsz4b93w/PPRr/qN1Yymfu8t87LnFCMo
 github.com/ghodss/yaml v1.0.0 h1:wQHKEahhL6wmXdzwWG11gIVCkOv05bNOh+Rxn0yngAk=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/go-sql-driver/mysql v0.0.0-20161129053045-4ac31a97ccff/go.mod h1:zAC/RDZ24gD3HViQzih4MyKcchzm+sOG5ZlKdlhCg5w=
+github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4 h1:3DFRjZdCDhzvxDf0U6/1qAryzOqD7Y5iAj0DJRRl1bs=
 github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4/go.mod h1:zAC/RDZ24gD3HViQzih4MyKcchzm+sOG5ZlKdlhCg5w=
 github.com/go-sql-driver/mysql v1.4.0 h1:7LxgVwFb2hIQtMm87NdgAVfXjnt4OePseqT1tKx+opk=
 github.com/go-sql-driver/mysql v1.4.0/go.mod h1:zAC/RDZ24gD3HViQzih4MyKcchzm+sOG5ZlKdlhCg5w=
@@ -195,11 +196,17 @@ github.com/pingcap/pd v0.0.0-20181015053559-eb892dda1e33 h1:UQKEV9u9PR1RjFiJqqGi
 github.com/pingcap/pd v0.0.0-20181015053559-eb892dda1e33/go.mod h1:+bFEXnol47I8RhLpb0RbP5ZvpG6Ca7dw0LL/ARsmRk0=
 github.com/pingcap/pd v2.0.5+incompatible h1:nUTetzzM/tLbd03DoMB76AAvI57oYftNib9sUE3KPFk=
 github.com/pingcap/pd v2.0.5+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
+github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
+github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/tidb v2.0.8+incompatible/go.mod h1:I8C6jrPINP2rrVunTRd7C9fRRhQrtR43S1/CL5ix/yQ=
 github.com/pingcap/tidb-tools v0.0.0-20181025073300-5db58e3b7e66 h1:auCqWgjgklL7o7c3Pj5PaSOAd9hBZd3OwEyvGSEStnA=
 github.com/pingcap/tidb-tools v0.0.0-20181025073300-5db58e3b7e66/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tidb-tools v0.0.0-20181031100052-035b36a94b4a h1:1gKUBL1SrzEKQXheEzqpSGebwEHQTsw+8mGw2gxQfYg=
 github.com/pingcap/tidb-tools v0.0.0-20181031100052-035b36a94b4a/go.mod h1:1mGKedCmwRGNgW26EMwDLOX075+QVmAIV7Q0FQY3URs=
+github.com/pingcap/tidb-tools v0.0.0-20181101060435-7083cb45066d h1:LLVbx8WozKAMk+KeSSjvOpKdr+I3EH8sxN7tusBs/dI=
+github.com/pingcap/tidb-tools v0.0.0-20181101060435-7083cb45066d/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
+github.com/pingcap/tidb-tools v0.0.0-20181101090416-cfac1096162e h1:LKGiK9RwOntq4kniQdGM9q1Cg4AGeIyHBeiFc2OIlpo=
+github.com/pingcap/tidb-tools v0.0.0-20181101090416-cfac1096162e/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tipb v0.0.0-20171213095807-07ff5b094233/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
 github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323 h1:mRKKzRjDNaUNPnAkPAHnRqpNmwNWBX1iA+hxlmvQ93I=
 github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
