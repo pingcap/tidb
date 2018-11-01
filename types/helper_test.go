@@ -17,7 +17,7 @@ import (
 	"strconv"
 
 	. "github.com/pingcap/check"
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 var _ = Suite(&testTypeHelperSuite{})
