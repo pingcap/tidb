@@ -1371,7 +1371,7 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	for _, col := range cols {
 		if col.Name.L == model.ExtraHandleName.L {
 			e.hasExtraHandle = true
-			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not support.")
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 		}
 	}
 
@@ -1999,7 +1999,7 @@ func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]boo
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range assignList {
 		if v.Col.ColName.L == model.ExtraHandleName.L {
-			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not support.")
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 		}
 		idx := v.Col.Index
 		assignFlag[idx] = true

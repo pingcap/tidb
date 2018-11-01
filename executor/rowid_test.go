@@ -19,7 +19,7 @@ import (
 )
 
 /*
-Insert, update and replace statements for _tidb_rowid are not support now.
+Insert, update and replace statements for _tidb_rowid are not supported now.
 After we support it, the following operations can be passed.
 func (s *testSuite) TestExportRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -66,19 +66,19 @@ func (s *testSuite) TestRowID(c *C) {
 		Check(testkit.Rows("1\x00\x00\x00\x00\x00\x00\x00\x00\x00 10 1"))
 	// insert statement
 	_, err := tk.Exec("insert into tt (id, c, _tidb_rowid) values(30000,10,1);")
-	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not support.")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not supported.")
 	// replace statement
 	_, err = tk.Exec("replace into tt (id, c, _tidb_rowid) values(30000,10,1);")
-	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not support.")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not supported.")
 	// update statement
 	_, err = tk.Exec("update tt set id = 2, _tidb_rowid = 1 where _tidb_rowid = 1")
-	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not support.")
+	c.Assert(err.Error(), Equals, "insert, update and replace statements for _tidb_rowid are not supported.")
 	tk.MustExec("update tt set id = 2 where _tidb_rowid = 1")
 
 	tk.MustExec("admin check table tt;")
 	tk.MustExec("drop table tt")
 
-	// Insert, update and replace statements for _tidb_rowid are not support now.
+	// Insert, update and replace statements for _tidb_rowid are not supported now.
 	// After we support it, the following operations must be passed.
 	//	tk.MustExec("insert into tt (id, c, _tidb_rowid) values(30000,10,1);")
 	//	tk.MustExec("admin check table tt;")
