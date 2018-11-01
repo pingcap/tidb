@@ -15,7 +15,6 @@ package core
 
 import (
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 )
 
 // ResolveIndices implements Plan interface.
