@@ -94,7 +94,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
   name = "github.com/pingcap/tipb"
 
 [[constraint]]
-  name = "github.com/pkg/errors"
+  name = "github.com/pingcap/errors"
   version = "0.11.0"
   source = "https://github.com/pingcap/errors.git"
 
