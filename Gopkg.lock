@@ -577,7 +577,7 @@
     "github.com/pingcap/tidb-tools/tidb-binlog/pump_client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
-    "github.com/pkg/errors",
+    "github.com/pingcap/errors",
     "github.com/prometheus/client_golang/prometheus",
     "github.com/prometheus/client_golang/prometheus/push",
     "github.com/sirupsen/logrus",
