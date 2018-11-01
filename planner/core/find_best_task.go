@@ -513,7 +513,7 @@ func splitIndexFilterConditions(conditions []expression.Expression, indexColumns
 func checkIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn, pkName model.CIStr) bool {
 	cols := expression.ExtractColumns(condition)
 	for _, col := range cols {
-		if pkName.L == col.ColName.L {
+		if pkName.L == col.ColName.L || col.ID == model.ExtraHandleID {
 			continue
 		}
 		isIndexColumn := false
