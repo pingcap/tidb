@@ -83,7 +83,7 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 	mustExecute(se, "commit")
 }
 
-func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
+func readResult(ctx context.Context, rs sessionctx.RecordSet, count int) {
 	chk := rs.NewChunk()
 	for count > 0 {
 		err := rs.Next(ctx, chk)

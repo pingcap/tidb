@@ -230,7 +230,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 type stateCase struct {
 	session            session.Session
 	rawStmt            ast.StmtNode
-	stmt               sqlexec.Statement
+	stmt               sessionctx.Statement
 	expectedExecErr    error
 	expectedCompileErr error
 }

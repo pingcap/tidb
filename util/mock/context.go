@@ -48,8 +48,13 @@ type Context struct {
 	pcache      *kvcache.SimpleLRUCache
 }
 
+// GetSessionTracing is created to pass implementation check.
+func (c *Context) GetSessionTracing() sessionctx.SessionTracing {
+	return nil
+}
+
 // Execute implements sqlexec.SQLExecutor Execute interface.
-func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
+func (c *Context) Execute(ctx context.Context, sql string) ([]sessionctx.RecordSet, error) {
 	return nil, errors.Errorf("Not Support.")
 }
 

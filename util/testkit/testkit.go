@@ -123,7 +123,7 @@ func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 var connectionID uint64
 
 // Exec executes a sql statement.
-func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+func (tk *TestKit) Exec(sql string, args ...interface{}) (sessionctx.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
 		tk.Se, err = session.CreateSession4Test(tk.store)
@@ -133,7 +133,7 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 	}
 	ctx := context.Background()
 	if len(args) == 0 {
-		var rss []sqlexec.RecordSet
+		var rss []sessionctx.RecordSet
 		rss, err = tk.Se.Execute(ctx, sql)
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
@@ -180,9 +180,9 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return tk.ResultSetToResult(rs, comment)
 }
 
-// ResultSetToResult converts sqlexec.RecordSet to testkit.Result.
+// ResultSetToResult converts sessionctx.RecordSet to testkit.Result.
 // It is used to check results of execute statement in binary mode.
-func (tk *TestKit) ResultSetToResult(rs sqlexec.RecordSet, comment check.CommentInterface) *Result {
+func (tk *TestKit) ResultSetToResult(rs sessionctx.RecordSet, comment check.CommentInterface) *Result {
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
 	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
 	err = rs.Close()

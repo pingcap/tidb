@@ -110,22 +110,17 @@ type tikvHandlerTool struct {
 // newTikvHandlerTool checks and prepares for tikv handler.
 // It would panic when any error happens.
 func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
-	var tikvStore kvStore
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Invalid KvStore with illegal driver")
+	if tikvStore, ok := s.driver.store.(kvStore); ok {
+		regionCache := tikvStore.GetRegionCache()
+
+		return &tikvHandlerTool{
+			regionCache: regionCache,
+			store:       tikvStore,
+		}
 	}
 
-	if tikvStore, ok = store.store.(kvStore); !ok {
-		panic("Invalid KvStore with illegal store")
-	}
+	panic("Invalid KvStore with illegal store")
 
-	regionCache := tikvStore.GetRegionCache()
-
-	return &tikvHandlerTool{
-		regionCache: regionCache,
-		store:       tikvStore,
-	}
 }
 
 func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {

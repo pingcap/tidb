@@ -46,6 +46,8 @@ type TxnState struct {
 	// If StmtCommit meets error (which should not happen, just in case), mark it.
 	// And rollback the whole transaction when it commit.
 	fail error
+
+	Ctx context.Context
 }
 
 func (st *TxnState) init() {

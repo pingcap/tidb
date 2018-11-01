@@ -36,6 +36,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+
 	// For pprof
 	_ "net/http/pprof"
 	"sync"
@@ -43,12 +44,14 @@ import (
 	"time"
 
 	"github.com/blacktear23/go-proxyprotocol"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -78,7 +81,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 type Server struct {
 	cfg               *config.Config
 	tlsConfig         *tls.Config
-	driver            IDriver
+	driver            *TiDBDriver
 	listener          net.Listener
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
@@ -90,6 +93,8 @@ type Server struct {
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
 	statusServer   *http.Server
+	// TODO(zhexuany: figure out how to use ambientContext)
+	Tracer opentracing.Tracer
 }
 
 // ConnectionCount gets current connection count.
@@ -134,7 +139,7 @@ func (s *Server) skipAuth() bool {
 }
 
 // NewServer creates a new Server.
-func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
+func NewServer(cfg *config.Config, driver *TiDBDriver) (*Server, error) {
 	s := &Server{
 		cfg:               cfg,
 		driver:            driver,
@@ -176,6 +181,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	s.Tracer = tracing.NewTracer()
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())

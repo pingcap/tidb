@@ -28,7 +28,7 @@ var _ = Suite(&testSampleSuite{})
 
 type testSampleSuite struct {
 	count int
-	rs    sqlexec.RecordSet
+	rs    sessionctx.RecordSet
 }
 
 func (s *testSampleSuite) SetUpSuite(c *C) {
