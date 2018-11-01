@@ -180,7 +180,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				return 0, errors.Trace(err)
 			}
 			sets = append(sets, &exprSet{tp: colType, ID: id, mask: maskCovered, ranges: ranges, numCols: 1})
-			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
+			if colInfo.isHandle {
 				sets[len(sets)-1].tp = pkType
 			}
 		}
