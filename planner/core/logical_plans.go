@@ -185,6 +185,13 @@ type LogicalProjection struct {
 	// Currently it is "true" only when the current sql query is a "DO" statement.
 	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
 	calculateNoDelay bool
+
+	// avoidColumnRef is a temporary variable which is ONLY used to avoid
+	// building columnEvaluator for the expressions of Projection which is
+	// built by buildProjection4Union.
+	// This can be removed after column pool being supported.
+	// Related issue:
+	avoidColumnEvaluator bool
 }
 
 func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColumn {
