@@ -705,6 +705,9 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		for i, srcCol := range child.Schema().Columns {
 			if isChildProj {
+				// Note: After this, the parent Projection.Expr[i], child
+				// Projection.Schema.Column[i], child Projection.Expr[i] will
+				// share the same UniqueID if the i_th expression is *Column.
 				if exprCol, isCol := childProj.Exprs[i].(*expression.Column); isCol {
 					srcCol.UniqueID = exprCol.UniqueID
 				}
