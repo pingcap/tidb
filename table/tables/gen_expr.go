@@ -16,10 +16,10 @@ package tables
 import (
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pkg/errors"
 )
 
 // getDefaultCharsetAndCollate is copyed from ddl/ddl_api.go.
