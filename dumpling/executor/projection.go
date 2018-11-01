@@ -16,10 +16,10 @@ package executor
 import (
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
