@@ -65,7 +65,7 @@ Window functions have been supported in a number of database systems. Without it
 
 ## Compatibility
 
-Yes, this proposal makes TiDB more compatible with MySQL.
+Yes, this proposal makes TiDB more compatible with MySQL 8.0.
 
 ## Implementation
 
