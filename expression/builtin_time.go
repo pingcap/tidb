@@ -2554,7 +2554,7 @@ func (du *baseDateArithmitical) getIntervalFromString(ctx sessionctx.Context, ar
 		return "", true, errors.Trace(err)
 	}
 	// unit "DAY" and "HOUR" has to be specially handled.
-	if strings.ToLower(unit) == "day" || strings.ToLower(unit) == "hour" {
+	if toLower := strings.ToLower(unit); toLower == "day" || toLower == "hour" {
 		if strings.ToLower(interval) == "true" {
 			interval = "1"
 		} else if strings.ToLower(interval) == "false" {
