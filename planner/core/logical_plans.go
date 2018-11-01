@@ -190,7 +190,7 @@ type LogicalProjection struct {
 	// building columnEvaluator for the expressions of Projection which is
 	// built by buildProjection4Union.
 	// This can be removed after column pool being supported.
-	// Related issue:
+	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	avoidColumnEvaluator bool
 }
 
