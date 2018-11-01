@@ -32,36 +32,36 @@ type joinGroupEdge struct {
 }
 
 func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, conds []expression.Expression) (LogicalPlan, error) {
-	edges := make([][]int, len(joinGroup))
+	adjacents := make([][]int, len(joinGroup))
 	totalEdges := make([]joinGroupEdge, 0, len(conds))
 	addEdge := func(node1, node2 int, edgeContent *expression.ScalarFunction) {
 		totalEdges = append(totalEdges, joinGroupEdge{
 			nodeIDs: []int{node1, node2},
 			edge:    edgeContent,
 		})
-		edges[node1] = append(edges[node1], node2)
-		edges[node2] = append(edges[node2], node1)
+		adjacents[node1] = append(adjacents[node1], node2)
+		adjacents[node2] = append(adjacents[node2], node1)
 	}
 	// Build Graph for join group
 	for _, cond := range conds {
 		sf := cond.(*expression.ScalarFunction)
 		lCol := sf.GetArgs()[0].(*expression.Column)
 		rCol := sf.GetArgs()[1].(*expression.Column)
-		lIdx := findColumnIndexByGroup(joinGroup, lCol)
-		rIdx := findColumnIndexByGroup(joinGroup, rCol)
+		lIdx := findNodeIndexInGroup(joinGroup, lCol)
+		rIdx := findNodeIndexInGroup(joinGroup, rCol)
 		addEdge(lIdx, rIdx, sf)
 	}
 	visited := make([]bool, len(joinGroup))
-	groupID2bfsID := make([]int, len(joinGroup))
+	nodeID2VisitID := make([]int, len(joinGroup))
 	var joins []LogicalPlan
 	// BFS the tree.
 	for i := 0; i < len(joinGroup); i++ {
 		if visited[i] {
 			continue
 		}
-		newPos2OldPos := s.bfsGraph(i, visited, edges, groupID2bfsID)
+		visitID2NodeID := s.bfsGraph(i, visited, adjacents, nodeID2VisitID)
 		// Do DP on each sub graph.
-		join, err := s.dpGraph(newPos2OldPos, groupID2bfsID, joinGroup, totalEdges)
+		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEdges)
 		if err != nil {
 			return nil, err
 		}
@@ -72,42 +72,42 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, conds []expression.
 }
 
 // bfsGraph bfs a sub graph starting at startPos. And relabel its label for future use.
-func (s *joinReorderDPSolver) bfsGraph(startPos int, visited []bool, edges [][]int, originalID2bfsID []int) []int {
-	queue := []int{startPos}
-	visited[startPos] = true
-	var newPos2OldPos []int
+func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VistID []int) []int {
+	queue := []int{startNode}
+	visited[startNode] = true
+	var visitID2NodeID []int
 	for len(queue) > 0 {
-		now := queue[0]
+		curNodeID := queue[0]
 		queue = queue[1:]
-		originalID2bfsID[now] = len(newPos2OldPos)
-		newPos2OldPos = append(newPos2OldPos, now)
-		for _, next := range edges[now] {
-			if visited[next] {
+		nodeID2VistID[curNodeID] = len(visitID2NodeID)
+		visitID2NodeID = append(visitID2NodeID, curNodeID)
+		for _, adjNodeID := range adjacents[curNodeID] {
+			if visited[adjNodeID] {
 				continue
 			}
-			queue = append(queue, next)
-			visited[next] = true
+			queue = append(queue, adjNodeID)
+			visited[adjNodeID] = true
 		}
 	}
-	return newPos2OldPos
+	return visitID2NodeID
 }
 
 func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGroup []LogicalPlan, totalEdges []joinGroupEdge) (LogicalPlan, error) {
-	nodeCnt := len(newPos2OldPos)
-	bestPlan := make([]LogicalPlan, 1<<uint(nodeCnt))
-	bestCost := make([]int64, 1<<uint(nodeCnt))
+	nodeCnt := uint(len(newPos2OldPos))
+	bestPlan := make([]LogicalPlan, 1<<nodeCnt)
+	bestCost := make([]int64, 1<<nodeCnt)
 	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
-	for i := 0; i < nodeCnt; i++ {
-		bestPlan[1<<uint(i)] = joinGroup[newPos2OldPos[i]]
+	for i := uint(0); i < nodeCnt; i++ {
+		bestPlan[1<<i] = joinGroup[newPos2OldPos[i]]
 	}
-	// Enumerate the state from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
-	for state := uint(1); state < (1 << uint(nodeCnt)); state++ {
-		if bits.OnesCount(state) == 1 {
+	// Enumerate the nodeBitmap from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
+	for nodeBitmap := uint(1); nodeBitmap < (1 << nodeCnt); nodeBitmap++ {
+		if bits.OnesCount(nodeBitmap) == 1 {
 			continue
 		}
 		// This loop can iterate all its subset.
-		for sub := (state - 1) & state; sub > 0; sub = (sub - 1) & state {
-			remain := state ^ sub
+		for sub := (nodeBitmap - 1) & nodeBitmap; sub > 0; sub = (sub - 1) & nodeBitmap {
+			remain := nodeBitmap ^ sub
 			if sub > remain {
 				continue
 			}
@@ -124,13 +124,13 @@ func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGr
 			if err != nil {
 				return nil, err
 			}
-			if bestPlan[state] == nil || bestCost[state] > join.statsInfo().Count()+bestCost[remain]+bestCost[sub] {
-				bestPlan[state] = join
-				bestCost[state] = join.statsInfo().Count() + bestCost[remain] + bestCost[sub]
+			if bestPlan[nodeBitmap] == nil || bestCost[nodeBitmap] > join.statsInfo().Count()+bestCost[remain]+bestCost[sub] {
+				bestPlan[nodeBitmap] = join
+				bestCost[nodeBitmap] = join.statsInfo().Count() + bestCost[remain] + bestCost[sub]
 			}
 		}
 	}
-	return bestPlan[(1<<uint(nodeCnt))-1], nil
+	return bestPlan[(1<<nodeCnt)-1], nil
 }
 
 func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int, totalEdges []joinGroupEdge) []joinGroupEdge {
