@@ -3229,3 +3229,20 @@ func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
 	c.Assert(strings.Split(b, ".")[1], Equals, "00")
 	c.Assert(len(strings.Split(d, ".")[1]), Equals, 3)
 }
+
+func (s *testSuite) TestRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));`)
+	tk.MustExec(`insert into t values('a', 'b', 'c');`)
+	tk.MustExec(`insert into t values('a', 'b', 'c');`)
+	tk.MustQuery(`select b, _tidb_rowid from t use index(idx) where a = 'a';`).Check(testkit.Rows(
+		`b 1`,
+		`b 2`,
+	))
+	tk.MustExec(`begin;`)
+	tk.MustExec(`select * from t for update`)
+	tk.MustQuery(`select distinct b from t use index(idx) where a = 'a';`).Check(testkit.Rows(`b`))
+	tk.MustExec(`commit;`)
+}
