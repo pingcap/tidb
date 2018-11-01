@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 )

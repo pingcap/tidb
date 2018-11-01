@@ -17,9 +17,9 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pkg/errors"
 )
 
 // RoundMode is the type for round mode.

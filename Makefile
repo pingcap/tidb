@@ -11,7 +11,7 @@ CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
-GO        := go
+GO        := GO111MODULE=on go
 GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 OVERALLS  := CGO_ENABLED=1 overalls
@@ -20,13 +20,13 @@ GOVERALLS := goveralls
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "vendor"
+PACKAGE_LIST  := go list ./...
 PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
-FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go" | grep -vE "vendor")
+FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
 
-GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail enable)
-GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail disable)
+GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs gofail enable)
+GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs gofail disable)
 
 LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
@@ -62,7 +62,7 @@ build:
 # The retool tools.json is setup from hack/retool-install.sh
 check-setup:
 	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
-	@retool sync
+	@GO111MODULE=off retool sync
 
 check: check-setup fmt lint vet
 
@@ -71,7 +71,7 @@ check-fail: goword check-static check-slow
 
 fmt:
 	@echo "gofmt (simplify)"
-	@gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | $(FAIL_ON_STDOUT)
+	@gofmt -s -l -w $(FILES) 2>&1 | grep -v "parser/parser.go" | $(FAIL_ON_STDOUT)
 
 goword:
 	retool do goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
@@ -96,7 +96,7 @@ lint:
 
 vet:
 	@echo "vet"
-	@go vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
+	$(GO) vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
 clean:
 	$(GO) clean -i ./...
@@ -114,7 +114,7 @@ explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest:
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
@@ -131,21 +131,21 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race:
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 leak:
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test:
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
@@ -186,17 +186,6 @@ benchdb:
 
 importer:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
-
-update:
-	which dep 2>/dev/null || go get -u github.com/golang/dep/cmd/dep
-ifdef PKG
-	dep ensure -add ${PKG}
-else
-	dep ensure -update
-endif
-	@echo "removing test files"
-	dep prune
-	bash ./hack/clean_vendor.sh
 
 checklist:
 	cat checklist.md
