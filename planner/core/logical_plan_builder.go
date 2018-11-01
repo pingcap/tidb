@@ -705,7 +705,7 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		for i, srcCol := range child.Schema().Columns {
 			if isChildProj {
-				if exprCol, isCol := childProj.Exprs[i].(*expression.Column); isCol{
+				if exprCol, isCol := childProj.Exprs[i].(*expression.Column); isCol {
 					srcCol.UniqueID = exprCol.UniqueID
 				}
 			}
