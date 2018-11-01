@@ -169,6 +169,21 @@
   version = "v1.1"
 
 [[projects]]
+  digest = "1:c9f6002218a23250d551df200241ea6907f15b0677777bee852239d7c24ccf93"
+  name = "github.com/lightstep/lightstep-tracer-go"
+  packages = [
+    ".",
+    "collectorpb",
+    "lightstep/rand",
+    "lightstep_thrift",
+    "lightsteppb",
+    "thrift_0_9_2/lib/go/thrift",
+  ]
+  pruneopts = "NUT"
+  revision = "87a8ccb2b6d479c7bc6c5ce556671aa194523655"
+  version = "v0.15.6"
+
+[[projects]]
   branch = "master"
   digest = "1:5985ef4caf91ece5d54817c11ea25f182697534f8ae6521eadcd628c142ac4b6"
   name = "github.com/matttproud/golang_protobuf_extensions"
@@ -422,19 +437,20 @@
   version = "v1.1.0"
 
 [[projects]]
-  digest = "1:686219a880e6ec42870431372756a66c19c1396e9fe203b659179422d3c6bf96"
+  branch = "master"
+  digest = "1:fef1e6ae1eb8ada90ce7bd138db294fe4c6c84169c7233944e75be2b3af54662"
   name = "golang.org/x/net"
   packages = [
     "context",
+    "http/httpguts",
     "http2",
     "http2/hpack",
     "idna",
     "internal/timeseries",
-    "lex/httplex",
     "trace",
   ]
   pruneopts = "NUT"
-  revision = "d1e1b351919c6738fdeb9893d5c998b161464f0c"
+  revision = "c44066c5c816ec500d459a2a324a753f78531ae0"
 
 [[projects]]
   branch = "master"
@@ -547,6 +563,7 @@
     "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing",
     "github.com/grpc-ecosystem/go-grpc-prometheus",
     "github.com/klauspost/cpuid",
+    "github.com/lightstep/lightstep-tracer-go",
     "github.com/ngaut/pools",
     "github.com/ngaut/sync2",
     "github.com/opentracing/basictracer-go",
@@ -574,12 +591,14 @@
     "github.com/pingcap/parser/terror",
     "github.com/pingcap/parser/types",
     "github.com/pingcap/pd/client",
+    "github.com/pingcap/tidb-tools/tidb-binlog/node",
     "github.com/pingcap/tidb-tools/tidb-binlog/pump_client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
     "github.com/pkg/errors",
     "github.com/prometheus/client_golang/prometheus",
     "github.com/prometheus/client_golang/prometheus/push",
+    "github.com/prometheus/client_model/go",
     "github.com/sirupsen/logrus",
     "github.com/spaolacci/murmur3",
     "github.com/twinj/uuid",

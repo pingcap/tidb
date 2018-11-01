@@ -106,3 +106,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
 [[constraint]]
   name = "github.com/pingcap/tidb-tools"
   revision = "5db58e3b7e6613456551c40d011806a346b2f44a"
+
+[[constraint]]
+  name = "github.com/lightstep/lightstep-tracer-go"
+  version = "0.15.6"
