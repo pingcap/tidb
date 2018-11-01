@@ -14,6 +14,7 @@ A proposal template: [TEMPLATE.md](./TEMPLATE.md)
 - [Proposal: Implement Radix Hash Join](./2018-09-21-radix-hashjoin.md)
 - [Proposal: Maintaining histograms in plan](./2018-09-04-histograms-in-plan.md)
 - [Proposal: Support a Global Column Pool](./2018-10-22-the-column-pool.md)
+- [Proposal: Join Reorder Design v1](./2018-10-20-join-reorder-dp-v1.md)
 - [Proposal: Support Window Functions](./2018-10-31-window-functions.md)
 
 ## Completed
