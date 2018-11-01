@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 var statisticsList []Statistics
