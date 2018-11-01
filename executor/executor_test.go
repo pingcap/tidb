@@ -28,6 +28,7 @@ import (
 	gofail "github.com/etcd-io/gofail/runtime"
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -62,7 +63,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -1369,6 +1369,21 @@ func (s *testSuite) TestJSON(c *C) {
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
 	result.Check(testkit.Rows(`3 {} <nil>`))
+
+	// Check cast json to decimal.
+	tk.MustExec("drop table if exists test_json")
+	tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
+	tk.MustExec(`insert into test_json (b) values
+		('{"c": "1267.1"}'),
+		('{"c": "1267.01"}'),
+		('{"c": "1267.1234"}'),
+		('{"c": "1267.3456"}'),
+		('{"c": "1234567890123456789012345678901234567890123456789012345"}'),
+		('{"c": "1234567890123456789012345678901234567890123456789012345.12345"}');`)
+
+	tk.MustQuery("select a from test_json;").Check(testkit.Rows("1267.10", "1267.01", "1267.12",
+		"1267.35", "1234567890123456789012345678901234567890123456789012345.00",
+		"1234567890123456789012345678901234567890123456789012345.12"))
 }
 
 func (s *testSuite) TestMultiUpdate(c *C) {
@@ -3250,4 +3265,21 @@ func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
 	c.Assert(len(strings.Split(a, ".")), Equals, 1)
 	c.Assert(strings.Split(b, ".")[1], Equals, "00")
 	c.Assert(len(strings.Split(d, ".")[1]), Equals, 3)
+}
+
+func (s *testSuite) TestRowID(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));`)
+	tk.MustExec(`insert into t values('a', 'b', 'c');`)
+	tk.MustExec(`insert into t values('a', 'b', 'c');`)
+	tk.MustQuery(`select b, _tidb_rowid from t use index(idx) where a = 'a';`).Check(testkit.Rows(
+		`b 1`,
+		`b 2`,
+	))
+	tk.MustExec(`begin;`)
+	tk.MustExec(`select * from t for update`)
+	tk.MustQuery(`select distinct b from t use index(idx) where a = 'a';`).Check(testkit.Rows(`b`))
+	tk.MustExec(`commit;`)
 }

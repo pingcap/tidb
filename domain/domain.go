@@ -25,6 +25,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -531,6 +531,11 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoHandle:      infoschema.NewHandle(store),
 		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7, 500),
 	}
+}
+
+// ResetHandle resets the domain's infoschema handle. It is used for testing.
+func (do *Domain) ResetHandle(store kv.Storage) {
+	do.infoHandle = infoschema.NewHandle(store)
 }
 
 // Init initializes a domain.

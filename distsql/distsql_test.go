@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

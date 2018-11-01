@@ -219,7 +219,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.init(e.ctx)
+	}.Init(e.ctx)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	return join

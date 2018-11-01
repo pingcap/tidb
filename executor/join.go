@@ -20,6 +20,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

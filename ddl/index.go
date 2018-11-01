@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
