@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -81,7 +82,7 @@ type testBinlogSuite struct {
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
-	client   binlog.PumpClient
+	client   *pumpcli.PumpsClient
 	ddl      ddl.DDL
 }
 
@@ -112,7 +113,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
-	s.client = binlog.NewPumpClient(clientCon)
+	s.client = binloginfo.MockPumpsClient(binlog.NewPumpClient(clientCon))
 	s.ddl.SetBinlogClient(s.client)
 }
 
