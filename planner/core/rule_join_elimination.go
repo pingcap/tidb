@@ -19,9 +19,8 @@ import (
 )
 
 type outerJoinEliminator struct {
-	hasDistinct int
-	cols        [][]*expression.Column
-	schemas     []*expression.Schema
+	cols    [][]*expression.Column
+	schemas []*expression.Schema
 }
 
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
@@ -44,8 +43,8 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin) LogicalPla
 
 func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, innerChildIdx int) LogicalPlan {
 	// outer join elimination with distinct
-	if o.hasDistinct > 0 {
-		cols := o.cols[o.hasDistinct-1]
+	if len(o.cols) > 0 {
+		cols := o.cols[len(o.cols)-1]
 		allColsInSchema := true
 		for _, col := range cols {
 			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
@@ -70,28 +69,51 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, innerChildIdx int) Log
 			return nil
 		}
 	}
-	p.children[innerChildIdx].buildKeyInfo()
 	// second, check whether the other side join keys are unique keys
+	p.children[innerChildIdx].buildKeyInfo()
+	var joinKeys []*expression.Column
+	for _, eqCond := range p.EqualConditions {
+		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
+	}
+	tmpSchema := expression.NewSchema(joinKeys...)
 	for _, keyInfo := range p.children[innerChildIdx].Schema().Keys {
-		keyInfoContainAllCols := true
-		var joinKeys []*expression.Column
-		if innerChildIdx > 0 {
-			joinKeys = p.RightJoinKeys
-		} else {
-			joinKeys = p.LeftJoinKeys
-		}
-		for _, col := range joinKeys {
+		joinKeysContainKeyInfo := true
+		for _, col := range keyInfo {
 			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-			if c, _ := expression.NewSchema(keyInfo...).FindColumn(columnName); c == nil {
-				keyInfoContainAllCols = false
+			if c, _ := tmpSchema.FindColumn(columnName); c == nil {
+				joinKeysContainKeyInfo = false
 				break
 			}
 		}
-		if keyInfoContainAllCols {
+		if joinKeysContainKeyInfo {
 			return p.children[1^innerChildIdx]
 		}
 	}
-
+	// Third, if p.children[innerChildIdx] is datasource, we must check specially index.
+	// Because buildKeyInfo() don't save the index without notnull flag.
+	// But in outer join, null==null don't return true. The null index do not affect the res.
+	if ds, ok := p.children[innerChildIdx].(*DataSource); ok {
+		for _, path := range ds.possibleAccessPaths {
+			if path.isTablePath {
+				continue
+			}
+			idx := path.index
+			if !idx.Unique {
+				continue
+			}
+			joinKeysContainIndex := true
+			for _, idxCol := range idx.Columns {
+				columnName := &ast.ColumnName{Schema: ds.DBName, Table: ds.tableInfo.Name, Name: idxCol.Name}
+				if c, _ := tmpSchema.FindColumn(columnName); c == nil {
+					joinKeysContainIndex = false
+					break
+				}
+			}
+			if joinKeysContainIndex {
+				return p.children[1^innerChildIdx]
+			}
+		}
+	}
 	return nil
 }
 
@@ -116,11 +138,9 @@ func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 			}
 		}
 		if isDistinctAgg {
-			o.hasDistinct++
 			o.cols = append(o.cols, agg.groupByCols)
 			defer func() {
-				o.hasDistinct--
-				o.cols = o.cols[:o.hasDistinct]
+				o.cols = o.cols[:len(o.cols)-1]
 			}()
 		}
 	}
