@@ -92,7 +92,17 @@ explain select ifnull(a, 0), ifnull(nb, 0) from t;
 explain select ifnull(nb, 0), ifnull(nb, 0) from t;
 explain select 1+ifnull(nb, 0) from t;
 explain select 1+ifnull(a, 0) from t;
-drop table if exists t;
+explain select 1+ifnull(nb, 0) from t where nb=1;
+# ifnull can be eliminated
+explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(ta.nb, 1) or ta.nb is null;
+explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
+explain select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
+explain select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
+# ifnull cannot be eliminated
+explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
+explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
+# when it comes to inner join case, ifnull can always be eliminated on not null column
+explain select ifnull(t.a, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 drop table if exists t;
 create table t(a int);
 explain select * from t where _tidb_rowid = 0;

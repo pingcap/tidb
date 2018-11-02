@@ -216,6 +216,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				CMSketch:  CMSketchFromProto(jsonCol.CMSketch),
 				Info:      colInfo,
 				Count:     count,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			tbl.Columns[col.ID] = col
 		}
