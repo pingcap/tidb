@@ -757,13 +757,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *driver.ParamMarkerExpr:
-		tp := types.NewFieldType(mysql.TypeUnspecified)
-		types.DefaultParamTypeForValue(v.GetValue(), tp)
-		value := &expression.Constant{Value: v.Datum, RetType: tp}
-		if er.useCache() {
-			value.DeferredExpr = er.getParamExpression(v)
-		}
-		er.ctxStack = append(er.ctxStack, value)
+		er.paramToExpression(v)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
 	case *ast.FuncCallExpr:
@@ -820,17 +814,18 @@ func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
 }
 
-func (er *expressionRewriter) getParamExpression(v *driver.ParamMarkerExpr) expression.Expression {
-	f, err := expression.NewFunction(er.ctx,
-		ast.GetParam,
-		&v.Type,
-		datumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
-	if err != nil {
-		er.err = errors.Trace(err)
-		return nil
+func (er *expressionRewriter) paramToExpression(v *driver.ParamMarkerExpr) {
+	tp := types.NewFieldType(mysql.TypeUnspecified)
+	types.DefaultParamTypeForValue(v.GetValue(), tp)
+	value := &expression.Constant{Value: v.Datum, RetType: tp}
+	if er.useCache() {
+		var f expression.Expression
+		f, er.err = expression.NewFunctionBase(er.ctx, ast.GetParam, &v.Type,
+			datumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
+		f.GetType().Tp = v.Type.Tp
+		value.DeferredExpr = f
 	}
-	f.GetType().Tp = v.Type.Tp
-	return f
+	er.ctxStack = append(er.ctxStack, value)
 }
 
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
@@ -1240,9 +1235,16 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	}
 
 	var function expression.Expression
-	function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
-	er.ctxStack = append(er.ctxStack, function)
+	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
+		function, er.err = expression.NewFunctionBase(er.ctx, v.FnName.L, &v.Type, args...)
+		c := &expression.Constant{Value: types.NewDatum(nil), RetType: &v.Type, DeferredExpr: function}
+		c.GetType().Tp = function.GetType().Tp
+		er.ctxStack = append(er.ctxStack, c)
+	} else {
+		function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)
+		er.ctxStack = append(er.ctxStack, function)
+	}
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
