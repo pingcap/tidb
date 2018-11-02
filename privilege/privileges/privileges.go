@@ -32,13 +32,13 @@ var SkipWithGrant = false
 const (
 	codeInvalidPrivilegeType  terror.ErrCode = 1
 	codeInvalidUserNameFormat                = 2
-	codeNoSuchGrant                          = 1141
+	codeErrNonexistingGrant                  = 1141
 )
 
 var (
 	errInvalidPrivilegeType  = terror.ClassPrivilege.New(codeInvalidPrivilegeType, "unknown privilege type")
 	errInvalidUserNameFormat = terror.ClassPrivilege.New(codeInvalidUserNameFormat, "wrong username format")
-	errNoSuchGrant           = terror.ClassPrivilege.New(codeNoSuchGrant, "There is no such grant defined for user '%s' on host '%s'")
+	errNonexistingGrant      = terror.ClassPrivilege.New(codeErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
 )
 
 var _ privilege.Manager = (*UserPrivileges)(nil)
@@ -151,8 +151,15 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	}
 	grants = mysqlPrivilege.showGrants(u, h)
 	if len(grants) == 0 {
-		err = errNoSuchGrant.GenWithStackByArgs(u, h)
+		err = errNonexistingGrant.GenWithStackByArgs(u, h)
 	}
 
 	return
+}
+
+func init() {
+	privilegeMySQLErrCodes := map[terror.ErrCode]uint16{
+		codeErrNonexistingGrant: mysql.ErrNonexistingGrant,
+	}
+	terror.ErrClassToMySQLCodes[terror.ClassPrivilege] = privilegeMySQLErrCodes
 }

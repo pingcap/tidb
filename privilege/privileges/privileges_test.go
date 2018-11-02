@@ -239,9 +239,10 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	mustExec(c, se, `DROP USER 'show'@'localhost'`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
+
+	// This should now return an error
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
-	c.Assert(err, IsNil)
-	c.Assert(gs, HasLen, 0)
+	c.Assert(err, NotNil) // cant show grants for non-existent
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {

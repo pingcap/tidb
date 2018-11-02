@@ -588,6 +588,7 @@ func (s *testSuite) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
+
 // TestShow2 is moved from session_test
 func (s *testSuite) TestShow2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -627,8 +628,6 @@ func (s *testSuite) TestShow2(c *C) {
 
 	tk.MustQuery("show grants for current_user()").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
-
-	tk.MustQuery("SHOW GRANTS FOR 'missinguser'").Check(testutil.RowsWithSep("|", "Error|1141|There is no such grant defined for user 'missinguser' on host '%'"))
 
 }
 
