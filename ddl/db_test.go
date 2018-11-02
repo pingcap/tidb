@@ -24,6 +24,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -48,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -1534,9 +1534,14 @@ func (s *testDBSuite) TestTableForeignKey(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("create table t1 (a int, b int);")
+	// test create table with foreign key.
 	failSQL := "create table t2 (c int, foreign key (a) references t1(a));"
 	s.testErrorCode(c, failSQL, tmysql.ErrKeyColumnDoesNotExits)
-	s.tk.MustExec("drop table if exists t1,t2;")
+	// test add foreign key.
+	s.tk.MustExec("create table t3 (a int, b int);")
+	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
+	s.testErrorCode(c, failSQL, tmysql.ErrKeyColumnDoesNotExits)
+	s.tk.MustExec("drop table if exists t1,t2,t3;")
 }
 
 func (s *testDBSuite) TestBitDefaultValue(c *C) {
@@ -3038,8 +3043,8 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 
 	s.tk.MustExec("truncate table t5;")
 	is = domain.GetDomain(ctx).InfoSchema()
-	c.Assert(err, IsNil)
 	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
 	c.Assert(oldPID != newPID, IsTrue)
 }

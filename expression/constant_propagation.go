@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -21,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disjointset"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -372,7 +372,7 @@ func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Const
 	retMapper := make(map[int]*Constant)
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, true)
 	if retMapper == nil {
-		// Filter is constant false or error occured, enforce early termination.
+		// Filter is constant false or error occurred, enforce early termination.
 		return nil
 	}
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, false)
