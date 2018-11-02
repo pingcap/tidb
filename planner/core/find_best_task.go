@@ -288,18 +288,18 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 	return
 }
 
-func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
-	for _, colInfo := range columns {
-		if pkIsHandle && mysql.HasPriKeyFlag(colInfo.Flag) {
+func isCoveringIndex(columns []*expression.Column, indexColumns []*model.IndexColumn, pkIsHandle bool) bool {
+	for _, col := range columns {
+		if pkIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 			continue
 		}
-		if colInfo.ID == model.ExtraHandleID {
+		if col.ID == model.ExtraHandleID {
 			continue
 		}
 		isIndexColumn := false
 		for _, indexCol := range indexColumns {
-			isFullLen := indexCol.Length == types.UnspecifiedLength || indexCol.Length == colInfo.Flen
-			if colInfo.Name.L == indexCol.Name.L && isFullLen {
+			isFullLen := indexCol.Length == types.UnspecifiedLength || indexCol.Length == col.RetType.Flen
+			if col.ColName.L == indexCol.Name.L && isFullLen {
 				isIndexColumn = true
 				break
 			}
@@ -347,7 +347,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	}
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
-	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
 			return invalidTask, nil
@@ -488,43 +488,15 @@ func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Colum
 
 func splitIndexFilterConditions(conditions []expression.Expression, indexColumns []*model.IndexColumn,
 	table *model.TableInfo) (indexConds, tableConds []expression.Expression) {
-	var pkName model.CIStr
-	if table.PKIsHandle {
-		pkInfo := table.GetPkColInfo()
-		if pkInfo != nil {
-			pkName = pkInfo.Name
-		}
-	}
 	var indexConditions, tableConditions []expression.Expression
 	for _, cond := range conditions {
-		if checkIndexCondition(cond, indexColumns, pkName) {
+		if isCoveringIndex(expression.ExtractColumns(cond), indexColumns, table.PKIsHandle) {
 			indexConditions = append(indexConditions, cond)
 		} else {
 			tableConditions = append(tableConditions, cond)
 		}
 	}
 	return indexConditions, tableConditions
-}
-
-// checkIndexCondition will check whether all columns of condition is index columns or primary key column.
-func checkIndexCondition(condition expression.Expression, indexColumns []*model.IndexColumn, pkName model.CIStr) bool {
-	cols := expression.ExtractColumns(condition)
-	for _, col := range cols {
-		if pkName.L == col.ColName.L {
-			continue
-		}
-		isIndexColumn := false
-		for _, indCol := range indexColumns {
-			if col.ColName.L == indCol.Name.L && indCol.Length == types.UnspecifiedLength {
-				isIndexColumn = true
-				break
-			}
-		}
-		if !isIndexColumn {
-			return false
-		}
-	}
-	return true
 }
 
 // convertToTableScan converts the DataSource to table scan.
