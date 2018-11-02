@@ -329,7 +329,7 @@
 
 [[projects]]
   digest = "1:4b96ce0f151b10c52b1d6876c179e9a6d2329f98939c4cf8148daaf27f981413"
-  name = "github.com/pkg/errors"
+  name = "github.com/pingcap/errors"
   packages = ["."]
   pruneopts = "NUT"
   revision = "1176802fff62540cc87d289bd40c52a2d6b2ea16"
@@ -577,7 +577,7 @@
     "github.com/pingcap/tidb-tools/tidb-binlog/pump_client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
-    "github.com/pkg/errors",
+    "github.com/pingcap/errors",
     "github.com/prometheus/client_golang/prometheus",
     "github.com/prometheus/client_golang/prometheus/push",
     "github.com/sirupsen/logrus",
