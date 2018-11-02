@@ -259,6 +259,18 @@ func (e *Execute) rebuildRange(p Plan) error {
 				return errors.Trace(err)
 			}
 		}
+	case *Insert:
+		if x.SelectPlan != nil {
+			return e.rebuildRange(x.SelectPlan)
+		}
+	case *Update:
+		if x.SelectPlan != nil {
+			return e.rebuildRange(x.SelectPlan)
+		}
+	case *Delete:
+		if x.SelectPlan != nil {
+			return e.rebuildRange(x.SelectPlan)
+		}
 	}
 	return nil
 }
