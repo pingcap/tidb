@@ -15,11 +15,11 @@ package infoschema_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -175,4 +175,21 @@ func (s *testSuite) TestSchemataCharacterSet(c *C) {
 	tk.MustQuery("select default_character_set_name, default_collation_name FROM information_schema.SCHEMATA  WHERE schema_name = 'foo'").Check(
 		testkit.Rows("utf8mb4 utf8_bin"))
 
+}
+
+func (s *testSuite) TestProfiling(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	session.SetStatsLease(0)
+	do, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer do.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows())
+	tk.MustExec("set @@profiling=1")
+	tk.MustQuery("select * from information_schema.profiling").Check(testkit.Rows("0 0  0 0 0 0 0 0 0 0 0 0 0 0   0"))
 }

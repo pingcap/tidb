@@ -22,18 +22,19 @@ import (
 	"time"
 
 	"github.com/klauspost/cpuid"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -238,7 +239,7 @@ type SessionVars struct {
 	SnapshotInfoschema interface{}
 
 	// BinlogClient is used to write binlog.
-	BinlogClient interface{}
+	BinlogClient *pumpcli.PumpsClient
 
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
@@ -252,8 +253,8 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
-	// AllowInSubqueryUnFolding can be set to true to fold in subquery
-	AllowInSubqueryUnFolding bool
+	// AllowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
+	AllowInSubqToJoinAndAgg bool
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -287,7 +288,7 @@ type SessionVars struct {
 	OptimizerSelectivityLevel int
 
 	// EnableTablePartition enables table partition feature.
-	EnableTablePartition bool
+	EnableTablePartition string
 
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
@@ -334,6 +335,7 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
+		AllowInSubqToJoinAndAgg:   DefOptInSubqToJoinAndAgg,
 		EnableRadixJoin:           false,
 		L2CacheSize:               cpuid.CPU.Cache.L2,
 		CommandValue:              uint32(mysql.ComSleep),
@@ -552,8 +554,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
-	case TiDBOptInSubqUnFolding:
-		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
+	case TiDBOptInSubqToJoinAndAgg:
+		s.AllowInSubqToJoinAndAgg = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
@@ -617,7 +619,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
-		s.EnableTablePartition = TiDBOptOn(val)
+		s.EnableTablePartition = val
 	case TiDBDDLReorgWorkerCount:
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgPriority:

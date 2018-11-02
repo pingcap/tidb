@@ -15,9 +15,9 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
@@ -340,6 +340,14 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("1"))
 
 	_, err = tk.Exec("set @@global.max_connections='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.max_allowed_packet=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '-1'"))
+	result = tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("1024"))
+
+	_, err = tk.Exec("set @@global.max_allowed_packet='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
 	tk.MustExec("set @@global.max_connect_errors=18446744073709551615")

@@ -16,20 +16,20 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, p.stats, prop)
+	us := PhysicalUnionScan{Conditions: p.conditions}.Init(p.ctx, p.stats, prop)
 	return []PhysicalPlan{us}
 }
 
@@ -132,7 +132,7 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 			DefaultValues:   p.DefaultValues,
 			LeftKeys:        leftKeys,
 			RightKeys:       rightKeys,
-		}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 		mergeJoin.SetSchema(p.schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
@@ -238,7 +238,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		LeftKeys:        leftKeys,
 		RightKeys:       rightKeys,
 		OtherConditions: p.OtherConditions,
-	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	return []PhysicalPlan{enforcedPhysicalMergeJoin}
@@ -274,7 +274,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 		Concurrency:     uint(p.ctx.GetSessionVars().HashJoinConcurrency),
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
-	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
 }
@@ -345,7 +345,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, innerJ
 		innerPlan:       innerPlan,
 		KeyOff2IdxOff:   newKeyOff,
 		Ranges:          ranges,
-	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
 }
@@ -442,7 +442,7 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 		filterCondition: ds.pushedDownConds,
 		Ranges:          ranges,
 		rangeDecidedBy:  outerJoinKeys,
-	}.init(ds.ctx)
+	}.Init(ds.ctx)
 	ts.SetSchema(ds.schema)
 
 	var rowCount float64
@@ -472,7 +472,7 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 	}
 	// Use `reader.stats` instead of `us.stats` because it should be more accurate. No need to specify
 	// childrenReqProps now since we have got reader already.
-	physicalUnionScan := PhysicalUnionScan{Conditions: us.conditions}.init(us.ctx, reader.statsInfo(), nil)
+	physicalUnionScan := PhysicalUnionScan{Conditions: us.conditions}.Init(us.ctx, reader.statsInfo(), nil)
 	physicalUnionScan.SetChildren(reader)
 	return physicalUnionScan
 }
@@ -489,7 +489,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		KeepOrder:        false,
 		Ranges:           ranger.FullRange(),
 		rangeDecidedBy:   outerJoinKeys,
-	}.init(ds.ctx)
+	}.Init(ds.ctx)
 	is.filterCondition = remainedConds
 
 	var rowCount float64
@@ -505,9 +505,9 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	cop := &copTask{
 		indexPlan: is,
 	}
-	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
+		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.Init(ds.ctx)
 		ts.SetSchema(is.dataSourceSchema)
 		cop.tablePlan = ts
 	}
@@ -705,7 +705,7 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	proj := PhysicalProjection{
 		Exprs:            p.Exprs,
 		CalculateNoDelay: p.calculateNoDelay,
-	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), newProp)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
 }
@@ -718,7 +718,7 @@ func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 			ByItems: lt.ByItems,
 			Count:   lt.Count,
 			Offset:  lt.Offset,
-		}.init(lt.ctx, lt.stats, resultProp)
+		}.Init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, topN)
 	}
 	return ret
@@ -735,7 +735,7 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 		limit := PhysicalLimit{
 			Count:  lt.Count,
 			Offset: lt.Offset,
-		}.init(lt.ctx, lt.stats, resultProp)
+		}.Init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, limit)
 	}
 	return ret
@@ -767,7 +767,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		PhysicalJoin:  la.getHashJoin(prop, 1),
 		OuterSchema:   la.corCols,
 		rightChOffset: la.children[0].Schema().Len(),
-	}.init(la.ctx,
+	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Cols: prop.Cols, Desc: prop.Desc},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
@@ -855,7 +855,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
-	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
 	return []PhysicalPlan{sel}
 }
 
@@ -869,7 +869,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 		limit := PhysicalLimit{
 			Offset: p.Offset,
 			Count:  p.Count,
-		}.init(p.ctx, p.stats, resultProp)
+		}.Init(p.ctx, p.stats, resultProp)
 		ret = append(ret, limit)
 	}
 	return ret
@@ -878,7 +878,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	lock := PhysicalLock{
 		Lock: p.Lock,
-	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
 	return []PhysicalPlan{lock}
 }
 
@@ -891,13 +891,13 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	for range p.children {
 		chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
 	}
-	ua := PhysicalUnionAll{}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	ua := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	ua.SetSchema(p.Schema())
 	return []PhysicalPlan{ua}
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
-	ps := PhysicalSort{ByItems: ls.ByItems}.init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	ps := PhysicalSort{ByItems: ls.ByItems}.Init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	return ps
 }
 
@@ -907,7 +907,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *property.PhysicalProperty) *Nomin
 		return nil
 	}
 	prop.ExpectedCnt = reqProp.ExpectedCnt
-	ps := NominalSort{}.init(ls.ctx, prop)
+	ps := NominalSort{}.Init(ls.ctx, prop)
 	return ps
 }
 
@@ -928,6 +928,6 @@ func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	if !prop.IsEmpty() {
 		return nil
 	}
-	mor := PhysicalMaxOneRow{}.init(p.ctx, p.stats, &property.PhysicalProperty{ExpectedCnt: 2})
+	mor := PhysicalMaxOneRow{}.Init(p.ctx, p.stats, &property.PhysicalProperty{ExpectedCnt: 2})
 	return []PhysicalPlan{mor}
 }

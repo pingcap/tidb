@@ -18,12 +18,12 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

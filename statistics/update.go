@@ -21,14 +21,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -457,11 +457,11 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	h.mu.Lock()
 	tbls := make([]*Table, 0, len(h.mu.rateMap))
 	for id, item := range h.mu.rateMap {
-		table, ok := is.TableByID(id)
+		table, ok := h.getTableByPhysicalID(is, id)
 		if !ok {
 			continue
 		}
-		tbl := h.GetTableStats(table.Meta()).copy()
+		tbl := h.GetPartitionStats(table.Meta(), id).copy()
 		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
 			col := *tbl.Columns[item.PkID]
 			col.ErrorRate.merge(item.PkErrorRate)

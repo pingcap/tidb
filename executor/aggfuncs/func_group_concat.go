@@ -18,11 +18,11 @@ import (
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pkg/errors"
 )
 
 type baseGroupConcat4String struct {

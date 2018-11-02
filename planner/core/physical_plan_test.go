@@ -15,10 +15,10 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -389,12 +389,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		// Test Semi Join hint success.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 where t1.a in (select a from t t2)",
-			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->Projection",
 		},
 		// Test Semi Join hint fail.
 		{
 			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1 where t1.a in (select a from t t2)",
-			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t2.a,t1.a)->Projection",
 		},
 		{
 			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 join t t2 where t1.c=t2.c and t1.f=t2.f",
@@ -457,7 +457,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		//},
 		{
 			sql:  "select * from t where a in (select s.a from t s) order by t.a",
-			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,s.a)->Projection",
 		},
 		// Test Nested sub query.
 		{
@@ -467,7 +467,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test Semi Join + Order by.
 		{
 			sql:  "select * from t where a in (select a from t) order by b",
-			best: "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort",
+			best: "MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Projection->Sort",
 		},
 		// Test Apply.
 		{
