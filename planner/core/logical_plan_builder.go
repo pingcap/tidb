@@ -22,6 +22,7 @@ import (
 	"unicode"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -39,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -77,6 +77,7 @@ func (b *PlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	// when we eliminate the max and min we may add `is not null` filter.
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagEliminateAgg
+	b.optFlag = b.optFlag | flagEliminateProjection
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx)
 	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
@@ -271,6 +272,16 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 	return nil
 }
 
+func resetNotNullFlag(schema *expression.Schema, start, end int) {
+	for i := start; i < end; i++ {
+		col := *schema.Columns[i]
+		newFieldType := *col.RetType
+		newFieldType.Flag &= ^mysql.NotNullFlag
+		col.RetType = &newFieldType
+		schema.Columns[i] = &col
+	}
+}
+
 func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 	// We will construct a "Join" node for some statements like "INSERT",
 	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
@@ -301,10 +312,12 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 		// left outer join need to be checked elimination
 		b.optFlag = b.optFlag | flagEliminateOuterJoin
 		joinPlan.JoinType = LeftOuterJoin
+		resetNotNullFlag(joinPlan.schema, leftPlan.Schema().Len(), joinPlan.schema.Len())
 	case ast.RightJoin:
 		// right outer join need to be checked elimination
 		b.optFlag = b.optFlag | flagEliminateOuterJoin
 		joinPlan.JoinType = RightOuterJoin
+		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len())
 	default:
 		joinPlan.JoinType = InnerJoin
 	}
@@ -462,6 +475,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	if b.curClause != havingClause {
 		b.curClause = whereClause
 	}
+
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := LogicalSelection{}.Init(b.ctx)
@@ -581,37 +595,6 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 	}
 }
 
-func eliminateIfNullOnNotNullCol(p LogicalPlan, expr expression.Expression) expression.Expression {
-	ds, isDs := p.(*DataSource)
-	if !isDs {
-		return expr
-	}
-
-	scalarExpr, isScalarFunc := expr.(*expression.ScalarFunction)
-	if !isScalarFunc {
-		return expr
-	}
-	exprChildren := scalarExpr.GetArgs()
-	for i := 0; i < len(exprChildren); i++ {
-		exprChildren[i] = eliminateIfNullOnNotNullCol(p, exprChildren[i])
-	}
-
-	if scalarExpr.FuncName.L != ast.Ifnull {
-		return expr
-	}
-	colRef, isColRef := exprChildren[0].(*expression.Column)
-	if !isColRef {
-		return expr
-	}
-
-	colInfo := model.FindColumnInfo(ds.Columns, colRef.ColName.L)
-	if !mysql.HasNotNullFlag(colInfo.Flag) {
-		return expr
-	}
-
-	return colRef
-}
-
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
@@ -621,7 +604,6 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	oldLen := 0
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
-		newExpr = eliminateIfNullOnNotNullCol(p, newExpr)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -715,7 +697,7 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			}
 		}
 		b.optFlag |= flagEliminateProjection
-		proj := LogicalProjection{Exprs: exprs}.Init(b.ctx)
+		proj := LogicalProjection{Exprs: exprs, avoidColumnEvaluator: true}.Init(b.ctx)
 		proj.SetSchema(u.schema.Clone())
 		proj.SetChildren(child)
 		u.children[childID] = proj
