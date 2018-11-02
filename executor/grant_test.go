@@ -181,14 +181,26 @@ func (s *testSuite) TestIssue2456(c *C) {
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
 
+func (s *testSuite) TestNoAutoCreateUser(c *C) {
+	// Creating a user as part of a GRANT is no longer the default
+	// sql_mode = NO_AUTO_CREATE_USER
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	_, err := tk.Exec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
+	c.Check(err, NotNil)
+}
+
 func (s *testSuite) TestCreateUserWhenGrant(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	// This only applies to sql_mode:NO_AUTO_CREATE_USER off
+	tk.MustExec(`SET SQL_MODE=''`)
 	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
 	// Make sure user is created automatically when grant to a non-exists one.
 	tk.MustQuery(`SELECT user FROM mysql.user WHERE user='test' and host='%'`).Check(
 		testkit.Rows("test"),
 	)
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 }
 
 func (s *testSuite) TestIssue2654(c *C) {

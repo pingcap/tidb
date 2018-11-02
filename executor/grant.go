@@ -70,7 +70,10 @@ func (e *GrantExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !exists {
+		// TODO: Change to SQLMode.HasAuthCreateUserMode() once parser supports it.
+		if !exists && e.ctx.GetSessionVars().SQLMode.HasStrictMode() {
+			return fmt.Errorf("Can't find any matching row in the user table")
+		} else if !exists {
 			pwd, ok := user.EncodedPassword()
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
