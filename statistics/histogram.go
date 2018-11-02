@@ -720,8 +720,9 @@ func (e *ErrorRate) merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
-	Count int64
-	Info  *model.ColumnInfo
+	Count    int64
+	Info     *model.ColumnInfo
+	isHandle bool
 	ErrorRate
 }
 
