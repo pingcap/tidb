@@ -588,7 +588,6 @@ func (s *testSuite) TestIssue3641(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
-
 // TestShow2 is moved from session_test
 func (s *testSuite) TestShow2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
