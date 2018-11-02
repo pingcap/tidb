@@ -182,10 +182,9 @@ func (s *testSuite) TestIssue2456(c *C) {
 }
 
 func (s *testSuite) TestNoAutoCreateUser(c *C) {
-	// Creating a user as part of a GRANT is no longer the default
-	// sql_mode = NO_AUTO_CREATE_USER
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	tk.MustExec(`SET sql_mode='NO_AUTO_CREATE_USER'`)
 	_, err := tk.Exec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
 	c.Check(err, NotNil)
 }
