@@ -1293,6 +1293,12 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinctrow c2,c1) from t group by c1;`, true},
 		{`SELECT student_name, GROUP_CONCAT(DISTINCT test_score ORDER BY test_score DESC SEPARATOR ' ') FROM student GROUP BY student_name;`, true},
+		{`select std(c1) from t`, true},
+		{`select stddev(c1) from t`, true},
+		{`select stddev_pop(c1) from t`, true},
+		{`select stddev_pop(distinct c1) from t`, true},
+		{`select stddev_samp(c1) from t`, true},
+		{`select stddev_samp(distinct c1) from t`, true},
 
 		// for encryption and compression functions
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},
