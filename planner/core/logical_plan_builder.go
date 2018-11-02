@@ -313,7 +313,7 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 		resetNotNullFlag(joinPlan.schema, leftPlan.Schema().Len(), joinPlan.schema.Len())
 	case ast.RightJoin:
 		joinPlan.JoinType = RightOuterJoin
-		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len()-1)
+		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len())
 	default:
 		joinPlan.JoinType = InnerJoin
 	}
