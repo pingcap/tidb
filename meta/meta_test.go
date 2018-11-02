@@ -218,6 +218,7 @@ func (s *testSuite) TestMeta(c *C) {
 	err = t.SetSchemaDiff(schemaDiff)
 	c.Assert(err, IsNil)
 	readDiff, err := t.GetSchemaDiff(schemaDiff.Version)
+	c.Assert(err, IsNil)
 	c.Assert(readDiff, DeepEquals, schemaDiff)
 
 	err = txn.Commit(context.Background())
@@ -332,6 +333,7 @@ func (s *testSuite) TestDDL(c *C) {
 
 	// Test GetAllDDLJobsInQueue.
 	err = t.EnQueueDDLJob(job)
+	c.Assert(err, IsNil)
 	job1 := &model.Job{ID: 2}
 	err = t.EnQueueDDLJob(job1)
 	c.Assert(err, IsNil)

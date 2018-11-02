@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 )
 
 type visitInfo struct {
@@ -677,7 +677,7 @@ func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]i
 			}
 		}
 		if !found {
-			return nil, errors.New(fmt.Sprintf("can not found the specified partition name %s in the table definition", name.O))
+			return nil, fmt.Errorf("can not found the specified partition name %s in the table definition", name.O)
 		}
 	}
 	return ids, nil
