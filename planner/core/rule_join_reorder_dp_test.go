@@ -146,7 +146,7 @@ func (s *testJoinReorderDPSuite) makeStatsMapForTPCHQ5() {
 }
 
 func (s *testJoinReorderDPSuite) newDataSource(name string) LogicalPlan {
-	ds := DataSource{}.init(s.ctx)
+	ds := DataSource{}.Init(s.ctx)
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.schema = expression.NewSchema()
