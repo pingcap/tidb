@@ -17,6 +17,8 @@ import (
 	"container/list"
 	"math/rand"
 	"sync"
+	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/types"
 )
@@ -84,24 +86,34 @@ func (p *Pool) PutChunk(fields []*types.FieldType, chk *Chunk) {
 }
 
 type colPool struct {
-	shards  []colPoolShard
+	shards  []*colPoolShard
 	elemLen int
+	rander  *rand.Rand
 }
 
 func newColPool(numShards int, elemLen int) *colPool {
-	return &colPool{
-		shards:  make([]colPoolShard, numShards),
+	cp := &colPool{
+		shards:  make([]*colPoolShard, numShards),
 		elemLen: elemLen,
+		rander:  rand.New(rand.NewSource(time.Now().Unix())),
 	}
+	for i := 0; i < numShards; i++ {
+		cp.shards[i] = newColPoolShard()
+	}
+	return cp
 }
 
 func (cp *colPool) put(col *column) {
-	ordinal := rand.Int() % len(cp.shards)
+	x := *(*uint64)(unsafe.Pointer(&col))
+	x = (x ^ (x >> 30)) * uint64(0xbf58476d1ce4e5b9)
+	x = (x ^ (x >> 27)) * uint64(0x94d049bb133111eb)
+	x = x ^ (x >> 31)
+	ordinal := x % uint64(len(cp.shards))
 	cp.shards[ordinal].put(col)
 }
 
 func (cp *colPool) get(cap int) *column {
-	ordinal := rand.Int() % len(cp.shards)
+	ordinal := cp.rander.Int() % len(cp.shards)
 	col := cp.shards[ordinal].get()
 	if col != nil {
 		return col
@@ -113,16 +125,28 @@ func (cp *colPool) get(cap int) *column {
 	return newFixedLenColumn(cp.elemLen, cap)
 }
 
+func newColPoolShard() *colPoolShard {
+	return &colPoolShard{
+		cols:   list.New(),
+		exists: make(map[*column]struct{}),
+	}
+}
+
 type colPoolShard struct {
 	sync.Mutex
 	cols *list.List
+
+	exists map[*column]struct{}
 }
 
 func (ps *colPoolShard) put(col *column) {
 	ps.Lock()
 	defer ps.Unlock()
 
-	ps.cols.PushFront(col)
+	if _, ok := ps.exists[col]; !ok {
+		ps.cols.PushFront(col)
+		ps.exists[col] = struct{}{}
+	}
 }
 
 func (ps *colPoolShard) get() *column {
@@ -131,7 +155,9 @@ func (ps *colPoolShard) get() *column {
 
 	if ps.cols.Len() > 0 {
 		head := ps.cols.Front()
-		return ps.cols.Remove(head).(*column)
+		col := ps.cols.Remove(head).(*column)
+		delete(ps.exists, col)
+		return col
 	}
 	return nil
 }
