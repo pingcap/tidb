@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disjointset"
+	log "github.com/sirupsen/logrus"
 )
 
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
