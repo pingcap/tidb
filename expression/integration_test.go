@@ -2091,6 +2091,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("-1"))
 	result = tk.MustQuery("select cast(1 as signed int)")
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select cast('8e2' as signed), cast('+8e2' as signed), cast('-8e2' as signed), cast('-8e2' as unsigned)")
+	result.Check(testkit.Rows("8 8 -8 18446744073709551608"))
 
 	// test cast time as decimal overflow
 	tk.MustExec("drop table if exists t1")

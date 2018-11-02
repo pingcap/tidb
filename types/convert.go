@@ -231,12 +231,26 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 }
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
-func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error) {
-	floatPrefix, err := getValidFloatPrefix(sc, str)
-	if err != nil {
-		return floatPrefix, errors.Trace(err)
+func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (valid string, err error) {
+	var validLen int
+	for i := 0; i < len(str); i++ {
+		c := str[i]
+		if c == '+' || c == '-' {
+			validLen++
+		} else if c < '0' || c > '9' {
+			break
+		} else {
+			validLen++
+		}
 	}
-	return floatStrToIntStr(sc, floatPrefix, str)
+	valid = str[:validLen]
+	if valid == "" {
+		valid = "0"
+	}
+	if validLen == 0 || validLen != len(str) {
+		err = errors.Trace(handleTruncateError(sc))
+	}
+	return valid, err
 }
 
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by

@@ -36,6 +36,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustQuery("select bit_and(c) from t where NULL").Check(testkit.Rows("18446744073709551615"))
 	tk.MustQuery("select bit_or(c) from t where NULL").Check(testkit.Rows("0"))
 	tk.MustQuery("select bit_xor(c) from t where NULL").Check(testkit.Rows("0"))
+	tk.MustQuery("select bit_xor('8e2')").Check(testkit.Rows("8"))
 	result := tk.MustQuery("select count(*) from t")
 	result.Check(testkit.Rows("7"))
 	result = tk.MustQuery("select count(*) from t group by d order by c")
