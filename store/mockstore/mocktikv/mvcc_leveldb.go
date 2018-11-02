@@ -18,6 +18,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/iterator"
 	"github.com/pingcap/goleveldb/leveldb/opt"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

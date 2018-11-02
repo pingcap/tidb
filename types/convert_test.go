@@ -20,13 +20,13 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testTypeConvertSuite{})
@@ -271,8 +271,10 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	dt, err := ParseDate(nil, "2015-11-11")
 	c.Assert(err, IsNil)
 	v, err = Convert(dt, ft)
+	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(ZeroDuration, ft)
+	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(time.Now().Year()))
 
 	// For enum
