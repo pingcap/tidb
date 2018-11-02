@@ -128,10 +128,6 @@ func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 				isDistinctAgg = false
 				break
 			}
-			if len(aggDesc.Args) != 1 {
-				isDistinctAgg = false
-				break
-			}
 			if _, ok := aggDesc.Args[0].(*expression.Column); !ok {
 				isDistinctAgg = false
 				break
