@@ -281,6 +281,23 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	c.Assert(count, Equals, 0.0)
 }
 
+func (s *testSelectivitySuite) TestPrimaryKeySelectivity(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a char(10) primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > "t"`).Check(testkit.Rows(
+		"IndexScan_8   cop table:t, index:a, range:(t,+inf], keep order:false 3333.33",
+		"TableScan_9   cop table:t, keep order:false 3333.33",
+		"IndexLookUp_10   root index:IndexScan_8, table:TableScan_9 3333.33"))
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > 1`).Check(testkit.Rows(
+		"TableScan_5   cop table:t, range:(1,+inf], keep order:false 3333.33",
+		"TableReader_6   root data:TableScan_5 3333.33"))
+}
+
 func BenchmarkSelectivity(b *testing.B) {
 	c := &C{}
 	s := &testSelectivitySuite{}

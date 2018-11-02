@@ -126,6 +126,7 @@ func (h *Handle) LoadStatsFromJSON(tableInfo *model.TableInfo, jsonTbl *JSONTabl
 				CMSketch:  CMSketchFromProto(jsonCol.CMSketch),
 				Info:      colInfo,
 				Count:     count,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			tbl.Columns[col.ID] = col
 		}
