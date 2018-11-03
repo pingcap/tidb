@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testAnalyzeSuite{})
@@ -586,6 +586,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 
 		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, sql)
+		c.Assert(err, IsNil)
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
