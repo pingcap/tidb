@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
@@ -37,14 +36,6 @@ import (
  ************************************************************************************/
 var (
 	_ Executor = (*GrantExec)(nil)
-)
-
-const (
-	codePasswordNoMatch = 1133
-)
-
-var (
-	errPasswordNoMatch = terror.ClassExecutor.New(codePasswordNoMatch, mysql.MySQLErrName[mysql.ErrPasswordNoMatch])
 )
 
 // GrantExec executes GrantStmt.
@@ -80,7 +71,7 @@ func (e *GrantExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		if !exists && e.ctx.GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
-			return errPasswordNoMatch
+			return ErrPasswordNoMatch
 		} else if !exists {
 			pwd, ok := user.EncodedPassword()
 			if !ok {

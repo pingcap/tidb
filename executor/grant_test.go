@@ -19,6 +19,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -187,6 +189,7 @@ func (s *testSuite) TestNoAutoCreateUser(c *C) {
 	tk.MustExec(`SET sql_mode='NO_AUTO_CREATE_USER'`)
 	_, err := tk.Exec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
 	c.Check(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue)
 }
 
 func (s *testSuite) TestCreateUserWhenGrant(c *C) {
