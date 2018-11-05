@@ -16,11 +16,11 @@ package aggfuncs
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/errors"
 )
 
 type varianceType int
