@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 // AddUint64 adds uint64 a and b if no overflow, else returns error.

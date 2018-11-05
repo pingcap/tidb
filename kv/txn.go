@@ -18,8 +18,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/pingcap/tidb/terror"
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
