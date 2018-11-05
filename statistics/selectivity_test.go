@@ -22,10 +22,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -322,6 +322,23 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(2, 2))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 0.0)
+}
+
+func (s *testSelectivitySuite) TestPrimaryKeySelectivity(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a char(10) primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > "t"`).Check(testkit.Rows(
+		"IndexLookUp_10 3333.33 root ",
+		"├─IndexScan_8 3333.33 cop table:t, index:a, range:(\"t\",+inf], keep order:false, stats:pseudo",
+		"└─TableScan_9 3333.33 cop table:t, keep order:false, stats:pseudo"))
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > 1`).Check(testkit.Rows(
+		"TableReader_6 3333.33 root data:TableScan_5",
+		"└─TableScan_5 3333.33 cop table:t, range:(1,+inf], keep order:false, stats:pseudo"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {

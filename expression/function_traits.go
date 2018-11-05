@@ -14,28 +14,17 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 )
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
 var UnCacheableFunctions = map[string]struct{}{
-	ast.Now:              {},
-	ast.CurrentTimestamp: {},
-	ast.UTCTime:          {},
-	ast.Curtime:          {},
-	ast.CurrentTime:      {},
-	ast.UTCTimestamp:     {},
-	ast.UnixTimestamp:    {},
-	ast.Sysdate:          {},
-	ast.Curdate:          {},
-	ast.CurrentDate:      {},
-	ast.UTCDate:          {},
-	ast.Database:         {},
-	ast.CurrentUser:      {},
-	ast.User:             {},
-	ast.ConnectionID:     {},
-	ast.LastInsertId:     {},
-	ast.Version:          {},
+	ast.Database:     {},
+	ast.CurrentUser:  {},
+	ast.User:         {},
+	ast.ConnectionID: {},
+	ast.LastInsertId: {},
+	ast.Version:      {},
 }
 
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.
@@ -50,6 +39,23 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.SetVar:    {},
 	ast.GetVar:    {},
 	ast.GetParam:  {},
+}
+
+// DeferredFunctions stores non-deterministic functions, which can be deferred only when the plan cache is enabled.
+var DeferredFunctions = map[string]struct{}{
+	ast.Now:              {},
+	ast.CurrentTimestamp: {},
+	ast.UTCTime:          {},
+	ast.Curtime:          {},
+	ast.CurrentTime:      {},
+	ast.UTCTimestamp:     {},
+	ast.UnixTimestamp:    {},
+	ast.Sysdate:          {},
+	ast.Curdate:          {},
+	ast.CurrentDate:      {},
+	ast.UTCDate:          {},
+	ast.Rand:             {},
+	ast.UUID:             {},
 }
 
 // inequalFunctions stores functions which cannot be propagated from column equal condition.

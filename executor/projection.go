@@ -16,10 +16,10 @@ package executor
 import (
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -49,7 +49,7 @@ type projectionOutput struct {
 type ProjectionExec struct {
 	baseExecutor
 
-	evaluatorSuit    *expression.EvaluatorSuit
+	evaluatorSuit    *expression.EvaluatorSuite
 	calculateNoDelay bool
 
 	prepared    bool
@@ -295,7 +295,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 type projectionWorker struct {
 	sctx            sessionctx.Context
-	evaluatorSuit   *expression.EvaluatorSuit
+	evaluatorSuit   *expression.EvaluatorSuite
 	globalFinishCh  <-chan struct{}
 	inputGiveBackCh chan<- *projectionInput
 

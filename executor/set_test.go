@@ -15,9 +15,9 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
@@ -239,6 +239,13 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_constraint_check_in_place = 0")
 	tk.MustQuery(`select @@global.tidb_constraint_check_in_place;`).Check(testkit.Rows("0"))
+
+	tk.MustExec("set tidb_slow_log_threshold = 0")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_slow_log_threshold = 1")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("1"))
+	_, err = tk.Exec("set global tidb_slow_log_threshold = 0")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
@@ -340,6 +347,14 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("1"))
 
 	_, err = tk.Exec("set @@global.max_connections='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.max_allowed_packet=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '-1'"))
+	result = tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("1024"))
+
+	_, err = tk.Exec("set @@global.max_allowed_packet='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
 	tk.MustExec("set @@global.max_connect_errors=18446744073709551615")

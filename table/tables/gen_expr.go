@@ -16,11 +16,11 @@ package tables
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/util/charset"
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
 )
 
 // nameResolver is the visitor to resolve table name and column name.

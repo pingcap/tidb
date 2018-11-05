@@ -19,18 +19,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -1183,8 +1183,8 @@ func dataForPseudoProfiling() [][]types.Datum {
 		0,                      // PAGE_FAULTS_MAJOR
 		0,                      // PAGE_FAULTS_MINOR
 		0,                      // SWAPS
-		0,                      // SOURCE_FUNCTION
-		0,                      // SOURCE_FILE
+		"",                     // SOURCE_FUNCTION
+		"",                     // SOURCE_FILE
 		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)
