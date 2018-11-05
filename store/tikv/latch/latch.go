@@ -201,6 +201,8 @@ func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 		latch.waiting = latch.waiting[:len(latch.waiting)-1]
 
 		if find.maxCommitTS > nextLock.startTS {
+			find.value = nextLock
+			nextLock.acquiredCount++
 			nextLock.isStale = true
 		}
 	}
