@@ -119,6 +119,8 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, innerChildIdx int) Log
 	return nil
 }
 
+// Check whether a LogicalPlan is a LogicalAggregation and its all aggregate functions is duplicate aggnostic.
+// Also, check all the args are expression.Column.
 func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (isDuplicateAgnosticAgg bool, cols []*expression.Column) {
 	if agg, ok := p.(*LogicalAggregation); ok {
 		isDuplicateAgnosticAgg = true
