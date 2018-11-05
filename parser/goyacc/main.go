@@ -222,7 +222,15 @@ func (s symsUsed) Less(i, j int) bool {
 		return false
 	}
 
-	return strings.ToLower(s[i].sym.Name) < strings.ToLower(s[j].sym.Name)
+	caseFoldedCompare := strings.Compare(strings.ToLower(s[i].sym.Name), strings.ToLower(s[j].sym.Name))
+	if caseFoldedCompare < 0 {
+		return true
+	}
+	if caseFoldedCompare > 0 {
+		return false
+	}
+
+	return s[i].sym.Name < s[j].sym.Name
 }
 
 func main1(in string) (err error) {
