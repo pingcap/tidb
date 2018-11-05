@@ -709,12 +709,12 @@ func parseOnePart(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, c
 		parseWhenLen6(lastSepChar, selfDecideFsp, currentPart, realFsp, seps)
 		return nil
 	} else {
-		if '.' == lastSepChar {//'2017.0112 00~00~00.333' -> 2017-01-12 00:00:00.333
-			var err= parseWhenLenLess6(lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
+		if '.' == lastSepChar { //'2017.0112 00~00~00.333' -> 2017-01-12 00:00:00.333
+			var err = parseWhenLenLess6(lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
 			if err != nil {
 				return err
 			}
-		}else {//'2017@0112 00~00~00.333' -> Incorrect DATETIME value
+		} else { //'2017@0112 00~00~00.333' -> Incorrect DATETIME value
 			parseOnePartAsWhole(currentPart, totalPartCount, seps)
 		}
 	}
@@ -799,7 +799,7 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) (
 
 	if isFloat && MaxSqlTimeParts-1 > totalPartCount {
 		// 20170118.999-->"2017-01-18 00:00:00.000"
-		if 0 == totalPartCount {// 20170118-->"2017-01-18 00:00:00.000"
+		if 0 == totalPartCount { // 20170118-->"2017-01-18 00:00:00.000"
 			err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
 			if err != nil {
 				return nil, realFsp, err
