@@ -67,8 +67,6 @@ var (
 	_ builtinFunc = &builtinJSONLengthSig{}
 	_ builtinFunc = &builtinJSONValidJSONSig{}
 	_ builtinFunc = &builtinJSONValidStringSig{}
-	_ builtinFunc = &builtinJSONValidNullSig{}
-	_ builtinFunc = &builtinJSONValidOthersSig{}
 )
 
 type jsonTypeFunctionClass struct {
@@ -698,26 +696,16 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 
 	var bf baseBuiltinFunc
-	switch args[0].GetType().Tp {
-	case mysql.TypeNull:
-		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, args[0].GetType().EvalType())
-		sig = &builtinJSONValidNullSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_JsonValidSig)
-	case mysql.TypeJSON:
+	switch args[0].GetType().EvalType() {
+	case types.ETJson:
 		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
 		sig = &builtinJSONValidJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidSig)
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob,
-		mysql.TypeLongBlob, mysql.TypeMediumBlob, mysql.TypeTinyBlob:
-		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
-		sig = &builtinJSONValidStringSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_JsonValidSig)
 	default:
 		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, args[0].GetType().EvalType())
-		sig = &builtinJSONValidOthersSig{bf}
+		sig = &builtinJSONValidStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_JsonValidSig)
 	}
-
 	return sig, nil
 }
 
@@ -750,6 +738,10 @@ func (b *builtinJSONValidStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	if b.args[0].GetType().EvalType() != types.ETString {
+		return 0, false, nil
+	}
+
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, nil
@@ -759,34 +751,6 @@ func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bo
 		return 0, false, nil
 	}
 	return 1, false, nil
-}
-
-type builtinJSONValidNullSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinJSONValidNullSig) Clone() builtinFunc {
-	newSig := &builtinJSONValidNullSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-func (b *builtinJSONValidNullSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-	return 1, true, nil
-}
-
-type builtinJSONValidOthersSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
-	newSig := &builtinJSONValidOthersSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-func (b *builtinJSONValidOthersSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-	return 0, false, nil
 }
 
 type jsonArrayAppendFunctionClass struct {
