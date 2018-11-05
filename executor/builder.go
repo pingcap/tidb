@@ -981,7 +981,7 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 
 	return &ProjectionExec{
 		baseExecutor:  newBaseExecutor(b.ctx, expression.NewSchema(projSchemaCols...), projFromID, src),
-		evaluatorSuit: expression.NewEvaluatorSuit(projExprs),
+		evaluatorSuit: expression.NewEvaluatorSuite(projExprs, false),
 	}
 }
 
@@ -1112,7 +1112,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
 		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency,
-		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
+		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
 
