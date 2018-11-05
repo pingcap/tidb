@@ -111,7 +111,7 @@ func (h *Handle) GetQueryFeedback() []*QueryFeedback {
 
 // DurationToTS converts duration to timestamp.
 func DurationToTS(d time.Duration) uint64 {
-	return oracle.ComposeTS(int64(d)/int64(time.Millisecond), 0)
+	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
 // Update reads stats meta from store and updates the stats map.
