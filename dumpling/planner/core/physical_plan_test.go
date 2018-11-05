@@ -436,7 +436,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-
+	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tests := []struct {
 		sql  string
 		best string
@@ -782,6 +782,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	se.Execute(context.Background(), "use test")
+	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	c.Assert(err, IsNil)
 
 	tests := []struct {
@@ -1176,7 +1177,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-
+	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tests := []struct {
 		sql  string
 		best string

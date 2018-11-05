@@ -1873,6 +1873,8 @@ func (s *testSuite) TestColumnName(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
+	// disable only full group by
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
 	rs, err := tk.Exec("select 1 + c, count(*) from t")
 	c.Check(err, IsNil)
 	fields := rs.Fields()
