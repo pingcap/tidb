@@ -12,4 +12,6 @@
 // limitations under the License.
 
 // The code in this package was derived from https://github.com/cockroachlabs/cockroach.
+
+// Package tracing is used for query-level, session-level and event(binds to /request/debug) tracing.
 package tracing

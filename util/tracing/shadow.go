@@ -14,9 +14,9 @@
 package tracing
 
 import (
-	"context"
 	"github.com/lightstep/lightstep-tracer-go"
 	"github.com/opentracing/opentracing-go"
+	"golang.org/x/net/context"
 )
 
 type shadowTracerManager interface {

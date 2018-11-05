@@ -14,7 +14,6 @@
 package tracing
 
 import (
-	"context"
 	"fmt"
 	"testing"
 )
@@ -33,13 +32,5 @@ func BenchmarkNoopLogKVWithF(b *testing.B) {
 	sp := noopSpan{}
 	for i := 0; i < b.N; i++ {
 		sp.LogKV("event", fmt.Sprintf("this is format %s", "noop is finished"))
-	}
-}
-
-// BenchmarkChildSpan benchs the cost of `ChildSpanFromContxt`.
-func BenchmarkChildSpan(b *testing.B) {
-	ctx := context.TODO()
-	for i := 0; i < b.N; i++ {
-		ChildSpan(ctx, "child")
 	}
 }

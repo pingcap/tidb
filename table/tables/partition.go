@@ -145,6 +145,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 					column = col
 				}
 			}
+			fmt.Printf("%s\n", pi.Expr)
 			if column == nil {
 				log.Warnf("partition pruning won't work on this expr:%s", pi.Expr)
 			}
