@@ -19,7 +19,9 @@ import (
 )
 
 type outerJoinEliminator struct {
-	cols    [][]*expression.Column
+	// save the duplicate agnostic aggregate function's args in recursion
+	cols [][]*expression.Column
+	// save the LogicalJoin's parent schema in recursion
 	schemas []*expression.Schema
 }
 
@@ -27,8 +29,8 @@ type outerJoinEliminator struct {
 // 1. outer join elimination: For example left outer join, if the parent only use the
 //    columns from left table and the join key of right table(the inner table) is a unique
 //    key of the right table. the left outer join can be eliminated.
-// 2. outer join elimination with distinct: For example left outer join. If the parent
-//    only use the columns from left table with 'distinct' label. The left outer join can
+// 2. outer join elimination with duplicate agnostic aggregate functions: For example left outer join.
+//    If the parent only use the columns from left table with 'distinct' label. The left outer join can
 //    be eliminated.
 func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin) LogicalPlan {
 	switch p.JoinType {
@@ -42,7 +44,7 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin) LogicalPla
 }
 
 func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, innerChildIdx int) LogicalPlan {
-	// outer join elimination with distinct
+	// outer join elimination with duplicate agnostic aggregate functions
 	if len(o.cols) > 0 {
 		cols := o.cols[len(o.cols)-1]
 		allColsInSchema := true
@@ -58,7 +60,7 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, innerChildIdx int) Log
 		}
 	}
 
-	// outer join elimination without distinct
+	// outer join elimination without duplicate agnostic aggregate functions
 	// first, check whether the parent's schema columns are all in left or right
 	if len(o.schemas) == 0 {
 		return nil
@@ -117,28 +119,38 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, innerChildIdx int) Log
 	return nil
 }
 
-func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
-	// check the distinct
-	if agg, ok := p.(*LogicalAggregation); ok && len(agg.groupByCols) > 0 {
-		isDistinctAgg := true
+func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (isDuplicateAgnosticAgg bool, cols []*expression.Column) {
+	if agg, ok := p.(*LogicalAggregation); ok {
+		isDuplicateAgnosticAgg = true
 		for _, aggDesc := range agg.AggFuncs {
 			if aggDesc.Name != ast.AggFuncFirstRow &&
 				aggDesc.Name != ast.AggFuncMax &&
-				aggDesc.Name != ast.AggFuncMin {
-				isDistinctAgg = false
+				aggDesc.Name != ast.AggFuncMin &&
+				(aggDesc.Name != ast.AggFuncAvg || !aggDesc.HasDistinct) &&
+				(aggDesc.Name != ast.AggFuncSum || !aggDesc.HasDistinct) &&
+				(aggDesc.Name != ast.AggFuncCount || !aggDesc.HasDistinct) {
+				isDuplicateAgnosticAgg = false
 				break
 			}
-			if _, ok := aggDesc.Args[0].(*expression.Column); !ok {
-				isDistinctAgg = false
+			if col, ok := aggDesc.Args[0].(*expression.Column); ok {
+				cols = append(cols, col)
+			} else {
+				isDuplicateAgnosticAgg = false
 				break
 			}
 		}
-		if isDistinctAgg {
-			o.cols = append(o.cols, agg.groupByCols)
-			defer func() {
-				o.cols = o.cols[:len(o.cols)-1]
-			}()
-		}
+		return
+	}
+	return false, nil
+}
+
+func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
+	// check the duplicate agnostic aggregate functions
+	if ok, cols := o.isDuplicateAgnosticAgg(p); ok {
+		o.cols = append(o.cols, cols)
+		defer func() {
+			o.cols = o.cols[:len(o.cols)-1]
+		}()
 	}
 
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
