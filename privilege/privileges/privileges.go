@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -27,19 +26,6 @@ import (
 
 // SkipWithGrant causes the server to start without using the privilege system at all.
 var SkipWithGrant = false
-
-// privilege error codes.
-const (
-	codeInvalidPrivilegeType  terror.ErrCode = 1
-	codeInvalidUserNameFormat                = 2
-	codeErrNonexistingGrant                  = 1141
-)
-
-var (
-	errInvalidPrivilegeType  = terror.ClassPrivilege.New(codeInvalidPrivilegeType, "unknown privilege type")
-	errInvalidUserNameFormat = terror.ClassPrivilege.New(codeInvalidUserNameFormat, "wrong username format")
-	errNonexistingGrant      = terror.ClassPrivilege.New(codeErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
-)
 
 var _ privilege.Manager = (*UserPrivileges)(nil)
 
@@ -155,11 +141,4 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 	}
 
 	return
-}
-
-func init() {
-	privilegeMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeErrNonexistingGrant: mysql.ErrNonexistingGrant,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassPrivilege] = privilegeMySQLErrCodes
 }
