@@ -48,6 +48,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 		store.Close()
 	}()
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t1(a int, b int, c int, key idx(a, b))")
 	tk.MustExec("create table t2(a int, b int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
@@ -652,6 +653,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 		store.Close()
 	}()
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t(a int, b int, c int, index idx(c))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
 	tk.MustExec("analyze table t")
