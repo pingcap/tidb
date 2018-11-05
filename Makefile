@@ -101,6 +101,7 @@ vet:
 clean:
 	$(GO) clean -i ./...
 	rm -rf *.out
+	rm -rf parser/
 
 todo:
 	@grep -n ^[[:space:]]*_[[:space:]]*=[[:space:]][[:alpha:]][[:alnum:]]* */*.go parser/parser.y || true
