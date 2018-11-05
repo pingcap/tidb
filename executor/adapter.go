@@ -289,7 +289,11 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
 			log.Debugf("con:%d ActivePendingTxn %s", ctx.GetSessionVars().ConnectionID, a.Text)
-			err = ctx.ActivePendingTxn()
+			if _, ok := a.Plan.(*plannercore.CheckTable); ok && ctx.GetSessionVars().SnapshotTS != 0 {
+				err = ctx.InitTxnWithStartTS(ctx.GetSessionVars().SnapshotTS)
+			} else {
+				err = ctx.ActivePendingTxn()
+			}
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
