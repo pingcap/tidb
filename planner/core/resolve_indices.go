@@ -15,7 +15,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/util/disjointset"
 )
 
 // ResolveIndices implements Plan interface.
@@ -23,6 +23,44 @@ func (p *PhysicalProjection) ResolveIndices() {
 	p.physicalSchemaProducer.ResolveIndices()
 	for i, expr := range p.Exprs {
 		p.Exprs[i] = expr.ResolveIndices(p.children[0].Schema())
+	}
+	childProj, isProj := p.children[0].(*PhysicalProjection)
+	if !isProj {
+		return
+	}
+	refine4NeighbourProj(p, childProj)
+}
+
+// refine4NeighbourProj refines the index for p.Exprs whose type is *Column when
+// there is two neighbouring Projections.
+// This function is introduced because that different childProj.Expr may refer
+// to the same index of childProj.Schema, so we need to keep this relation
+// between the specified expressions in the parent Projection.
+func refine4NeighbourProj(p, childProj *PhysicalProjection) {
+	inputIdx2OutputIdxes := make(map[int][]int)
+	for i, expr := range childProj.Exprs {
+		col, isCol := expr.(*expression.Column)
+		if !isCol {
+			continue
+		}
+		inputIdx2OutputIdxes[col.Index] = append(inputIdx2OutputIdxes[col.Index], i)
+	}
+	childSchemaUnionSet := disjointset.NewIntSet(childProj.schema.Len())
+	for _, outputIdxes := range inputIdx2OutputIdxes {
+		if len(outputIdxes) <= 1 {
+			continue
+		}
+		for i := 1; i < len(outputIdxes); i++ {
+			childSchemaUnionSet.Union(outputIdxes[0], outputIdxes[i])
+		}
+	}
+
+	for _, expr := range p.Exprs {
+		col, isCol := expr.(*expression.Column)
+		if !isCol {
+			continue
+		}
+		col.Index = childSchemaUnionSet.FindRoot(col.Index)
 	}
 }
 
@@ -107,13 +145,7 @@ func (p *PhysicalIndexReader) ResolveIndices() {
 	p.physicalSchemaProducer.ResolveIndices()
 	p.indexPlan.ResolveIndices()
 	for i, col := range p.OutputColumns {
-		if col.ID != model.ExtraHandleID {
-			p.OutputColumns[i] = col.ResolveIndices(p.indexPlan.Schema()).(*expression.Column)
-		} else {
-			p.OutputColumns[i] = col.Clone().(*expression.Column)
-			// If this is extra handle, then it must be the tail.
-			p.OutputColumns[i].Index = len(p.OutputColumns) - 1
-		}
+		p.OutputColumns[i] = col.ResolveIndices(p.indexPlan.Schema()).(*expression.Column)
 	}
 }
 

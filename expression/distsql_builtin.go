@@ -18,8 +18,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 )
 
 func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {

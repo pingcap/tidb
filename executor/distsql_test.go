@@ -22,9 +22,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -171,6 +171,7 @@ func (s *testSuite) TestBigIntPK(c *C) {
 func (s *testSuite) TestCorColToRanges(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only-full-group-by
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2 ,2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8), (9, 9, 9)")

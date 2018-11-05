@@ -16,12 +16,12 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pkg/errors"
 )
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
@@ -250,7 +250,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 						defaultValueMap := s.aggDefaultValueMap(agg)
 						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
-							proj := LogicalProjection{}.init(agg.ctx)
+							proj := LogicalProjection{}.Init(agg.ctx)
 							proj.SetSchema(apply.schema)
 							proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
 							for i, val := range defaultValueMap {
