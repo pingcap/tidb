@@ -78,6 +78,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", false, errors.Trace(err)
 		}
 		return string(j), true, nil
+	case TiDBSlowLogThreshold:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
