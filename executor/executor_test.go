@@ -3270,4 +3270,9 @@ func (s *testSuite) TestRowID(c *C) {
 	tk.MustExec(`select * from t for update`)
 	tk.MustQuery(`select distinct b from t use index(idx) where a = 'a';`).Check(testkit.Rows(`b`))
 	tk.MustExec(`commit;`)
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a varchar(5) primary key)`)
+	tk.MustExec(`insert into t values('a')`)
+	tk.MustQuery("select *, _tidb_rowid from t use index(`primary`) where _tidb_rowid=1").Check(testkit.Rows("a 1"))
 }
