@@ -20,7 +20,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
 )
@@ -31,7 +30,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := mathutil.MaxInt64(int64(h.Lease), int64(ddlLease))
-	offset := oracle.ComposeTS(10*lease, 0)
+	offset := DurationToTS(10 * time.Duration(lease))
 	if h.LastUpdateVersion() < offset {
 		return nil
 	}
