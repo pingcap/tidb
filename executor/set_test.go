@@ -211,6 +211,13 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("off"))
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+
+	tk.MustExec("set tidb_slow_log_threshold = 0")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_slow_log_threshold = 1")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("1"))
+	_, err = tk.Exec("set global tidb_slow_log_threshold = 0")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
