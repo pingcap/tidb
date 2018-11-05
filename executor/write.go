@@ -1370,8 +1370,11 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	}
 	for _, col := range cols {
 		if col.Name.L == model.ExtraHandleName.L {
+			if !e.ctx.GetSessionVars().AllowWriteRowID {
+				return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+			}
 			e.hasExtraHandle = true
-			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+			break
 		}
 	}
 
@@ -1919,7 +1922,7 @@ type UpdateExec struct {
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types.DatumRow, error) {
-	assignFlag, err := getUpdateColumns(e.OrderedList, schema.Len())
+	assignFlag, err := getUpdateColumns(e.ctx, e.OrderedList, schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1995,10 +1998,10 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
+func getUpdateColumns(ctx sessionctx.Context, assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range assignList {
-		if v.Col.ColName.L == model.ExtraHandleName.L {
+		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ColName.L == model.ExtraHandleName.L {
 			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 		}
 		idx := v.Col.Index
