@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -438,6 +439,35 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 	return t
 }
 
+// convertNotStartAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
+// to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
+func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	var (
+		unique      bool
+		indexName   model.CIStr
+		idxColNames []*ast.IndexColName
+		indexOption *ast.IndexOption
+	)
+	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+	if indexInfo == nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("index not exist %s", indexName)
+	}
+	return convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, occuredErr)
+}
+
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	log.Infof("[ddl-%s] run DDL job %s", w, job)
@@ -451,9 +481,18 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
 		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
-		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			log.Infof("[ddl-%s] run the cancelling DDL job %s", w, job)
-			w.reorgCtx.notifyReorgCancel()
+		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
+			if job.SnapshotVer != 0 {
+				// add index workers are started. need to ask them to exit.
+				log.Infof("[ddl-%s] run the cancelling DDL job %s", w, job)
+				w.reorgCtx.notifyReorgCancel()
+			} else {
+				// add index workers are not started, remove the indexInfo in tableInfo.
+				ver, err = convertNotStartAddIdxJob2RollbackJob(t, job, errCancelledDDLJob)
+				job.Error = toTError(err)
+				job.ErrorCount++
+				return
+			}
 		} else {
 			job.State = model.JobStateCancelled
 			job.Error = errCancelledDDLJob

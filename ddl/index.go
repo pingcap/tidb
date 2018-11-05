@@ -333,7 +333,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			}
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
-				ver, err = convert2RollbackJob(t, job, tblInfo, indexInfo, err)
+				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 			w.reorgCtx.cleanNotifyReorgCancel()
@@ -358,9 +358,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 	return ver, errors.Trace(err)
 }
 
-func convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
+func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
 	job.State = model.JobStateRollingback
-	job.Args = []interface{}{indexInfo.Name, getPartitionIDs(tblInfo)}
+	job.Args = []interface{}{indexInfo.Name}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
 	// The write reorganization state in add index job that likes write only state in drop index job.
@@ -437,6 +437,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 			job.Args[0] = indexInfo.ID
+			job.Args = append(job.Args, getPartitionIDs(tblInfo))
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
