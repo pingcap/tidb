@@ -882,7 +882,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	}
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
-		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
+		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
 	return e
