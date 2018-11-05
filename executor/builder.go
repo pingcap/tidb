@@ -882,7 +882,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	}
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
-		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
+		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
 	return e
@@ -1035,6 +1035,9 @@ func (b *executorBuilder) buildMaxOneRow(v *plan.PhysicalMaxOneRow) Executor {
 func (b *executorBuilder) buildUnionAll(v *plan.PhysicalUnionAll) Executor {
 	childExecs := make([]Executor, len(v.Children()))
 	for i, child := range v.Children() {
+		if proj, isProj := child.(*plan.PhysicalProjection); isProj {
+			proj.AvoidColumnEvaluator = true
+		}
 		childExecs[i] = b.build(child)
 		if b.err != nil {
 			b.err = errors.Trace(b.err)
