@@ -703,8 +703,9 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 		return nil
 	}
 	proj := PhysicalProjection{
-		Exprs:            p.Exprs,
-		CalculateNoDelay: p.calculateNoDelay,
+		Exprs:                p.Exprs,
+		CalculateNoDelay:     p.calculateNoDelay,
+		AvoidColumnEvaluator: p.avoidColumnEvaluator,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}

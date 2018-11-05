@@ -878,3 +878,8 @@ var (
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
 	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged, "Information schema is changed.")
 )
+
+func init() {
+	// Map error codes to mysql error codes.
+	terror.ErrClassToMySQLCodes[terror.ClassDomain] = make(map[terror.ErrCode]uint16)
+}

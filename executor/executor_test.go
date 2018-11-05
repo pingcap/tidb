@@ -1081,6 +1081,13 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t value(1 ,2)")
 	tk.MustQuery("select a, b from (select a, 0 as d, b from t union all select a, 0 as d, b from t) test;").Check(testkit.Rows("1 2", "1 2"))
+
+	// #issue 8141
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t1 value(1,2),(1,1),(2,2),(2,2),(3,2),(3,2)")
+	tk.MustExec("set @@tidb_max_chunk_size=2;")
+	tk.MustQuery("select count(*) from (select a as c, a as d from t1 union all select a, b from t1) t;").Check(testkit.Rows("12"))
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
@@ -1866,6 +1873,8 @@ func (s *testSuite) TestColumnName(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
+	// disable only full group by
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
 	rs, err := tk.Exec("select 1 + c, count(*) from t")
 	c.Check(err, IsNil)
 	fields := rs.Fields()
