@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 type varianceType int
