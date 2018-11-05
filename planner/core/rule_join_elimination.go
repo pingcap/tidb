@@ -132,10 +132,15 @@ func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (isDuplicate
 				isDuplicateAgnosticAgg = false
 				break
 			}
-			if col, ok := aggDesc.Args[0].(*expression.Column); ok {
-				cols = append(cols, col)
-			} else {
-				isDuplicateAgnosticAgg = false
+			for _, expr := range aggDesc.Args {
+				if col, ok := expr.(*expression.Column); ok {
+					cols = append(cols, col)
+				} else {
+					isDuplicateAgnosticAgg = false
+					break
+				}
+			}
+			if !isDuplicateAgnosticAgg {
 				break
 			}
 		}
