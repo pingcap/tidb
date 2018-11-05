@@ -14,7 +14,6 @@
 package timeutil
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,7 +104,7 @@ func inferTZNameFromFileName(path string) (string, error) {
 	if idx := strings.Index(path, substr); idx != -1 {
 		return string(path[idx+len(substr)+1:]), nil
 	}
-	return "", errors.New(fmt.Sprintf("path %s is not supported", path))
+	return "", fmt.Errorf("path %s is not supported", path)
 }
 
 // SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.

@@ -20,12 +20,12 @@ package types
 import (
 	"io"
 
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
-	ast "github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/charset"
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
+	ast "github.com/pingcap/parser/types"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.
