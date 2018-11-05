@@ -106,6 +106,9 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	}
 	for _, col := range cols {
 		if col.Name.L == model.ExtraHandleName.L {
+			if !e.ctx.GetSessionVars().AllowWriteRowID {
+				return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+			}
 			e.hasExtraHandle = true
 			break
 		}

@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -45,7 +46,7 @@ type UpdateExec struct {
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
-	assignFlag, err := e.getUpdateColumns(schema.Len())
+	assignFlag, err := e.getUpdateColumns(e.ctx, schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -206,9 +207,12 @@ func (e *UpdateExec) Open(ctx context.Context) error {
 	return e.SelectExec.Open(ctx)
 }
 
-func (e *UpdateExec) getUpdateColumns(schemaLen int) ([]bool, error) {
+func (e *UpdateExec) getUpdateColumns(ctx sessionctx.Context, schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range e.OrderedList {
+		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ColName.L == model.ExtraHandleName.L {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
 		idx := v.Col.Index
 		assignFlag[idx] = true
 	}
