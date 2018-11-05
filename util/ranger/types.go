@@ -18,11 +18,11 @@ import (
 	"math"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pkg/errors"
 )
 
 // Range represents a range generated in physical plan building phase.

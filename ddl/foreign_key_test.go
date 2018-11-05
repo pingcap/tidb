@@ -18,13 +18,13 @@ import (
 	"sync"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -78,7 +78,9 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := s.d.doDDLJob(s.ctx, job)
+	err := s.ctx.NewTxn()
+	c.Assert(err, IsNil)
+	err = s.d.doDDLJob(s.ctx, job)
 	c.Assert(err, IsNil)
 	return job
 }

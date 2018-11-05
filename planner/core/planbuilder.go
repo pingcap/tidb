@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 )
 
 type visitInfo struct {
@@ -213,9 +213,9 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
-	dual := LogicalTableDual{RowCount: 1}.init(b.ctx)
+	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx)
 
-	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.init(b.ctx)
+	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
@@ -251,7 +251,7 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 				// Convert column name expression to string value expression.
 				vars.Value = ast.NewValueExpr(cn.Name.Name.O)
 			}
-			mockTablePlan := LogicalTableDual{}.init(b.ctx)
+			mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 			var err error
 			assign.Expr, _, err = b.rewrite(vars.Value, mockTablePlan, nil, true)
 			if err != nil {
@@ -390,7 +390,7 @@ func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexI
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
-	selectLock := LogicalLock{Lock: lock}.init(b.ctx)
+	selectLock := LogicalLock{Lock: lock}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock
 }
@@ -455,11 +455,11 @@ func (b *PlanBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		dataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
-	}.init(b.ctx)
+	}.Init(b.ctx)
 	is.stats = &property.StatsInfo{}
 	cop := &copTask{indexPlan: is}
 	// It's double read case.
-	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
+	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.Init(b.ctx)
 	ts.SetSchema(is.dataSourceSchema)
 	cop.tablePlan = ts
 	is.initSchema(id, idx, true)
@@ -544,7 +544,7 @@ func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, erro
 	p := &CheckTable{Tables: as.Tables}
 	p.GenExprs = make(map[model.TableColumnID]expression.Expression, len(p.Tables))
 
-	mockTablePlan := LogicalTableDual{}.init(b.ctx)
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	for _, tbl := range p.Tables {
 		tableInfo := tbl.TableInfo
 		schema := expression.TableInfo2SchemaWithDBName(b.ctx, tbl.Schema, tableInfo)
@@ -677,7 +677,7 @@ func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]i
 			}
 		}
 		if !found {
-			return nil, errors.New(fmt.Sprintf("can not found the specified partition name %s in the table definition", name.O))
+			return nil, fmt.Errorf("can not found the specified partition name %s in the table definition", name.O)
 		}
 	}
 	return ids, nil
@@ -889,7 +889,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		Full:        show.Full,
 		User:        show.User,
 		GlobalScope: show.GlobalScope,
-	}.init(b.ctx)
+	}.Init(b.ctx)
 	switch showTp := show.Tp; showTp {
 	case ast.ShowProcedureStatus:
 		p.SetSchema(buildShowProcedureSchema())
@@ -913,7 +913,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
-	mockTablePlan := LogicalTableDual{}.init(b.ctx)
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
 	if show.Pattern != nil {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
@@ -1072,7 +1072,7 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		Columns:     insert.Columns,
 		tableSchema: schema,
 		IsReplace:   insert.IsReplace,
-	}.init(b.ctx)
+	}.Init(b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
 		privilege: mysql.InsertPriv,
@@ -1080,7 +1080,7 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		table:     tableInfo.Name.L,
 	})
 
-	mockTablePlan := LogicalTableDual{}.init(b.ctx)
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
 
 	checkRefColumn := func(n ast.Node) ast.Node {
@@ -1365,7 +1365,7 @@ func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
 	schema := expression.TableInfo2Schema(b.ctx, tableInfo)
-	mockTablePlan := LogicalTableDual{}.init(b.ctx)
+	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 
 	var err error
@@ -1615,7 +1615,12 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
-		names = []string{fmt.Sprintf("Grants for %s", s.User)}
+		if s.User != nil {
+			names = []string{fmt.Sprintf("Grants for %s", s.User)}
+		} else {
+			// Don't know the name yet, so just say "user"
+			names = []string{"Grants for User"}
+		}
 	case ast.ShowIndex:
 		names = []string{"Table", "Non_unique", "Key_name", "Seq_in_index",
 			"Column_name", "Collation", "Cardinality", "Sub_part", "Packed",

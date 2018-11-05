@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 )
 
 // Build is used to build a specific AggFunc implementation according to the

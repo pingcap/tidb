@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testAnalyzeSuite{})
@@ -48,6 +48,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 		store.Close()
 	}()
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t1(a int, b int, c int, key idx(a, b))")
 	tk.MustExec("create table t2(a int, b int)")
 	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
@@ -384,7 +385,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1))}(test.t.c1,test.t1.c1)",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1)->HashAgg)->HashAgg}(test.t.c1,test.t1.c1)->Projection",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
@@ -441,7 +442,6 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create table t3 (a int, b int)")
 	testKit.MustExec("create index a on t3 (a)")
 
-	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 	testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
 	testKit.MustExec("create index a on t4 (a)")
 	testKit.MustExec("create index b on t4 (b)")
@@ -587,6 +587,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 
 		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, sql)
+		c.Assert(err, IsNil)
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
@@ -652,6 +653,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 		store.Close()
 	}()
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t(a int, b int, c int, index idx(c))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
 	tk.MustExec("analyze table t")

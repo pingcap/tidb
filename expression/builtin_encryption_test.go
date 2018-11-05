@@ -54,6 +54,7 @@ func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
 		password := types.NewDatum(tt.password)
 
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, password}))
+		c.Assert(err, IsNil)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
@@ -69,6 +70,7 @@ func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
 		cryptStr := fromHex(test.crypt)
 
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, password}))
+		c.Assert(err, IsNil)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 
 		c.Assert(err, IsNil)
@@ -111,6 +113,7 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 			args = append(args, types.NewDatum(param))
 		}
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
@@ -130,6 +133,7 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 			args = append(args, types.NewDatum(param))
 		}
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(str, DeepEquals, types.NewDatum(tt.origin))
@@ -145,11 +149,13 @@ func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, argNull}))
+	c.Assert(err, IsNil)
 	crypt, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull, arg}))
+	c.Assert(err, IsNil)
 	crypt, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
@@ -257,6 +263,7 @@ func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
 		str := types.NewDatum(tt.origin)
 		hashLength := types.NewDatum(tt.hashLength)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, hashLength}))
+		c.Assert(err, IsNil)
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		if tt.validCase {

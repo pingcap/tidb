@@ -16,12 +16,13 @@ package statistics
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -182,8 +183,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				return 0, nil, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: colType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
-			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
-				nodes[len(nodes)-1].Tp = pkType
+			if colInfo.isHandle && colInfo.Tp.EvalType() == types.ETInt {
 				var cnt float64
 				cnt, err = coll.GetRowCountByIntColumnRanges(sc, id, ranges)
 				if err != nil {
@@ -195,6 +195,9 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			cnt, err := coll.GetRowCountByColumnRanges(sc, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
+			}
+			if colInfo.isHandle {
+				nodes[len(nodes)-1].Tp = pkType
 			}
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
 		}
