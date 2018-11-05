@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disjointset"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -27,34 +28,11 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
-type multiEqualSet struct {
-	parent []int
-}
-
-func (m *multiEqualSet) init(l int) {
-	m.parent = make([]int, l)
-	for i := range m.parent {
-		m.parent[i] = i
-	}
-}
-
-func (m *multiEqualSet) addRelation(a int, b int) {
-	m.parent[m.findRoot(a)] = m.findRoot(b)
-}
-
-func (m *multiEqualSet) findRoot(a int) int {
-	if a == m.parent[a] {
-		return a
-	}
-	m.parent[a] = m.findRoot(m.parent[a])
-	return m.parent[a]
-}
-
 type propagateConstantSolver struct {
-	colMapper  map[string]int // colMapper maps column to its index
-	unionSet   *multiEqualSet // unionSet stores the relations like col_i = col_j
-	eqList     []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
-	columns    []*Column      // columns stores all columns appearing in the conditions
+	colMapper  map[string]int      // colMapper maps column to its index
+	unionSet   *disjointset.IntSet // unionSet stores the relations like col_i = col_j
+	eqList     []*Constant         // if eqList[i] != nil, it means col_i = eqList[i]
+	columns    []*Column           // columns stores all columns appearing in the conditions
 	conditions []Expression
 	ctx        sessionctx.Context
 }
@@ -106,8 +84,7 @@ func (s *propagateConstantSolver) propagateConstantEQ() {
 // We maintain a unionSet representing the equivalent for every two columns.
 func (s *propagateConstantSolver) propagateColumnEQ() {
 	visited := make([]bool, len(s.conditions))
-	s.unionSet = &multiEqualSet{}
-	s.unionSet.init(len(s.columns))
+	s.unionSet = disjointset.NewIntSet(len(s.columns))
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
@@ -115,7 +92,7 @@ func (s *propagateConstantSolver) propagateColumnEQ() {
 			if lOk && rOk {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
-				s.unionSet.addRelation(lID, rID)
+				s.unionSet.Union(lID, rID)
 				visited[i] = true
 			}
 		}
@@ -125,7 +102,7 @@ func (s *propagateConstantSolver) propagateColumnEQ() {
 	for i, coli := range s.columns {
 		for j := i + 1; j < len(s.columns); j++ {
 			// unionSet doesn't have iterate(), we use a two layer loop to iterate col_i = col_j relation
-			if s.unionSet.findRoot(i) != s.unionSet.findRoot(j) {
+			if s.unionSet.FindRoot(i) != s.unionSet.FindRoot(j) {
 				continue
 			}
 			colj := s.columns[j]

@@ -12,9 +12,9 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
-GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
-OVERALLS  := CGO_ENABLED=1 overalls
+GOBUILD   := GO111MODULE=off CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOTEST    := GO111MODULE=off CGO_ENABLED=1 $(GO) test -p 3
+OVERALLS  := GO111MODULE=off CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
@@ -122,6 +122,7 @@ vet:
 clean:
 	$(GO) clean -i ./...
 	rm -rf *.out
+	rm -rf parser/parser.go
 
 todo:
 	@grep -n ^[[:space:]]*_[[:space:]]*=[[:space:]][[:alpha:]][[:alnum:]]* */*.go parser/parser.y || true
@@ -171,13 +172,13 @@ tikv_integration_test: parserlib
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
-RACE_FLAG = 
+RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-CHECK_FLAG = 
+CHECK_FLAG =
 ifeq ("$(WITH_CHECK)", "1")
 	CHECK_FLAG = $(TEST_LDFLAGS)
 endif
