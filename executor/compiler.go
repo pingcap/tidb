@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )

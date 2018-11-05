@@ -53,7 +53,7 @@ function build_importer()
     importer="./importer"
     echo "building importer binary: $importer"
     rm -rf $importer
-    go build -o $importer github.com/pingcap/tidb/cmd/importer
+    GO111MODULE=ON go build -o $importer github.com/pingcap/tidb/cmd/importer
 }
 
 function build_tidb_server()
@@ -61,14 +61,14 @@ function build_tidb_server()
     tidb_server="./explaintest_tidb-server"
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
-    go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
+    GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
 }
 
 function build_explain_test()
 {
     echo "building explain-test binary: $explain_test"
     rm -rf $explain_test
-    go build -o $explain_test
+    GO111MODULE=on go build -o $explain_test
 }
 
 while getopts "t:s:r:b:v:c:i:h" opt; do

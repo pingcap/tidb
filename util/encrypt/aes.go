@@ -18,7 +18,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 type ecb struct {

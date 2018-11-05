@@ -17,6 +17,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pkg/errors"
 )
 
 // Preprocess resolves table names of the node, and checks some statements validation.
@@ -614,6 +614,8 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 		if currentUser != nil {
 			node.User.Username = currentUser.Username
 			node.User.Hostname = currentUser.Hostname
+			node.User.AuthUsername = currentUser.AuthUsername
+			node.User.AuthHostname = currentUser.AuthHostname
 		}
 	}
 }

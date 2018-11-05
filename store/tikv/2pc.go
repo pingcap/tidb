@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )

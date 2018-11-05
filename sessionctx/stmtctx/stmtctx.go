@@ -80,6 +80,8 @@ type StatementContext struct {
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexIDs         []int64
+	NowTs            time.Time
+	SysTs            time.Time
 }
 
 // AddAffectedRows adds affected rows.
