@@ -238,6 +238,10 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
+	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
+	// This variable is currently not recommended to be turned on.
+	AllowWriteRowID bool
+
 	// AllowInSubqueryUnFolding can be set to true to fold in subquery
 	AllowInSubqueryUnFolding bool
 
@@ -517,6 +521,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptWriteRowID:
+		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqUnFolding:
 		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:

@@ -39,6 +39,9 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
+	TiDBOptWriteRowID = "tidb_opt_write_row_id"
+
 	// tidb_opt_insubquery_unfold is used to enable/disable the optimizer rule of in subquery unfold.
 	TiDBOptInSubqUnFolding = "tidb_opt_insubquery_unfold"
 
@@ -172,6 +175,7 @@ const (
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
 	DefOptInSubqUnfolding            = false
+	DefOptWriteRowID                 = false
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
 	DefCurretTS                      = 0
