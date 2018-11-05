@@ -937,8 +937,8 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
 
-	result = tk.MustQuery("SELECT CAST('a' AS BINARY(429496729));")
-	result.Check(testkit.Rows("-10"))
+	result = tk.MustQuery("SELECT CAST('a' AS BINARY(67108865));")
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {

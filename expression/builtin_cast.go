@@ -1035,7 +1035,8 @@ func (b *builtinCastStringAsStringSig) evalString(row chunk.Row) (res string, is
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 
-	if types.IsBinaryStr(b.tp) && len(res) < b.tp.Flen {
+	isTooLarge := uint64(len(res)) > b.maxAllowedPacket || (b.tp.Flen != types.UnspecifiedLength && uint64(b.tp.Flen) > b.maxAllowedPacket)
+	if types.IsBinaryStr(b.tp) && isTooLarge {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", b.maxAllowedPacket))
 		return "", true, nil
 	}
