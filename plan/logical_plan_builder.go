@@ -669,7 +669,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		}
 		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
 			b.optFlag |= flagEliminateProjection
-			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
+			proj := LogicalProjection{Exprs: exprs, avoidColumnEvaluator: true}.init(b.ctx)
 			if childID == 0 {
 				for _, col := range unionSchema.Columns {
 					col.FromID = proj.ID()
