@@ -277,6 +277,15 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 	return nil, nil
 }
 
+func activePendingTxn(ctx sessionctx.Context, a *ExecStmt) error {
+	if ctx.GetSessionVars().SnapshotTS != 0 {
+		if _, ok := a.Plan.(*plannercore.CheckTable); ok {
+			return ctx.InitTxnWithStartTS(ctx.GetSessionVars().SnapshotTS)
+		}
+	}
+	return ctx.ActivePendingTxn()
+}
+
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
 func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
@@ -289,11 +298,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
 			log.Debugf("con:%d ActivePendingTxn %s", ctx.GetSessionVars().ConnectionID, a.Text)
-			if _, ok := a.Plan.(*plannercore.CheckTable); ok && ctx.GetSessionVars().SnapshotTS != 0 {
-				err = ctx.InitTxnWithStartTS(ctx.GetSessionVars().SnapshotTS)
-			} else {
-				err = ctx.ActivePendingTxn()
-			}
+			activePendingTxn(ctx, a)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
