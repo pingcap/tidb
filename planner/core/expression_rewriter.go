@@ -757,7 +757,12 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
 	case *driver.ParamMarkerExpr:
-		er.paramToExpression(v)
+		var value expression.Expression
+		value, er.err = expression.GetParamExpression(er.ctx, v, er.useCache())
+		if er.err != nil {
+			return retNode, false
+		}
+		er.ctxStack = append(er.ctxStack, value)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
 	case *ast.FuncCallExpr:
@@ -810,24 +815,6 @@ func (er *expressionRewriter) useCache() bool {
 	return er.ctx.GetSessionVars().StmtCtx.UseCache
 }
 
-func datumToConstant(d types.Datum, tp byte) *expression.Constant {
-	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
-}
-
-func (er *expressionRewriter) paramToExpression(v *driver.ParamMarkerExpr) {
-	tp := types.NewFieldType(mysql.TypeUnspecified)
-	types.DefaultParamTypeForValue(v.GetValue(), tp)
-	value := &expression.Constant{Value: v.Datum, RetType: tp}
-	if er.useCache() {
-		var f expression.Expression
-		f, er.err = expression.NewFunctionBase(er.ctx, ast.GetParam, &v.Type,
-			datumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
-		f.GetType().Tp = v.Type.Tp
-		value.DeferredExpr = f
-	}
-	er.ctxStack = append(er.ctxStack, value)
-}
-
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
@@ -837,7 +824,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			er.ctxStack[stkLen-1], er.err = expression.NewFunction(er.ctx,
 				ast.SetVar,
 				er.ctxStack[stkLen-1].GetType(),
-				datumToConstant(types.NewDatum(name), mysql.TypeString),
+				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			return
 		}
@@ -845,7 +832,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			ast.GetVar,
 			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
 			types.NewFieldType(mysql.TypeString),
-			datumToConstant(types.NewStringDatum(name), mysql.TypeString))
+			expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
 		if err != nil {
 			er.err = errors.Trace(err)
 			return
@@ -871,7 +858,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = errors.Trace(err)
 		return
 	}
-	e := datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	e := expression.DatumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
 	e.RetType.Charset, _ = er.ctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.RetType.Collate, _ = er.ctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStack = append(er.ctxStack, e)

@@ -430,10 +430,10 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if orderedList == nil {
 		return nil
 	}
-	updatePlan := &Update{
+	updatePlan := Update{
 		SelectPlan:  fastSelect,
 		OrderedList: orderedList,
-	}
+	}.Init(ctx)
 	updatePlan.SetSchema(fastSelect.schema)
 	return updatePlan
 }
@@ -480,9 +480,9 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
-	delPlan := &Delete{
+	delPlan := Delete{
 		SelectPlan: fastSelect,
-	}
+	}.Init(ctx)
 	delPlan.SetSchema(fastSelect.schema)
 	return delPlan
 }
