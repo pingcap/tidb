@@ -554,10 +554,16 @@ func (s *testSuite) TestAdminCheckTableSnapshot(c *C) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
+	// For admin check table when use snapshot.
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	tk.MustExec("admin check table admin_t_s;")
 
 	tk.MustExec("set @@tidb_snapshot = ''")
 	_, err = tk.Exec("admin check table admin_t_s")
 	c.Assert(err, NotNil)
+
+	r := tk.MustQuery("admin cleanup index admin_t_s a")
+	r.Check(testkit.Rows("1"))
+	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("drop table if exists admin_t_s")
 }
