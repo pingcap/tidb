@@ -9110,8 +9110,8 @@ yynewstate:
 				x.Flag |= mysql.BinaryFlag
 			}
 			if x.Charset == "" {
-				x.Charset = charset.CharsetUTF8
-				x.Collate = charset.CollationUTF8
+				x.Charset = mysql.DefaultCharset
+				x.Collate = mysql.DefaultCollationName
 			}
 			parser.yyVAL.item = x
 		}
@@ -9180,8 +9180,8 @@ yynewstate:
 		{
 			x := types.NewFieldType(mysql.TypeJSON)
 			x.Flag |= mysql.BinaryFlag | (mysql.ParseToJSONFlag)
-			x.Charset = charset.CharsetUTF8
-			x.Collate = charset.CollationUTF8
+			x.Charset = mysql.DefaultCharset
+			x.Collate = mysql.DefaultCollationName
 			parser.yyVAL.item = x
 		}
 	case 815:
