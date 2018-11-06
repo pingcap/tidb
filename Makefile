@@ -52,7 +52,7 @@ buildsucc:
 all: dev server benchkv
 
 parser:
-	@echo "remove this command later"
+	@echo "remove this command later, when our CI script doesn't call it"
 
 dev: checklist test check
 
@@ -71,7 +71,7 @@ check-fail: goword check-static check-slow
 
 fmt:
 	@echo "gofmt (simplify)"
-	@gofmt -s -l -w $(FILES) 2>&1 | grep -v "parser/parser.go" | $(FAIL_ON_STDOUT)
+	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
 goword:
 	retool do goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
@@ -101,13 +101,6 @@ vet:
 clean:
 	$(GO) clean -i ./...
 	rm -rf *.out
-	rm -rf parser/
-
-todo:
-	@grep -n ^[[:space:]]*_[[:space:]]*=[[:space:]][[:alpha:]][[:alnum:]]* */*.go parser/parser.y || true
-	@grep -n TODO */*.go parser/parser.y || true
-	@grep -n BUG */*.go parser/parser.y || true
-	@grep -n println */*.go parser/parser.y || true
 
 test: checklist gotest explaintest
 
