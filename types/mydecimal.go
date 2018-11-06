@@ -2192,7 +2192,8 @@ func DecimalSqrt(from, to *MyDecimal, fracIncr int) error {
 		lastRes = res
 		fromDivRes := new(MyDecimal)
 		err = DecimalDiv(from, &res, fromDivRes, fracIncr)
-		if err != nil {
+		fracIncr = 0
+		if err != nil && err != ErrTruncated {
 			return err
 		}
 		resAddFromDivRes := new(MyDecimal)
@@ -2202,8 +2203,8 @@ func DecimalSqrt(from, to *MyDecimal, fracIncr int) error {
 		}
 		decimalIntTwo := NewDecFromInt(2)
 		tmpRes := new(MyDecimal)
-		err = DecimalDiv(resAddFromDivRes, decimalIntTwo, tmpRes, 1)
-		if err != nil {
+		err = DecimalDiv(resAddFromDivRes, decimalIntTwo, tmpRes, fracIncr)
+		if err != nil && err != ErrTruncated {
 			return err
 		}
 		res = *tmpRes

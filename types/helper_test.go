@@ -44,3 +44,52 @@ func (s *testTypeHelperSuite) TestStrToInt(c *C) {
 		c.Check(strconv.FormatInt(output, 10), Equals, tt.output)
 	}
 }
+
+func (s *testTypeHelperSuite) TestCalculateMergeFloat64(c *C) {
+	tests := []struct {
+		partialCount    int64
+		mergeCount      int64
+		partialSum      float64
+		mergeSum        float64
+		partialVariance float64
+		mergeVariance   float64
+		variance        float64
+		sum             float64
+		err             error
+	}{
+		{4, 2, 12, 6, 10.1, 0, 10.1, 18, nil},
+		{3, 9, 22.2, 32.5, 19.89, 21.49, 73.68027777777777, 54.7, nil},
+	}
+	for _, tt := range tests {
+		variance, sum, err := CalculateMergeFloat64(tt.partialCount, tt.mergeCount, tt.partialSum,
+			tt.mergeSum, tt.partialVariance, tt.mergeVariance)
+		c.Assert(err, Equals, tt.err)
+		c.Assert(variance, Equals, tt.variance)
+		c.Assert(sum, Equals, tt.sum)
+	}
+}
+
+func (s *testTypeHelperSuite) TestCalculateMergeDecimal(c *C) {
+	tests := []struct {
+		partialCount    int64
+		mergeCount      int64
+		partialSum      float64
+		mergeSum        float64
+		partialVariance float64
+		mergeVariance   float64
+		variance        string
+		sum             string
+		err             error
+	}{
+		{4, 2, 12, 6, 10.1, 0, "10.10000000", "18", nil},
+		{3, 9, 22.2, 32.5, 19.89, 21.49, "73.680277839347222252", "54.7", nil},
+	}
+	for _, tt := range tests {
+		variance, sum, err := CalculateMergeDecimal(tt.partialCount, tt.mergeCount,
+			NewDecFromFloatForTest(tt.partialSum), NewDecFromFloatForTest(tt.mergeSum),
+			NewDecFromFloatForTest(tt.partialVariance), NewDecFromFloatForTest(tt.mergeVariance))
+		c.Assert(err, Equals, tt.err)
+		c.Assert(variance.String(), Equals, tt.variance)
+		c.Assert(sum.String(), Equals, tt.sum)
+	}
+}

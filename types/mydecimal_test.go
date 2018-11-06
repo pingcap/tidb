@@ -759,6 +759,28 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 	}
 }
 
+func (s *testMyDecimalSuite) TestSqrt(c *C) {
+	type tcase struct {
+		from   string
+		result string
+		err    error
+	}
+	tests := []tcase{
+		{"2", "1.4142", nil},
+		{"5", "2.2361", nil},
+		{"100000000.00", "10000.000000", nil},
+		{"12345678.87654321", "3513.641825306502", nil},
+		{"-123", "0", ErrTruncatedWrongVal},
+	}
+	for _, tt := range tests {
+		var from, to MyDecimal
+		from.FromString([]byte(tt.from))
+		ec := DecimalSqrt(&from, &to, SqrtFracIncr)
+		c.Check(ec, Equals, tt.err)
+		c.Assert(to.String(), Equals, tt.result)
+	}
+}
+
 func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
 	type tcase struct {
 		neg    bool

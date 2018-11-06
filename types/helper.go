@@ -222,6 +222,7 @@ func CalculateMergeFloat64(partialCount int64, mergeCount int64, partialSum floa
 // CalculateMergeDecimal merge variance and partialCount > 0 and mergeCount > 0.
 // NOTE: mergeCount and mergeSum do not include partialCount and partialSum yet.
 func CalculateMergeDecimal(partialCount int64, mergeCount int64, partialSum *MyDecimal, mergeSum *MyDecimal, partialVariance *MyDecimal, mergeVariance *MyDecimal) (variance *MyDecimal, sum *MyDecimal, err error) {
+	sum, variance = new(MyDecimal), new(MyDecimal)
 	err = DecimalAdd(partialSum, mergeSum, sum)
 	if err != nil {
 		err = errors.Trace(err)
@@ -235,6 +236,18 @@ func CalculateMergeDecimal(partialCount int64, mergeCount int64, partialSum *MyD
 		err = errors.Trace(err)
 		return
 	}
+	t1 := new(MyDecimal)
+	err = DecimalMul(divCount, mergeSum, t1)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	t := new(MyDecimal)
+	err = DecimalSub(t1, partialSum, t)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
 	addCount := new(MyDecimal)
 	err = DecimalAdd(decimalPartialCount, decimalMergeCount, addCount)
 	if err != nil {
@@ -242,7 +255,7 @@ func CalculateMergeDecimal(partialCount int64, mergeCount int64, partialSum *MyD
 		return
 	}
 	doubleDivCount := new(MyDecimal)
-	err = DecimalMul(divCount, divCount, doubleDivCount)
+	err = DecimalMul(t, t, doubleDivCount)
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -276,6 +289,5 @@ func CalculateMergeDecimal(partialCount int64, mergeCount int64, partialSum *MyD
 		err = errors.Trace(err)
 		return
 	}
-
 	return
 }

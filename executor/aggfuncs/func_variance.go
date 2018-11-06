@@ -89,7 +89,7 @@ func (e *baseVarianceDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 			return errors.Trace(err)
 		}
 		err = types.DecimalSqrt(tmp, res, types.SqrtFracIncr)
-		if err != nil {
+		if err != nil && err != types.ErrTruncated {
 			return errors.Trace(err)
 		}
 	case varianceStdSamp:
@@ -105,7 +105,7 @@ func (e *baseVarianceDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 			return errors.Trace(err)
 		}
 		err = types.DecimalSqrt(tmp, res, types.SqrtFracIncr)
-		if err != nil {
+		if err != nil && err != types.ErrTruncated {
 			return errors.Trace(err)
 		}
 	case varianceVarPop:
