@@ -622,6 +622,7 @@ var defaultSysVars = []*SysVar{
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
+	{ScopeSession, TiDBOptWriteRowID, boolToIntStr(DefOptWriteRowID)},
 	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
 	{ScopeGlobal, TiDBAutoAnalyzeStartTime, DefAutoAnalyzeStartTime},
@@ -664,6 +665,7 @@ var defaultSysVars = []*SysVar{
 	/* The following variable is defined as session scope but is actually server scope. */
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
+	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal | ScopeSession, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
