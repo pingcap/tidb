@@ -5,27 +5,27 @@
 - Discussion at: https://github.com/pingcap/tidb/issues/7974
 
 ## Abstract
-This proposal proposes to implement view feature in TiDB, aimed to make SQL easier to write.
+This proposal proposes to implement VIEW feature in TiDB, aimed to make SQL easier to write.
 
 ## Background
-A database view is a searchable object in a database that is defined by a query. Though a view doesn’t store data, some refer to a view as “virtual tables,” and you can query a view like you can query a table. A view can combine data from two or more tables, using joins, and also just contain a subset of information. This makes them convenient to abstract, or hide, complicated queries.
+A database view is a searchable object in a database that is defined by a query. Though a view doesn’t store data, some refer to a VIEW as "virtual tables", and you can query a view like you can query a table. A view can combine data from two or more tables, using joins, and also just contain a subset of information. This makes them convenient to abstract, or hide, complicated queries.
 
 Below is a visual depiction of a view:
   ![AnatomyOfAview](imgs/view.png)
   
-A view is created from a query using the CREATE OR REPLACE VIEW command. In the example below we are creating a PopularBooks view based on a query which selects all Books that have the IsPopular field checked. Following is the query:
+A view is created from a query using the "`CREATE OR REPLACE VIEW`" command. In the example below we are creating a PopularBooks view based on a query which selects all Books that have the IsPopular field checked. Following is the query:
 `CREATE OR REPLACE VIEW PopularBooks AS SELECT ISBN, Title, Author,PublishDate FROM Books WHERE IsPopular=1`  
 
-Once a view is created, you can use it as you query any table in a SELECT statement. For example, to list all the popular book titles ordered by an author, you could write:  
+Once a view is created, you can use it as you query any table in a `SELECT` statement. For example, to list all the popular book titles ordered by an author, you could write:  
 `SELECT Author, Title FROM PopularBooks ORDER BY Author`  
 
 In general you can use any of the SELECT clauses, such as GROUP BY, in a select statement containing a view.
 
 ## Proposal
-I implement the `CREATE OR REPLACE` command to create a view with the SELECT statement. Currently, I reuse `DROP TABLE` to drop a view, and `show full tables` can also display the view list with different table types. The `show create table` command can also regenerate a view create command.
+I implement the "`CREATE OR REPLACE`" command to create a view with the `SELECT` statement. Currently, I reuse "`DROP TABLE`" to drop a view, and "`SHOW FULL TABLES`" can also display the view list with different table types. The "`SHOW CREATE TABlE`" command can also regenerate a view create command.
 
 ## Rationale
-View is just a tableinfo object store with a `SELECT` statement, and only supports two types of DDL operations, which are `CREATE` and `DROP`. Currently, view can only be used within the `SELECT` statement.  
+`VIEW` is just a tableinfo object store with a `SELECT` statement, and only supports two types of DDL operations, which are "`CREATE OR REPLACE VIEW`" and "`DROP`". Currently, view can only be used within the `SELECT` statement.  
 Let me describe more details about the view DDL operation:
 1. Create a VIEW  
   1.1 Parse the create view statement and build a logical plan for select cause part. If any grammar error occurs, return errors to parser.   
@@ -51,7 +51,7 @@ Let me describe more details about the view DDL operation:
 It makes TiDB more compatible with MySQL.
 
 ## Implementation
-First, we need to introduce `TableType` for `TableInfo`. Currently, I define two kinds of tables, which are `BaseTable` and `View`. By default if we use the `CREATE TABLE` command to create a table, TiDB creates a BaseTable `TableInfo`; if we use the `CREATE VIEW` command to create a table, TiDB creates a View `TableInfo`.
+First, we need to introduce `TableType` for `TableInfo`. Currently, I define two kinds of tables, which are `BaseTable` and `View`. By default if we use the "`CREATE TABLE`" command to create a table, TiDB creates a BaseTable `TableInfo`; if we use the "`CREATE VIEW`" command to create a table, TiDB creates a View `TableInfo`.
 
 In order to store the VIEW's select text, we also need to add attribute `ViewSelectStmt string json:"view_select_stmt"` store select statement.
 
