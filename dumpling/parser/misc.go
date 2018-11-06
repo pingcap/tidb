@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 func isLetter(ch rune) bool {
@@ -199,6 +200,7 @@ var tokenMap = map[string]int{
 	"COUNT":                    count,
 	"CREATE":                   create,
 	"CROSS":                    cross,
+	"CURRENT":                  current,
 	"CURRENT_DATE":             currentDate,
 	"CURRENT_TIME":             currentTime,
 	"CURRENT_TIMESTAMP":        currentTs,
@@ -259,6 +261,7 @@ var tokenMap = map[string]int{
 	"FIXED":                    fixed,
 	"FLOAT":                    floatType,
 	"FLUSH":                    flush,
+	"FOLLOWING":                following,
 	"FOR":                      forKwd,
 	"FORCE":                    force,
 	"FOREIGN":                  foreign,
@@ -312,6 +315,7 @@ var tokenMap = map[string]int{
 	"KEY_BLOCK_SIZE":           keyBlockSize,
 	"KEYS":                     keys,
 	"KILL":                     kill,
+	"LAST":                     last,
 	"LEADING":                  leading,
 	"LEFT":                     left,
 	"LESS":                     less,
@@ -360,6 +364,7 @@ var tokenMap = map[string]int{
 	"NOT":                      not,
 	"NOW":                      now,
 	"NULL":                     null,
+	"NULLS":                    nulls,
 	"NUMERIC":                  numericType,
 	"NVARCHAR":                 nvarcharType,
 	"OFFSET":                   offset,
@@ -375,6 +380,7 @@ var tokenMap = map[string]int{
 	"PASSWORD":                 password,
 	"PLUGINS":                  plugins,
 	"POSITION":                 position,
+	"PRECEDING":                preceding,
 	"PRECISION":                precisionType,
 	"PREPARE":                  prepare,
 	"PRIMARY":                  primary,
@@ -401,6 +407,7 @@ var tokenMap = map[string]int{
 	"REPEAT":                   repeat,
 	"REPEATABLE":               repeatable,
 	"REPLACE":                  replace,
+	"RESPECT":                  respect,
 	"REPLICATION":              replication,
 	"RESTRICT":                 restrict,
 	"REVERSE":                  reverse,
@@ -487,6 +494,7 @@ var tokenMap = map[string]int{
 	"TRIM":                     trim,
 	"TRUE":                     trueKwd,
 	"TRUNCATE":                 truncate,
+	"UNBOUNDED":                unbounded,
 	"UNCOMMITTED":              uncommitted,
 	"UNDEFINED":                undefined,
 	"UNION":                    union,
@@ -558,6 +566,24 @@ var btFuncTokenMap = map[string]int{
 	"VAR_SAMP":     builtinVarSamp,
 }
 
+var windowFuncTokenMap = map[string]int{
+	"CUME_DIST":    cumeDist,
+	"DENSE_RANK":   denseRank,
+	"FIRST_VALUE":  firstValue,
+	"GROUPS":       groups,
+	"LAG":          lag,
+	"LAST_VALUE":   lastValue,
+	"LEAD":         lead,
+	"NTH_VALUE":    nthValue,
+	"NTILE":        ntile,
+	"OVER":         over,
+	"PERCENT_RANK": percentRank,
+	"RANK":         rank,
+	"ROWS":         rows,
+	"ROW_NUMBER":   rowNumber,
+	"WINDOW":       window,
+}
+
 // aliases are strings directly map to another string and use the same token.
 var aliases = map[string]string{
 	"SCHEMA":  "DATABASE",
@@ -601,7 +627,10 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 			return tok
 		}
 	}
-	tok := tokenMap[tokenStr]
+	tok, ok := tokenMap[hack.String(data)]
+	if !ok && s.supportWindowFunc {
+		tok = windowFuncTokenMap[hack.String(data)]
+	}
 	return tok
 }
 
