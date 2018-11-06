@@ -73,7 +73,8 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	bo := NewBackoffer(context.Background(), batchGetMaxBackoff).WithVars(s.vars)
+	ctx := context.WithValue(context.Background(), TxnStartKey, s.version.Ver)
+	bo := NewBackoffer(ctx, batchGetMaxBackoff).WithVars(s.vars)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
@@ -208,7 +209,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
-	val, err := s.get(NewBackoffer(context.Background(), getMaxBackoff), k)
+	ctx := context.WithValue(context.Background(), TxnStartKey, s.version.Ver)
+	val, err := s.get(NewBackoffer(ctx, getMaxBackoff), k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

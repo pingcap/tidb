@@ -569,7 +569,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		if !committed && !undetermined {
 			c.cleanWg.Add(1)
 			go func() {
-				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
+				cleanupKeysCtx := context.WithValue(context.Background(), TxnStartKey, ctx.Value(TxnStartKey))
+				err := c.cleanupKeys(NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
 				if err != nil {
 					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
 					log.Infof("con:%d 2PC cleanup err: %v, tid: %d", c.connID, err, c.startTS)
