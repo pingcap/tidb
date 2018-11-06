@@ -62,7 +62,25 @@ func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
 	return txn.(*tikvTxn)
 }
 
-func (s *testScanSuite) TestSeek(c *C) {
+func (s *testScanSuite) TestScan(c *C) {
+	check := func(c *C, scan kv.Iterator, rowNum int, keyOnly bool) {
+		for i := 0; i < rowNum; i++ {
+			k := scan.Key()
+			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
+			if !keyOnly {
+				v := scan.Value()
+				c.Assert(v, BytesEquals, valueBytes(i))
+			}
+			// Because newScan return first item without calling scan.Next() just like go-hbase,
+			// for-loop count will decrease 1.
+			if i < rowNum-1 {
+				scan.Next()
+			}
+		}
+		scan.Next()
+		c.Assert(scan.Valid(), IsFalse)
+	}
+
 	for _, rowNum := range s.rowNums {
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
@@ -76,57 +94,35 @@ func (s *testScanSuite) TestSeek(c *C) {
 		val, err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, valueBytes(0))
+		// Test scan without upperBound
 		scan, err := txn2.Iter(encodeKey(s.prefix, ""), nil)
 		c.Assert(err, IsNil)
-
-		for i := 0; i < rowNum; i++ {
-			k := scan.Key()
-			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
-			v := scan.Value()
-			c.Assert(v, BytesEquals, valueBytes(i))
-			// Because newScan return first item without calling scan.Next() just like go-hbase,
-			// for-loop count will decrease 1.
-			if i < rowNum-1 {
-				scan.Next()
-			}
-		}
-		scan.Next()
-		c.Assert(scan.Valid(), IsFalse)
+		check(c, scan, rowNum, false)
+		// Test scan with upperBound
+		upperBound := rowNum / 2
+		scan, err = txn2.Iter(encodeKey(s.prefix, ""), encodeKey(s.prefix, s08d("key", upperBound)))
+		c.Assert(err, IsNil)
+		check(c, scan, upperBound, false)
 
 		txn3 := s.beginTxn(c)
 		txn3.SetOption(kv.KeyOnly, true)
+		// Test scan without upper bound
 		scan, err = txn3.Iter(encodeKey(s.prefix, ""), nil)
 		c.Assert(err, IsNil)
-
-		for i := 0; i < rowNum; i++ {
-			k := scan.Key()
-			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
-			// Because newScan return first item without calling scan.Next() just like go-hbase,
-			// for-loop count will decrease 1.
-			if i < rowNum-1 {
-				scan.Next()
-			}
-		}
-		scan.Next()
-		c.Assert(scan.Valid(), IsFalse)
+		check(c, scan, rowNum, true)
+		// test scan with upper bound
+		scan, err = txn3.Iter(encodeKey(s.prefix, ""), encodeKey(s.prefix, s08d("key", upperBound)))
+		c.Assert(err, IsNil)
+		check(c, scan, upperBound, true)
 
 		// Restore KeyOnly to false
 		txn3.SetOption(kv.KeyOnly, false)
 		scan, err = txn3.Iter(encodeKey(s.prefix, ""), nil)
 		c.Assert(err, IsNil)
-
-		for i := 0; i < rowNum; i++ {
-			k := scan.Key()
-			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
-			v := scan.Value()
-			c.Assert(v, BytesEquals, valueBytes(i))
-			// Because newScan return first item without calling scan.Next() just like go-hbase,
-			// for-loop count will decrease 1.
-			if i < rowNum-1 {
-				scan.Next()
-			}
-		}
-		scan.Next()
-		c.Assert(scan.Valid(), IsFalse)
+		check(c, scan, rowNum, true)
+		// test scan with upper bound
+		scan, err = txn3.Iter(encodeKey(s.prefix, ""), encodeKey(s.prefix, s08d("key", upperBound)))
+		c.Assert(err, IsNil)
+		check(c, scan, upperBound, true)
 	}
 }
