@@ -240,7 +240,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues
 
 // Drop removes the KV index from store.
 func (c *index) Drop(rm kv.RetrieverMutator) error {
-	it, err := rm.Iter(c.prefix, nil)
+	it, err := rm.Iter(c.prefix, c.prefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}
