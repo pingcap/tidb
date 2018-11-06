@@ -44,6 +44,11 @@ type Scanner struct {
 	specialComment specialCommentScanner
 
 	sqlMode mysql.SQLMode
+
+	// If the lexer should recognize keywords for window function.
+	// It may break the compatibility when support those keywords,
+	// because some application may already use them as identifiers.
+	supportWindowFunc bool
 }
 
 type specialCommentScanner interface {
@@ -188,6 +193,11 @@ func (s *Scanner) SetSQLMode(mode mysql.SQLMode) {
 // GetSQLMode return the SQL mode of scanner.
 func (s *Scanner) GetSQLMode() mysql.SQLMode {
 	return s.sqlMode
+}
+
+// EnableWindowFunc enables the scanner to recognize the keywords of window function.
+func (s *Scanner) EnableWindowFunc() {
+	s.supportWindowFunc = true
 }
 
 // NewScanner returns a new scanner object.
