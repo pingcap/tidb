@@ -14,7 +14,7 @@
 package tracing
 
 import (
-	"context"
+	"golang.org/x/net/context"
 	"github.com/lightstep/lightstep-tracer-go"
 	"github.com/opentracing/opentracing-go"
 )
