@@ -15,8 +15,8 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -24,6 +24,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only-full-group-by
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
 	tk.MustExec("insert t values (NULL, 1)")
@@ -248,10 +249,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("create table t2 (c1 int)")
 	tk.MustExec("insert into t1 values(3), (2)")
 	tk.MustExec("insert into t2 values(1), (2)")
-	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
+	tk.MustExec("set @@session.tidb_opt_insubq_to_join_and_agg = 0")
 	result = tk.MustQuery("select sum(c1 in (select * from t2)) from t1")
 	result.Check(testkit.Rows("1"))
-	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
+	tk.MustExec("set @@session.tidb_opt_insubq_to_join_and_agg = 1")
 	result = tk.MustQuery("select sum(c1 in (select * from t2)) from t1")
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select sum(c1) k from (select * from t1 union all select * from t2)t group by c1 * 2 order by k")
@@ -377,6 +378,11 @@ func (s *testSuite) TestAggPrune(c *C) {
 	tk.MustExec("create table t(id int primary key, b float, c float, d float)")
 	tk.MustExec("insert into t values(1, 1, 3, NULL), (2, 1, NULL, 6), (3, NULL, 1, 2), (4, NULL, NULL, 1), (5, NULL, 2, NULL), (6, 3, NULL, NULL), (7, NULL, NULL, NULL), (8, 1, 2 ,3)")
 	tk.MustQuery("select count(distinct b, c, d) from t group by id").Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(10))")
+	tk.MustExec("insert into t value(1, 11),(3, NULL)")
+	tk.MustQuery("SELECT a, MIN(b), MAX(b) FROM t GROUP BY a").Check(testkit.Rows("1 11 11", "3 <nil> <nil>"))
 }
 
 func (s *testSuite) TestGroupConcatAggr(c *C) {

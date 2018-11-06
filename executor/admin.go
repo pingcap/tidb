@@ -16,23 +16,23 @@ package executor
 import (
 	"math"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -102,7 +102,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		FieldType: *colTypeForHandle,
 	})
 
-	e.srcChunk = e.newChunk()
+	e.srcChunk = e.newFirstChunk()
 	dagPB, err := e.buildDAGPB()
 	if err != nil {
 		return errors.Trace(err)
@@ -197,7 +197,7 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	e.srcChunk = chunk.NewChunkWithCapacity(e.columnsTypes(), e.maxChunkSize)
+	e.srcChunk = chunk.New(e.columnsTypes(), e.initCap, e.maxChunkSize)
 	e.batchSize = 2048
 	e.recoverRows = make([]recoverRows, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
@@ -636,7 +636,7 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	e.idxChunk = chunk.NewChunkWithCapacity(e.getIdxColTypes(), e.maxChunkSize)
+	e.idxChunk = chunk.New(e.getIdxColTypes(), e.initCap, e.maxChunkSize)
 	e.idxValues = make(map[int64][][]types.Datum, e.batchSize)
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)

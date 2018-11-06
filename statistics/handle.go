@@ -19,14 +19,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -109,6 +109,11 @@ func (h *Handle) GetQueryFeedback() []*QueryFeedback {
 	return h.feedback
 }
 
+// DurationToTS converts duration to timestamp.
+func DurationToTS(d time.Duration) uint64 {
+	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
+}
+
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema) error {
 	lastVersion := h.LastUpdateVersion()
@@ -117,7 +122,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := oracle.ComposeTS(3*int64(h.Lease), 0)
+	offset := DurationToTS(3 * h.Lease)
 	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -258,7 +263,7 @@ func (h *Handle) LoadNeededHistograms() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, CMSketch: cms, Count: int64(hg.totalRowCount())}
+		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, CMSketch: cms, Count: int64(hg.totalRowCount()), isHandle: c.isHandle}
 		h.UpdateTableStats([]*Table{tbl}, nil)
 		histogramNeededColumns.delete(col)
 	}

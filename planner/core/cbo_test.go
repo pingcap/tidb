@@ -15,12 +15,15 @@ package core_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -28,12 +31,41 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testAnalyzeSuite{})
 
 type testAnalyzeSuite struct {
+}
+
+func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
+	tk.MustExec("create table t1(a int, b int, c int, key idx(a, b))")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55)")
+	tk.MustExec("analyze table t1, t2")
+	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
+	c.Assert(len(rs.Rows()), Equals, 10)
+	for _, row := range rs.Rows() {
+		c.Assert(len(row), Equals, 5)
+		taskType := row[2].(string)
+		if taskType != "cop" {
+			execInfo := row[4].(string)
+			c.Assert(strings.Contains(execInfo, "time"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
+		}
+	}
 }
 
 // TestCBOWithoutAnalyze tests the plan with stats that only have count info.
@@ -323,7 +355,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -353,7 +385,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1))}(test.t.c1,test.t1.c1)",
+			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1)->HashAgg)->HashAgg}(test.t.c1,test.t1.c1)->Projection",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
@@ -373,7 +405,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -410,7 +442,6 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create table t3 (a int, b int)")
 	testKit.MustExec("create index a on t3 (a)")
 
-	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 	testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
 	testKit.MustExec("create index a on t4 (a)")
 	testKit.MustExec("create index b on t4 (b)")
@@ -485,7 +516,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -556,12 +587,13 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 
 		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, sql)
+		c.Assert(err, IsNil)
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, true)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
@@ -621,13 +653,14 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 		store.Close()
 	}()
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t(a int, b int, c int, index idx(c))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
 			"Projection_11 10.00 root 9_aux_0",
-			"└─Apply_13 10.00 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]",
+			"└─Apply_13 10.00 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_20 1.00 root funcs:count(1)",
@@ -693,6 +726,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	dom, err := session.BootstrapSession(store)
+	dom.SetStatsUpdating(true)
 	return store, dom, errors.Trace(err)
 }
 
@@ -811,7 +845,7 @@ func BenchmarkOptimize(b *testing.B) {
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err := core.Optimize(ctx, stmt, is)
+				_, err := planner.Optimize(ctx, stmt, is)
 				c.Assert(err, IsNil)
 			}
 			b.ReportAllocs()

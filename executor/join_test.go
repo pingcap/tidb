@@ -726,14 +726,14 @@ func (s *testSuite) TestInSubquery(c *C) {
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("insert into t1 values (1),(2)")
 	tk.MustExec("insert into t2 values (1),(2)")
-	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 1")
+	tk.MustExec("set @@session.tidb_opt_insubq_to_join_and_agg = 0")
 	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
 	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
 	result.Check(testkit.Rows())
 	result = tk.MustQuery("select * from t1 where a not in (select * from t2 where false)")
 	result.Sort().Check(testkit.Rows("1", "2"))
-	tk.MustExec("set @@session.tidb_opt_insubquery_unfold = 0")
+	tk.MustExec("set @@session.tidb_opt_insubq_to_join_and_agg = 1")
 	result = tk.MustQuery("select * from t1 where a in (select * from t2)")
 	result.Sort().Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select * from t1 where a in (select * from t2 where false)")
@@ -876,11 +876,11 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"MergeJoin_15 12500.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
+		"MergeJoin_15 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
 		"├─TableReader_11 10000.00 root data:TableScan_10",
 		"│ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
-		"└─TableReader_13 10000.00 root data:TableScan_12",
-		"  └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"└─TableReader_13 6666.67 root data:TableScan_12",
+		"  └─TableScan_12 6666.67 cop table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("set @@tidb_max_chunk_size=1")

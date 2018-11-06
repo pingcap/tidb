@@ -15,22 +15,27 @@ package variable
 
 import (
 	"crypto/tls"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/klauspost/cpuid"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -164,12 +169,12 @@ type SessionVars struct {
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// PreparedStmts stores prepared statement.
-	PreparedStmts        map[uint32]interface{}
+	PreparedStmts        map[uint32]*ast.Prepared
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// params for prepared statements
-	PreparedParams []interface{}
+	PreparedParams []types.Datum
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -235,7 +240,7 @@ type SessionVars struct {
 	SnapshotInfoschema interface{}
 
 	// BinlogClient is used to write binlog.
-	BinlogClient interface{}
+	BinlogClient *pumpcli.PumpsClient
 
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
@@ -249,8 +254,12 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
-	// AllowInSubqueryUnFolding can be set to true to fold in subquery
-	AllowInSubqueryUnFolding bool
+	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
+	// This variable is currently not recommended to be turned on.
+	AllowWriteRowID bool
+
+	// AllowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
+	AllowInSubqToJoinAndAgg bool
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
@@ -284,7 +293,10 @@ type SessionVars struct {
 	OptimizerSelectivityLevel int
 
 	// EnableTablePartition enables table partition feature.
-	EnableTablePartition bool
+	EnableTablePartition string
+
+	// EnableCascadesPlanner enables the cascades planner.
+	EnableCascadesPlanner bool
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
@@ -294,6 +306,19 @@ type SessionVars struct {
 	EnableStreaming bool
 
 	writeStmtBufs WriteStmtBufs
+
+	// L2CacheSize indicates the size of CPU L2 cache, using byte as unit.
+	L2CacheSize int
+
+	// EnableRadixJoin indicates whether to use radix hash join to execute
+	// HashJoin.
+	EnableRadixJoin bool
+
+	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
+	ConstraintCheckInPlace bool
+
+	// CommandValue indicates which command current session is doing.
+	CommandValue uint32
 }
 
 // NewSessionVars creates a session vars object.
@@ -301,9 +326,9 @@ func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                     make(map[string]string),
 		systems:                   make(map[string]string),
-		PreparedStmts:             make(map[uint32]interface{}),
+		PreparedStmts:             make(map[uint32]*ast.Prepared),
 		PreparedStmtNameToID:      make(map[string]uint32),
-		PreparedParams:            make([]interface{}, 10),
+		PreparedParams:            make([]types.Datum, 0, 10),
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
@@ -315,6 +340,10 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
+		AllowInSubqToJoinAndAgg:   DefOptInSubqToJoinAndAgg,
+		EnableRadixJoin:           false,
+		L2CacheSize:               cpuid.CPU.Cache.L2,
+		CommandValue:              uint32(mysql.ComSleep),
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -444,6 +473,26 @@ func (s *SessionVars) ResetPrevAffectedRows() {
 	}
 }
 
+// GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
+func (s *SessionVars) GetExecuteArgumentsInfo() string {
+	if len(s.PreparedParams) == 0 {
+		return ""
+	}
+	args := make([]string, 0, len(s.PreparedParams))
+	for _, v := range s.PreparedParams {
+		if v.IsNull() {
+			args = append(args, "<nil>")
+		} else {
+			str, err := v.ToString()
+			if err != nil {
+				terror.Log(err)
+			}
+			args = append(args, str)
+		}
+	}
+	return fmt.Sprintf(" [arguments: %s]", strings.Join(args, ", "))
+}
+
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	val, ok := s.systems[name]
@@ -510,8 +559,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
-	case TiDBOptInSubqUnFolding:
-		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
+	case TiDBOptWriteRowID:
+		s.AllowWriteRowID = TiDBOptOn(val)
+	case TiDBOptInSubqToJoinAndAgg:
+		s.AllowInSubqToJoinAndAgg = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
 		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
 	case TiDBIndexLookupJoinConcurrency:
@@ -534,6 +585,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
+	case TiDBConstraintCheckInPlace:
+		s.ConstraintCheckInPlace = TiDBOptOn(val)
 	case TiDBBatchInsert:
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
@@ -562,22 +615,30 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBSlowLogThreshold:
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
+	case TiDBQueryLogMaxLen:
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBRetryLimit:
 		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
 	case TiDBDisableTxnAutoRetry:
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
+	case TiDBEnableCascadesPlanner:
+		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
-		s.EnableTablePartition = TiDBOptOn(val)
+		s.EnableTablePartition = val
 	case TiDBDDLReorgWorkerCount:
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
+	case TiDBEnableRadixJoin:
+		s.EnableRadixJoin = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

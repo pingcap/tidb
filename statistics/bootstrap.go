@@ -16,15 +16,15 @@ package statistics
 import (
 	"fmt"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -120,7 +120,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables stat
 				continue
 			}
 			hist := NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
-			table.Columns[hist.ID] = &Column{Histogram: *hist, Info: colInfo, Count: nullCount}
+			table.Columns[hist.ID] = &Column{Histogram: *hist, Info: colInfo, Count: nullCount, isHandle: tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)}
 		}
 	}
 }

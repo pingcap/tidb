@@ -19,18 +19,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -608,9 +608,23 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 		return nil
 	}
 
+	loginUser := ctx.GetSessionVars().User
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
 	var records [][]types.Datum
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
+		// If you have the PROCESS privilege, you can see all threads.
+		// Otherwise, you can see only your own threads.
+		if !hasProcessPriv && pi.User != loginUser.Username {
+			continue
+		}
+
 		var t uint64
 		if len(pi.Info) != 0 {
 			t = uint64(time.Since(pi.Time) / time.Second)
@@ -632,15 +646,14 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 
 func dataForEngines() (records [][]types.Datum) {
 	records = append(records,
-		types.MakeDatums("InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"),
-		types.MakeDatums("CSV", "YES", "CSV storage engine", "NO", "NO", "NO"),
-		types.MakeDatums("MRG_MYISAM", "YES", "Collection of identical MyISAM tables", "NO", "NO", "NO"),
-		types.MakeDatums("BLACKHOLE", "YES", "/dev/null storage engine (anything you write to it disappears)", "NO", "NO", "NO"),
-		types.MakeDatums("MyISAM", "YES", "MyISAM storage engine", "NO", "NO", "NO"),
-		types.MakeDatums("MEMORY", "YES", "Hash based, stored in memory, useful for temporary tables", "NO", "NO", "NO"),
-		types.MakeDatums("ARCHIVE", "YES", "Archive storage engine", "NO", "NO", "NO"),
-		types.MakeDatums("FEDERATED", "NO", "Federated MySQL storage engine", nil, nil, nil),
-		types.MakeDatums("PERFORMANCE_SCHEMA", "YES", "Performance Schema", "NO", "NO", "NO"),
+		types.MakeDatums(
+			"InnoDB",  // Engine
+			"DEFAULT", // Support
+			"Supports transactions, row-level locking, and foreign keys", // Comment
+			"YES", // Transactions
+			"YES", // XA
+			"YES", // Savepoints
+		),
 	)
 	return records
 }
@@ -1170,8 +1183,8 @@ func dataForPseudoProfiling() [][]types.Datum {
 		0,                      // PAGE_FAULTS_MAJOR
 		0,                      // PAGE_FAULTS_MINOR
 		0,                      // SWAPS
-		0,                      // SOURCE_FUNCTION
-		0,                      // SOURCE_FILE
+		"",                     // SOURCE_FUNCTION
+		"",                     // SOURCE_FILE
 		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)

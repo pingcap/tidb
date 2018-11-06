@@ -21,24 +21,24 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -135,6 +135,7 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	// for uuid
 	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
 	for _, it := range r.Rows() {
@@ -477,6 +478,8 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("100 123 123 120"))
 	result = tk.MustQuery("SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);")
 	result.Check(testkit.Rows("100 123.45 123.4 123.456 1.230000000000000000000000000000 123.45"))
+	result = tk.MustQuery("SELECT truncate(9223372036854775807, -7), truncate(9223372036854775808, -10), truncate(cast(-1 as unsigned), -10);")
+	result.Check(testkit.Rows("9223372036850000000 9223372030000000000 18446744070000000000"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a date, b datetime, c timestamp, d varchar(20));`)
@@ -736,6 +739,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("www.pingcap 12345 45 2017 01:01"))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
 	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
+	tk.MustQuery(`select substring_index('xyz', 'abc', 9223372036854775808)`).Check(testkit.Rows(``))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
 	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
 	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
@@ -1797,12 +1801,18 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		{"\"2011-01-01 00:00:00\"", "10.10", "DAY", "2011-01-11 00:00:00", "2010-12-22 00:00:00"},
 		{"\"2011-01-01 00:00:00\"", "10.10", "HOUR", "2011-01-01 10:00:00", "2010-12-31 14:00:00"},
 		{"\"2011-01-01 00:00:00\"", "10.10", "MINUTE", "2011-01-01 00:10:00", "2010-12-31 23:50:00"},
-		{"\"2011-01-01 00:00:00\"", "10.10", "SECOND", "2011-01-01 00:00:10", "2010-12-31 23:59:50"},
+		{"\"2011-01-01 00:00:00\"", "10.10", "SECOND", "2011-01-01 00:00:10.100000", "2010-12-31 23:59:49.900000"},
 		{"\"2011-01-01 00:00:00\"", "10.10", "MICROSECOND", "2011-01-01 00:00:00.000010", "2010-12-31 23:59:59.999990"},
+		{"\"2011-01-01 00:00:00\"", "10.90", "MICROSECOND", "2011-01-01 00:00:00.000011", "2010-12-31 23:59:59.999989"},
 
 		{"\"2009-01-01\"", "6/4", "HOUR_MINUTE", "2009-01-04 12:20:00", "2008-12-28 11:40:00"},
 		{"\"2009-01-01\"", "6/0", "HOUR_MINUTE", "<nil>", "<nil>"},
 		{"\"1970-01-01 12:00:00\"", "CAST(6/4 AS DECIMAL(3,1))", "HOUR_MINUTE", "1970-01-01 13:05:00", "1970-01-01 10:55:00"},
+		//for issue #8077
+		{"\"2012-01-02\"", "\"prefix8\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
+		{"\"2012-01-02\"", "\"prefix8prefix\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
+		{"\"2012-01-02\"", "\"8:00\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
+		{"\"2012-01-02\"", "\"8:00:00\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
 	}
 	for _, tc := range dateArithmeticalTests {
 		addDate := fmt.Sprintf("select adddate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
@@ -1933,6 +1943,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery(`select cast(20170118.999 as datetime);`)
 	result.Check(testkit.Rows("2017-01-18 00:00:00"))
 
+	// Test corner cases of cast string as datetime
 	result = tk.MustQuery(`select cast("170102034" as datetime);`)
 	result.Check(testkit.Rows("2017-01-02 03:04:00"))
 	result = tk.MustQuery(`select cast("1701020304" as datetime);`)
@@ -1943,7 +1954,44 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("2017-01-02 03:04:01"))
 	result = tk.MustQuery(`select cast("1701020304.111" as datetime);`)
 	result.Check(testkit.Rows("2017-01-02 03:04:11"))
-	//tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1701020304.111'"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1701020304.111'"))
+	result = tk.MustQuery(`select cast("17011" as datetime);`)
+	result.Check(testkit.Rows("2017-01-01 00:00:00"))
+	result = tk.MustQuery(`select cast("150101." as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 00:00:00"))
+	result = tk.MustQuery(`select cast("150101.a" as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '150101.a'"))
+	result = tk.MustQuery(`select cast("150101.1a" as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 01:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '150101.1a'"))
+	result = tk.MustQuery(`select cast("150101.1a1" as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 01:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '150101.1a1'"))
+	result = tk.MustQuery(`select cast("1101010101.111" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.111'"))
+	result = tk.MustQuery(`select cast("1101010101.11aaaaa" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.11aaaaa'"))
+	result = tk.MustQuery(`select cast("1101010101.a1aaaaa" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.a1aaaaa'"))
+	result = tk.MustQuery(`select cast("1101010101.11" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("1101010101.111" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.111'"))
+	result = tk.MustQuery(`select cast("970101.111" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:01:00"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("970101.11111" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:11:01"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("970101.111a1" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:01:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '970101.111a1'"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
@@ -2347,13 +2395,13 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	// for current_user
 	sessionVars := tk.Se.GetSessionVars()
 	originUser := sessionVars.User
-	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "127.0.%%"}
 	result = tk.MustQuery("select current_user()")
-	result.Check(testkit.Rows("root@localhost"))
+	result.Check(testkit.Rows("root@127.0.%%"))
 	sessionVars.User = originUser
 
 	// for user
-	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "127.0.%%"}
 	result = tk.MustQuery("select user()")
 	result.Check(testkit.Rows("root@localhost"))
 	sessionVars.User = originUser
@@ -2951,6 +2999,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(100))")
+	tk.MustExec("create table d(a varchar(100))")
 	tk.MustExec("insert into t values('hello'), ('hello')")
 	result := tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,hello"))
@@ -2958,6 +3007,15 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustExec("set @@group_concat_max_len=7")
 	result = tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,h"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+
+	_, err := tk.Exec("insert into d select group_concat(a) from t")
+	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, terror.ErrCode(mysql.ErrCutValueGroupConcat))
+
+	tk.Exec("set sql_mode=''")
+	tk.MustExec("insert into d select group_concat(a) from t")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
 func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
@@ -3075,6 +3133,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	rs, err := tk.Exec("select date '0000-00-00';")
+	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("0000-00-00")), IsTrue)
@@ -3104,6 +3163,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	c.Assert(rs.Close(), IsNil)
 
 	rs, err = tk.Exec("select date '0000-00-00';")
+	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("0000-00-00")), IsTrue)
@@ -3316,6 +3376,25 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$[*]')
 	`)
 	r.Check(testkit.Rows("1 0 1 0"))
+
+	r = tk.MustQuery(`select
+
+		json_keys('{}'),
+		json_keys('{"a": 1, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}', "$.a")
+	`)
+	r.Check(testkit.Rows(`[] ["a", "b"] ["a", "b"] ["c"]`))
+
+	r = tk.MustQuery(`select
+		json_length('1'),
+		json_length('{}'),
+		json_length('[]'),
+		json_length('{"a": 1}'),
+		json_length('{"a": 1, "b": 2}'),
+		json_length('[1, 2, 3]')
+	`)
+	r.Check(testkit.Rows("1 0 0 1 2 3"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
@@ -3589,4 +3668,14 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	tk.MustExec("insert into t select 0.5999991229316*0.918755041726043;")
 	res := tk.MustQuery("select * from t;")
 	res.Check(testkit.Rows("0.55125221922461136"))
+}
+
+func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);`)
+	tk.MustExec(`insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");`)
+	res := tk.MustQuery(`select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;`)
+	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
 }

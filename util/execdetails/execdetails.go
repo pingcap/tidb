@@ -16,6 +16,8 @@ package execdetails
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -51,4 +53,51 @@ func (d ExecDetails) String() string {
 		parts = append(parts, fmt.Sprintf("processed_keys:%d", d.ProcessedKeys))
 	}
 	return strings.Join(parts, " ")
+}
+
+// RuntimeStatsColl collects executors's execution info.
+type RuntimeStatsColl struct {
+	mu    sync.Mutex
+	stats map[string]*RuntimeStats
+}
+
+// RuntimeStats collects one executor's execution info.
+type RuntimeStats struct {
+	// executor's Next() called times.
+	loop int32
+	// executor consume time.
+	consume int64
+	// executor return row count.
+	rows int64
+}
+
+// NewRuntimeStatsColl creates new executor collector.
+func NewRuntimeStatsColl() *RuntimeStatsColl {
+	return &RuntimeStatsColl{stats: make(map[string]*RuntimeStats)}
+}
+
+// Get gets execStat for a executor.
+func (e *RuntimeStatsColl) Get(planID string) *RuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runtimeStats, exists := e.stats[planID]
+	if !exists {
+		runtimeStats = &RuntimeStats{}
+		e.stats[planID] = runtimeStats
+	}
+	return runtimeStats
+}
+
+// Record records executor's execution.
+func (e *RuntimeStats) Record(d time.Duration, rowNum int) {
+	atomic.AddInt32(&e.loop, 1)
+	atomic.AddInt64(&e.consume, int64(d))
+	atomic.AddInt64(&e.rows, int64(rowNum))
+}
+
+func (e *RuntimeStats) String() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 }

@@ -24,16 +24,18 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -41,14 +43,12 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -556,7 +556,6 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL string) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
 	s.tk.MustExec("drop table if exists test_add_index")
 	s.tk.MustExec(createTableSQL)
 
@@ -1076,6 +1075,15 @@ LOOP:
 	c.Assert(colC.Tp, Equals, mysql.TypeDatetime)
 	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
+
+	// test add unsupported constraint
+	s.mustExec(c, "create table t_add_unsupported_constraint (a int);")
+	_, err = s.tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int AUTO_INCREMENT;")
+	c.Assert(err.Error(), Equals, "[ddl:202]unsupported add column 'id' constraint AUTO_INCREMENT when altering 'test_db.t_add_unsupported_constraint'")
+	_, err = s.tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int KEY;")
+	c.Assert(err.Error(), Equals, "[ddl:202]unsupported add column 'id' constraint PRIMARY KEY when altering 'test_db.t_add_unsupported_constraint'")
+	_, err = s.tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int UNIQUE;")
+	c.Assert(err.Error(), Equals, "[ddl:202]unsupported add column 'id' constraint UNIQUE KEY when altering 'test_db.t_add_unsupported_constraint'")
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
@@ -1226,8 +1234,12 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
-	sql = "alter table t3 change aa a bigint not null"
-	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	s.mustExec(c, "create table t4 (c1 int, c2 int, c3 int default 1, index (c1));")
+	s.tk.MustExec("insert into t4(c2) values (null);")
+	sql = "alter table t4 change c1 a1 int not null;"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
+	sql = "alter table t4 change c2 a bigint not null;"
+	s.testErrorCode(c, sql, tmysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 	// Rename to an existing column.
@@ -1525,6 +1537,20 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 
 	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
 	c.Assert(err, NotNil)
+}
+
+func (s *testDBSuite) TestTableForeignKey(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t1 (a int, b int);")
+	// test create table with foreign key.
+	failSQL := "create table t2 (c int, foreign key (a) references t1(a));"
+	s.testErrorCode(c, failSQL, tmysql.ErrKeyColumnDoesNotExits)
+	// test add foreign key.
+	s.tk.MustExec("create table t3 (a int, b int);")
+	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
+	s.testErrorCode(c, failSQL, tmysql.ErrKeyColumnDoesNotExits)
+	s.tk.MustExec("drop table if exists t1,t2,t3;")
 }
 
 func (s *testDBSuite) TestBitDefaultValue(c *C) {
@@ -2611,7 +2637,6 @@ func (s *testDBSuite) TestBackwardCompatibility(c *C) {
 func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	s.tk.MustExec("drop table if exists employees;")
 	s.tk.MustExec(`create table employees (
 	id int not null,
@@ -2712,7 +2737,6 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	s.tk.MustExec("drop table if exists employees")
 	s.tk.MustExec(`create table employees (
 	id int not null,
@@ -2850,7 +2874,6 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 func (s *testDBSuite) TestAddPartitionTooManyPartitions(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	count := ddl.PartitionCountLimit
 	s.tk.MustExec("drop table if exists p1;")
 	sql1 := `create table p1 (
@@ -2933,7 +2956,6 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 
 	// Test truncate table partition.
 	s.tk.MustExec("drop table if exists t3;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t3(
 		id int, name varchar(50), 
 		purchased date
@@ -2972,7 +2994,6 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 
 	// Test drop table partition.
 	s.tk.MustExec("drop table if exists t4;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t4(
 		id int, name varchar(50), 
 		purchased date
@@ -3008,12 +3029,38 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	hasOldPartitionData = checkPartitionDelRangeDone(c, s, partitionPrefix)
 	c.Assert(hasOldPartitionData, IsFalse)
 	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
+
+	// Test truncate table partition reassign a new partitionIDs.
+	s.tk.MustExec("drop table if exists t5;")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
+	s.tk.MustExec(`create table t5(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
+	oldPID = oldTblInfo.Meta().Partition.Definitions[0].ID
+
+	s.tk.MustExec("truncate table t5;")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
+	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
+	c.Assert(oldPID != newPID, IsTrue)
 }
 
 func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec("drop table if exists part1;")
 	s.tk.MustExec(`create table part1 (
 		col1 int not null,
@@ -3206,7 +3253,6 @@ func (s *testDBSuite) TestPartitionDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	done := make(chan error, 1)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec("drop table if exists partition_drop_idx;")
 	s.tk.MustExec(`create table partition_drop_idx (
 		c1 int, c2 int, c3 int
@@ -3286,7 +3332,6 @@ LOOP:
 func (s *testDBSuite) TestPartitionCancelAddIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
-	s.mustExec(c, "set @@session.tidb_enable_table_partition=1;")
 	s.mustExec(c, "drop table if exists t1;")
 	s.mustExec(c, `create table t1 (
 		c1 int, c2 int, c3 int
@@ -3416,10 +3461,115 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 	return hook.OnJobUpdatedExported, c3IdxInfo
 }
 
+func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists test2;")
+	s.tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
+	s.tk.MustExec("alter table test2 change c2 a int not null;")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test2"))
+	c.Assert(err, IsNil)
+	var c2 *table.Column
+	for _, col := range t.Cols() {
+		if col.Name.L == "a" {
+			c2 = col
+		}
+	}
+	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
+
+	s.tk.MustExec("drop table if exists test2;")
+	s.tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
+	s.tk.MustExec("insert into test2(c2) values (null);")
+	s.testErrorCode(c, "alter table test2 change c2 a int not null", tmysql.ErrInvalidUseOfNull)
+	s.testErrorCode(c, "alter table test2 change c1 a1 bigint not null;", tmysql.WarnDataTruncated)
+}
+
+func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int default 1, index (c1));")
+
+	var c2 *table.Column
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+
+		t := s.testGetTable(c, "t1")
+		for _, col := range t.Cols() {
+			if col.Name.L == "c2" {
+				c2 = col
+			}
+		}
+		if mysql.HasPreventNullInsertFlag(c2.Flag) {
+			s.testErrorCode(c, "insert into t1(c2) values (null);", tmysql.ErrBadNull)
+		}
+
+		hookCtx := mock.NewContext()
+		hookCtx.Store = s.store
+		var err error
+		err = hookCtx.NewTxn()
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+
+		jobIDs := []int64{job.ID}
+		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		// It only tests cancel one DDL job.
+		if errs[0] != nil {
+			checkErr = errors.Trace(errs[0])
+			return
+		}
+
+		err = hookCtx.Txn().Commit(context.Background())
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+	}
+
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
+	ticker := time.NewTicker(s.lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			break LOOP
+		case <-ticker.C:
+			s.mustExec(c, "insert into t1(c2) values (null);")
+		}
+	}
+
+	t := s.testGetTable(c, "t1")
+	for _, col := range t.Cols() {
+		if col.Name.L == "c2" {
+			c2 = col
+		}
+	}
+	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
+	s.mustExec(c, "drop table t1")
+	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
+}
+
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
 	hired date not null

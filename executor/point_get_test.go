@@ -35,4 +35,23 @@ func (s *testSuite) TestPointGet(c *C) {
 	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")
 	tk.MustExec("INSERT INTO tab3 VALUES(0,854,111.96,'mguub',711,966.36,'snwlo');")
 	tk.MustQuery("SELECT ALL * FROM tab3 WHERE col4 = 85;").Check(testkit.Rows())
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint primary key, b bigint, c bigint);`)
+	tk.MustExec(`insert into t values(1, NULL, NULL), (2, NULL, 2), (3, 3, NULL), (4, 4, 4), (5, 6, 7);`)
+	tk.MustQuery(`select * from t where a = 1;`).Check(testkit.Rows(
+		`1 <nil> <nil>`,
+	))
+	tk.MustQuery(`select * from t where a = 2;`).Check(testkit.Rows(
+		`2 <nil> 2`,
+	))
+	tk.MustQuery(`select * from t where a = 3;`).Check(testkit.Rows(
+		`3 3 <nil>`,
+	))
+	tk.MustQuery(`select * from t where a = 4;`).Check(testkit.Rows(
+		`4 4 4`,
+	))
+	tk.MustQuery(`select a, a, b, a, b, c, b, c, c from t where a = 5;`).Check(testkit.Rows(
+		`5 5 6 5 6 7 6 7 7`,
+	))
 }

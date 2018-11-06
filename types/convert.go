@@ -22,12 +22,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pkg/errors"
 )
 
 func truncateStr(str string, flen int) string {
@@ -185,7 +185,7 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 		}
 	}
 
-	d, err = ParseDuration(str, fsp)
+	d, err = ParseDuration(sc, str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
@@ -376,6 +376,21 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 		return StrToFloat(sc, hack.String(j.GetString()))
 	}
 	return 0, errors.New("Unknown type code in JSON")
+}
+
+// ConvertJSONToDecimal casts JSON into decimal.
+func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyDecimal, error) {
+	res := new(MyDecimal)
+	if j.TypeCode != json.TypeCodeString {
+		f64, err := ConvertJSONToFloat(sc, j)
+		if err != nil {
+			return res, errors.Trace(err)
+		}
+		err = res.FromFloat64(f64)
+		return res, errors.Trace(err)
+	}
+	err := sc.HandleTruncate(res.FromString([]byte(j.GetString())))
+	return res, errors.Trace(err)
 }
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.

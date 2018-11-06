@@ -232,13 +232,12 @@ commit-timeout = "41s"
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
-enabled = false
-capacity = 10240000
+enabled = true
+capacity = 2048000
 
 [binlog]
-
-# Socket file to write binlog.
-binlog-socket = ""
+# enable to write binlog.
+enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
 write-timeout = "15s"

@@ -24,18 +24,18 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
-	"github.com/pkg/errors"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -727,6 +727,9 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			fk.RefTable = constr.Refer.Table.Name
 			fk.State = model.StatePublic
 			for _, key := range constr.Keys {
+				if table.FindCol(cols, key.Column.Name.O) == nil {
+					return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
+				}
 				fk.Cols = append(fk.Cols, key.Column.Name)
 			}
 			for _, key := range constr.Refer.IndexColNames {
@@ -749,7 +752,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			for _, key := range constr.Keys {
 				col = table.FindCol(cols, key.Column.Name.O)
 				if col == nil {
-					return nil, errKeyColumnDoesNotExits.GenWithStack("key column %s doesn't exist in table", key.Column.Name)
+					return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
 				}
 				// Virtual columns cannot be used in primary key.
 				if col.IsGenerated() && !col.GeneratedStored {
@@ -1008,6 +1011,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.Charset = op.StrValue
 		case ast.TableOptionCollate:
 			tbInfo.Collate = op.StrValue
+		case ast.TableOptionCompression:
+			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
 			if hasAutoIncrementColumn(tbInfo) && op.UintValue != 0 {
 				return errUnsupportedShardRowIDBits
@@ -1188,11 +1193,15 @@ func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Id
 	return schema, t, nil
 }
 
-func checkColumnConstraint(constraints []*ast.ColumnOption) error {
-	for _, constraint := range constraints {
+func checkColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
+	for _, constraint := range col.Options {
 		switch constraint.Tp {
-		case ast.ColumnOptionAutoIncrement, ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return errUnsupportedAddColumn.GenWithStack("unsupported add column constraint - %v", constraint.Tp)
+		case ast.ColumnOptionAutoIncrement:
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionPrimaryKey:
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint PRIMARY KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionUniqKey:
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint UNIQUE KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
 		}
 	}
 
@@ -1203,7 +1212,7 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(specNewColumn.Options)
+	err := checkColumnConstraint(specNewColumn, ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1455,7 +1464,22 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 			return nil
 		}
 	case mysql.TypeEnum:
-		return errUnsupportedModifyColumn.GenWithStackByArgs("modify enum column is not supported")
+		if origin.Tp == to.Tp {
+			if len(to.Elems) < len(origin.Elems) {
+				msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
+				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+			for index, originElem := range origin.Elems {
+				toElem := to.Elems[index]
+				if originElem != toElem {
+					msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+					return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				}
+			}
+			return nil
+		}
+		msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	default:
 		if origin.Tp == to.Tp {
 			return nil
@@ -1635,9 +1659,14 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("set auto_increment")
 	}
 
-	// We don't support modifying the type definitions from 'null' to 'not null' now.
+	// We support modifying the type definitions of 'null' to 'not null' now.
+	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("null to not null")
+		if err = checkForNullValue(ctx, col.Tp == newCol.Tp, ident.Schema, ident.Name, col.Name, newCol.Name); err != nil {
+			return nil, errors.Trace(err)
+		}
+		// `modifyColumnTp` indicates that there is a type modification.
+		modifyColumnTp = mysql.TypeNull
 	}
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
@@ -1649,7 +1678,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		TableID:    t.Meta().ID,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position},
+		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp},
 	}
 	return job, nil
 }
@@ -1962,13 +1991,16 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
+func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	var fkInfo model.FKInfo
 	fkInfo.Name = fkName
 	fkInfo.RefTable = refer.Table.Name
 
 	fkInfo.Cols = make([]model.CIStr, len(keys))
 	for i, key := range keys {
+		if table.FindCol(cols, key.Column.Name.O) == nil {
+			return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
+		}
 		fkInfo.Cols[i] = key.Column.Name
 	}
 
@@ -1996,7 +2028,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	fkInfo, err := buildFKInfo(fkName, keys, refer)
+	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}

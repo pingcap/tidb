@@ -27,15 +27,15 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/transform"
 )
@@ -1210,6 +1210,11 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 	} else {
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
+		if count < 0 {
+			// -count overflows max int64, returns an empty string.
+			return "", false, nil
+		}
+
 		if count < end {
 			start = end - count
 		}

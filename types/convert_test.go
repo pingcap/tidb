@@ -20,13 +20,13 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testTypeConvertSuite{})
@@ -271,8 +271,10 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	dt, err := ParseDate(nil, "2015-11-11")
 	c.Assert(err, IsNil)
 	v, err = Convert(dt, ft)
+	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(ZeroDuration, ft)
+	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(time.Now().Year()))
 
 	// For enum
@@ -335,7 +337,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	c.Assert(err, IsNil)
 	testToString(c, t, "2011-11-10 11:11:11.999999")
 
-	td, err := ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration(nil, "11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testToString(c, td, "11:11:11.999999")
 
@@ -464,7 +466,7 @@ func (s *testTypeConvertSuite) TestStrToNum(c *C) {
 func (s *testTypeConvertSuite) TestFieldTypeToStr(c *C) {
 	defer testleak.AfterTest(c)()
 	v := TypeToStr(mysql.TypeUnspecified, "not binary")
-	c.Assert(v, Equals, type2Str[mysql.TypeUnspecified])
+	c.Assert(v, Equals, TypeStr(mysql.TypeUnspecified))
 	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
 	c.Assert(v, Equals, "blob")
 	v = TypeToStr(mysql.TypeString, charset.CharsetBin)
@@ -801,6 +803,27 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		c.Assert(err, IsNil)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
+	}
+}
+
+func (s *testTypeConvertSuite) TestConvertJSONToDecimal(c *C) {
+	var tests = []struct {
+		In  string
+		Out *MyDecimal
+	}{
+		{`{}`, NewDecFromStringForTest("0")},
+		{`[]`, NewDecFromStringForTest("0")},
+		{`3`, NewDecFromStringForTest("3")},
+		{`-3`, NewDecFromStringForTest("-3")},
+		{`4.5`, NewDecFromStringForTest("4.5")},
+		{`"1234"`, NewDecFromStringForTest("1234")},
+		{`"1234567890123456789012345678901234567890123456789012345"`, NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
+	}
+	for _, tt := range tests {
+		j, err := json.ParseBinaryFromString(tt.In)
+		c.Assert(err, IsNil)
+		casted, _ := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
+		c.Assert(casted.Compare(tt.Out), Equals, 0)
 	}
 }
 

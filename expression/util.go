@@ -19,15 +19,16 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pkg/errors"
 )
 
 // Filter the input expressions, append the results to result.
@@ -374,7 +375,7 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 
 // DeriveRelaxedFiltersFromDNF given a DNF expression, derive a relaxed DNF expression which only contains columns
 // in specified schema; the derived expression is a superset of original expression, i.e, any tuple satisfying
-// the original expression must satisfy the derived expression. Return nil when the derived expression is univeral set.
+// the original expression must satisfy the derived expression. Return nil when the derived expression is universal set.
 // A running example is: for schema of t1, `(t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)` would be derived as
 // `t1.a=1 or t1.a=2`, while `t1.a=1 or t2.a=1` would get nil.
 func DeriveRelaxedFiltersFromDNF(expr Expression, schema *Schema) Expression {
@@ -394,7 +395,7 @@ func DeriveRelaxedFiltersFromDNF(expr Expression, schema *Schema) Expression {
 				if relaxedCNFItem != nil {
 					newCNFItems = append(newCNFItems, relaxedCNFItem)
 				}
-				// If relaxed expression for embedded DNF is univeral set, just drop this CNF item
+				// If relaxed expression for embedded DNF is universal set, just drop this CNF item
 				continue
 			}
 			// This cnfItem must be simple expression now
@@ -502,4 +503,26 @@ func ColumnSliceIsIntersect(s1, s2 []*Column) bool {
 		}
 	}
 	return false
+}
+
+// DatumToConstant generates a Constant expression from a Datum.
+func DatumToConstant(d types.Datum, tp byte) *Constant {
+	return &Constant{Value: d, RetType: types.NewFieldType(tp)}
+}
+
+// GetParamExpression generate a getparam function expression.
+func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, useCache bool) (Expression, error) {
+	tp := types.NewFieldType(mysql.TypeUnspecified)
+	types.DefaultParamTypeForValue(v.GetValue(), tp)
+	value := &Constant{Value: v.Datum, RetType: tp}
+	if useCache {
+		f, err := NewFunctionBase(ctx, ast.GetParam, &v.Type,
+			DatumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		f.GetType().Tp = v.Type.Tp
+		value.DeferredExpr = f
+	}
+	return value, nil
 }

@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -50,7 +49,7 @@ type Context struct {
 }
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
-func (c *Context) Execute(ctx context.Context, sql string) ([]ast.RecordSet, error) {
+func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Support.")
 }
 

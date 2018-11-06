@@ -14,10 +14,12 @@
 package executor
 
 import (
+	"time"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -47,7 +49,7 @@ type projectionOutput struct {
 type ProjectionExec struct {
 	baseExecutor
 
-	evaluatorSuit    *expression.EvaluatorSuit
+	evaluatorSuit    *expression.EvaluatorSuite
 	calculateNoDelay bool
 
 	prepared    bool
@@ -75,7 +77,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	}
 
 	if e.isUnparallelExec() {
-		e.childResult = e.children[0].newChunk()
+		e.childResult = e.children[0].newFirstChunk()
 	}
 
 	return nil
@@ -139,7 +141,11 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  +------------------------------+       +----------------------+
 //
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
+	chk.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
 		return errors.Trace(e.unParallelExecute(ctx, chk))
 	}
@@ -207,11 +213,11 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		})
 
 		e.fetcher.inputCh <- &projectionInput{
-			chk:          e.children[0].newChunk(),
+			chk:          e.children[0].newFirstChunk(),
 			targetWorker: e.workers[i],
 		}
 		e.fetcher.outputCh <- &projectionOutput{
-			chk:  e.newChunk(),
+			chk:  e.newFirstChunk(),
 			done: make(chan error, 1),
 		}
 	}
@@ -289,7 +295,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 type projectionWorker struct {
 	sctx            sessionctx.Context
-	evaluatorSuit   *expression.EvaluatorSuit
+	evaluatorSuit   *expression.EvaluatorSuite
 	globalFinishCh  <-chan struct{}
 	inputGiveBackCh chan<- *projectionInput
 
