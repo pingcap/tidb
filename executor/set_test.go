@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
