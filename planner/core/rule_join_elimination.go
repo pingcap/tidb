@@ -31,7 +31,7 @@ type outerJoinEliminator struct {
 func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin,
 	cols []*expression.Column, schema *expression.Schema) LogicalPlan {
 	switch p.JoinType {
-	case LeftOuterJoin:
+	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		return o.doEliminate(p, 1, cols, schema)
 	case RightOuterJoin:
 		return o.doEliminate(p, 0, cols, schema)
@@ -69,7 +69,6 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, innerChildIdx int,
 		}
 	}
 	// second, check whether the other side join keys are unique keys
-	p.children[innerChildIdx].buildKeyInfo()
 	var joinKeys []*expression.Column
 	for _, eqCond := range p.EqualConditions {
 		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
