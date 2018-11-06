@@ -1035,13 +1035,24 @@ func (b *builtinCastStringAsStringSig) evalString(row chunk.Row) (res string, is
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 
-	isTooLarge := uint64(len(res)) > b.maxAllowedPacket || (b.tp.Flen != types.UnspecifiedLength && uint64(b.tp.Flen) > b.maxAllowedPacket)
+	//	isTooLarge := uint64(len(res)) > b.maxAllowedPacket || (b.tp.Flen != types.UnspecifiedLength && uint64(b.tp.Flen) > b.maxAllowedPacket)
+	//	if types.IsBinaryStr(b.tp) && isTooLarge {
+	//		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", b.maxAllowedPacket))
+	//		return "", true, nil
+	//	}
+
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc)
+
+	if err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	isTooLarge := uint64(len(res)) > b.maxAllowedPacket
 	if types.IsBinaryStr(b.tp) && isTooLarge {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", b.maxAllowedPacket))
 		return "", true, nil
 	}
 
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
