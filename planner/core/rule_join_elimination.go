@@ -28,98 +28,120 @@ type outerJoinEliminator struct {
 // 2. outer join elimination with duplicate agnostic aggregate functions: For example left outer join.
 //    If the parent only use the columns from left table with 'distinct' label. The left outer join can
 //    be eliminated.
-func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin,
-	cols []*expression.Column, schema *expression.Schema) LogicalPlan {
+func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []*expression.Column, parentSchema *expression.Schema) LogicalPlan {
+	var innerChildIdx int
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		return o.doEliminate(p, 1, cols, schema)
+		innerChildIdx = 1
 	case RightOuterJoin:
-		return o.doEliminate(p, 0, cols, schema)
+		innerChildIdx = 0
 	default:
-		return nil
+		return p
 	}
+
+	outerPlan := p.children[1^innerChildIdx]
+	innerPlan := p.children[innerChildIdx]
+	// outer join elimination with duplicate agnostic aggregate functions
+	if o.isAggColsAllFromOuterTable(outerPlan, aggCols) {
+		return outerPlan
+	}
+	// outer join elimination without duplicate agnostic aggregate functions
+	if !o.isParentColsAllFromOuterTable(outerPlan, parentSchema) {
+		return p
+	}
+	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
+	if o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys) {
+		return outerPlan
+	}
+	if o.isInnerJoinKeysContainIndex(innerPlan, innerJoinKeys) {
+		return outerPlan
+	}
+	return p
 }
 
-func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, innerChildIdx int,
-	cols []*expression.Column, schema *expression.Schema) LogicalPlan {
-	// outer join elimination with duplicate agnostic aggregate functions
-	if len(cols) > 0 {
-		allColsInSchema := true
-		for _, col := range cols {
-			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-			if c, _ := p.children[1^innerChildIdx].Schema().FindColumn(columnName); c == nil {
-				allColsInSchema = false
-				break
-			}
-		}
-		if allColsInSchema == true {
-			return p.children[1^innerChildIdx]
-		}
-	}
-
-	// outer join elimination without duplicate agnostic aggregate functions
-	// first, check whether the parent's schema columns are all in left or right
-	if schema == nil {
-		return nil
-	}
-	for _, col := range schema.Columns {
-		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-		if c, _ := p.children[1^innerChildIdx].Schema().FindColumn(columnName); c == nil {
-			return nil
-		}
-	}
-	// second, check whether the other side join keys are unique keys
+func (o *outerJoinEliminator) extractInnerJoinKeys(join *LogicalJoin, innerChildIdx int) *expression.Schema {
 	var joinKeys []*expression.Column
-	for _, eqCond := range p.EqualConditions {
+	for _, eqCond := range join.EqualConditions {
 		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
 	}
-	tmpSchema := expression.NewSchema(joinKeys...)
-	for _, keyInfo := range p.children[innerChildIdx].Schema().Keys {
+	return expression.NewSchema(joinKeys...)
+}
+
+func (o *outerJoinEliminator) isAggColsAllFromOuterTable(outerPlan LogicalPlan, aggCols []*expression.Column) bool {
+	if len(aggCols) == 0 {
+		return false
+	}
+	for _, col := range aggCols {
+		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
+		if c, _ := outerPlan.Schema().FindColumn(columnName); c == nil {
+			return false
+		}
+	}
+	return true
+}
+
+func (o *outerJoinEliminator) isParentColsAllFromOuterTable(outerPlan LogicalPlan, parentSchema *expression.Schema) bool {
+	if parentSchema == nil {
+		return false
+	}
+	for _, col := range parentSchema.Columns {
+		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
+		if c, _ := outerPlan.Schema().FindColumn(columnName); c == nil {
+			return false
+		}
+	}
+	return true
+}
+
+func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalPlan, joinKeys *expression.Schema) bool {
+	for _, keyInfo := range innerPlan.Schema().Keys {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
 			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-			if c, _ := tmpSchema.FindColumn(columnName); c == nil {
+			if c, _ := joinKeys.FindColumn(columnName); c == nil {
 				joinKeysContainKeyInfo = false
 				break
 			}
 		}
 		if joinKeysContainKeyInfo {
-			return p.children[1^innerChildIdx]
+			return true
 		}
 	}
-	// Third, if p.children[innerChildIdx] is datasource, we must check specially index.
-	// Because buildKeyInfo() don't save the index without notnull flag.
-	// But in outer join, null==null don't return true. The null index do not affect the res.
-	if ds, ok := p.children[innerChildIdx].(*DataSource); ok {
-		for _, path := range ds.possibleAccessPaths {
-			if path.isTablePath {
-				continue
-			}
-			idx := path.index
-			if !idx.Unique {
-				continue
-			}
-			joinKeysContainIndex := true
-			for _, idxCol := range idx.Columns {
-				columnName := &ast.ColumnName{Schema: ds.DBName, Table: ds.tableInfo.Name, Name: idxCol.Name}
-				if c, _ := tmpSchema.FindColumn(columnName); c == nil {
-					joinKeysContainIndex = false
-					break
-				}
-			}
-			if joinKeysContainIndex {
-				return p.children[1^innerChildIdx]
+	return false
+}
+
+func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan, joinKeys *expression.Schema) bool {
+	ds, ok := innerPlan.(*DataSource)
+	if !ok {
+		return false
+	}
+	for _, path := range ds.possibleAccessPaths {
+		if path.isTablePath {
+			continue
+		}
+		idx := path.index
+		if !idx.Unique {
+			continue
+		}
+		joinKeysContainIndex := true
+		for _, idxCol := range idx.Columns {
+			columnName := &ast.ColumnName{Schema: ds.DBName, Table: ds.tableInfo.Name, Name: idxCol.Name}
+			if c, _ := joinKeys.FindColumn(columnName); c == nil {
+				joinKeysContainIndex = false
+				break
 			}
 		}
+		if joinKeysContainIndex {
+			return true
+		}
 	}
-	return nil
+	return false
 }
 
 // Check whether a LogicalPlan is a LogicalAggregation and its all aggregate functions is duplicate agnostic.
 // Also, check all the args are expression.Column.
-func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (isDuplicateAgnosticAgg bool, cols []*expression.Column) {
+func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (_ bool, cols []*expression.Column) {
 	if agg, ok := p.(*LogicalAggregation); ok {
-		isDuplicateAgnosticAgg = true
 		cols = agg.groupByCols
 		for _, aggDesc := range agg.AggFuncs {
 			if !aggDesc.HasDistinct &&
@@ -136,39 +158,30 @@ func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (isDuplicate
 				}
 			}
 		}
-		return
+		return true, cols
 	}
 	return false, nil
 }
 
-func (o *outerJoinEliminator) doOptimize(p LogicalPlan, cols []*expression.Column, schema *expression.Schema) (LogicalPlan, error) {
-	oldCols, oldSchema := cols, schema
+func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Column, parentSchema *expression.Schema) LogicalPlan {
 	// check the duplicate agnostic aggregate functions
 	if ok, newCols := o.isDuplicateAgnosticAgg(p); ok {
-		cols = newCols
+		aggCols = newCols
 	}
 
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		// if child is logical join, then save the parent schema
-		if _, ok := child.(*LogicalJoin); ok {
-			schema = p.Schema()
-		}
-		newChild, _ := o.doOptimize(child, cols, schema)
+		newChild := o.doOptimize(child, aggCols, p.Schema())
 		newChildren = append(newChildren, newChild)
 	}
-	cols, schema = oldCols, oldSchema
 	p.SetChildren(newChildren...)
-	join, ok := p.(*LogicalJoin)
-	if !ok {
-		return p, nil
+	join, isJoin := p.(*LogicalJoin)
+	if !isJoin {
+		return p
 	}
-	if proj := o.tryToEliminateOuterJoin(join, cols, schema); proj != nil {
-		return proj, nil
-	}
-	return p, nil
+	return o.tryToEliminateOuterJoin(join, aggCols, parentSchema)
 }
 
 func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
-	return o.doOptimize(p, make([]*expression.Column, 0, 0), nil)
+	return o.doOptimize(p, nil, nil), nil
 }
