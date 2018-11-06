@@ -70,22 +70,25 @@ func (s *testSchedulerSuite) TestWithConcurrency(c *C) {
 // The data should not repeat in the sequence.
 func generate() [][]byte {
 	table := []byte{'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'}
-	xxx := make([]byte, 0, 5)
+	ret := make([][]byte, 0, 5)
 	chance := []int{100, 60, 40, 20}
 	for i := 0; i < len(chance); i++ {
 		needMore := rand.Intn(100) < chance[i]
 		if needMore {
-			randChar := table[rand.Intn(len(table))]
-			if !bytes.Contains(xxx, []byte{randChar}) {
-				xxx = append(xxx, randChar)
+			randBytes := []byte{table[rand.Intn(len(table))]}
+			if !contains(randBytes, ret) {
+				ret = append(ret, randBytes)
 			}
 		}
 	}
-
-	// Turn []byte{"x","y","z"} into [][]byte{[]byte("x"), []byte("y"), []byte("z")}
-	ret := make([][]byte, len(xxx))
-	for i := 0; i < len(xxx); i++ {
-		ret[i] = []byte{xxx[i]}
-	}
 	return ret
+}
+
+func contains(x []byte, set [][]byte) bool {
+	for _, y := range set {
+		if bytes.Compare(x, y) == 0 {
+			return true
+		}
+	}
+	return false
 }
