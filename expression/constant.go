@@ -106,7 +106,7 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 			}
 			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, retType)
 			if err != nil {
-				return c.Value, err
+				return dt, err
 			}
 			c.Value.SetValue(val.GetValue())
 		}

@@ -1075,6 +1075,15 @@ LOOP:
 	c.Assert(colC.Tp, Equals, mysql.TypeDatetime)
 	hasNotNull = tmysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
+
+	// test add unsupported constraint
+	s.mustExec(c, "create table t_add_unsupported_constraint (a int);")
+	_, err = s.tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int AUTO_INCREMENT;")
+	c.Assert(err.Error(), Equals, "[ddl:202]unsupported add column 'id' constraint AUTO_INCREMENT when altering 'test_db.t_add_unsupported_constraint'")
+	_, err = s.tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int KEY;")
+	c.Assert(err.Error(), Equals, "[ddl:202]unsupported add column 'id' constraint PRIMARY KEY when altering 'test_db.t_add_unsupported_constraint'")
+	_, err = s.tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int UNIQUE;")
+	c.Assert(err.Error(), Equals, "[ddl:202]unsupported add column 'id' constraint UNIQUE KEY when altering 'test_db.t_add_unsupported_constraint'")
 }
 
 func (s *testDBSuite) testDropColumn(c *C) {
