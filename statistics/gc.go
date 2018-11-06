@@ -25,13 +25,18 @@ import (
 	"golang.org/x/net/context"
 )
 
+// DurationToTS converts duration to timestamp.
+func DurationToTS(d time.Duration) uint64 {
+	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
+}
+
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
 // other tidb could know that table is deleted.
 func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := mathutil.MaxInt64(int64(h.Lease), int64(ddlLease))
-	offset := oracle.ComposeTS(10*lease, 0)
+	offset := DurationToTS(10 * time.Duration(lease))
 	if h.PrevLastVersion < offset {
 		return nil
 	}
