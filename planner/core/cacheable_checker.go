@@ -21,7 +21,11 @@ import (
 
 // Cacheable checks whether the input ast is cacheable.
 func Cacheable(node ast.Node) bool {
-	if _, isSelect := node.(*ast.SelectStmt); !isSelect {
+	_, isSelect := node.(*ast.SelectStmt)
+	_, isUpdate := node.(*ast.UpdateStmt)
+	_, isInsert := node.(*ast.InsertStmt)
+	_, isDelete := node.(*ast.DeleteStmt)
+	if !(isSelect || isUpdate || isInsert || isDelete) {
 		return false
 	}
 	checker := cacheableChecker{

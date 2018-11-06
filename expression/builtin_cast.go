@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 )
 
 var (
@@ -1541,11 +1541,11 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	f64, err := types.ConvertJSONToFloat(sc, val)
-	if err == nil {
-		res = new(types.MyDecimal)
-		err = res.FromFloat64(f64)
+	res, err = types.ConvertJSONToDecimal(sc, val)
+	if err != nil {
+		return res, false, errors.Trace(err)
 	}
+	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
