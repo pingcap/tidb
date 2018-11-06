@@ -25,9 +25,9 @@ import (
 	"time"
 	"unsafe"
 
+	"context"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pkg/errors"
-	"golang.org/x/net/context"
+	"github.com/pingcap/errors"
 	"golang.org/x/net/trace"
 )
 
@@ -140,9 +140,7 @@ var Recordable opentracing.StartSpanOption = recordableOption{}
 func (recordableOption) Apply(*opentracing.StartSpanOptions) {}
 
 // StartSpan is part of the opentracing.Tracer interface.
-func (t *Tracer) StartSpan(
-	operationName string, opts ...opentracing.StartSpanOption,
-) opentracing.Span {
+func (t *Tracer) StartSpan(operationName string, opts ...opentracing.StartSpanOption) opentracing.Span {
 	// Fast paths to avoid the allocation of StartSpanOptions below when tracing
 	// is disabled: if we have no options or a single SpanReference (the common
 	// case) with a noop context, return a noop span now.
@@ -192,7 +190,7 @@ func (t *Tracer) StartSpan(
 			recordingGroup = parentCtx.recordingGroup
 			recordingType = parentCtx.recordingType
 		} else if parentCtx.Baggage[TiDBQueryLevelTracing] != "" {
-			// Automatically enable recording if we have the Snowball baggage item.
+			// Automatically enable recording if we have the query-level tracing baggage item.
 			recordingGroup = new(spanGroup)
 			recordingType = TiDBRecording
 		}
@@ -205,7 +203,7 @@ func (t *Tracer) StartSpan(
 	}
 
 	// If tracing is disabled, the Recordable option wasn't passed, and we're not
-	// part of a recording or snowball trace, avoid overhead and return a noop
+	// part of a recording or query-level trace, avoid overhead and return a noop
 	// span.
 	if !recordable && recordingGroup == nil && shadowTr == nil && !t.useNetTrace() && !t.forceRealSpans {
 		return &t.noopSpan
@@ -283,9 +281,7 @@ func (t *Tracer) StartSpan(
 // If separateRecording is true and the parent span is recording, we start a
 // new recording for the child span. If separateRecording is false (the
 // default), then the child span will be part of the same recording.
-func StartChildSpan(
-	operationName string, parentSpan opentracing.Span, separateRecording bool,
-) opentracing.Span {
+func StartChildSpan(operationName string, parentSpan opentracing.Span, separateRecording bool) opentracing.Span {
 	tr := parentSpan.Tracer().(*Tracer)
 	// If tracing is disabled, avoid overhead and return a noop span.
 	if IsBlackHoleSpan(parentSpan) {
@@ -302,7 +298,7 @@ func StartChildSpan(
 	}
 
 	// Copy baggage from parent.
-	pSpan.mu.Lock()
+	pSpan.mu.RLock()
 	if l := len(pSpan.mu.Baggage); l > 0 {
 		s.mu.Baggage = make(map[string]string, l)
 		for k, v := range pSpan.mu.Baggage {
@@ -338,7 +334,7 @@ func StartChildSpan(
 		}
 	}
 
-	pSpan.mu.Unlock()
+	pSpan.mu.RUnlock()
 	return s
 }
 
@@ -537,11 +533,11 @@ func ChildSpan(ctx context.Context, opName string) (context.Context, opentracing
 
 // EnsureContext checks whether the given context.Context contains a Span. If
 // not, it creates one using the provided Tracer and wraps it in the returned
-// Span. The returned closure must be called after the request has been fully
-// processed.
-func EnsureContext(
-	ctx context.Context, tracer opentracing.Tracer, name string,
-) (context.Context, func()) {
+// Span. The returned closure(it binds to the root span of current context)
+// must be called after the request has been fully processed.
+// This function is useful when we have access to tracer but cannot access
+// to a context which already embedded with a span.
+func EnsureContext(ctx context.Context, tracer opentracing.Tracer, name string) (context.Context, func()) {
 	if opentracing.SpanFromContext(ctx) == nil {
 		sp := tracer.StartSpan(name)
 		return opentracing.ContextWithSpan(ctx, sp), sp.Finish
@@ -552,9 +548,7 @@ func EnsureContext(
 // EnsureChildSpan is the same as EnsureContext, except it creates a child
 // span for the input context if the input context already has an active
 // trace.
-func EnsureChildSpan(
-	ctx context.Context, tracer opentracing.Tracer, name string,
-) (context.Context, func()) {
+func EnsureChildSpan(ctx context.Context, tracer opentracing.Tracer, name string) (context.Context, func()) {
 	if opentracing.SpanFromContext(ctx) == nil {
 		sp := tracer.StartSpan(name)
 		return opentracing.ContextWithSpan(ctx, sp), sp.Finish
@@ -584,7 +578,10 @@ func EnsureChildSpan(
 // Note: this test function is in this file because it needs to be used by
 // both tests in the tracing package and tests outside of it, and the function
 // itself depends on tracing.
-func TestingCheckRecordedSpans(recSpans []RecordedSpan, expected string) error {
+var TestingCheckRecordedSpans = testingCheckRecordedSpans
+
+// testingCheckRecordedSpans is used for testing purpose. Please refer to above detailed description.
+func testingCheckRecordedSpans(recSpans []RecordedSpan, expected string) error {
 	expected = strings.TrimSpace(expected)
 	var rows []string
 	row := func(format string, args ...interface{}) {

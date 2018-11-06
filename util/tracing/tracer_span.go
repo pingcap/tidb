@@ -110,7 +110,7 @@ type span struct {
 	recording int32
 
 	mu struct {
-		sync.Mutex
+		sync.RWMutex
 		// duration is initialized to -1 and set on Finish().
 		duration time.Duration
 
