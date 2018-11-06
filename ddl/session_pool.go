@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -45,7 +44,6 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 	ctx := resource.(sessionctx.Context)
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
-	ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	return ctx, nil
 }
 
