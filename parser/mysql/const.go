@@ -506,6 +506,11 @@ func (m SQLMode) HasIgnoreSpaceMode() bool {
 	return m&ModeIgnoreSpace == ModeIgnoreSpace
 }
 
+// HasNoAutoCreateUserMode detects if 'NO_AUTO_CREATE_USER' mode is set in SQLMode
+func (m SQLMode) HasNoAutoCreateUserMode() bool {
+	return m&ModeNoAutoCreateUser == ModeNoAutoCreateUser
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
