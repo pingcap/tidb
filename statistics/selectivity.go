@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -183,7 +182,8 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				return 0, nil, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: colType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
-			if colInfo.isHandle && colInfo.Tp.EvalType() == types.ETInt {
+			if colInfo.isHandle {
+				nodes[len(nodes)-1].Tp = pkType
 				var cnt float64
 				cnt, err = coll.GetRowCountByIntColumnRanges(sc, id, ranges)
 				if err != nil {
@@ -195,9 +195,6 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			cnt, err := coll.GetRowCountByColumnRanges(sc, id, ranges)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
-			}
-			if colInfo.isHandle {
-				nodes[len(nodes)-1].Tp = pkType
 			}
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
 		}
