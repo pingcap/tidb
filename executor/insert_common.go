@@ -16,6 +16,7 @@ package executor
 import (
 	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -112,6 +112,9 @@ func (e *InsertValues) initInsertColumns() error {
 	}
 	for _, col := range cols {
 		if col.Name.L == model.ExtraHandleName.L {
+			if !e.ctx.GetSessionVars().AllowWriteRowID {
+				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+			}
 			e.hasExtraHandle = true
 			break
 		}

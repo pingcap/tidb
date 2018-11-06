@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -56,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -299,7 +299,7 @@ func (s *session) doCommit(ctx context.Context) error {
 					Tp:            binlog.BinlogType_Prewrite,
 					PrewriteValue: prewriteData,
 				},
-				Client: s.sessionVars.BinlogClient.(binlog.PumpClient),
+				Client: s.sessionVars.BinlogClient,
 			}
 			s.txn.SetOption(kv.BinlogInfo, info)
 		}
@@ -1193,7 +1193,7 @@ func createSession(store kv.Storage) (*session, error) {
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-	s.sessionVars.BinlogClient = binloginfo.GetPumpClient()
+	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 	return s, nil
 }
@@ -1290,7 +1290,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBConstraintCheckInPlace + quoteCommaQuote +
 	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
-	variable.TiDBOptInSubqUnFolding + quoteCommaQuote +
+	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBEnableCascadesPlanner + quoteCommaQuote +

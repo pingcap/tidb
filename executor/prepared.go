@@ -17,6 +17,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -124,6 +124,10 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	stmt := stmts[0]
 	if _, ok := stmt.(ast.DDLNode); ok {
 		return ErrPrepareDDL
+	}
+	err = ResetContextOfStmt(e.ctx, stmt)
+	if err != nil {
+		return err
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
