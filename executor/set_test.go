@@ -14,7 +14,6 @@
 package executor_test
 
 import (
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -240,6 +239,13 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustExec("set tidb_slow_log_threshold = 1")
 	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("1"))
 	_, err = tk.Exec("set global tidb_slow_log_threshold = 0")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("set tidb_query_log_max_len = 0")
+	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_query_log_max_len = 20")
+	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("20"))
+	_, err = tk.Exec("set global tidb_query_log_max_len = 20")
 	c.Assert(err, NotNil)
 }
 
