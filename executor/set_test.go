@@ -516,6 +516,25 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	tk.MustExec("set @@innodb_lock_wait_timeout = 1073741825")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
 
+	tk.MustExec("set @@global.validate_password_number_count=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_number_count value: '-1'"))
+
+	tk.MustExec("set @@global.validate_password_length=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_length value: '-1'"))
+
+	tk.MustExec("set @@global.validate_password_mixed_case_count=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_mixed_case_count: '-1'"))
+
+	tk.MustExec("set @@global.validate_password_policy=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_policy: '-1'"))
+	result = tk.MustQuery("select @@validate_password_policy;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.validate_password_policy=3")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_policy: '3'"))
+	result = tk.MustQuery("select @@validate_password_policy;")
+	result.Check(testkit.Rows("2"))
+
 	_, err = tk.Exec("set @@tx_isolation=''")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 

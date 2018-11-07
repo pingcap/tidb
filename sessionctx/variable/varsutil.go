@@ -285,6 +285,17 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "SYSTEM", nil
 		}
 		return value, nil
+	case ValidatePasswordPolicy:
+		if strings.EqualFold(value, "0") || value == "0" {
+			return "0", nil
+		} else if strings.EqualFold(value, "1") || value == "1" {
+			return "1", nil
+		} else if strings.EqualFold(value, "2") || value == "2" {
+			return "2", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case ValidatePasswordLength, ValidatePasswordMixedCaseCount, ValidatePasswordNumberCount:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars);
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
