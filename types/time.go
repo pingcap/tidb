@@ -23,10 +23,10 @@ import (
 	gotime "time"
 	"unicode"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

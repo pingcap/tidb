@@ -17,8 +17,8 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -447,7 +447,6 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 
 	// Test partitioned table.
 	tk.MustExec(`drop table if exists test`)
-	tk.MustExec(`set @@tidb_enable_table_partition = 1`)
 	tk.MustExec(`create table test (
 		      a int not null,
 		      c int not null,

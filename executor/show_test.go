@@ -19,18 +19,18 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -418,6 +418,33 @@ func (s *testSuite) TestShow(c *C) {
 			"  `val` tinyint(10) UNSIGNED ZEROFILL DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+
+	// Test show columns with different types of default value
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(
+		c0 int default 1,
+		c1 int default b'010',
+		c2 bigint default x'A7',
+		c3 bit(8) default b'00110001',
+		c4 varchar(6) default b'00110001',
+		c5 varchar(6) default '\'C6\'',
+		c6 enum('s', 'm', 'l', 'xl') default 'xl',
+		c7 set('a', 'b', 'c', 'd') default 'a,c,c',
+		c8 datetime default current_timestamp on update current_timestamp,
+		c9 year default '2014'
+	);`)
+	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep("|",
+		"c0|int(11)|YES||1|",
+		"c1|int(11)|YES||2|",
+		"c2|bigint(20)|YES||167|",
+		"c3|bit(8)|YES||b'110001'|",
+		"c4|varchar(6)|YES||1|",
+		"c5|varchar(6)|YES||'C6'|",
+		"c6|enum('s','m','l','xl')|YES||xl|",
+		"c7|set('a','b','c','d')|YES||a,c,c|",
+		"c8|datetime|YES||CURRENT_TIMESTAMP|on update CURRENT_TIMESTAMP",
+		"c9|year|YES||2014|",
+	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
@@ -590,7 +617,8 @@ func (s *testSuite) TestShow2(c *C) {
 	timeStr := time.Now().Format("2006-01-02 15:04:05")
 	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", create_time, timeStr, timeStr)))
 
-	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
+	// The Hostname is the actual host
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
 	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
 
@@ -620,7 +648,6 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint);`)
 

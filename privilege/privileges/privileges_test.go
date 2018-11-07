@@ -19,14 +19,15 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
@@ -239,9 +240,12 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	mustExec(c, se, `DROP USER 'show'@'localhost'`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
-	c.Assert(gs, HasLen, 0)
 
+	// This should now return an error
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	// cant show grants for non-existent
+	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	c.Assert(terror.ErrorEqual(err, errNonexistingGrant), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
