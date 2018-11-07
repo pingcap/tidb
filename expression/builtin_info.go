@@ -383,8 +383,56 @@ type benchmarkFunctionClass struct {
 	baseFunctionClass
 }
 
+// getFunction See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
 func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "BENCHMARK")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Syntax: BENCHMARK(loop_count, expression)
+	// Now that eval result of input arg is useless, we can define by the same eval type of input arg here.
+	sameEvalType := args[1].GetType().EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, sameEvalType)
+	sig := &builtinBenchmarkSig{bf}
+	return sig, nil
+}
+
+type builtinBenchmarkSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBenchmarkSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinBenchmarkSig) evalInt(row chunk.Row) (int64, bool, error) {
+	// Get loop count.
+	loopCount, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+
+	// BENCHMARK() will return NULL if loop count < 0,
+	// behavior observed on MySQL 5.7.24.
+	if loopCount < 0 {
+		return 0, true, nil
+	}
+
+	// Eval loop count times.
+	var i int64
+	for ; i < loopCount; i++ {
+		_, err := b.args[1].Eval(row)
+		// BENCHMARK() will pass-through the eval error,
+		// behavior observed on MySQL 5.7.24.
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+	}
+
+	// Return value of BENCHMARK() is always 0.
+	return 0, false, nil
 }
 
 type charsetFunctionClass struct {

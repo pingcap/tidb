@@ -120,10 +120,35 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 
 func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.Benchmark]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, nil)))
-	c.Assert(f, IsNil)
-	c.Assert(err, ErrorMatches, "*FUNCTION BENCHMARK does not exist")
+
+	cases := []struct {
+		LoopCount  int
+		Expression interface{}
+		Expected   int64
+		IsNil      bool
+	}{
+		{-3, 1, 0, true},
+		{0, 1, 0, false},
+		{3, 1, 0, false},
+		{3, 1.234, 0, false},
+		{3, "abc", 0, false},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Benchmark, s.primitiveValsToConstants([]interface{}{
+			t.LoopCount,
+			t.Expression,
+		})...)
+		c.Assert(err, IsNil)
+
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		if t.IsNil {
+			c.Assert(d.IsNull(), IsTrue)
+		} else {
+			c.Assert(d.GetInt64(), Equals, t.Expected)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestCharset(c *C) {
