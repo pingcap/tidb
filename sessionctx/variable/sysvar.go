@@ -127,6 +127,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "slave_pending_jobs_size_max", "16777216"},
 	{ScopeNone, "innodb_sync_array_size", "1"},
 	{ScopeSession, "rand_seed2", ""},
+	{ScopeGlobal, "validate_password_check_user_name", "OFF"},
 	{ScopeGlobal, "validate_password_number_count", "1"},
 	{ScopeSession, "gtid_next", ""},
 	{ScopeGlobal | ScopeSession, SQLSelectLimit, "18446744073709551615"},
@@ -270,7 +271,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_file_classes", "50"},
 	{ScopeGlobal, "expire_logs_days", "0"},
 	{ScopeGlobal | ScopeSession, "binlog_rows_query_log_events", "OFF"},
-	{ScopeGlobal, "validate_password_policy", "1"},
 	{ScopeGlobal, "default_password_lifetime", ""},
 	{ScopeNone, "pid_file", "/usr/local/mysql/data/localhost.pid"},
 	{ScopeNone, "innodb_undo_tablespaces", "0"},
@@ -775,6 +775,12 @@ const (
 	SyncBinlog = "sync_binlog"
 	// BlockEncryptionMode is the name for 'block_encryption_mode' system variable.
 	BlockEncryptionMode = "block_encryption_mode"
+	// ValidatePassswordNumberCount is the name of 'validate_password_number_count' system variable.
+	ValidatePasswordNumberCount = "validate_password_number_count"
+	// ValidatePassswordLength is the name of 'validate_password_length' system variable.
+	ValidatePasswordLength = "validate_password_length";
+	// ValidatePassswordMixedCaseCount is the name of 'validate_password_mixed_case_count' system variable.
+	ValidatePasswordMixedCaseCount = "validate_password_mixed_case_count";
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
