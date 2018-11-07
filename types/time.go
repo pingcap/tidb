@@ -677,21 +677,30 @@ func parseWhenLen6(lastSepChar uint8, selfDecideFsp bool, currentPart string, re
 	}
 }
 
-func parseWhenLenLess6(lastSepChar uint8, currentSepChar uint8, currentPart string, totalPartCount *int, seps *[]string) error {
+func parseWhenLenLess6(lastSepChar uint8, currentSepChar uint8, currentPart string, totalPartCount *int, seps *[]string) (warning bool, err error) {
 	if '-' == lastSepChar || '-' == currentSepChar {
 		*seps = append(*seps, currentPart)
 		*totalPartCount = *totalPartCount + 1
 	} else {
+		var beforeLen = len(*seps)
+		var MaxLenTemp = MaxSqlTimeParts
+		if beforeLen < MaxSqlTimeParts-1 {
+			MaxLenTemp = MaxSqlTimeParts - 1
+		}
 		var partsNoYear, validLen, err = ParseNoDelimiterNoYear(currentPart)
 		if err != nil {
-			return err
+			return false, err
 		}
-		for j := 0; j < MaxSqlTimeParts-len(*seps) && j < validLen; j++ {
+		var j = 0
+		for j = 0; len(*seps) < MaxLenTemp && j < validLen; j++ {
 			*seps = append(*seps, partsNoYear[j])
 			*totalPartCount = *totalPartCount + 1
 		}
+		if MaxLenTemp == len(*seps) && j < validLen {
+			return true, nil
+		}
 	}
-	return nil
+	return false, nil
 }
 
 func parseOnePartAsWhole(currentPart string, totalPartCount *int, seps *[]string) error {
@@ -700,31 +709,27 @@ func parseOnePartAsWhole(currentPart string, totalPartCount *int, seps *[]string
 	return nil
 }
 
-func parseOnePart(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, currentPart string, realFsp *int, totalPartCount *int, seps *[]string) error {
+func parseOnePart(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, currentPart string, realFsp *int, totalPartCount *int, seps *[]string) (bool, error) {
+	var warning = false
+	var err error = nil
 	if len(*seps) == 0 {
-		var err = parseWhenLen0(lastSepChar, currentSepChar, selfDecideFsp, currentPart, totalPartCount, seps)
-		if err != nil {
-			return err
-		}
+		err = parseWhenLen0(lastSepChar, currentSepChar, selfDecideFsp, currentPart, totalPartCount, seps)
 	} else if len(*seps) == MaxSqlTimeParts-1 {
 		parseWhenLen6(lastSepChar, selfDecideFsp, currentPart, realFsp, seps)
-		return nil
 	} else {
 		if '.' == lastSepChar { //'2017.0112 00~00~00.333' -> 2017-01-12 00:00:00.333
-			var err = parseWhenLenLess6(lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
-			if err != nil {
-				return err
-			}
+			warning, err = parseWhenLenLess6(lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
 		} else { //'2017@0112 00~00~00.333' -> Incorrect DATETIME value
-			parseOnePartAsWhole(currentPart, totalPartCount, seps)
+			err = parseOnePartAsWhole(currentPart, totalPartCount, seps)
 		}
 	}
-	return nil
+	return warning, err
 }
 
-func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) ([]string, int, error) {
+func splitDateTimeV2(sc *stmtctx.StatementContext, format string, fsp int, selfDecideFsp bool, isFloat bool) ([]string, int, error) {
 	format = strings.TrimSpace(format)
 	var err error = nil
+	var warning = false
 	var realFsp = fsp
 	var start = 0
 	var lastSepChar uint8 = 0
@@ -754,12 +759,18 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) (
 			continue
 		}
 
+		if totalPartCount >= 4 && !isNumberI_1 && unicode.IsLetter(rune(format[i])) {
+			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format))
+			err = nil
+			return seps, realFsp, nil
+		}
+
 		//if i - 1 is number,i is not number,meaning the ending of one sep
 		if isNumberI_1 && !isNumberI {
 			var currentPart = format[start:i]
 			currentSepChar = format[i]
 
-			err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, currentPart, &realFsp, &totalPartCount, &seps)
+			warning, err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, currentPart, &realFsp, &totalPartCount, &seps)
 			if err != nil {
 				return nil, realFsp, err
 			}
@@ -780,6 +791,12 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) (
 				return seps, realFsp, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(format))
 			}
 
+			if totalPartCount >= 4 && format[i] >= 'A' && format[i] <= 'z' { //{"150101.1a1"=>"2015-01-01 01:00:00"},
+				sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format))
+				err = nil
+				return seps, realFsp, nil
+			}
+
 			if totalPartCount >= MaxSqlTimeParts {
 				return seps, realFsp, nil
 			}
@@ -795,22 +812,29 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) (
 	}
 
 	if 0 == len(lastPart) {
+		if (format[len(format)-1] > '9' || format[len(format)-1] < '0') && sc != nil {
+			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format))
+			err = nil
+		}
 		return seps, realFsp, nil
 	}
 
 	if isFloat && MaxSqlTimeParts-1 > totalPartCount {
 		// 20170118.999-->"2017-01-18 00:00:00.000"
 		if 0 == totalPartCount { // 20170118-->"2017-01-18 00:00:00.000"
-			err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
+			warning, err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
 			if err != nil {
 				return nil, realFsp, err
 			}
 		}
 	} else {
-		err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
+		warning, err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
 		if err != nil {
 			return nil, realFsp, err
 		}
+	}
+	if warning {
+		sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format))
 	}
 	return seps, realFsp, nil
 }
@@ -955,13 +979,13 @@ func ParseNoDelimiterHavingYear(strNoDelimiter string) ([7]string, int, error) {
 	return seps, validLen, err
 }
 
-func parseDatetimeV2(str string, fsp int, isFloat bool, selfDecideFsp bool) (Time, error) {
+func parseDatetimeV2(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool, selfDecideFsp bool) (Time, error) {
 	var (
 		year, month, day, hour, minute, second, microsecond int
 		err                                                 error
 	)
 
-	seps, realFsp, err := splitDateTimeV2(str, fsp, selfDecideFsp, isFloat)
+	seps, realFsp, err := splitDateTimeV2(sc, str, fsp, selfDecideFsp, isFloat)
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
 	}
@@ -1673,7 +1697,7 @@ func parseTimeNoFsp(sc *stmtctx.StatementContext, str string, tp byte, isFloat b
 
 	var fsp = MinFsp
 	var selfDecideFsp = true
-	t, err := parseDatetimeV2(str, fsp, isFloat, selfDecideFsp)
+	t, err := parseDatetimeV2(sc, str, fsp, isFloat, selfDecideFsp)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
@@ -1691,7 +1715,7 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFlo
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
 
-	t, err := parseDatetimeV2(str, fsp, isFloat, false)
+	t, err := parseDatetimeV2(sc, str, fsp, isFloat, false)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
