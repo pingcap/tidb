@@ -20,25 +20,26 @@ import (
 )
 
 // Pool is the column pool.
+// NOTE: Pool is non-copyable.
 type Pool struct {
 	initCap int
 
-	varLenColPool   *colPool
-	fixLenColPool4  *colPool
-	fixLenColPool8  *colPool
-	fixLenColPool16 *colPool
-	fixLenColPool40 *colPool
+	varLenColPool   *sync.Pool
+	fixLenColPool4  *sync.Pool
+	fixLenColPool8  *sync.Pool
+	fixLenColPool16 *sync.Pool
+	fixLenColPool40 *sync.Pool
 }
 
 // NewPool creates a new Pool.
 func NewPool(initCap int) *Pool {
 	return &Pool{
 		initCap:         initCap,
-		varLenColPool:   newColPool(varElemLen, initCap),
-		fixLenColPool4:  newColPool(4, initCap),
-		fixLenColPool8:  newColPool(8, initCap),
-		fixLenColPool16: newColPool(16, initCap),
-		fixLenColPool40: newColPool(40, initCap),
+		varLenColPool:   &sync.Pool{New: func() interface{} { return newVarLenColumn(initCap, nil) }},
+		fixLenColPool4:  &sync.Pool{New: func() interface{} { return newFixedLenColumn(4, initCap) }},
+		fixLenColPool8:  &sync.Pool{New: func() interface{} { return newFixedLenColumn(8, initCap) }},
+		fixLenColPool16: &sync.Pool{New: func() interface{} { return newFixedLenColumn(16, initCap) }},
+		fixLenColPool40: &sync.Pool{New: func() interface{} { return newFixedLenColumn(40, initCap) }},
 	}
 }
 
@@ -81,18 +82,4 @@ func (p *Pool) PutChunk(fields []*types.FieldType, chk *Chunk) {
 		}
 	}
 	chk.columns = nil // release the column references.
-}
-
-type colPool struct {
-	sync.Pool
-}
-
-func newColPool(elemLen, initCap int) *colPool {
-	pool := &colPool{}
-	if elemLen != varElemLen {
-		pool.New = func() interface{} { return newFixedLenColumn(elemLen, initCap) }
-	} else {
-		pool.New = func() interface{} { return newVarLenColumn(initCap, nil) }
-	}
-	return pool
 }
