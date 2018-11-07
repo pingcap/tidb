@@ -37,6 +37,7 @@ func (s *testKeySuite) TestPartialNext(c *C) {
 	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
 	c.Check(err, IsNil)
 	keyB, err := codec.EncodeValue(sc, nil, types.NewDatum("abca"), types.NewDatum("def"))
+	c.Check(err, IsNil)
 
 	// We only use first column value to seek.
 	seekKey, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"))

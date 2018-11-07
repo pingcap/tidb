@@ -20,11 +20,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -196,7 +196,9 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 
 // WithVars sets the kv.Variables to the Backoffer and return it.
 func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
-	b.vars = vars
+	if vars != nil {
+		b.vars = vars
+	}
 	return b
 }
 
