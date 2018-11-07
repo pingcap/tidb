@@ -699,7 +699,7 @@ func (n *ParenthesesExpr) Accept(v Visitor) (Node, bool) {
 type PositionExpr struct {
 	exprNode
 	// N is the position, started from 1 now.
-	N int
+	N ExprNode
 	// Refer is the result field the position refers to.
 	Refer *ResultField
 }
@@ -716,6 +716,13 @@ func (n *PositionExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PositionExpr)
+	if n.N != nil {
+		node, ok := n.N.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.N = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
