@@ -18,8 +18,10 @@ import (
 	"math/bits"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/cznic/mathutil"
+	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -181,6 +183,12 @@ func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 	}
 	find.maxCommitTS = mathutil.MaxUint64(find.maxCommitTS, lock.commitTS)
 	find.value = nil
+	// Make a copy of the key, so latch does not reference the transaction's memory.
+	// If we do not do it, transaction memory can't be recycle by GC and there will
+	// be a leak.
+	copyKey := make([]byte, len(find.key))
+	copy(copyKey, find.key)
+	find.key = copyKey
 	if len(latch.waiting) == 0 {
 		return nil
 	}
@@ -201,6 +209,8 @@ func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 		latch.waiting = latch.waiting[:len(latch.waiting)-1]
 
 		if find.maxCommitTS > nextLock.startTS {
+			find.value = nextLock
+			nextLock.acquiredCount++
 			nextLock.isStale = true
 		}
 	}
@@ -252,27 +262,32 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 }
 
 // recycle is not thread safe, the latch should acquire its lock before executing this function.
-func (l *latch) recycle(currentTS uint64) {
+func (l *latch) recycle(currentTS uint64) int {
+	total := 0
 	fakeHead := node{next: l.queue}
 	prev := &fakeHead
 	for curr := prev.next; curr != nil; curr = curr.next {
 		if tsoSub(currentTS, curr.maxCommitTS) >= expireDuration && curr.value == nil {
 			l.count--
 			prev.next = curr.next
+			total++
 		} else {
 			prev = curr
 		}
 	}
 	l.queue = fakeHead.next
+	return total
 }
 
 func (latches *Latches) recycle(currentTS uint64) {
+	total := 0
 	for i := 0; i < len(latches.slots); i++ {
 		latch := &latches.slots[i]
 		latch.Lock()
-		latch.recycle(currentTS)
+		total += latch.recycle(currentTS)
 		latch.Unlock()
 	}
+	log.Debugf("recycle run at %v, recycle count = %d...\n", time.Now(), total)
 }
 
 func findNode(list *node, key []byte) *node {

@@ -122,6 +122,9 @@ func (s *testLatchSuite) TestRecycle(c *C) {
 	lock.SetCommitTS(startTS + 1)
 	var wakeupList []*Lock
 	latches.release(lock, wakeupList)
+	// Release lock will grant latch to lock1 automatically,
+	// so release lock1 is called here.
+	latches.release(lock1, wakeupList)
 
 	lock2 := latches.genLock(startTS+3, [][]byte{
 		[]byte("b"), []byte("c"),
