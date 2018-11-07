@@ -2038,6 +2038,19 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 			sql:  "select distinct t2.a, t2.b from t t1 right outer join t t2 on t1.b = t2.b",
 			best: "DataScan(t2)->Aggr(firstrow(t2.a),firstrow(t2.b))",
 		},
+		// Test duplicate agnostic agg functions on join
+		{
+			sql:  "select max(t1.a), min(t1.b) from t t1 left join t t2 on t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(max(t1.a),min(t1.b))->Projection",
+		},
+		{
+			sql:  "select sum(distinct t1.a) from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(sum(t1.a))->Projection",
+		},
+		{
+			sql:  "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(count(t1.a, t1.b))->Projection",
+		},
 		// Test left outer join
 		{
 			sql:  "select t1.b from t t1 left outer join t t2 on t1.a = t2.a",
@@ -2047,6 +2060,11 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		{
 			sql:  "select t2.b from t t1 right outer join t t2 on t1.a = t2.a",
 			best: "DataScan(t2)->Projection",
+		},
+		// For complex join query
+		{
+			sql:  "select max(t3.b) from (t t1 left join t t2 on t1.a = t2.a) right join t t3 on t1.b = t3.b",
+			best: "DataScan(t3)->TopN([t3.b true],0,1)->Aggr(max(t3.b))->Projection",
 		},
 	}
 
