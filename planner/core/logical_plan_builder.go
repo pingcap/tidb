@@ -108,10 +108,10 @@ func (b *PlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			aggIndexMap[i] = position
 			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 			schema4Agg.Append(&expression.Column{
-				ColName:     model.NewCIStr(fmt.Sprintf("%d_col_%d", plan4Agg.id, position)),
-				UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
-				IsAggOrSubq: true,
-				RetType:     newFunc.RetTp,
+				ColName:      model.NewCIStr(fmt.Sprintf("%d_col_%d", plan4Agg.id, position)),
+				UniqueID:     b.ctx.GetSessionVars().AllocPlanColumnID(),
+				IsReferenced: true,
+				RetType:      newFunc.RetTp,
 			})
 		}
 	}
@@ -570,7 +570,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
-	if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
+	if c, ok := expr.(*expression.Column); ok && !c.IsReferenced {
 		// Field is a column reference.
 		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, c)
 	} else if field.AsName.L != "" {
@@ -1959,7 +1959,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
-		ap.schema.Columns[i].IsAggOrSubq = true
+		ap.schema.Columns[i].IsReferenced = true
 	}
 	return ap
 }
@@ -1997,10 +1997,10 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	if asScalar {
 		newSchema := outerPlan.Schema().Clone()
 		newSchema.Append(&expression.Column{
-			ColName:     model.NewCIStr(fmt.Sprintf("%d_aux_0", joinPlan.id)),
-			RetType:     types.NewFieldType(mysql.TypeTiny),
-			IsAggOrSubq: true,
-			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ColName:      model.NewCIStr(fmt.Sprintf("%d_aux_0", joinPlan.id)),
+			RetType:      types.NewFieldType(mysql.TypeTiny),
+			IsReferenced: true,
+			UniqueID:     b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
 		joinPlan.SetSchema(newSchema)
 		if not {
