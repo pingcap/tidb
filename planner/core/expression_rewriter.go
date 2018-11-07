@@ -1164,13 +1164,14 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		}
 		stackLen := len(er.ctxStack)
 		arg1 := er.ctxStack[stackLen-2]
-		newArg1, isColumn := arg1.(*expression.Column)
+		col, isColumn := arg1.(*expression.Column)
 		// if expr1 is a column and column has not null flag, then we can eliminate ifnull on
 		// this column.
-		if isColumn && mysql.HasNotNullFlag(newArg1.RetType.Flag) {
-			newArg1.IsReferenced = true
+		if isColumn && mysql.HasNotNullFlag(col.RetType.Flag) {
+			newCol := col.Clone().(*expression.Column)
+			newCol.IsReferenced = true
 			er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
-			er.ctxStack = append(er.ctxStack, newArg1)
+			er.ctxStack = append(er.ctxStack, newCol)
 			return true
 		}
 
