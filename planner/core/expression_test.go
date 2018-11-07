@@ -218,6 +218,33 @@ func (s *testExpressionSuite) TestIsNull(c *C) {
 	s.runTests(c, tests)
 }
 
+func (s *testExpressionSuite) TestCompareRow(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []testCase{
+		{
+			exprStr:   "row(1,2,3)=row(1,2,3)",
+			resultStr: "1",
+		},
+		{
+			exprStr:   "row(1,2,3)=row(1+3,2,3)",
+			resultStr: "0",
+		},
+		{
+			exprStr:   "row(1,2,3)<>row(1,2,3)",
+			resultStr: "0",
+		},
+		{
+			exprStr:   "row(1,2,3)<>row(1+3,2,3)",
+			resultStr: "1",
+		},
+		{
+			exprStr:   "row(1+3,2,3)<>row(1+3,2,3)",
+			resultStr: "0",
+		},
+	}
+	s.runTests(c, tests)
+}
+
 func (s *testExpressionSuite) TestIsTruth(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []testCase{
