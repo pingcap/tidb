@@ -270,8 +270,7 @@ func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues
 		return nil, false, errors.Trace(err)
 	}
 
-	upperBound := c.prefix.PrefixNext()
-	it, err := r.Iter(key, upperBound)
+	it, err := r.Iter(key, nil)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
