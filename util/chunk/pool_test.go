@@ -40,14 +40,14 @@ func (s *poolTestSuite) TestPoolGetChunk(c *check.C) {
 	pool := NewPool(initCap)
 
 	fieldTypes := []*types.FieldType{
-		&types.FieldType{Tp: mysql.TypeVarchar},
-		&types.FieldType{Tp: mysql.TypeJSON},
-		&types.FieldType{Tp: mysql.TypeFloat},
-		&types.FieldType{Tp: mysql.TypeNewDecimal},
-		&types.FieldType{Tp: mysql.TypeDouble},
-		&types.FieldType{Tp: mysql.TypeLonglong},
-		&types.FieldType{Tp: mysql.TypeTimestamp},
-		&types.FieldType{Tp: mysql.TypeDatetime},
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeJSON},
+		{Tp: mysql.TypeFloat},
+		{Tp: mysql.TypeNewDecimal},
+		{Tp: mysql.TypeDouble},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeTimestamp},
+		{Tp: mysql.TypeDatetime},
 	}
 
 	chk := pool.GetChunk(fieldTypes)
@@ -75,14 +75,14 @@ func (s *poolTestSuite) TestPoolPutChunk(c *check.C) {
 	pool := NewPool(initCap)
 
 	fieldTypes := []*types.FieldType{
-		&types.FieldType{Tp: mysql.TypeVarchar},
-		&types.FieldType{Tp: mysql.TypeJSON},
-		&types.FieldType{Tp: mysql.TypeFloat},
-		&types.FieldType{Tp: mysql.TypeNewDecimal},
-		&types.FieldType{Tp: mysql.TypeDouble},
-		&types.FieldType{Tp: mysql.TypeLonglong},
-		&types.FieldType{Tp: mysql.TypeTimestamp},
-		&types.FieldType{Tp: mysql.TypeDatetime},
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeJSON},
+		{Tp: mysql.TypeFloat},
+		{Tp: mysql.TypeNewDecimal},
+		{Tp: mysql.TypeDouble},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeTimestamp},
+		{Tp: mysql.TypeDatetime},
 	}
 
 	chk := pool.GetChunk(fieldTypes)
@@ -94,14 +94,14 @@ func BenchmarkPoolChunkOperation(b *testing.B) {
 	pool := NewPool(1024)
 
 	fieldTypes := []*types.FieldType{
-		&types.FieldType{Tp: mysql.TypeVarchar},
-		&types.FieldType{Tp: mysql.TypeJSON},
-		&types.FieldType{Tp: mysql.TypeFloat},
-		&types.FieldType{Tp: mysql.TypeNewDecimal},
-		&types.FieldType{Tp: mysql.TypeDouble},
-		&types.FieldType{Tp: mysql.TypeLonglong},
-		&types.FieldType{Tp: mysql.TypeTimestamp},
-		&types.FieldType{Tp: mysql.TypeDatetime},
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeJSON},
+		{Tp: mysql.TypeFloat},
+		{Tp: mysql.TypeNewDecimal},
+		{Tp: mysql.TypeDouble},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeTimestamp},
+		{Tp: mysql.TypeDatetime},
 	}
 
 	b.ResetTimer()
@@ -111,28 +111,3 @@ func BenchmarkPoolChunkOperation(b *testing.B) {
 		}
 	})
 }
-
-/*
-func BenchmarkColPoolShardPutChunk(b *testing.B) {
-	pool := NewPool(1024)
-
-	fieldTypes := []*types.FieldType{
-		&types.FieldType{Tp: mysql.TypeVarchar},
-		&types.FieldType{Tp: mysql.TypeJSON},
-		&types.FieldType{Tp: mysql.TypeFloat},
-		&types.FieldType{Tp: mysql.TypeNewDecimal},
-		&types.FieldType{Tp: mysql.TypeDouble},
-		&types.FieldType{Tp: mysql.TypeLonglong},
-		&types.FieldType{Tp: mysql.TypeTimestamp},
-		&types.FieldType{Tp: mysql.TypeDatetime},
-	}
-	chk := pool.GetChunk(fieldTypes, 1024)
-	shard := newColPoolShard()
-
-	b.ResetTimer()
-
-	for counter := 0; counter < b.N; counter++ {
-		shard.put(chk.columns[0])
-	}
-}
-*/
