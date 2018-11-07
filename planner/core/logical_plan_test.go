@@ -1849,8 +1849,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
-		s := ToString(p)
-		c.Assert(s, Equals, tt.best, comment)
+		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }
 
