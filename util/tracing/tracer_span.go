@@ -14,17 +14,14 @@
 package tracing
 
 import (
-	"bytes"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gogo/protobuf/proto"
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 
 	otlog "github.com/opentracing/opentracing-go/log"
-	"golang.org/x/net/trace"
 )
 
 // spanMeta stores span information that is common to span and spanContext.
@@ -86,8 +83,6 @@ const (
 	// TiDBRecording means that remote child spans (generally opened through
 	// RPCs) are also recorded.
 	TiDBRecording
-	// SingleNodeRecording means that only spans on the current node are recorded.
-	SingleNodeRecording
 )
 
 type span struct {
@@ -97,8 +92,6 @@ type span struct {
 
 	tracer *Tracer
 
-	// x/net/trace.Trace instance; nil if not tracing to x/net/trace.
-	netTr trace.Trace
 	// Shadow tracer and span; nil if not using a shadow tracer.
 	shadowTr   *shadowTracer
 	shadowSpan opentracing.Span
@@ -159,36 +152,6 @@ func (s *span) enableRecording(group *spanGroup, recType RecordingType) {
 	group.addSpan(s)
 }
 
-// StartRecording enables recording on the span. Events from this point forward
-// are recorded; also, all direct and indirect child spans started from now on
-// will be part of the same recording.
-//
-// Recording is not supported by noop spans; to ensure a real span is always
-// created, use the Force option to StartSpan.
-//
-// If recording was already started on this span (either directly or because a
-// parent span is recording), the old recording is lost.
-func StartRecording(os opentracing.Span, recType RecordingType) {
-	if recType == NoRecording {
-		panic("StartRecording called with NoRecording")
-	}
-	if _, noop := os.(*noopSpan); noop {
-		panic("StartRecording called on NoopSpan; use the Force option for StartSpan")
-	}
-	os.(*span).enableRecording(new(spanGroup), recType)
-}
-
-// StopRecording disables recording on this span. Child spans that were created
-// since recording was started will continue to record until they finish.
-//
-// Calling this after StartRecording is not required; the recording will go away
-// when all the spans finish.
-//
-// StopRecording() can be called on a Finish()ed span.
-func StopRecording(os opentracing.Span) {
-	os.(*span).disableRecording()
-}
-
 func (s *span) disableRecording() {
 	s.mu.Lock()
 	atomic.StoreInt32(&s.recording, 0)
@@ -204,52 +167,6 @@ func (s *span) disableRecording() {
 	s.mu.Unlock()
 }
 
-// IsRecordable returns true if {Start,Stop}Recording() can be called on this
-// span.
-//
-// In other words, this tests if the span is our custom type, and not a noopSpan
-// or anything else.
-func IsRecordable(os opentracing.Span) bool {
-	_, customizedSpan := os.(*span)
-	return customizedSpan
-}
-
-// GetRecording retrieves the current recording, if the span has
-// recording enabled. This can be called while spans that are part of the
-// record are still open; it can run concurrently with operations on those
-// spans.
-func GetRecording(os opentracing.Span) []RecordedSpan {
-	if _, noop := os.(*noopSpan); noop {
-		return nil
-	}
-	s := os.(*span)
-	if !s.isRecording() {
-		return nil
-	}
-	s.mu.Lock()
-	group := s.mu.recordingGroup
-	s.mu.Unlock()
-	if group == nil {
-		return nil
-	}
-	return group.getSpans()
-}
-
-// IsBlackHoleSpan returns true if events for this span are just dropped. This
-// is the case when tracing is disabled and we're not recording. Tracing clients
-// can use this method to figure out if they can short-circuit some
-// tracing-related work that would be discarded anyway.
-func IsBlackHoleSpan(s opentracing.Span) bool {
-	// There are two types of black holes: instances of noopSpan and, when tracing
-	// is disabled, real spans that are not recording.
-	if _, noop := s.(*noopSpan); noop {
-		return true
-	}
-	sp := s.(*span)
-	return !sp.isRecording() && sp.netTr == nil
-	// && sp.shadowTr == nil
-}
-
 // IsNoopContext returns true if the span context is from a "no-op" span. If
 // this is true, any span derived from this context will be a "black hole span".
 func IsNoopContext(spanCtx opentracing.SpanContext) bool {
@@ -257,17 +174,6 @@ func IsNoopContext(spanCtx opentracing.SpanContext) bool {
 	return noop
 }
 
-// SetSpanStats sets the stats on a span. stats.Stats() will also be added to
-// the span tags.
-func SetSpanStats(os opentracing.Span, stats SpanStats) {
-	s := os.(*span)
-	s.mu.Lock()
-	s.mu.stats = stats
-	for name, value := range stats.Stats() {
-		s.setTagInner(StatTagPrefix+name, value, true /* locked */)
-	}
-	s.mu.Unlock()
-}
 
 // Finish is part of the opentracing.Span interface.
 func (s *span) Finish() {
@@ -285,9 +191,6 @@ func (s *span) FinishWithOptions(opts opentracing.FinishOptions) {
 	s.mu.Unlock()
 	if s.shadowTr != nil {
 		s.shadowSpan.Finish()
-	}
-	if s.netTr != nil {
-		s.netTr.Finish()
 	}
 }
 
@@ -333,9 +236,6 @@ func (s *span) setTagInner(key string, value interface{}, locked bool) opentraci
 	if s.shadowTr != nil {
 		s.shadowSpan.SetTag(key, value)
 	}
-	if s.netTr != nil {
-		s.netTr.LazyPrintf("%s:%v", key, value)
-	}
 	if s.isRecording() {
 		if !locked {
 			s.mu.Lock()
@@ -355,22 +255,6 @@ func (s *span) setTagInner(key string, value interface{}, locked bool) opentraci
 func (s *span) LogFields(fields ...otlog.Field) {
 	if s.shadowTr != nil {
 		s.shadowSpan.LogFields(fields...)
-	}
-	if s.netTr != nil {
-		// lights step does not support arbitrary event
-		if len(fields) == 1 && fields[0].Key() == "event" {
-			s.netTr.LazyPrintf("%s", fields[0].Value())
-		} else {
-			var buf bytes.Buffer
-			for i, f := range fields {
-				if i > 0 {
-					buf.WriteByte(' ')
-				}
-				fmt.Fprintf(&buf, "%s:%v", f.Key(), f.Value())
-			}
-
-			s.netTr.LazyPrintf("%s", buf.String())
-		}
 	}
 	if s.isRecording() {
 		s.mu.Lock()
@@ -485,54 +369,6 @@ type RecordedSpan struct {
 	Duration time.Duration
 	// Events logged in the span.
 	Logs []opentracing.LogRecord
-}
-
-// getSpans returns all the local and remote spans accumulated in this group.
-// The first result is the first local span - i.e. the span originally passed to
-// StartRecording().
-func (ss *spanGroup) getSpans() []RecordedSpan {
-	ss.Lock()
-	spans := ss.spans
-	ss.Unlock()
-
-	result := make([]RecordedSpan, 0, len(spans))
-	for _, s := range spans {
-		s.mu.Lock()
-		rs := RecordedSpan{
-			TraceID:      s.TraceID,
-			SpanID:       s.SpanID,
-			ParentSpanID: s.parentSpanID,
-			Operation:    s.operation,
-			StartTime:    s.startTime,
-			Duration:     s.mu.duration,
-		}
-		switch rs.Duration {
-		case -1:
-			// -1 indicates an unfinished span.
-			rs.Duration = 0
-		case 0:
-			// 0 is a special value for unfinished spans. Change to 1ns.
-			rs.Duration = time.Nanosecond
-		}
-
-		if len(s.mu.Baggage) > 0 {
-			rs.Baggage = make(map[string]string)
-			for k, v := range s.mu.Baggage {
-				rs.Baggage[k] = v
-			}
-		}
-		if len(s.mu.tags) > 0 {
-			rs.Tags = make(map[string]string)
-			for k, v := range s.mu.tags {
-				// We encode the tag values as strings.
-				rs.Tags[k] = fmt.Sprint(v)
-			}
-		}
-		rs.Logs = s.mu.recordedLogs
-		s.mu.Unlock()
-		result = append(result, rs)
-	}
-	return result
 }
 
 type noopSpanContext struct{}
