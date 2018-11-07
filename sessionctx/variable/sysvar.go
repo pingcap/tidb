@@ -127,6 +127,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "slave_pending_jobs_size_max", "16777216"},
 	{ScopeNone, "innodb_sync_array_size", "1"},
 	{ScopeSession, "rand_seed2", ""},
+	{ScopeGlobal, "validate_password_check_user_name", "OFF"},
 	{ScopeGlobal, "validate_password_number_count", "1"},
 	{ScopeSession, "gtid_next", ""},
 	{ScopeGlobal | ScopeSession, SQLSelectLimit, "18446744073709551615"},
@@ -775,6 +776,16 @@ const (
 	SyncBinlog = "sync_binlog"
 	// BlockEncryptionMode is the name for 'block_encryption_mode' system variable.
 	BlockEncryptionMode = "block_encryption_mode"
+	// ValidatePassswordNumberCount is the name of 'validate_password_number_count' system variable.
+	ValidatePasswordNumberCount = "validate_password_number_count"
+	// ValidatePassswordSpecialCharCount is the name of 'validate_password_special_char_count' system variable.
+	ValidatePasswordSpecialCharCount = "validate_password_special_char_count";
+	// ValidatePassswordLength is the name of 'validate_password_length' system variable.
+	ValidatePasswordLength = "validate_password_length";
+	// ValidatePassswordMixedCaseCount is the name of 'validate_password_mixed_case_count' system variable.
+	ValidatePasswordMixedCaseCount = "validate_password_mixed_case_count";
+	// ValidatePassswordPolicy is the name of 'validate_password_policy' system variable.
+	ValidatePasswordPolicy = "validate_password_policy";
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
