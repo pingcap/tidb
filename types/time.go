@@ -74,7 +74,8 @@ const (
 	TimeMaxValue = TimeMaxHour*10000 + TimeMaxMinute*100 + TimeMaxSecond
 	// TimeMaxValueSeconds is the maximum second value for mysql time type.
 	TimeMaxValueSeconds = TimeMaxHour*3600 + TimeMaxMinute*60 + TimeMaxSecond
-	MaxSqlTimeParts     = 7
+	// MaxSQLTimeParts means 7 parts of sql time:YYYY-MM-DD HH-MM-SS.MS
+	MaxSQLTimeParts = 7
 )
 
 // Zero values for different types.
@@ -563,7 +564,7 @@ func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
-	var seps = make([]string, 0, MaxSqlTimeParts)
+	var seps = make([]string, 0, MaxSQLTimeParts)
 	for i := 0; i < len(format); i++ {
 		if len(seps) > 7 { //max len is 7,'Y-M-D H-M-S.ms'
 			break
@@ -576,16 +577,16 @@ func ParseDateFormat(format string) []string {
 		}
 
 		if i > 0 {
-			var isNumberI_1 = unicode.IsNumber(rune(format[i-1]))
+			var isNumberIB1 = unicode.IsNumber(rune(format[i-1]))
 			var isNumberI = unicode.IsNumber(rune(format[i]))
 
 			//if i-1 is not number,i is number,meaning the beginning of one sep
-			if !isNumberI_1 && isNumberI {
+			if !isNumberIB1 && isNumberI {
 				start = i
 			}
 
 			//if i - 1 is number,i is not number,meaning the ending of one sep
-			if isNumberI_1 && !isNumberI {
+			if isNumberIB1 && !isNumberI {
 				seps = append(seps, format[start:i])
 				start = -1
 			}
@@ -597,13 +598,12 @@ func ParseDateFormat(format string) []string {
 	return seps
 }
 
-// ParseDateFormat parses a formatted date string and returns separated components.
-//Separator is a single none-number char.
+// ParseDateFormatV1 is new version of ParseDateFormat parsing a formatted date string and returns separated components.
 func ParseDateFormatV1(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
-	var seps = make([]string, 0, MaxSqlTimeParts)
+	var seps = make([]string, 0, MaxSQLTimeParts)
 	for i := 0; i < len(format); i++ {
 		// Date format must start and end with number.
 		if i == 0 || i == len(format)-1 {
@@ -648,7 +648,7 @@ func parseWhenLen0(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, 
 		*totalPartCount = *totalPartCount + 1
 	} else {
 
-		var partsWithYear, validLen, err = ParseNoDelimiterHavingYear(currentPart)
+		var partsWithYear, validLen, err = parseNoDelimiterHavingYear(currentPart)
 		if err != nil {
 			return err
 		}
@@ -683,11 +683,11 @@ func parseWhenLenLess6(lastSepChar uint8, currentSepChar uint8, currentPart stri
 		*totalPartCount = *totalPartCount + 1
 	} else {
 		var beforeLen = len(*seps)
-		var MaxLenTemp = MaxSqlTimeParts
-		if beforeLen < MaxSqlTimeParts-1 {
-			MaxLenTemp = MaxSqlTimeParts - 1
+		var MaxLenTemp = MaxSQLTimeParts
+		if beforeLen < MaxSQLTimeParts-1 {
+			MaxLenTemp = MaxSQLTimeParts - 1
 		}
-		var partsNoYear, validLen, err = ParseNoDelimiterNoYear(currentPart)
+		var partsNoYear, validLen, err = parseNoDelimiterNoYear(currentPart)
 		if err != nil {
 			return false, err
 		}
@@ -714,7 +714,7 @@ func parseOnePart(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, c
 	var err error = nil
 	if len(*seps) == 0 {
 		err = parseWhenLen0(lastSepChar, currentSepChar, selfDecideFsp, currentPart, totalPartCount, seps)
-	} else if len(*seps) == MaxSqlTimeParts-1 {
+	} else if len(*seps) == MaxSQLTimeParts-1 {
 		parseWhenLen6(lastSepChar, selfDecideFsp, currentPart, realFsp, seps)
 	} else {
 		if '.' == lastSepChar { //'2017.0112 00~00~00.333' -> 2017-01-12 00:00:00.333
@@ -735,7 +735,7 @@ func splitDateTimeV2(sc *stmtctx.StatementContext, format string, fsp int, selfD
 	var lastSepChar uint8 = 0
 	var currentSepChar uint8 = 0
 	var totalPartCount = 0
-	var seps = make([]string, 0, MaxSqlTimeParts)
+	var seps = make([]string, 0, MaxSQLTimeParts)
 	if 0 == len(format) {
 		return seps, realFsp, nil
 	}
@@ -747,26 +747,26 @@ func splitDateTimeV2(sc *stmtctx.StatementContext, format string, fsp int, selfD
 		return nil, realFsp, err
 	}
 
-	for i := 1; i < len(format) && len(seps) < MaxSqlTimeParts; i++ {
-		var isNumberI_1 = unicode.IsNumber(rune(format[i-1]))
+	for i := 1; i < len(format) && len(seps) < MaxSQLTimeParts; i++ {
+		var isNumberIB1 = unicode.IsNumber(rune(format[i-1]))
 		var isNumberI = unicode.IsNumber(rune(format[i]))
 
 		//if i-1 is not number,i is number,meaning the beginning of one sep
-		if !isNumberI_1 && isNumberI {
+		if !isNumberIB1 && isNumberI {
 			start = i
 			lastSepChar = format[i-1]
 			currentSepChar = 0
 			continue
 		}
 
-		if totalPartCount >= 4 && !isNumberI_1 && unicode.IsLetter(rune(format[i])) {
+		if totalPartCount >= 4 && !isNumberIB1 && unicode.IsLetter(rune(format[i])) {
 			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format))
 			err = nil
 			return seps, realFsp, nil
 		}
 
 		//if i - 1 is number,i is not number,meaning the ending of one sep
-		if isNumberI_1 && !isNumberI {
+		if isNumberIB1 && !isNumberI {
 			var currentPart = format[start:i]
 			currentSepChar = format[i]
 
@@ -797,7 +797,7 @@ func splitDateTimeV2(sc *stmtctx.StatementContext, format string, fsp int, selfD
 				return seps, realFsp, nil
 			}
 
-			if totalPartCount >= MaxSqlTimeParts {
+			if totalPartCount >= MaxSQLTimeParts {
 				return seps, realFsp, nil
 			}
 
@@ -819,7 +819,7 @@ func splitDateTimeV2(sc *stmtctx.StatementContext, format string, fsp int, selfD
 		return seps, realFsp, nil
 	}
 
-	if isFloat && MaxSqlTimeParts-1 > totalPartCount {
+	if isFloat && MaxSQLTimeParts-1 > totalPartCount {
 		// 20170118.999-->"2017-01-18 00:00:00.000"
 		if 0 == totalPartCount { // 20170118-->"2017-01-18 00:00:00.000"
 			warning, err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
@@ -839,7 +839,7 @@ func splitDateTimeV2(sc *stmtctx.StatementContext, format string, fsp int, selfD
 	return seps, realFsp, nil
 }
 
-func ParseNoDelimiterNoYear(strNoDelimiter string) ([6]string, int, error) {
+func parseNoDelimiterNoYear(strNoDelimiter string) ([6]string, int, error) {
 	var seps = [6]string{"", "", "", "", "", ""}
 	var validLen = 0 // valid length
 	var err error
@@ -896,7 +896,7 @@ func ParseNoDelimiterNoYear(strNoDelimiter string) ([6]string, int, error) {
 	}
 	return seps, validLen, err
 }
-func ParseNoDelimiterHavingYear(strNoDelimiter string) ([7]string, int, error) {
+func parseNoDelimiterHavingYear(strNoDelimiter string) ([7]string, int, error) {
 	//var seps = [7]int{-1,-2,-3,-4,-5,-6,-7}
 	var seps = [7]string{"", "", "", "", "", "", ""}
 	var validLen = 0 // valid length
