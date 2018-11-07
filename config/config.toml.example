@@ -227,8 +227,8 @@ grpc-keepalive-timeout = 3
 commit-timeout = "41s"
 
 # The max time a Txn may use (in seconds) from its startTS to commitTS.
-# We use it to guarantee GC worker will not influence any active txn. The value
-# should be less than GC life time.
+# We use it to guarantee GC worker will not influence any active txn. Please make sure that this
+# value is less than gc_life_time - 10s.
 max-txn-time-use = "590"
 
 [binlog]
