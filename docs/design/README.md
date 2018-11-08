@@ -2,7 +2,7 @@
 
 ## Why We need Design Documents
 
-The design document provides a description of the architecture and important details of what we want to do through a high-level. It is the most powerful tool to ensure our work to be correctly performed.
+The design document provides a high-level description of the architecture and important details of what we want to do. It is the most powerful tool to ensure that our work is correctly performed.
 
 Writing a design document can promote us to think deliberately and gather the knowledge from others to get our job be done better.  An excellent design document is closely related to the success of our task.
 
