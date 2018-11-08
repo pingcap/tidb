@@ -99,6 +99,9 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 	}
 
 	for _, col := range tbl.Columns {
+		if col.Histogram.Len() == 0 {
+			continue
+		}
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
