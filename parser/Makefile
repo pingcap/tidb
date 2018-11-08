@@ -7,7 +7,7 @@ LINUX:="Linux"
 all: parser.go
 
 test: parser.go
-	GO111MODULE=on go test ./...
+	sh test.sh
 
 parser.go: parser.y
 	make parser
@@ -34,3 +34,4 @@ bin/goyacc: goyacc/main.go
 clean:
 	go clean -i ./...
 	rm -rf *.out
+	rm parser.go
