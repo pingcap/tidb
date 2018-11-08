@@ -479,6 +479,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
+			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan()
 			if err != nil {
 				return errors.Trace(err)

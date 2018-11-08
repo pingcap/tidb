@@ -243,6 +243,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
+	sc.TableIDs = sc.TableIDs[:0]
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print
