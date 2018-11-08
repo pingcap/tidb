@@ -10,7 +10,7 @@ Writing a design document can promote us to think deliberately and gather knowle
 
 1. Before starting to write a design document, please [create a new issue](https://github.com/pingcap/tidb/issues/new/choose) for tracing the process of your design.
 2. Create a new [Google Doc](https://docs.google.com/document/u/0/) to write the design document. Pelase refer to this [proposal template](./TEMPLATE.md).
-3. If the design document is ready to be reviewed, please put the shared link with `can comment` permission in the issue you've created, one of our engineers will follow up and keep updated.
+3. If the design document is ready to be reviewed, please put the shared link with the `can comment` permission in the issue you've created, and one of our engineers will follow up this issue and keep it updated.
 4. If needed, we may organize a communications seminar through [Google Hangouts](https://hangouts.google.com/) to discuss your design with you and the interested friends from the community.
 5. When your design is determined, please submit a pull request(PR) to add your new file under this directory, and put the link of your PR in the issue you've created. 
 6. Once your PR has been merged, please close the old issue.
