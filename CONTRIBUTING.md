@@ -61,7 +61,7 @@ TiDB is written in [Go](http://golang.org).
 If you don't have a Go development environment,
 please [set one up](http://golang.org/doc/code.html).
 
-The version of GO should be **1.10** or above.
+The version of GO should be **1.11** or above.
 
 After installation, you'll need `GOPATH` defined,
 and `PATH` modified to access your Go binaries.
@@ -75,11 +75,7 @@ export PATH=$PATH:$GOPATH/bin
 
 #### Dependency management
 
-TiDB uses [`dep`](https://github.com/golang/dep) to manage dependencies.
-
-```sh
-go get -u github.com/golang/dep/cmd/dep
-```
+TiDB uses [`Go Modules`](https://github.com/golang/go/wiki/Modules) to manage dependencies.
 
 ## Workflow
 
