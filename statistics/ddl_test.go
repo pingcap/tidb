@@ -15,7 +15,7 @@ package statistics_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
@@ -137,7 +137,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	c.Assert(count, Equals, float64(2))
 	count, err = statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(1), tableInfo.Columns[3].ID)
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, float64(2))
+	c.Assert(count, Equals, float64(0))
 
 	testKit.MustExec("alter table t add column c4 datetime NOT NULL default CURRENT_TIMESTAMP")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
@@ -175,7 +175,6 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 func (s *testStatsCacheSuite) TestDDLPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))

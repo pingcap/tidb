@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

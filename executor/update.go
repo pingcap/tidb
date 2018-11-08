@@ -14,13 +14,14 @@
 package executor
 
 import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -42,10 +43,11 @@ type UpdateExec struct {
 	// columns2Handle stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see executor.cols2Handle
 	columns2Handle cols2HandleSlice
+	evalBuffer     chunk.MutRow
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
-	assignFlag, err := e.getUpdateColumns(schema.Len())
+	assignFlag, err := e.getUpdateColumns(e.ctx, schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -139,8 +141,20 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	fields := e.children[0].retTypes()
+	schema := e.children[0].Schema()
+	colsInfo := make([]*table.Column, len(fields))
+	for id, cols := range schema.TblID2Handle {
+		tbl := e.tblID2table[id]
+		for _, col := range cols {
+			offset := getTableOffset(schema, col)
+			for i, c := range tbl.WritableCols() {
+				colsInfo[offset+i] = c
+			}
+		}
+	}
 	globalRowIdx := 0
 	chk := e.children[0].newFirstChunk()
+	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
@@ -154,7 +168,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
-			newRow, err1 := e.composeNewRow(globalRowIdx, datumRow)
+			newRow, err1 := e.composeNewRow(globalRowIdx, datumRow, colsInfo)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -179,19 +193,30 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 	return errors.Trace(err)
 }
 
-func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Datum, error) {
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CopyRow(oldRow)
+	e.evalBuffer.SetDatums(newRowData...)
 	for _, assign := range e.OrderedList {
 		handleIdx, handleFound := e.columns2Handle.findHandle(int32(assign.Col.Index))
 		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
 			continue
 		}
-		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())
-
-		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
-			return nil, errors.Trace(err1)
+		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
+		if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
+			return nil, err
 		}
-		newRowData[assign.Col.Index] = val
+
+		// info of `_tidb_rowid` column is nil.
+		// No need to cast `_tidb_rowid` column value.
+		if cols[assign.Col.Index] != nil {
+			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
+			if err = e.handleErr(assign.Col.ColName, rowIdx, err); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		newRowData[assign.Col.Index] = *val.Copy()
+		e.evalBuffer.SetDatum(assign.Col.Index, val)
 	}
 	return newRowData, nil
 }
@@ -206,9 +231,12 @@ func (e *UpdateExec) Open(ctx context.Context) error {
 	return e.SelectExec.Open(ctx)
 }
 
-func (e *UpdateExec) getUpdateColumns(schemaLen int) ([]bool, error) {
+func (e *UpdateExec) getUpdateColumns(ctx sessionctx.Context, schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range e.OrderedList {
+		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ColName.L == model.ExtraHandleName.L {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
 		idx := v.Col.Index
 		assignFlag[idx] = true
 	}

@@ -14,13 +14,12 @@
 package expression
 
 import (
-	"fmt"
 	"math"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -202,20 +201,35 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 
 func (s *testEvaluatorSuite) TestValues(c *C) {
 	defer testleak.AfterTest(c)()
+
+	origin := s.ctx.GetSessionVars().StmtCtx.InInsertStmt
+	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = false
+	defer func() {
+		s.ctx.GetSessionVars().StmtCtx.InInsertStmt = origin
+	}()
+
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
 	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("")))
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
+
 	sig, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums()))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(sig, chunk.Row{})
-	c.Assert(err.Error(), Equals, "Session current insert values is nil")
-	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
-	_, err = evalBuiltinFunc(sig, chunk.Row{})
-	c.Assert(err.Error(), Equals, fmt.Sprintf("Session current insert values len %d and column's offset %v don't match", 1, 1))
-	currInsertValues := types.MakeDatums("1", "2")
-	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
+
 	ret, err := evalBuiltinFunc(sig, chunk.Row{})
 	c.Assert(err, IsNil)
+	c.Assert(ret.IsNull(), IsTrue)
+
+	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
+	ret, err = evalBuiltinFunc(sig, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(ret.IsNull(), IsTrue)
+
+	currInsertValues := types.MakeDatums("1", "2")
+	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
+	ret, err = evalBuiltinFunc(sig, chunk.Row{})
+	c.Assert(err, IsNil)
+
 	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)

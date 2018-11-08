@@ -22,11 +22,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pkg/errors"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
@@ -85,6 +85,10 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return string(j), true, nil
 	case TiDBForcePriority:
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
+	case TiDBSlowLogThreshold:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
+	case TiDBQueryLogMaxLen:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -244,6 +248,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, 2, vars)
 	case InnodbLockWaitTimeout:
 		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
+	// See "https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_allowed_packet"
+	case MaxAllowedPacket:
+		return checkUInt64SystemVar(name, value, 1024, 1073741824, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
@@ -289,7 +296,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
-		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
+		TiDBOptInSubqToJoinAndAgg, TiDBEnableTablePartition,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBEnableCascadesPlanner:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
@@ -322,7 +329,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TIDBMemQuotaIndexLookupReader,
 		TIDBMemQuotaIndexLookupJoin,
 		TIDBMemQuotaNestedLoopApply,
-		TiDBRetryLimit:
+		TiDBRetryLimit,
+		TiDBSlowLogThreshold,
+		TiDBQueryLogMaxLen:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name)

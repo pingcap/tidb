@@ -17,12 +17,12 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -212,6 +212,33 @@ func (s *testExpressionSuite) TestIsNull(c *C) {
 		},
 		{
 			exprStr:   "NULL IS NOT NULL",
+			resultStr: "0",
+		},
+	}
+	s.runTests(c, tests)
+}
+
+func (s *testExpressionSuite) TestCompareRow(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []testCase{
+		{
+			exprStr:   "row(1,2,3)=row(1,2,3)",
+			resultStr: "1",
+		},
+		{
+			exprStr:   "row(1,2,3)=row(1+3,2,3)",
+			resultStr: "0",
+		},
+		{
+			exprStr:   "row(1,2,3)<>row(1,2,3)",
+			resultStr: "0",
+		},
+		{
+			exprStr:   "row(1,2,3)<>row(1+3,2,3)",
+			resultStr: "1",
+		},
+		{
+			exprStr:   "row(1+3,2,3)<>row(1+3,2,3)",
 			resultStr: "0",
 		},
 	}

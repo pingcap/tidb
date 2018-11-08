@@ -13,10 +13,10 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -40,7 +40,7 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 		p.Children()[chIdx] = dual
 		return
 	}
-	selection := LogicalSelection{Conditions: conditions}.init(p.context())
+	selection := LogicalSelection{Conditions: conditions}.Init(p.context())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
 }
@@ -234,7 +234,7 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	if ok {
 		return proj
 	}
-	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.init(p.ctx)
+	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.ctx)
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
@@ -417,7 +417,7 @@ func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	}
 	sc := p.context().GetSessionVars().StmtCtx
 	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.init(p.context())
+		dual := LogicalTableDual{}.Init(p.context())
 		dual.SetSchema(p.Schema())
 		return dual
 	}

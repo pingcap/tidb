@@ -27,8 +27,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	log "github.com/sirupsen/logrus"
@@ -629,6 +629,7 @@ func runTestAuth(c *C) {
 		config.User = "authtest"
 		config.Passwd = "456"
 	}))
+	c.Assert(err, IsNil)
 	_, err = db.Query("USE mysql;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()
