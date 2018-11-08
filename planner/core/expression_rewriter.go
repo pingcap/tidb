@@ -196,6 +196,9 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 				return nil, errors.Trace(err)
 			}
 		}
+		if op == ast.NE {
+			return expression.ComposeDNFCondition(er.ctx, funcs...), nil
+		}
 		return expression.ComposeCNFCondition(er.ctx, funcs...), nil
 	default:
 		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
