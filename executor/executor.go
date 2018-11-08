@@ -55,6 +55,7 @@ var (
 	_ Executor = &ProjectionExec{}
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
+	_ Executor = &ShowNextRowIDExec{}
 	_ Executor = &ShowDDLExec{}
 	_ Executor = &ShowDDLJobsExec{}
 	_ Executor = &ShowDDLJobQueriesExec{}
@@ -197,6 +198,34 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 	e.cursor += numCurBatch
+	return nil
+}
+
+// ShowNextRowIDExec represents a show the next row ID executor.
+type ShowNextRowIDExec struct {
+	baseExecutor
+	tblName *ast.TableName
+	done    bool
+}
+
+func (e *ShowNextRowIDExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+	is := domain.GetDomain(e.ctx).InfoSchema()
+	tbl, err := is.TableByName(e.tblName.Schema, e.tblName.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	nextGlobalID, err := tbl.Allocator(e.ctx).NextGlobalAutoID(tbl.Meta().ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	chk.AppendString(0, e.tblName.Schema.L)
+	chk.AppendString(1, e.tblName.Name.L)
+	chk.AppendInt64(2, nextGlobalID)
+	e.done = true
 	return nil
 }
 

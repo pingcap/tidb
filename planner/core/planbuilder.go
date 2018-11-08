@@ -502,6 +502,10 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ChecksumTable{Tables: as.Tables}
 		p.SetSchema(buildChecksumTableSchema())
 		ret = p
+	case ast.AdminShowNextRowID:
+		p := &ShowNextRowID{TableName: as.Tables[0]}
+		p.SetSchema(buildShowNextRowID())
+		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
@@ -759,6 +763,14 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		return b.buildAnalyzeIndex(as)
 	}
 	return b.buildAnalyzeTable(as)
+}
+
+func buildShowNextRowID() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
+	schema.Append(buildColumn("", "Database_name", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "Table_name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "Next_global_row_ID", mysql.TypeLonglong, 4))
+	return schema
 }
 
 func buildShowDDLFields() *expression.Schema {
