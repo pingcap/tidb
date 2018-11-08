@@ -1261,9 +1261,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		vars.LastInsertID = 0
 	}
 	sc.PrevAffectedRows = 0
-	if sc.InUpdateOrDeleteStmt || sc.InInsertStmt {
+	if vars.StmtCtx.InUpdateOrDeleteStmt || vars.StmtCtx.InInsertStmt {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
-	} else if sc.InSelectStmt {
+	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
 	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
