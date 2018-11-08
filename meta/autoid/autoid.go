@@ -57,7 +57,8 @@ type allocator struct {
 	end   int64
 	store kv.Storage
 	// dbID is current database's ID.
-	dbID int64
+	dbID       int64
+	isUnsigned bool
 }
 
 // GetStep is only used by tests
@@ -91,7 +92,10 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 		return errors.Trace(err1)
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.GlobalAutoID, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return autoID + 1, errors.Trace(err)
+	if alloc.isUnsigned {
+		return int64(uint64(autoID) + 1), err
+	}
+	return autoID + 1, err
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
@@ -104,16 +108,24 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
-	if requiredBase <= alloc.base {
-		// Satisfied by alloc.base, nothing to do.
+
+	// Satisfied by alloc.base, nothing to do.
+	if !alloc.isUnsigned && requiredBase <= alloc.base {
+		return nil
+	} else if alloc.isUnsigned && uint64(requiredBase) <= uint64(alloc.base) {
 		return nil
 	}
-	if requiredBase <= alloc.end {
-		// Satisfied by alloc.end, need to updata alloc.base.
+
+	// Satisfied by alloc.end, need to update alloc.base.
+	if !alloc.isUnsigned && requiredBase <= alloc.end {
+		alloc.base = requiredBase
+		return nil
+	} else if alloc.isUnsigned && uint64(requiredBase) <= uint64(alloc.end) {
 		alloc.base = requiredBase
 		return nil
 	}
 	var newBase, newEnd int64
+	var uNewBase, uNewEnd uint64
 	startTime := time.Now()
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
@@ -121,23 +133,44 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
+		uCurrentEnd, uRequiredBase := uint64(currentEnd), uint64(requiredBase)
 		if allocIDs {
-			newBase = mathutil.MaxInt64(currentEnd, requiredBase)
-			newEnd = newBase + step
+			if alloc.isUnsigned {
+				uNewBase = mathutil.MaxUint64(uCurrentEnd, uRequiredBase)
+				uNewEnd = uNewBase + uint64(step)
+			} else {
+				newBase = mathutil.MaxInt64(currentEnd, requiredBase)
+				newEnd = newBase + step
+			}
 		} else {
-			if currentEnd >= requiredBase {
+
+			if !alloc.isUnsigned && currentEnd >= requiredBase {
 				newBase = currentEnd
 				newEnd = currentEnd
 				// Required base satisfied, we don't need to update KV.
+				return nil
+			} else if alloc.isUnsigned && uCurrentEnd >= uRequiredBase {
+				uNewBase = uCurrentEnd
+				uNewEnd = uCurrentEnd
 				return nil
 			}
 			// If we don't want to allocate IDs, for example when creating a table with a given base value,
 			// We need to make sure when other TiDB server allocates ID for the first time, requiredBase + 1
 			// will be allocated, so we need to increase the end to exactly the requiredBase.
-			newBase = requiredBase
-			newEnd = requiredBase
+			if !alloc.isUnsigned {
+				newBase = requiredBase
+				newEnd = requiredBase
+			} else {
+				uNewBase = uRequiredBase
+				uNewEnd = uRequiredBase
+			}
+
 		}
-		_, err1 = m.GenAutoTableID(alloc.dbID, tableID, newEnd-currentEnd)
+		if !alloc.isUnsigned {
+			_, err1 = m.GenAutoTableID(alloc.dbID, tableID, newEnd-currentEnd)
+		} else {
+			_, err1 = m.GenAutoTableID(alloc.dbID, tableID, int64(uNewEnd-uCurrentEnd))
+		}
 		return errors.Trace(err1)
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -237,10 +270,11 @@ func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
-func NewAllocator(store kv.Storage, dbID int64) Allocator {
+func NewAllocator(store kv.Storage, dbID int64, isUnsigned bool) Allocator {
 	return &allocator{
-		store: store,
-		dbID:  dbID,
+		store:      store,
+		dbID:       dbID,
+		isUnsigned: isUnsigned,
 	}
 }
 

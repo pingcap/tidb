@@ -708,7 +708,9 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk.MustExec("drop table if exists autoid")
 	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
 	tk.MustExec("insert into autoid values(9223372036854775808);")
-	tk.MustQuery("select * from autoid").Check(testkit.Rows("9223372036854775808"))
+	tk.MustExec("insert into autoid values();")
+	tk.MustExec("insert into autoid values();")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9223372036854775808", "9223372036854775810", "9223372036854775812"))
 }
 
 func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {

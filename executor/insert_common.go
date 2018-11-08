@@ -447,19 +447,11 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 	}
 	if !d.IsNull() {
 		sc := e.ctx.GetSessionVars().StmtCtx
-		if mysql.HasUnsignedFlag(c.Flag) {
-			var uintD types.Datum
-			uintD, err = d.ConvertTo(sc, &c.FieldType)
-			if e.filterErr(err) != nil {
-				return types.Datum{}, err
-			}
-			recordID = int64(uintD.GetUint64())
-		} else {
-			recordID, err = d.ToInt64(sc)
-			if e.filterErr(err) != nil {
-				return types.Datum{}, errors.Trace(err)
-			}
+		datum, err := d.ConvertTo(sc, &c.FieldType)
+		if e.filterErr(err) != nil {
+			return types.Datum{}, err
 		}
+		recordID = datum.GetInt64()
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {

@@ -57,7 +57,7 @@ func (*testSuite) TestT(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	alloc := autoid.NewAllocator(store, 1)
+	alloc := autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
 
 	globalAutoId, err := alloc.NextGlobalAutoID(1)
@@ -97,13 +97,13 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(3011))
 
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(autoid.GetStep()+1))
 
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(2, int64(1), false)
 	c.Assert(err, IsNil)
@@ -111,11 +111,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
 
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3210), false)
 	c.Assert(err, IsNil)
-	alloc = autoid.NewAllocator(store, 1)
+	alloc = autoid.NewAllocator(store, 1, false)
 	c.Assert(alloc, NotNil)
 	err = alloc.Rebase(3, int64(3000), false)
 	c.Assert(err, IsNil)
@@ -159,7 +159,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	errCh := make(chan error, count)
 
 	allocIDs := func() {
-		alloc := autoid.NewAllocator(store, dbID)
+		alloc := autoid.NewAllocator(store, dbID, false)
 		for j := 0; j < int(autoid.GetStep())+5; j++ {
 			id, err1 := alloc.Alloc(tblID)
 			if err1 != nil {
@@ -213,7 +213,7 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 	injectConf := new(kv.InjectionConfig)
 	injectConf.SetCommitError(errors.New("injected"))
 	injectedStore := kv.NewInjectedStore(store, injectConf)
-	alloc := autoid.NewAllocator(injectedStore, 1)
+	alloc := autoid.NewAllocator(injectedStore, 1, false)
 	_, err = alloc.Alloc(2)
 	c.Assert(err, NotNil)
 	c.Assert(alloc.Base(), Equals, int64(0))
