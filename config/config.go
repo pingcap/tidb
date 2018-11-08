@@ -87,9 +87,9 @@ type Log struct {
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
 	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint   `toml:"slow-threshold" json:"slow-threshold"`
+	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen     uint   `toml:"query-log-max-len" json:"query-log-max-len"`
+	QueryLogMaxLen     uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
 // Security is the security section of the config.
@@ -189,7 +189,7 @@ type PreparedPlanCache struct {
 
 // OpenTracing is the opentracing section of the config.
 type OpenTracing struct {
-	Enable     bool                `toml:"enable" json:"enbale"`
+	Enable     bool                `toml:"enable" json:"enable"`
 	Sampler    OpenTracingSampler  `toml:"sampler" json:"sampler"`
 	Reporter   OpenTracingReporter `toml:"reporter" json:"reporter"`
 	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
@@ -241,7 +241,7 @@ type TiKVClient struct {
 
 // Binlog is the config for binlog.
 type Binlog struct {
-	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	Enable       bool   `toml:"enable" json:"enable"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
 	// If IgnoreError is true, when writting binlog meets error, TiDB would
 	// ignore the error.
@@ -273,9 +273,9 @@ var defaultConf = Config{
 			LogRotate: true,
 			MaxSize:   logutil.DefaultLogMaxSize,
 		},
-		SlowThreshold:      300,
+		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
-		QueryLogMaxLen:     2048,
+		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
 	},
 	Status: Status{
 		ReportStatus:    true,

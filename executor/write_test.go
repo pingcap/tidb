@@ -1076,6 +1076,12 @@ func (s *testSuite) TestUpdate(c *C) {
 	_, err = tk.Exec("update t, (select * from t) as b set b.k = t.k")
 	c.Assert(err.Error(), Equals, "[planner:1288]The target table b of the UPDATE is not updatable")
 	tk.MustExec("update t, (select * from t) as b set t.k = b.k")
+
+	// issue 8045
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (c1 float)`)
+	tk.MustExec("INSERT INTO t1 SET c1 = 1")
+	tk.MustExec("UPDATE t1 SET c1 = 1.2 WHERE c1=1;")
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {

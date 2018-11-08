@@ -44,7 +44,6 @@ func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table,
 		InsertValues: insertVal,
 		Table:        tbl,
 		Ctx:          ctx,
-		columns:      cols,
 	}
 }
 
@@ -81,6 +80,9 @@ func (e *LoadDataExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *LoadDataExec) Open(ctx context.Context) error {
+	if e.loadDataInfo.insertColumns != nil {
+		e.loadDataInfo.initEvalBuffer()
+	}
 	return nil
 }
 
@@ -95,7 +97,6 @@ type LoadDataInfo struct {
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
-	columns     []*table.Column
 }
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
@@ -274,7 +275,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 			e.row[i].SetString(string(cols[i].str))
 		}
 	}
-	row, err := e.getRow(e.columns, e.row)
+	row, err := e.getRow(e.row)
 	if err != nil {
 		e.handleWarning(err,
 			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))

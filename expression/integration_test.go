@@ -477,6 +477,8 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("100 123 123 120"))
 	result = tk.MustQuery("SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);")
 	result.Check(testkit.Rows("100 123.45 123.4 123.456 1.230000000000000000000000000000 123.45"))
+	result = tk.MustQuery("SELECT truncate(9223372036854775807, -7), truncate(9223372036854775808, -10), truncate(cast(-1 as unsigned), -10);")
+	result.Check(testkit.Rows("9223372036850000000 9223372030000000000 18446744070000000000"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a date, b datetime, c timestamp, d varchar(20));`)
@@ -3601,4 +3603,14 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	tk.MustExec("insert into t select 0.5999991229316*0.918755041726043;")
 	res := tk.MustQuery("select * from t;")
 	res.Check(testkit.Rows("0.55125221922461136"))
+}
+
+func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);`)
+	tk.MustExec(`insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");`)
+	res := tk.MustQuery(`select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;`)
+	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
 }

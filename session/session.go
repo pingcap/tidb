@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/timeutil"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -292,7 +292,7 @@ func (s *session) doCommit(ctx context.Context) error {
 					Tp:            binlog.BinlogType_Prewrite,
 					PrewriteValue: prewriteData,
 				},
-				Client: s.sessionVars.BinlogClient.(binlog.PumpClient),
+				Client: s.sessionVars.BinlogClient,
 			}
 			s.txn.SetOption(kv.BinlogInfo, info)
 		}
@@ -464,6 +464,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 	nh := GetHistory(s)
 	var err error
 	var schemaVersion int64
+	orgStartTS := s.GetSessionVars().TxnCtx.StartTS
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
@@ -493,6 +494,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 			s.StmtCommit()
 		}
+		log.Warnf("con:%d retrying_txn_start_ts:%d original_txn_start_ts:(%d)",
+			connID, s.GetSessionVars().TxnCtx.StartTS, orgStartTS)
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
 			hook.(func())()
@@ -796,7 +799,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 		startTS = time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
-		if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
+		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, errors.Trace(err)
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
@@ -1187,7 +1190,7 @@ func createSession(store kv.Storage) (*session, error) {
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
-	s.sessionVars.BinlogClient = binloginfo.GetPumpClient()
+	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 	return s, nil
 }
@@ -1431,6 +1434,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d start_ts:%d sql:%s", vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query)
+		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d start_ts:%d sql:%s%s",
+			vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query, vars.GetExecuteArgumentsInfo())
 	}
 }

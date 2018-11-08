@@ -188,6 +188,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 				Info:      colInfo,
 				Count:     count + nullCount,
 				ErrorRate: errorRate,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			break
 		}
@@ -206,6 +207,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 				CMSketch:  cms,
 				Count:     int64(hg.totalRowCount()),
 				ErrorRate: errorRate,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			break
 		}
@@ -394,7 +396,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
 	c := t.Columns[colID]
-	result, err := c.equalRowCount(sc, value)
+	result, err := c.equalRowCount(sc, value, t.ModifyCount)
 	result *= c.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -551,7 +553,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			// so we use heuristic methods to estimate the selectivity.
 			if idx.NDV > 0 && len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal) {
 				// for equality queries
-				selectivity = 1.0 / float64(idx.NDV)
+				selectivity = float64(coll.ModifyCount) / float64(idx.NDV) / idx.totalRowCount()
 			} else {
 				// for range queries
 				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.totalRowCount()
@@ -610,7 +612,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
-			t.Columns[col.ID] = &Column{Info: col}
+			t.Columns[col.ID] = &Column{Info: col, isHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag)}
 		}
 	}
 	for _, idx := range tblInfo.Indices {

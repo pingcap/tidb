@@ -33,6 +33,10 @@ const (
 	DefaultLogMaxSize = 300 // MB
 	defaultLogFormat  = "text"
 	defaultLogLevel   = log.InfoLevel
+	// DefaultSlowThreshold is the default slow log threshold in millisecond.
+	DefaultSlowThreshold = 300
+	// DefaultQueryLogMaxLen is the default max length of the query in the log.
+	DefaultQueryLogMaxLen = 2048
 )
 
 // FileLogConfig serializes file log related config in toml/json.

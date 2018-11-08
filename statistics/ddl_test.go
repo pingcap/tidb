@@ -137,7 +137,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	c.Assert(count, Equals, float64(2))
 	count, err = statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(1), tableInfo.Columns[3].ID)
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, float64(2))
+	c.Assert(count, Equals, float64(0))
 
 	testKit.MustExec("alter table t add column c4 datetime NOT NULL default CURRENT_TIMESTAMP")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())

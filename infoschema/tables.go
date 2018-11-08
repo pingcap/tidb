@@ -1170,8 +1170,8 @@ func dataForPseudoProfiling() [][]types.Datum {
 		0,                      // PAGE_FAULTS_MAJOR
 		0,                      // PAGE_FAULTS_MINOR
 		0,                      // SWAPS
-		0,                      // SOURCE_FUNCTION
-		0,                      // SOURCE_FILE
+		"",                     // SOURCE_FUNCTION
+		"",                     // SOURCE_FILE
 		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)
