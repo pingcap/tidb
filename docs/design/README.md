@@ -1,12 +1,28 @@
 # TiDB Design Documents
 
-A proposal template: [TEMPLATE.md](./TEMPLATE.md)
+## Why We need Design Documents
 
-## Proposed
+The design document provides a description of the architecture and important details of what we want to do through a high-level. It is the most powerful tool to ensure our work to be correctly performed.
+
+Writing a design document can promote us to think deliberately and gather the knowledge from others to get our job be done better.  An excellent design document is closely related to the success of our task.
+
+##Proprosal Process
+
+1. Before starting the design document, please [create a new issue](https://github.com/pingcap/tidb/issues/new/choose) for tracing the process of your design.
+2. Create a new [Google Doc](https://docs.google.com/document/u/0/) to write the design document. Pelase refer to this [proposal template](./TEMPLATE.md).
+3. If the design document is ready to be reviewed, please put the shared link with `can comment` permission in the issue you've created, one of our engineers will follow up and keep updated.
+4. If needed, we may organize a communications seminar to discuss your design with you and the interested friends from the community.
+5. When your design is determined, please submit a pull request(PR) to add your new file under this directory, and put the link of your PR in the issue you've created. 
+6. Once your PR has been merged, please close the old issue.
+7. Start the implementation refer to the proposal, and create a new issue to trace the process.
+
+##Proposal Status
+
+###Proposed
 
 - [Proposal: A new command to restore dropped table](./2018-08-10-restore-dropped-table.md)
 
-## In Progress
+###In Progress
 
 - [Proposal: A new storage row format for efficient decoding](./2018-07-19-row-format.md)
 - [Proposal: Enhance constraint propagation in TiDB logical plan](./2018-07-22-enhance-propagations.md)
@@ -17,7 +33,7 @@ A proposal template: [TEMPLATE.md](./TEMPLATE.md)
 - [Proposal: Join Reorder Design v1](./2018-10-20-join-reorder-dp-v1.md)
 - [Proposal: Support Window Functions](./2018-10-31-window-functions.md)
 
-## Completed
+###Completed
 
 - [Proposal: A new aggregate function execution framework](./2018-07-01-refactor-aggregate-framework.md)
 - [Proposal: Infer the System Timezone of a TiDB cluster via TZ environment variable](./2018-09-10-adding-tz-env.md)
