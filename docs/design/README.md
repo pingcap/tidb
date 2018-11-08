@@ -14,7 +14,7 @@ Writing a design document can promote us to think deliberately and gather knowle
 4. If needed, we may organize a communications seminar through [Google Hangouts](https://hangouts.google.com/) to discuss your design with you and the interested friends from the community.
 5. When your design is finalized, please submit a pull request (PR) to add your new file under this directory, and put the link of your PR in the issue you've created. 
 6. Once your PR has been merged, please close the old issue.
-7. Start the implementation refer to the proposal, and create a new issue to trace the process.
+7. Start the implementation referring to the proposal, and create a new issue to trace the process.
 
 ## Proposal Status
 
