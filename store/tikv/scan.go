@@ -30,10 +30,11 @@ type Scanner struct {
 	cache        []*pb.KvPair
 	idx          int
 	nextStartKey []byte
+	endKey       []byte
 	eof          bool
 }
 
-func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int) (*Scanner, error) {
+func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
@@ -43,6 +44,7 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int) (*Scanne
 		batchSize:    batchSize,
 		valid:        true,
 		nextStartKey: startKey,
+		endKey:       endKey,
 	}
 	err := scanner.Next()
 	if kv.IsErrNotFound(err) {
@@ -74,7 +76,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackoffer(context.Background(), scannerNextMaxBackoff)
+	bo := NewBackoffer(context.WithValue(context.Background(), txnStartKey, s.snapshot.version.Ver), scannerNextMaxBackoff)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -147,6 +149,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			Type: tikvrpc.CmdScan,
 			Scan: &pb.ScanRequest{
 				StartKey: s.nextStartKey,
+				EndKey:   s.endKey,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 				KeyOnly:  s.snapshot.keyOnly,
@@ -199,7 +202,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			// No more data in current Region. Next getData() starts
 			// from current Region's endKey.
 			s.nextStartKey = loc.EndKey
-			if len(loc.EndKey) == 0 {
+			if len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0) {
 				// Current Region is the last one.
 				s.eof = true
 			}
