@@ -208,6 +208,7 @@ type ShowNextRowIDExec struct {
 	done    bool
 }
 
+// Next implements the Executor Next interface.
 func (e *ShowNextRowIDExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {

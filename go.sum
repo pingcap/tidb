@@ -193,6 +193,8 @@ github.com/pingcap/parser v0.0.0-20181024082006-53ac409ed043 h1:P9Osi8lei5j2fiRg
 github.com/pingcap/parser v0.0.0-20181024082006-53ac409ed043/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20181102070703-4acd198f5092 h1:vGjjf7fhuaO9udn6QEFzvsNJDwVxFmdJvIJhCdCNe/E=
 github.com/pingcap/parser v0.0.0-20181102070703-4acd198f5092/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20181108063932-33b76e3c70ba h1:H8EuC6bgH/EREBOulWonaqLDBQc95kzJXkHL6KnAqRg=
+github.com/pingcap/parser v0.0.0-20181108063932-33b76e3c70ba/go.mod h1:/Ka3KYV3pcQBthjIFbvyOPkKg9zZB+feFyKG4J+RtPg=
 github.com/pingcap/pd v0.0.0-20180619050643-0ec6ffcf94e8/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/pd v0.0.0-20181015053559-eb892dda1e33 h1:UQKEV9u9PR1RjFiJqqGijsHAEzTDZe89xdgB4Lj9S8Y=
 github.com/pingcap/pd v0.0.0-20181015053559-eb892dda1e33/go.mod h1:+bFEXnol47I8RhLpb0RbP5ZvpG6Ca7dw0LL/ARsmRk0=
@@ -200,6 +202,7 @@ github.com/pingcap/pd v2.0.5+incompatible h1:nUTetzzM/tLbd03DoMB76AAvI57oYftNib9
 github.com/pingcap/pd v2.0.5+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
+github.com/pingcap/tidb v0.0.0-20181105182855-379ee5b1915a/go.mod h1:tq1TVnaDUrh46KbB+oJA34Ob3eMbinTopWVzhX5Rj94=
 github.com/pingcap/tidb v2.0.8+incompatible/go.mod h1:I8C6jrPINP2rrVunTRd7C9fRRhQrtR43S1/CL5ix/yQ=
 github.com/pingcap/tidb-tools v0.0.0-20181025073300-5db58e3b7e66 h1:auCqWgjgklL7o7c3Pj5PaSOAd9hBZd3OwEyvGSEStnA=
 github.com/pingcap/tidb-tools v0.0.0-20181025073300-5db58e3b7e66/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
