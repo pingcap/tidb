@@ -2459,3 +2459,67 @@ func (s *testParserSuite) TestWindowFunctionIdentifier(c *C) {
 	}
 	s.RunTest(c, table)
 }
+
+func (s *testParserSuite) TestWindowFunctions(c *C) {
+	table := []testCase{
+		// For window function descriptions.
+		// See https://dev.mysql.com/doc/refman/8.0/en/window-function-descriptions.html
+		{`SELECT CUME_DIST() OVER w FROM t;`, true},
+		{`SELECT DENSE_RANK() OVER w FROM t;`, true},
+		{`SELECT FIRST_VALUE(val) OVER w FROM t;`, true},
+		{`SELECT FIRST_VALUE(val) RESPECT NULLS OVER w FROM t;`, true},
+		{`SELECT FIRST_VALUE(val) IGNORE NULLS OVER w FROM t;`, true},
+		{`SELECT LAG(val) OVER w FROM t;`, true},
+		{`SELECT LAG(val, 1) OVER w FROM t;`, true},
+		{`SELECT LAG(val, 1, def) OVER w FROM t;`, true},
+		{`SELECT LAST_VALUE(val) OVER w FROM t;`, true},
+		{`SELECT LEAD(val) OVER w FROM t;`, true},
+		{`SELECT LEAD(val, 1) OVER w FROM t;`, true},
+		{`SELECT LEAD(val, 1, def) OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val, 233) OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val, 233) FROM FIRST OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val, 233) FROM LAST OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val, 233) FROM LAST IGNORE NULLS OVER w FROM t;`, true},
+		{`SELECT NTH_VALUE(val) OVER w FROM t;`, false},
+		{`SELECT NTILE(233) OVER w FROM t;`, true},
+		{`SELECT PERCENT_RANK() OVER w FROM t;`, true},
+		{`SELECT RANK() OVER w FROM t;`, true},
+		{`SELECT ROW_NUMBER() OVER w FROM t;`, true},
+		{`SELECT n, LAG(n, 1, 0) OVER w, LEAD(n, 1, 0) OVER w, n + LAG(n, 1, 0) OVER w FROM fib;`, true},
+
+		// For window function concepts and syntax.
+		// See https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html
+		{`SELECT SUM(profit) OVER(PARTITION BY country) AS country_profit FROM sales;`, true},
+		{`SELECT SUM(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT AVG(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT BIT_XOR(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT COUNT(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT COUNT(ALL profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT COUNT(*) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT MAX(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT MIN(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT SUM(profit) OVER() AS country_profit FROM sales;`, true},
+		{`SELECT ROW_NUMBER() OVER(PARTITION BY country) AS row_num1 FROM sales;`, true},
+		{`SELECT ROW_NUMBER() OVER(PARTITION BY country, d ORDER BY year, product) AS row_num2 FROM sales;`, true},
+
+		// For window function frame specification.
+		// See https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
+		{`SELECT SUM(val) OVER (PARTITION BY subject ORDER BY time ROWS UNBOUNDED PRECEDING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (PARTITION BY subject ORDER BY time ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (ROWS BETWEEN 1 PRECEDING AND UNBOUNDED FOLLOWING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (RANGE BETWEEN INTERVAL 5 DAY PRECEDING AND INTERVAL '2:30' MINUTE_SECOND FOLLOWING) FROM t;`, true},
+		{`SELECT AVG(val) OVER (RANGE BETWEEN CURRENT ROW AND CURRENT ROW) FROM t;`, true},
+		{`SELECT AVG(val) OVER (RANGE CURRENT ROW) FROM t;`, true},
+
+		// For named windows.
+		// See https://dev.mysql.com/doc/refman/8.0/en/window-functions-named-windows.html
+		{`SELECT RANK() OVER w FROM t WINDOW w AS (ORDER BY val);`, true},
+		{`SELECT RANK() OVER w FROM t WINDOW w AS ();`, true},
+		{`SELECT FIRST_VALUE(year) OVER (w ORDER BY year ASC) AS first FROM sales WINDOW w AS (PARTITION BY country);`, true},
+		{`SELECT RANK() OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (), w3 AS (w1);`, true},
+		{`SELECT RANK() OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (w3), w3 AS (w1);`, true},
+	}
+	s.enableWindowFunc = true
+	s.RunTest(c, table)
+}
