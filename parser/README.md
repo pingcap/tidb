@@ -1,4 +1,4 @@
-# parser
+# Parser
 
 TiDB SQL Parser
 
@@ -9,6 +9,7 @@ Assuming that you want to file a PR (pull request) to TiDB, and your PR includes
 ### Step 1: Make changes in your parser repository
 
 Fork this repository to your own account and commit the changes to your repository.
+
 > **Note:**
 >
 > - Don't forget to run `make test` before you commit!
@@ -20,19 +21,19 @@ Suppose the forked repository is `https://github.com/your-repo/parser`.
 
 1. In your TiDB repository, modify the `go.mod` file, remove `github.com/pingcap/parser` from the `require` instruction, and add a new line at the end of the file like this:
 
-```
-replace github.com/pingcap/parser => github.com/your-repo/parser v0.0.0-20181102150703-4acd198f5092
-```
+    ```
+    replace github.com/pingcap/parser => github.com/your-repo/parser v0.0.0-20181102150703-4acd198f5092
+    ```
 
-This change tells TiDB to use the modified parser from your repository.
+    This change tells TiDB to use the modified parser from your repository.
 
 2. You can get correct version information by running this command in your TiDB directory:
 
-```
-GO111MODULE=on go get -u github.com/your-repo/parser@master
-```
+    ```
+    GO111MODULE=on go get -u github.com/your-repo/parser@master
+    ```
 
-If some error is reported, you can ignore it and still edit the `go.mod` file manually.
+    If some error is reported, you can ignore it and still edit the `go.mod` file manually.
 
 3. File a PR to TiDB.
 
