@@ -119,7 +119,7 @@ func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error
 				// we will get an Apply operator whose schema is [test.t1.a, test.t2.d, test.t2.d],
 				// we check whether the column of the schema comes from a subquery to avoid
 				// causing the ambiguous error when resolve the column `d` in the Selection.
-				if !col.IsAggOrSubq {
+				if !col.IsReferenced {
 					return nil, -1, errors.Errorf("Column %s is ambiguous", col.String())
 				}
 			}
