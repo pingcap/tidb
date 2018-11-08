@@ -35,6 +35,8 @@ import (
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
 	ExecRestrictedSQL(ctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
+	// ExecRestrictedSQLWithSnapshot run sql statement in ctx with some restriction and set snapshot if ctx has snapshot.
+	ExecRestrictedSQLWithSnapshot(ctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
 }
 
 // SQLExecutor is an interface provides executing normal sql statement.

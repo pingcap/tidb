@@ -523,6 +523,7 @@ func (s *testSuite) TestAdminCheckTableSnapshot(c *C) {
 	tk.MustExec("create table admin_t_s (a int, b int, key(a));")
 	tk.MustExec("insert into admin_t_s values (0,0),(1,1);")
 	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("admin check index admin_t_s a;")
 
 	snapshotTime := time.Now()
 
@@ -545,6 +546,8 @@ func (s *testSuite) TestAdminCheckTableSnapshot(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_t_s")
 	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_t_s a")
+	c.Assert(err, NotNil)
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
@@ -557,13 +560,17 @@ func (s *testSuite) TestAdminCheckTableSnapshot(c *C) {
 	// For admin check table when use snapshot.
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("admin check index admin_t_s a;")
 
 	tk.MustExec("set @@tidb_snapshot = ''")
 	_, err = tk.Exec("admin check table admin_t_s")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_t_s a")
 	c.Assert(err, NotNil)
 
 	r := tk.MustQuery("admin cleanup index admin_t_s a")
 	r.Check(testkit.Rows("1"))
 	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("admin check index admin_t_s a;")
 	tk.MustExec("drop table if exists admin_t_s")
 }

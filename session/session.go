@@ -553,6 +553,41 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 
+	return execRestrictedSQL(ctx, se, sql)
+}
+
+func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+	ctx := context.TODO()
+
+	// Use special session to execute the sql.
+	tmp, err := s.sysSessionPool().Get()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	se := tmp.(*session)
+	defer s.sysSessionPool().Put(tmp)
+	metrics.SessionRestrictedSQLCounter.Inc()
+	if s.sessionVars.SnapshotTS != 0 {
+		if snapshot, ok := s.sessionVars.GetSystemVar(variable.TiDBSnapshot); ok {
+			sqlStr := fmt.Sprintf("set @@tidb_snapshot='%s'", snapshot)
+			_, err := se.Execute(ctx, sqlStr)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			defer func() {
+				_, err := se.Execute(ctx, "set @@tidb_snapshot=''")
+				// Normally err should be nil.
+				if err != nil {
+					// just in case.
+					se.sessionVars.SetSystemVar(variable.TiDBSnapshot, "")
+				}
+			}()
+		}
+	}
+	return execRestrictedSQL(ctx, se, sql)
+}
+
+func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	startTime := time.Now()
 	recordSets, err := se.Execute(ctx, sql)
 	if err != nil {
