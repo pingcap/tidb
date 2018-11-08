@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"golang.org/x/net/context"
 )
 
@@ -39,7 +40,7 @@ func (s *testScanSuite) SetUpSuite(c *C) {
 
 func (s *testScanSuite) TearDownSuite(c *C) {
 	txn := s.beginTxn(c)
-	scanner, err := txn.Seek(encodeKey(s.prefix, ""))
+	scanner, err := txn.Iter(encodeKey(s.prefix, ""), nil)
 	c.Assert(err, IsNil)
 	c.Assert(scanner, NotNil)
 	for scanner.Valid() {
@@ -61,7 +62,25 @@ func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
 	return txn.(*tikvTxn)
 }
 
-func (s *testScanSuite) TestSeek(c *C) {
+func (s *testScanSuite) TestScan(c *C) {
+	check := func(c *C, scan kv.Iterator, rowNum int, keyOnly bool) {
+		for i := 0; i < rowNum; i++ {
+			k := scan.Key()
+			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
+			if !keyOnly {
+				v := scan.Value()
+				c.Assert(v, BytesEquals, valueBytes(i))
+			}
+			// Because newScan return first item without calling scan.Next() just like go-hbase,
+			// for-loop count will decrease 1.
+			if i < rowNum-1 {
+				scan.Next()
+			}
+		}
+		scan.Next()
+		c.Assert(scan.Valid(), IsFalse)
+	}
+
 	for _, rowNum := range s.rowNums {
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
@@ -75,21 +94,14 @@ func (s *testScanSuite) TestSeek(c *C) {
 		val, err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, valueBytes(0))
-		scan, err := txn2.Seek(encodeKey(s.prefix, ""))
+		// Test scan without upperBound
+		scan, err := txn2.Iter(encodeKey(s.prefix, ""), nil)
 		c.Assert(err, IsNil)
-
-		for i := 0; i < rowNum; i++ {
-			k := scan.Key()
-			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
-			v := scan.Value()
-			c.Assert(v, BytesEquals, valueBytes(i))
-			// Because newScan return first item without calling scan.Next() just like go-hbase,
-			// for-loop count will decrease 1.
-			if i < rowNum-1 {
-				scan.Next()
-			}
-		}
-		scan.Next()
-		c.Assert(scan.Valid(), IsFalse)
+		check(c, scan, rowNum, false)
+		// Test scan with upperBound
+		upperBound := rowNum / 2
+		scan, err = txn2.Iter(encodeKey(s.prefix, ""), encodeKey(s.prefix, s08d("key", upperBound)))
+		c.Assert(err, IsNil)
+		check(c, scan, upperBound, false)
 	}
 }
