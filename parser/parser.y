@@ -3188,11 +3188,13 @@ ByItem:
 	Expression Order
 	{
 		expr := $1
-		if valueExpr, ok := expr.(ast.ValueExpr); ok {
-			expr = &ast.PositionExpr{N: valueExpr}
-		} else if paramExpr, ok := expr.(ast.ParamMarkerExpr); ok {
-			expr = &ast.PositionExpr{N: paramExpr}
- 		}
+		valueExpr, ok := expr.(ast.ValueExpr)
+		if ok {
+			position, isPosition := valueExpr.GetValue().(int64)
+			if isPosition {
+				expr = &ast.PositionExpr{N: int(position)}
+			}
+		}
 		$$ = &ast.ByItem{Expr: expr, Desc: $2.(bool)}
 	}
 
