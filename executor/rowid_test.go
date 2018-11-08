@@ -86,3 +86,68 @@ func (s *testSuite) TestNotAllowWriteRowID(c *C) {
 	//	tk.MustExec("insert into tt (id, c, _tidb_rowid) values(30000,10,1);")
 	//	tk.MustExec("admin check table tt;")
 }
+
+func (s *testSuite) TestRowIDIsRebasedAfterInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tt(id varchar(10), c int, primary key(id));")
+	tk.MustExec("insert tt values('one', 101), ('two', 102);")
+
+	// check that _tidb_rowid is automatically populated
+	tk.MustQuery("select *, _tidb_rowid from tt;").
+		Check(testkit.Rows("one 101 1", "two 102 2"))
+
+	// enable overwriting the _tidb_rowid column
+	tk.MustExec("set @@tidb_opt_write_row_id = 1;")
+
+	// check that _tidb_rowid takes the values from the insert statement
+	tk.MustExec("insert tt (id, c, _tidb_rowid) values ('three', 103, 9), ('four', 104, 16), ('five', 105, 5);")
+	tk.MustQuery("select *, _tidb_rowid from tt where c > 102;").
+		Check(testkit.Rows("five 105 5", "three 103 9", "four 104 16"))
+
+	// check that the new _tidb_rowid is rebased
+	tk.MustExec("insert tt values ('six', 106), ('seven', 107);")
+	tk.MustQuery("select *, _tidb_rowid from tt where c > 105;").
+		Check(testkit.Rows("six 106 17", "seven 107 18"))
+
+	tk.MustExec("admin check table tt;")
+	tk.MustExec("drop table tt")
+}
+
+func (s *testSuite) TestRowIDPlusAutoIncIsRebasedAfterInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tt(id varchar(10) primary key, c int auto_increment, index(c));")
+	tk.MustExec("insert tt (id) values ('one'), ('two');")
+
+	// check that both the auto_inc column and _tidb_rowid are automatically populated
+	tk.MustQuery("select *, _tidb_rowid from tt;").
+		Check(testkit.Rows("one 1 3", "two 2 4"))
+
+	// enable overwriting the _tidb_rowid column
+	tk.MustExec("set @@tidb_opt_write_row_id = 1;")
+
+	// check behavior of rebasing the auto_inc column
+	tk.MustExec("insert tt values ('three', 30), ('four', 40);")
+	tk.MustExec("insert tt values ('five', 5), ('six', 6);")
+	tk.MustQuery("select *, _tidb_rowid from tt;").
+		Check(testkit.Rows("one 1 3", "two 2 4", "three 30 41", "four 40 42", "five 5 43", "six 6 44"))
+
+	// check behavior of rebasing the _tidb_rowid column
+	// (since the auto_inc column and _tidb_rowid share the same allocator, rebasing one will affect the other)
+	tk.MustExec("insert tt (id, _tidb_rowid) values ('seven', 7), ('eight', 8);")
+	tk.MustQuery("select *, _tidb_rowid from tt where c > 6;").
+		Check(testkit.Rows("seven 45 7", "eight 46 8", "three 30 41", "four 40 42"))
+
+	tk.MustExec("insert tt (id, _tidb_rowid) values ('nine', 90), ('ten', 10);")
+	tk.MustQuery("select *, _tidb_rowid from tt where c > 46;").
+		Check(testkit.Rows("ten 48 10", "nine 47 90"))
+
+	// check behavior of implicitly filling in the columns again
+	tk.MustExec("insert tt (id) values ('eleven'), ('twelve'), ('thirteen');")
+	tk.MustQuery("select *, _tidb_rowid from tt where c > 48;").
+		Check(testkit.Rows("eleven 91 94", "twelve 92 95", "thirteen 93 96"))
+
+	tk.MustExec("admin check table tt;")
+	tk.MustExec("drop table tt")
+}

@@ -412,12 +412,13 @@ func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) kv.Retriev
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
-	var hasRecordID bool
+	var hasRecordID, hasExplicitRowID bool
 	cols := t.Cols()
 	if len(r) > len(cols) {
 		// The last value is _tidb_rowid.
 		recordID = r[len(r)-1].GetInt64()
 		hasRecordID = true
+		hasExplicitRowID = true
 	} else {
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.meta) {
@@ -429,6 +430,12 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 	}
 	if !hasRecordID {
 		recordID, err = t.AllocAutoID(ctx)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	} else if hasExplicitRowID {
+		// if _tidb_rowid is explicitly assigned, we need to rebase the allocator
+		err = t.RebaseAutoID(ctx, recordID, false)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
