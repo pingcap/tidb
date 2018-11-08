@@ -1,6 +1,6 @@
 # TiDB Design Documents
 
-## Why We need Design Documents
+## Why We Need Design Documents
 
 The design document provides a high-level description of the architecture and important details of what we want to do. It is the most powerful tool to ensure that our work is correctly performed.
 
