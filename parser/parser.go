@@ -8408,10 +8408,12 @@ yynewstate:
 	case 607:
 		{
 			expr := yyS[yypt-1].expr
-			if valueExpr, ok := expr.(ast.ValueExpr); ok {
-				expr = &ast.PositionExpr{N: valueExpr}
-			} else if paramExpr, ok := expr.(ast.ParamMarkerExpr); ok {
-				expr = &ast.PositionExpr{N: paramExpr}
+			valueExpr, ok := expr.(ast.ValueExpr)
+			if ok {
+				position, isPosition := valueExpr.GetValue().(int64)
+				if isPosition {
+					expr = &ast.PositionExpr{N: int(position)}
+				}
 			}
 			parser.yyVAL.item = &ast.ByItem{Expr: expr, Desc: yyS[yypt-0].item.(bool)}
 		}
