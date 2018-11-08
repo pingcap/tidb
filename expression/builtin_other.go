@@ -790,7 +790,7 @@ func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, erro
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-	v := sessionVars.StmtCtx.PreparedParams[idx].(types.Datum)
+	v := sessionVars.PreparedParams[idx]
 
 	str, err := v.ToString()
 	if err != nil {

@@ -1175,7 +1175,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.MemTracker = memory.NewTracker(s.Text(), vars.MemQuotaQuery)
 	sc.NowTs = time.Time{}
 	sc.SysTs = time.Time{}
-	sc.PreparedParams = []interface{}{}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
@@ -1251,6 +1250,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 	}
+	vars.PreparedParams = vars.PreparedParams[:0]
 	if !vars.InRestrictedSQL {
 		if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 			sc.Priority = priority

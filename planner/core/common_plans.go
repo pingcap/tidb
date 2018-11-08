@@ -159,7 +159,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 			return errors.Trace(err)
 		}
 		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = val
-		vars.StmtCtx.PreparedParams = append(vars.StmtCtx.PreparedParams, val)
+		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
