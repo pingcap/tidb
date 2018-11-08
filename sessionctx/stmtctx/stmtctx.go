@@ -71,6 +71,10 @@ type StatementContext struct {
 		histogramsNotLoad bool
 		execDetails       execdetails.ExecDetails
 	}
+	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
+	PrevAffectedRows int64
+	// params for prepared statements
+	PreparedParams []interface{}
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone         *time.Location

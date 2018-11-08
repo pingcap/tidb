@@ -97,7 +97,7 @@ type TransactionContext struct {
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
-	Histroy       interface{}
+	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
@@ -173,8 +173,6 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
-	// params for prepared statements
-	PreparedParams []types.Datum
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -199,8 +197,6 @@ type SessionVars struct {
 	PrevLastInsertID uint64 // PrevLastInsertID is the last insert ID of previous statement.
 	LastInsertID     uint64 // LastInsertID is the auto-generated ID in the current statement.
 	InsertID         uint64 // InsertID is the given insert ID of an auto_increment column.
-	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
-	PrevAffectedRows int64
 
 	// ClientCapability is client's capability.
 	ClientCapability uint32
@@ -328,7 +324,6 @@ func NewSessionVars() *SessionVars {
 		systems:                   make(map[string]string),
 		PreparedStmts:             make(map[uint32]*ast.Prepared),
 		PreparedStmtNameToID:      make(map[string]uint32),
-		PreparedParams:            make([]types.Datum, 0, 10),
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
@@ -463,27 +458,28 @@ func (s *SessionVars) Location() *time.Location {
 
 // ResetPrevAffectedRows reset the prev-affected-rows variable.
 func (s *SessionVars) ResetPrevAffectedRows() {
-	s.PrevAffectedRows = 0
+	s.StmtCtx.PrevAffectedRows = 0
 	if s.StmtCtx != nil {
 		if s.StmtCtx.InUpdateOrDeleteStmt || s.StmtCtx.InInsertStmt {
-			s.PrevAffectedRows = int64(s.StmtCtx.AffectedRows())
+			s.StmtCtx.PrevAffectedRows = int64(s.StmtCtx.AffectedRows())
 		} else if s.StmtCtx.InSelectStmt {
-			s.PrevAffectedRows = -1
+			s.StmtCtx.PrevAffectedRows = -1
 		}
 	}
 }
 
 // GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
 func (s *SessionVars) GetExecuteArgumentsInfo() string {
-	if len(s.PreparedParams) == 0 {
+	if len(s.StmtCtx.PreparedParams) == 0 {
 		return ""
 	}
-	args := make([]string, 0, len(s.PreparedParams))
-	for _, v := range s.PreparedParams {
-		if v.IsNull() {
+	args := make([]string, 0, len(s.StmtCtx.PreparedParams))
+	for _, v := range s.StmtCtx.PreparedParams {
+		d := v.(types.Datum)
+		if d.IsNull() {
 			args = append(args, "<nil>")
 		} else {
-			str, err := v.ToString()
+			str, err := d.ToString()
 			if err != nil {
 				terror.Log(err)
 			}

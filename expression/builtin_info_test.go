@@ -154,7 +154,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.PrevAffectedRows = 10
+	sessionVars.StmtCtx.PrevAffectedRows = 10
 
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
 	c.Assert(err, IsNil)

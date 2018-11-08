@@ -97,9 +97,10 @@ var (
 )
 
 type stmtRecord struct {
-	stmtID uint32
-	st     sqlexec.Statement
-	params []interface{}
+	stmtID  uint32
+	st      sqlexec.Statement
+	stmtCtx *stmtctx.StatementContext
+	params  []interface{}
 }
 
 // StmtHistory holds all histories of statements in a txn.
@@ -110,9 +111,10 @@ type StmtHistory struct {
 // Add appends a stmt to history list.
 func (h *StmtHistory) Add(stmtID uint32, st sqlexec.Statement, stmtCtx *stmtctx.StatementContext, params ...interface{}) {
 	s := &stmtRecord{
-		stmtID: stmtID,
-		st:     st,
-		params: append(([]interface{})(nil), params...),
+		stmtID:  stmtID,
+		st:      st,
+		stmtCtx: stmtCtx,
+		params:  append(([]interface{})(nil), params...),
 	}
 	h.history = append(h.history, s)
 }
@@ -475,7 +477,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if st.IsReadOnly() {
 				continue
 			}
-			executor.ResetContextOfStmt(s, st.(*executor.ExecStmt).StmtNode)
 			schemaVersion, err = st.RebuildPlan()
 			if err != nil {
 				return errors.Trace(err)
@@ -488,6 +489,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			} else {
 				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d", connID, schemaVersion, retryCnt, i)
 			}
+			s.sessionVars.StmtCtx = sr.stmtCtx
 			_, err = st.Exec(ctx)
 			if err != nil {
 				s.StmtRollback()
