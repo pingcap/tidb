@@ -636,7 +636,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 // genExprs use to calculate generated column value.
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc, genExprs map[string]expression.Expression) error {
-	it, err := retriever.Seek(startKey)
+	it, err := retriever.Iter(startKey, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
