@@ -456,18 +456,6 @@ func (s *SessionVars) Location() *time.Location {
 	return loc
 }
 
-// ResetPrevAffectedRows reset the prev-affected-rows variable.
-func (s *SessionVars) ResetPrevAffectedRows() {
-	s.StmtCtx.PrevAffectedRows = 0
-	if s.StmtCtx != nil {
-		if s.StmtCtx.InUpdateOrDeleteStmt || s.StmtCtx.InInsertStmt {
-			s.StmtCtx.PrevAffectedRows = int64(s.StmtCtx.AffectedRows())
-		} else if s.StmtCtx.InSelectStmt {
-			s.StmtCtx.PrevAffectedRows = -1
-		}
-	}
-}
-
 // GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
 func (s *SessionVars) GetExecuteArgumentsInfo() string {
 	if len(s.StmtCtx.PreparedParams) == 0 {
