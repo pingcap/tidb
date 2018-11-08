@@ -811,6 +811,30 @@ import (
 	ElseOpt			"Optional else clause"
 	Type			"Types"
 
+	OptExistingWindowName	"Optional existing WINDOW name"
+	OptFromFirstLast	"Optional FROM FIRST/LAST"
+	OptLLDefault		"Optional LEAD/LAG default"
+	OptLeadLagInfo		"Optional LEAD/LAG info"
+	OptNullTreatment	"Optional NULL treatment"
+	OptPartitionClause	"Optional PARTITION clause"
+	OptWindowOrderByClause	"Optional ORDER BY clause in WINDOW"
+	OptWindowFrameClause	"Optional FRAME clause in WINDOW"
+	OptWindowingClause	"Optional OVER clause"
+	WindowingClause		"OVER clause"
+	WindowClauseOptional	"Optional WINDOW clause"
+	WindowDefinitionList	"WINDOW definition list"
+	WindowDefinition	"WINDOW definition"
+	WindowFrameUnits	"WINDOW frame units"
+	WindowFrameBetween	"WINDOW frame between"
+	WindowFrameBound	"WINDOW frame bound"
+	WindowFrameExtent	"WINDOW frame extent"
+	WindowFrameStart	"WINDOW frame start"
+	WindowFuncCall		"WINDOW function call"
+	WindowName		"WINDOW name"
+	WindowNameOrSpec	"WINDOW name or spec"
+	WindowSpec		"WINDOW spec"
+	WindowSpecDetails	"WINDOW spec details"
+
 	BetweenOrNotOp		"Between predicate"
 	IsOrNotOp		"Is predicate"
 	InOrNotOp		"In predicate"
@@ -3334,6 +3358,11 @@ SimpleExpr:
 		// TODO: Create a builtin function hold expr and collation. When do evaluation, convert expr result using the collation.
 		$$ = $1
 	}
+|	WindowFuncCall
+	{
+		// TODO: Remove this fake ast placeholder.
+		$$ = ast.NewParamMarkerExpr(yyS[yypt].offset)
+	}
 |	Literal
 |	paramMarker
 	{
@@ -3813,31 +3842,31 @@ TrimDirection:
 	}
 
 SumExpr:
-	"AVG" '(' BuggyDefaultFalseDistinctOpt Expression ')'
+	"AVG" '(' BuggyDefaultFalseDistinctOpt Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
-|	builtinBitAnd '(' Expression ')'
+|	builtinBitAnd '(' Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
-|	builtinBitAnd '(' "ALL" Expression ')'
+|	builtinBitAnd '(' "ALL" Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 	}
-|	builtinBitOr '(' Expression ')'
+|	builtinBitOr '(' Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
-|	builtinBitOr '(' "ALL" Expression ')'
+|	builtinBitOr '(' "ALL" Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 	}
-|	builtinBitXor '(' Expression ')'
+|	builtinBitXor '(' Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
-|	builtinBitXor '(' "ALL" Expression ')'
+|	builtinBitXor '(' "ALL" Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 	}
@@ -3845,15 +3874,15 @@ SumExpr:
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: $4.([]ast.ExprNode), Distinct: true}
 	}
-|	builtinCount '(' "ALL" Expression ')'
+|	builtinCount '(' "ALL" Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}}
 	}
-|	builtinCount '(' Expression ')'
+|	builtinCount '(' Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
 	}
-|	builtinCount '(' '*' ')'
+|	builtinCount '(' '*' ')'  OptWindowingClause
 	{
 		args := []ast.ExprNode{ast.NewValueExpr(1)}
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args}
@@ -3864,23 +3893,23 @@ SumExpr:
 		args = append(args, $6.(ast.ExprNode))
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
 	}
-|	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')'
+|	builtinMax '(' BuggyDefaultFalseDistinctOpt Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
-|	builtinMin '(' BuggyDefaultFalseDistinctOpt Expression ')'
+|	builtinMin '(' BuggyDefaultFalseDistinctOpt Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
-|	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')'
+|	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
-|	builtinStddevPop '(' BuggyDefaultFalseDistinctOpt Expression ')'
+|	builtinStddevPop '(' BuggyDefaultFalseDistinctOpt Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: ast.AggFuncStddevPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
-|	builtinStddevSamp '(' BuggyDefaultFalseDistinctOpt Expression ')'
+|	builtinStddevSamp '(' BuggyDefaultFalseDistinctOpt Expression ')'  OptWindowingClause
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
@@ -4340,7 +4369,7 @@ SelectStmtFromDual:
 
 SelectStmtFromTable:
 	SelectStmtBasic "FROM"
-	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause
+	TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause WindowClauseOptional
 	{
 		st := $1.(*ast.SelectStmt)
 		st.From = $3.(*ast.TableRefsClause)
@@ -4420,6 +4449,277 @@ SelectStmt:
 FromDual:
 	"FROM" "DUAL"
 
+WindowClauseOptional:
+	{
+		$$ = nil
+	}
+|	"WINDOW" WindowDefinitionList
+	{
+		$$ = nil
+	}
+
+WindowDefinitionList:
+	WindowDefinition
+	{
+		$$ = nil
+	}
+|	WindowDefinitionList ',' WindowDefinition
+	{
+		$$ = nil
+	}
+
+WindowDefinition:
+	WindowName "AS" WindowSpec
+	{
+		$$ = nil
+	}
+
+WindowName:
+	Identifier
+	{
+		$$ = nil
+	}
+
+WindowSpec:
+	'(' WindowSpecDetails ')'
+	{
+		$$ = nil
+	}
+
+WindowSpecDetails:
+	OptExistingWindowName OptPartitionClause OptWindowOrderByClause OptWindowFrameClause
+	{
+		$$ = nil
+	}
+
+OptExistingWindowName:
+	{
+		$$ = nil
+	}
+|	WindowName
+	{
+		$$ = nil
+	}
+
+OptPartitionClause:
+	{
+		$$ = nil
+	}
+|	"PARTITION" "BY" ByList
+	{
+		$$ = nil
+	}
+
+OptWindowOrderByClause:
+	{
+		$$ = nil
+	}
+|	"ORDER" "BY" ByList
+	{
+		$$ = nil
+	}
+
+OptWindowFrameClause:
+	{
+		$$ = nil
+	}
+|	WindowFrameUnits WindowFrameExtent
+	{
+		$$ = nil
+	}
+
+WindowFrameUnits:
+	"ROWS"
+	{
+		$$ = nil
+	}
+|	"RANGE"
+	{
+		$$ = nil
+	}
+|	"GROUPS"
+	{
+		$$ = nil
+	}
+
+WindowFrameExtent:
+	WindowFrameStart
+	{
+		$$ = nil
+	}
+|	WindowFrameBetween
+	{
+		$$ = nil
+	}
+
+WindowFrameStart:
+	"UNBOUNDED" "PRECEDING"
+	{
+		$$ = nil
+	}
+|	NumLiteral "PRECEDING"
+	{
+		$$ = nil
+	}
+|	paramMarker "PRECEDING"
+	{
+		$$ = nil
+	}
+|	"INTERVAL" Expression TimeUnit "PRECEDING"
+	{
+		$$ = nil
+	}
+|	"CURRENT" "ROW"
+	{
+		$$ = nil
+	}
+
+WindowFrameBetween:
+	"BETWEEN" WindowFrameBound "AND" WindowFrameBound
+	{
+		$$ = nil
+	}
+
+WindowFrameBound:
+	WindowFrameStart
+	{
+		$$ = nil
+	}
+|	"UNBOUNDED" "FOLLOWING"
+	{
+		$$ = nil
+	}
+|	NumLiteral "FOLLOWING"
+	{
+		$$ = nil
+	}
+|	paramMarker "FOLLOWING"
+	{
+		$$ = nil
+	}
+|	"INTERVAL" Expression TimeUnit "FOLLOWING"
+	{
+		$$ = nil
+	}
+
+OptWindowingClause:
+	{
+		$$ = nil
+	}
+|	WindowingClause
+	{
+		$$ = nil
+	}
+
+WindowingClause:
+	"OVER" WindowNameOrSpec
+	{
+		$$ = nil
+	}
+
+WindowNameOrSpec:
+	WindowName
+	{
+		$$ = nil
+	}
+|	WindowSpec
+	{
+		$$ = nil
+	}
+
+WindowFuncCall:
+	"ROW_NUMBER" '(' ')' WindowingClause
+	{
+		$$ = nil
+	}
+|	"RANK" '(' ')' WindowingClause
+	{
+		$$ = nil
+	}
+|	"DENSE_RANK" '(' ')' WindowingClause
+	{
+		$$ = nil
+	}
+|	"CUME_DIST" '(' ')' WindowingClause
+	{
+		$$ = nil
+	}
+|	"PERCENT_RANK" '(' ')' WindowingClause
+	{
+		$$ = nil
+	}
+|	"NTILE" '(' SimpleExpr ')' WindowingClause
+	{
+		$$ = nil
+	}
+|	"LEAD" '(' Expression OptLeadLagInfo ')' OptNullTreatment WindowingClause
+	{
+		$$ = nil
+	}
+|	"LAG" '(' Expression OptLeadLagInfo ')' OptNullTreatment WindowingClause
+	{
+		$$ = nil
+	}
+|	"FIRST_VALUE" '(' Expression ')' OptNullTreatment WindowingClause
+	{
+		$$ = nil
+	}
+|	"LAST_VALUE" '(' Expression ')' OptNullTreatment WindowingClause
+	{
+		$$ = nil
+	}
+|	"NTH_VALUE" '(' Expression ',' SimpleExpr ')' OptFromFirstLast OptNullTreatment WindowingClause
+	{
+		$$ = nil
+	}
+
+OptLeadLagInfo:
+	{
+		$$ = nil
+	}
+|	',' NumLiteral OptLLDefault
+	{
+		$$ = nil
+	}
+|	',' paramMarker OptLLDefault
+	{
+		$$ = nil
+	}
+
+OptLLDefault:
+	{
+		$$ = nil
+	}
+|	',' Expression
+	{
+		$$ = nil
+	}
+
+OptNullTreatment:
+	{
+		$$ = nil
+	}
+|	"RESPECT" "NULLS"
+	{
+		$$ = nil
+	}
+|	"IGNORE" "NULLS"
+	{
+		$$ = nil
+	}
+
+OptFromFirstLast:
+	{
+		$$ = nil
+	}
+|	"FROM" "FIRST"
+	{
+		$$ = nil
+	}
+|	"FROM" "LAST"
+	{
+		$$ = nil
+	}
 
 TableRefsClause:
 	TableRefs
