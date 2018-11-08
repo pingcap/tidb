@@ -221,13 +221,13 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 			return nil, errors.Trace(err)
 		}
 		if evalexpr, ok := expr1.(*expression.Constant); ok {
-			_, isNull, err1 := evalexpr.EvalInt(er.ctx, nil)
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
 			if err1 != nil || isNull {
 				return expr1, err1
 			}
 		}
 		if evalexpr, ok := expr2.(*expression.Constant); ok {
-			_, isNull, err1 := evalexpr.EvalInt(er.ctx, nil)
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
 			if err1 != nil || isNull {
 				return expr2, err1
 			}
