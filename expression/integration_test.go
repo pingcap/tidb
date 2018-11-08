@@ -2887,6 +2887,18 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a bigint unsigned)")
 	tk.MustExec("insert into t value(17666000000000000000)")
 	tk.MustQuery("select * from t where a = 17666000000000000000").Check(testkit.Rows("17666000000000000000"))
+
+	// test for compare row
+	result = tk.MustQuery(`select row(1,2,3)=row(1,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1,2,3)=row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
