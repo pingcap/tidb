@@ -220,6 +220,24 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if evalexpr, ok := expr1.(*expression.Constant); ok {
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			if isNull {
+				return expr1, nil
+			}
+		}
+		if evalexpr, ok := expr2.(*expression.Constant); ok {
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
+			if err1 != nil {
+				return nil, errors.Trace(err1)
+			}
+			if isNull {
+				return expr2, nil
+			}
+		}
 		expr3, err = er.constructBinaryOpFunction(l, r, op)
 		if err != nil {
 			return nil, errors.Trace(err)
