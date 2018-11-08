@@ -113,7 +113,7 @@ func (e *InsertValues) initInsertColumns() error {
 	for _, col := range cols {
 		if col.Name.L == model.ExtraHandleName.L {
 			if !e.ctx.GetSessionVars().AllowWriteRowID {
-				return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
 			}
 			e.hasExtraHandle = true
 			break
