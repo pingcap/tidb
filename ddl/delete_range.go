@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"bytes"
 	"encoding/hex"
 	"fmt"
 	"math"
@@ -155,7 +154,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 		finish := true
 		dr.keys = dr.keys[:0]
 		err := kv.RunInNewTxn(dr.d.store, false, func(txn kv.Transaction) error {
-			iter, err := txn.Iter(oldStartKey, nil)
+			iter, err := txn.Iter(oldStartKey, r.EndKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -165,10 +164,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 				if !iter.Valid() {
 					break
 				}
-				finish = bytes.Compare(iter.Key(), r.EndKey) >= 0
-				if finish {
-					break
-				}
+				finish = false
 				dr.keys = append(dr.keys, iter.Key().Clone())
 				newStartKey = iter.Key().Next()
 
