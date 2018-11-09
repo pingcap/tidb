@@ -636,7 +636,10 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 // genExprs use to calculate generated column value.
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc, genExprs map[string]expression.Expression) error {
-	it, err := retriever.Iter(startKey, nil)
+	prefix := t.RecordPrefix()
+	keyUpperBound := prefix.PrefixNext()
+
+	it, err := retriever.Iter(startKey, keyUpperBound)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -663,7 +666,6 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		}
 	}
 
-	prefix := t.RecordPrefix()
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock

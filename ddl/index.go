@@ -619,7 +619,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle, taskRange.endHandle, taskRange.endIncluded,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals", 0)
@@ -1183,7 +1183,7 @@ func allocateIndexID(tblInfo *model.TableInfo) int64 {
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
+func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version uint64, startHandle int64, endHandle int64, endIncluded bool, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
 
 	snap, err := store.GetSnapshot(ver)
@@ -1191,8 +1191,22 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	firstKey := t.RecordKey(seekHandle)
-	it, err := snap.Iter(firstKey, nil)
+	firstKey := t.RecordKey(startHandle)
+
+	// Calculate the exclusive upper bound
+	var upperBound kv.Key
+	if endIncluded {
+		if endHandle == math.MaxInt64 {
+			upperBound = t.RecordKey(endHandle).PrefixNext()
+		} else {
+			// PrefixNext is time costing. Try to avoid it if possible.
+			upperBound = t.RecordKey(endHandle + 1)
+		}
+	} else {
+		upperBound = t.RecordKey(endHandle)
+	}
+
+	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
 		return errors.Trace(err)
 	}

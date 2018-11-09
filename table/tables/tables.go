@@ -766,7 +766,8 @@ func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMu
 // IterRecords implements table.Table IterRecords interface.
 func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	it, err := ctx.Txn().Iter(startKey, nil)
+	prefix := t.RecordPrefix()
+	it, err := ctx.Txn().Iter(startKey, prefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -782,7 +783,6 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 	for _, col := range cols {
 		colMap[col.ID] = &col.FieldType
 	}
-	prefix := t.RecordPrefix()
 	defaultVals := make([]types.Datum, len(cols))
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
@@ -896,7 +896,7 @@ func (t *tableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetS
 // Seek implements table.Table Seek interface.
 func (t *tableCommon) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	seekKey := tablecodec.EncodeRowKeyWithHandle(t.physicalTableID, h)
-	iter, err := ctx.Txn().Iter(seekKey, nil)
+	iter, err := ctx.Txn().Iter(seekKey, t.RecordPrefix().PrefixNext())
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
 		// No more records in the table, skip to the end.
 		return 0, false, nil
