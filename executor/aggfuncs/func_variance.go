@@ -49,15 +49,15 @@ type partialResult4VarianceDecimal struct {
 func (p *partialResult4VarianceDecimal) merge(count int64, sum, variance *types.MyDecimal) error {
 	if p.count == 0 {
 		p.count, p.sum, p.variance = count, *sum, *variance
-	} else {
-		variance, sum, err := types.CalculateMergeDecimal(p.count, count, &p.sum, sum, &p.variance, variance)
-		if err != nil {
-			return err
-		}
-		p.variance = *variance
-		p.sum = *sum
-		p.count += count
+		return nil
 	}
+	varianceNew, sumNew, err := types.CalculateMergeDecimal(p.count, count, &p.sum, sum, &p.variance, variance)
+	if err != nil {
+		return err
+	}
+	p.variance = *varianceNew
+	p.sum = *sumNew
+	p.count += count
 	return nil
 }
 
@@ -67,7 +67,8 @@ func (e *baseVarianceDecimal) AllocPartialResult() PartialResult {
 
 func (e *baseVarianceDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4VarianceDecimal)(pr)
-	p.sum, p.variance = *types.NewDecFromInt(0), *types.NewDecFromInt(0)
+	p.sum.FromInt(0)
+	p.variance.FromInt(0)
 	p.count = 0
 }
 
@@ -264,15 +265,15 @@ type partialResult4VarianceFloat64 struct {
 func (p *partialResult4VarianceFloat64) merge(count int64, sum, variance float64) error {
 	if p.count == 0 {
 		p.count, p.sum, p.variance = count, sum, variance
-	} else {
-		varianceNew, sumNew, err := types.CalculateMergeFloat64(p.count, count, p.sum, sum, p.variance, variance)
-		if err != nil {
-			return err
-		}
-		p.variance = varianceNew
-		p.sum = sumNew
-		p.count += count
+		return nil
 	}
+	varianceNew, sumNew, err := types.CalculateMergeFloat64(p.count, count, p.sum, sum, p.variance, variance)
+	if err != nil {
+		return err
+	}
+	p.variance = varianceNew
+	p.sum = sumNew
+	p.count += count
 	return nil
 }
 
