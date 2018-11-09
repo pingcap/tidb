@@ -257,6 +257,9 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		if dotIdx == -1 {
 			return validFloat, nil
 		}
+		if dotIdx == 0 {
+			return "0", nil
+		}
 		return validFloat[:dotIdx], nil
 	}
 	var intCnt int
