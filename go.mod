@@ -27,8 +27,8 @@ require (
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
 	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20181028030329-855d2192cdc7
-	github.com/pingcap/parser v0.0.0-20181108063932-33b76e3c70ba
+	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26
+	github.com/pingcap/parser v0.0.0-20181108112017-a63108d7da4c
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v0.0.0-20181101090416-cfac1096162e
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
@@ -48,6 +48,3 @@ require (
 	google.golang.org/grpc v1.16.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )
-
-// After we merge the PR of https://github.com/pingcap/tidb/pull/7965, I will use the latest parser.
-replace github.com/pingcap/parser => github.com/zimulala/parser v0.0.0-20181108115726-650caa67be64
