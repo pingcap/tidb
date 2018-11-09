@@ -546,7 +546,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				err:     nil,
 			}
 			connArray.batchCommandsCh <- entry
-			ctx, cancel := context.WithTimeout(ctx, timeout)
+			ctx1, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			select {
 			case res, ok := <-entry.res:
@@ -554,7 +554,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 					return nil, errors.Trace(entry.err)
 				}
 				return tikvrpc.FromBatchCommandsResponse(res), nil
-			case <-ctx.Done():
+			case <-ctx1.Done():
 				atomic.StoreInt32(&entry.timeout, 1)
 				return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, ""))
 			}
