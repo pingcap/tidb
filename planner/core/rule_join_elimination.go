@@ -31,7 +31,7 @@ type outerJoinEliminator struct {
 func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []*expression.Column, parentSchema *expression.Schema) LogicalPlan {
 	var innerChildIdx int
 	switch p.JoinType {
-	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+	case LeftOuterJoin:
 		innerChildIdx = 1
 	case RightOuterJoin:
 		innerChildIdx = 0
