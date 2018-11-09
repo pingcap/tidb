@@ -260,7 +260,7 @@ func (b *builtinLastInsertIDSig) Clone() builtinFunc {
 // evalInt evals LAST_INSERT_ID().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(b.ctx.GetSessionVars().PrevLastInsertID)
+	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
 	return res, false, nil
 }
 

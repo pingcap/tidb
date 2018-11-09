@@ -203,7 +203,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 			err error
 		)
 		if t.insertID > 0 {
-			s.ctx.GetSessionVars().PrevLastInsertID = t.insertID
+			s.ctx.GetSessionVars().StmtCtx.PrevLastInsertID = t.insertID
 		}
 
 		if t.args != nil {

@@ -626,7 +626,7 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 	tk.MustExec("execute stmt1 using @v1")
 	tk.MustExec("execute stmt1 using @v2")
 	tk.MustExec("deallocate prepare stmt1")
-	currLastInsertID := tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID := tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	tk.MustQuery("select c1 from t where c2 = 20").Check(testkit.Rows(fmt.Sprint(currLastInsertID)))
 	c.Assert(lastInsertID+2, Equals, currLastInsertID)
 }
@@ -727,7 +727,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 11").Check(testkit.Rows("6"))
-	currLastInsertID := tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID := tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+5, Equals, currLastInsertID)
 
 	// insert set
@@ -742,7 +742,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 31").Check(testkit.Rows("9"))
-	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID = tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// replace
@@ -757,7 +757,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 21").Check(testkit.Rows("10"))
-	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID = tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+1, Equals, currLastInsertID)
 
 	// update
@@ -773,7 +773,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 41").Check(testkit.Rows("0"))
-	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID = tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// prepare
@@ -795,7 +795,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 12").Check(testkit.Rows("7"))
-	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID = tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 }
 
@@ -1259,7 +1259,7 @@ func (s *testSessionSuite) TestResetCtx(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.MustExec("create table t (i int);")
+	tk.MustExec("create table t (i int auto_increment not null key);")
 	tk.MustExec("insert into t values (1);")
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (10);")
@@ -1271,6 +1271,18 @@ func (s *testSessionSuite) TestResetCtx(c *C) {
 
 	tk.MustExec("commit;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "11"))
+
+	tk.MustExec("delete from t where i = 11;")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("update t set i = i + last_insert_id() + 1;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("14", "25"))
+
+	tk1.MustExec("update t set i = 0 where i = 1;")
+	tk1.MustQuery("select * from t;").Check(testkit.Rows("0"))
+
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("13", "25"))
 }
 
 func (s *testSessionSuite) TestUnique(c *C) {

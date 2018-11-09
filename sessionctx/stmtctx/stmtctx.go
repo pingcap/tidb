@@ -73,6 +73,8 @@ type StatementContext struct {
 	}
 	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
 	PrevAffectedRows int64
+	// PrevLastInsertID is the last insert ID of previous statement.
+	PrevLastInsertID uint64
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone         *time.Location
@@ -244,6 +246,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
+	sc.IndexIDs = sc.IndexIDs[:0]
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print

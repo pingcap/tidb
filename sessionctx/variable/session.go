@@ -195,10 +195,9 @@ type SessionVars struct {
 
 	// Following variables are special for current session.
 
-	Status           uint16
-	PrevLastInsertID uint64 // PrevLastInsertID is the last insert ID of previous statement.
-	LastInsertID     uint64 // LastInsertID is the auto-generated ID in the current statement.
-	InsertID         uint64 // InsertID is the given insert ID of an auto_increment column.
+	Status       uint16
+	LastInsertID uint64 // LastInsertID is the auto-generated ID in the current statement.
+	InsertID     uint64 // InsertID is the given insert ID of an auto_increment column.
 
 	// ClientCapability is client's capability.
 	ClientCapability uint32

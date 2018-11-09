@@ -1257,7 +1257,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		}
 	}
 	if vars.LastInsertID > 0 {
-		vars.PrevLastInsertID = vars.LastInsertID
+		sc.PrevLastInsertID = vars.LastInsertID
 		vars.LastInsertID = 0
 	}
 	sc.PrevAffectedRows = 0
