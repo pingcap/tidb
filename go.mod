@@ -18,7 +18,6 @@ require (
 	github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f // indirect
 	github.com/cznic/golex v0.0.0-20170803123110-4ab7c5e190e4 // indirect
 	github.com/cznic/mathutil v0.0.0-20181021201202-eba54fb065b7
-	github.com/cznic/parser v0.0.0-20160622100904-31edd927e5b1 // indirect
 	github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
 	github.com/cznic/strutil v0.0.0-20171016134553-529a34b1c186 // indirect
 	github.com/cznic/y v0.0.0-20170802143616-045f81c6662a // indirect
