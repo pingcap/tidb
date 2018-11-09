@@ -61,6 +61,7 @@ const (
 	pRegionID   = "regionID"
 	pStartTS    = "startTS"
 	pTableName  = "table"
+	pTableID    = "tableID"
 	pColumnID   = "colID"
 	pColumnTp   = "colTp"
 	pColumnFlag = "colFlag"
@@ -314,6 +315,10 @@ type binlogRecover struct{}
 
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
+	*tikvHandlerTool
+}
+
+type dbTableHandler struct {
 	*tikvHandlerTool
 }
 
@@ -1361,4 +1366,46 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		clusterInfo.AllServersDiffVersions = allVersions
 	}
 	writeData(w, clusterInfo)
+}
+
+// DBTableInfo is use ro report the db, table info and the current schema version.
+type DBTableInfo struct {
+	DBInfo        *model.DBInfo    `json:"db_info"`
+	TableInfo     *model.TableInfo `json:"table_info"`
+	SchemaVersion int64            `json:"schema_version"`
+}
+
+//ServeHTTP handles request of db info and table info that related to the  tableID.
+func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	tableID := params[pTableID]
+	tblID, err := strconv.Atoi(tableID)
+	if err != nil {
+		writeError(w, errors.Errorf("Wrong tableID: %v", tableID))
+		return
+	}
+
+	schema, err := h.schema()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	dbTblInfo := DBTableInfo{
+		SchemaVersion: schema.SchemaMetaVersion(),
+	}
+	tbl, ok := schema.TableByID(int64(tblID))
+	if !ok {
+		writeData(w, dbTblInfo)
+		return
+	}
+	dbTblInfo.TableInfo = tbl.Meta()
+	dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
+	if !ok {
+		log.Warnf("can not find the database of table id: %v, table name: %v", dbTblInfo.TableInfo.ID, dbTblInfo.TableInfo.Name)
+		writeData(w, dbTblInfo)
+		return
+	}
+	dbTblInfo.DBInfo = dbInfo
+	writeData(w, dbTblInfo)
 }
