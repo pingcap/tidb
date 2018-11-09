@@ -149,7 +149,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
 	} else {
-		fieldType.Charset, fieldType.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
+		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 	return baseBuiltinFunc{
 		args: args,
@@ -199,7 +199,7 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 			b.tp.Tp = mysql.TypeMediumBlob
 		}
 		if len(b.tp.Charset) <= 0 {
-			b.tp.Charset, b.tp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
+			b.tp.Charset, b.tp.Collate = charset.GetDefaultCharsetAndCollate()
 		}
 	}
 	return b.tp

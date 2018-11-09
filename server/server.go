@@ -153,6 +153,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	var err error
 	if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
+			// job.SnapshotVer == 0 means
 			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
 		}
 	} else {
