@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -498,12 +499,20 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 
 // validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
 // the possible types of range are index key range and handle key range.
-func validRange(ran *ranger.Range) bool {
+func validRange(ran *ranger.Range, encoded bool) bool {
 	var low, high []byte
-	if ran.LowVal[0].Kind() == types.KindBytes {
+	if encoded {
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
-		low, high = codec.EncodeInt(nil, ran.LowVal[0].GetInt64()), codec.EncodeInt(nil, ran.HighVal[0].GetInt64())
+		var err error
+		low, err = codec.EncodeKey(nil, nil, ran.LowVal[0])
+		if err != nil {
+			return false
+		}
+		high, err = codec.EncodeKey(nil, nil, ran.HighVal[0])
+		if err != nil {
+			return false
+		}
 	}
 	if ran.LowExclude {
 		low = kv.Key(low).PrefixNext()
@@ -517,7 +526,7 @@ func validRange(ran *ranger.Range) bool {
 // SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
 // as inf, so all the split Ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
-func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
+func (hg *Histogram) SplitRange(ranges []*ranger.Range, encoded bool) []*ranger.Range {
 	split := make([]*ranger.Range, 0, len(ranges))
 	for len(ranges) > 0 {
 		// Find the last bound that greater or equal to the LowVal.
@@ -561,7 +570,7 @@ func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
 				HighExclude: false})
 			ranges[0].LowVal[0] = upper
 			ranges[0].LowExclude = true
-			if !validRange(ranges[0]) {
+			if !validRange(ranges[0], encoded) {
 				ranges = ranges[1:]
 			}
 		}
@@ -858,109 +867,48 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 	return totalCount, nil
 }
 
-func (c *Column) newNumericColumnBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Column, error) {
-	newColHist := &Column{Info: c.Info}
-	newColHist.Histogram = *NewHistogram(c.ID, int64(float64(c.NDV)*statsNode.Selectivity), 0, 0, c.Tp, chunk.InitialCapacity, 0)
-	ranLowIdx := 0
+type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) (float64, error)
+
+// newHistogramBySelectivity fulfills the content of new histogram by the given selectivity result.
+// TODO: Datum is not efficient, try to avoid using it here.
+//  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
+func newHistogramBySelectivity(sc *stmtctx.StatementContext, histID int64, oldHist *Histogram, statsNode *StatsNode, cntByRangeFunc countByRangeFunc) *Histogram {
+	newHist := NewHistogram(oldHist.ID, int64(float64(oldHist.NDV)*statsNode.Selectivity), 0, 0, oldHist.Tp, chunk.InitialCapacity, 0)
+	splitRanges := oldHist.SplitRange(statsNode.Ranges, false)
+	cntPerVal := int64(oldHist.AvgCountPerValue(int64(oldHist.totalRowCount())))
 	var totCnt int64 = 0
-	// Process each bucket.
-	for i := 0; i < c.Bounds.NumRows() && ranLowIdx < len(statsNode.Ranges); i += 2 {
-		newBkt := Bucket{Repeat: c.Buckets[i/2].Repeat}
-		// Find the bucket which is the first one whose have intersection with the bucket.
-		for ; ranLowIdx < len(statsNode.Ranges); ranLowIdx++ {
-			if chunk.Compare(c.Bounds.GetRow(i), 0, &statsNode.Ranges[ranLowIdx].HighVal[0]) <= 0 {
-				break
-			}
+	for boundIdx, ranIdx, highRangeIdx := 0, 0, 0; boundIdx < oldHist.Bounds.NumRows() && ranIdx < len(splitRanges); boundIdx, ranIdx = boundIdx+2, highRangeIdx {
+		for highRangeIdx < len(splitRanges) && chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &splitRanges[highRangeIdx].HighVal[0]) >= 0 {
+			highRangeIdx++
 		}
-		ranHighIdx := ranLowIdx
-		// Find the bucket which is the first one whose lowVal is bigger than bucket's high bound, i.e. out of the bucket.
-		for ; ranHighIdx < len(statsNode.Ranges); ranHighIdx++ {
-			if chunk.Compare(c.Bounds.GetRow(i+1), 0, &statsNode.Ranges[ranHighIdx].LowVal[0]) < 0 {
-				break
-			}
+		if boundIdx+2 >= oldHist.Bounds.NumRows() && splitRanges[highRangeIdx].HighVal[0].Kind() == types.KindMaxValue {
+			highRangeIdx++
 		}
-		if ranLowIdx == ranHighIdx {
+		if ranIdx == highRangeIdx {
 			continue
 		}
-		overlapped := 0.0
-		// Compute the overlap ratio.
-		for ranIdx := ranLowIdx; ranIdx < ranHighIdx; ranIdx++ {
-			overlapped += c.CalcRangeFraction(i/2, &statsNode.Ranges[ranIdx].LowVal[0], &statsNode.Ranges[ranIdx].HighVal[0])
+		cnt, err := cntByRangeFunc(sc, histID, splitRanges[ranIdx:highRangeIdx])
+		// This should not happen.
+		if err != nil {
+			log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v", err)
+			return nil
 		}
-		// If there's no overlap, skip it.
-		if overlapped == 0 {
-			ranLowIdx = ranHighIdx - 1
+		if cnt == 0 {
 			continue
 		}
-		// Update the bound of the bucket.
-		if chunk.Compare(c.Bounds.GetRow(i), 0, &statsNode.Ranges[ranLowIdx].LowVal[0]) < 0 {
-			newColHist.Bounds.AppendDatum(0, &statsNode.Ranges[ranLowIdx].LowVal[0])
-		} else {
-			newColHist.Bounds.AppendRow(c.Bounds.GetRow(i))
+		if int64(cnt) > oldHist.bucketCount(boundIdx/2) {
+			cnt = float64(oldHist.bucketCount(boundIdx / 2))
 		}
-		if chunk.Compare(c.Bounds.GetRow(i), 0, &statsNode.Ranges[ranHighIdx-1].HighVal[0]) > 0 {
-			newColHist.Bounds.AppendDatum(0, &statsNode.Ranges[ranHighIdx-1].HighVal[0])
-			// Update the repeat val.
-			newBkt.Repeat = 0
-		} else {
-			newColHist.Bounds.AppendRow(c.Bounds.GetRow(i + 1))
+		newHist.Bounds.AppendRow(oldHist.Bounds.GetRow(boundIdx))
+		newHist.Bounds.AppendRow(oldHist.Bounds.GetRow(boundIdx + 1))
+		totCnt += int64(cnt)
+		bkt := Bucket{Count: totCnt}
+		if chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &splitRanges[highRangeIdx-1].HighVal[0]) == 0 && !splitRanges[highRangeIdx-1].HighExclude {
+			bkt.Repeat = cntPerVal
 		}
-		totCnt += int64(overlapped * float64(c.bucketCount(i/2)))
-		newBkt.Count = totCnt
-		newColHist.Buckets = append(newColHist.Buckets, newBkt)
-		ranLowIdx = ranHighIdx - 1
+		newHist.Buckets = append(newHist.Buckets, bkt)
 	}
-	return newColHist, nil
-}
-
-func (c *Column) newNonNumericColumnBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Column, error) {
-	newColHist := &Column{Info: c.Info}
-	newColHist.Histogram = *NewHistogram(c.ID, int64(float64(c.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
-
-	lowBucketIdx, highBucketIdx := 0, 0
-	var totCnt int64 = 0
-
-	// Bucket bound of non-numeric column is not easy to calculate. Now just use its original bound.
-	// TODO: enhance its calculation.
-	// Now just remove the bucket that no range fell in.
-	for _, ran := range statsNode.Ranges {
-		lowBucketIdx = highBucketIdx
-		for ; highBucketIdx*2 < c.Bounds.NumRows(); highBucketIdx++ {
-			if chunk.Compare(c.Bounds.GetRow(highBucketIdx*2), 0, &ran.HighVal[0]) >= 0 {
-				break
-			}
-		}
-		for ; lowBucketIdx < highBucketIdx; lowBucketIdx++ {
-			if chunk.Compare(c.Bounds.GetRow(lowBucketIdx*2+1), 0, &ran.LowVal[0]) > 0 {
-				break
-			}
-		}
-		if lowBucketIdx*2 >= c.Bounds.NumRows() {
-			break
-		}
-		// TODO: GetDatum and AppendDatum is very inefficient, use a better way to this.
-		for i := lowBucketIdx; i < highBucketIdx; i++ {
-			low := c.Bounds.GetRow(i*2).GetDatum(0, c.Tp)
-			high := c.Bounds.GetRow(i*2+1).GetDatum(0, c.Tp)
-			newColHist.Bounds.AppendDatum(0, &low)
-			newColHist.Bounds.AppendDatum(0, &high)
-			totCnt += c.bucketCount(i)
-			newColHist.Buckets = append(newColHist.Buckets, Bucket{Repeat: c.Buckets[i].Repeat, Count: totCnt})
-		}
-	}
-	return newColHist, nil
-}
-
-func (c *Column) newColumnBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Column, error) {
-	if len(statsNode.Ranges) == 0 {
-		newColHist := &Column{Info: c.Info}
-		newColHist.Histogram = *NewHistogram(c.ID, 0, 0, 0, c.Tp, 0, 0)
-		return newColHist, nil
-	}
-	if c.Tp.EvalType() == types.ETInt || c.Tp.EvalType() == types.ETReal {
-		return c.newNumericColumnBySelectivity(sc, statsNode)
-	}
-	return c.newNonNumericColumnBySelectivity(sc, statsNode)
+	return newHist
 }
 
 func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Index, error) {
@@ -1029,15 +977,23 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			}
 			newColl.Indices[node.ID] = newIdxHist
 		} else {
+
 			colHist, ok := coll.Columns[node.ID]
 			if !ok {
 				continue
 			}
-			newColHist, err := colHist.newColumnBySelectivity(sc, node)
-			if err != nil {
-				return nil, err
+			newCol := &Column{Info: colHist.Info}
+			newCol.Histogram = *NewHistogram(newCol.ID, int64(float64(newCol.NDV)*node.Selectivity), 0, 0, colHist.Tp, chunk.InitialCapacity, 0)
+			var newHist *Histogram
+			if colHist.isHandle {
+				newHist = newHistogramBySelectivity(sc, node.ID, &colHist.Histogram, node, coll.GetRowCountByIntColumnRanges)
+			} else {
+				newHist = newHistogramBySelectivity(sc, node.ID, &colHist.Histogram, node, coll.GetRowCountByColumnRanges)
 			}
-			newColl.Columns[node.ID] = newColHist
+			if newHist != nil {
+				newCol.Histogram = *newHist
+				newColl.Columns[node.ID] = newCol
+			}
 		}
 	}
 	for id, idx := range coll.Indices {
