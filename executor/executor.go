@@ -219,13 +219,21 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	colName := model.ExtraHandleName
+	for _, col := range tbl.Meta().Columns {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			colName = col.Name
+			break
+		}
+	}
 	nextGlobalID, err := tbl.Allocator(e.ctx).NextGlobalAutoID(tbl.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	chk.AppendString(0, e.tblName.Schema.L)
-	chk.AppendString(1, e.tblName.Name.L)
-	chk.AppendInt64(2, nextGlobalID)
+	chk.AppendString(0, e.tblName.Schema.O)
+	chk.AppendString(1, e.tblName.Name.O)
+	chk.AppendString(2, colName.O)
+	chk.AppendInt64(3, nextGlobalID)
 	e.done = true
 	return nil
 }

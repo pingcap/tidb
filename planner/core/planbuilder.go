@@ -767,10 +767,11 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 }
 
 func buildShowNextRowID() *expression.Schema {
-	schema := expression.NewSchema(make([]*expression.Column, 0, 3)...)
-	schema.Append(buildColumn("", "Database_name", mysql.TypeVarchar, mysql.MaxDatabaseNameLength))
-	schema.Append(buildColumn("", "Table_name", mysql.TypeVarchar, mysql.MaxTableNameLength))
-	schema.Append(buildColumn("", "Next_global_row_ID", mysql.TypeLonglong, 4))
+	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
+	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, mysql.MaxDatabaseNameLength))
+	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, mysql.MaxTableNameLength))
+	schema.Append(buildColumn("", "COLUMN_NAME", mysql.TypeVarchar, mysql.MaxColumnNameLength))
+	schema.Append(buildColumn("", "NEXT_GLOBAL_ROW_ID", mysql.TypeLonglong, 4))
 	return schema
 }
 
