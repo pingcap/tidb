@@ -349,10 +349,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			err = s.retry(ctx, uint(maxRetryCount))
 		}
 	}
+	label := s.getSQLLabel()
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
-	metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Observe(float64(counter))
-	metrics.TransactionDuration.WithLabelValues(metrics.RetLabel(err)).Observe(float64(duration))
+	metrics.StatementPerTransaction.WithLabelValues(label, metrics.RetLabel(err)).Observe(float64(counter))
+	metrics.TransactionDuration.WithLabelValues(label, metrics.RetLabel(err)).Observe(float64(duration))
 	s.cleanRetryInfo()
 
 	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
@@ -390,7 +391,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	if err != nil {
 		label = metrics.LblError
 	}
-	metrics.TransactionCounter.WithLabelValues(label).Inc()
+	metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), label).Inc()
 	return errors.Trace(err)
 }
 
@@ -398,7 +399,7 @@ func (s *session) RollbackTxn(ctx context.Context) error {
 	var err error
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
-		metrics.TransactionCounter.WithLabelValues(metrics.LblRollback).Inc()
+		metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), metrics.LblRollback).Inc()
 	}
 	s.cleanRetryInfo()
 	s.txn.changeToInvalid()
@@ -442,6 +443,13 @@ const sqlLogMaxLen = 1024
 
 // SchemaChangedWithoutRetry is used for testing.
 var SchemaChangedWithoutRetry bool
+
+func (s *session) getSQLLabel() string {
+	if s.sessionVars.InRestrictedSQL {
+		return metrics.LblInternal
+	}
+	return metrics.LblGeneral
+}
 
 func (s *session) isRetryableError(err error) bool {
 	if SchemaChangedWithoutRetry {
@@ -512,13 +520,13 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 		}
 		if !s.isRetryableError(err) {
 			log.Warnf("con:%d session:%v, err:%v in retry", connID, s, err)
-			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblUnretryable)
+			metrics.SessionRetryErrorCounter.WithLabelValues(s.getSQLLabel(), metrics.LblUnretryable)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
 			log.Warnf("con:%d Retry reached max count %d", connID, retryCnt)
-			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblReachMax)
+			metrics.SessionRetryErrorCounter.WithLabelValues(s.getSQLLabel(), metrics.LblReachMax)
 			return errors.Trace(err)
 		}
 		log.Warnf("con:%d retryable error: %v, txn: %v", connID, err, s.txn)
@@ -749,11 +757,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, errors.Trace(err)
 	}
-	label := metrics.LblGeneral
-	if s.sessionVars.InRestrictedSQL {
-		label = metrics.LblInternal
-	}
-	metrics.SessionExecuteRunDuration.WithLabelValues(label).Observe(time.Since(startTime).Seconds())
+	metrics.SessionExecuteRunDuration.WithLabelValues(s.getSQLLabel()).Observe(time.Since(startTime).Seconds())
 
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
@@ -787,10 +791,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
 		return nil, errors.Trace(err)
 	}
-	label := metrics.LblGeneral
-	if s.sessionVars.InRestrictedSQL {
-		label = metrics.LblInternal
-	}
+	label := s.getSQLLabel()
 	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
 
 	compiler := executor.Compiler{Ctx: s}
