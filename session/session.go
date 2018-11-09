@@ -791,7 +791,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
 		return nil, errors.Trace(err)
 	}
-	metrics.SessionExecuteParseDuration.WithLabelValues(s.getSQLLabel()).Observe(time.Since(startTS).Seconds())
+	label := s.getSQLLabel()
+	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
 
 	compiler := executor.Compiler{Ctx: s}
 	for _, stmtNode := range stmtNodes {
