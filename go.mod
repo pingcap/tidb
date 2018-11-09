@@ -119,3 +119,5 @@ require (
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
 	honnef.co/go/tools v0.0.0-20180920025451-e3ad64cb4ed3 // indirect
 )
+
+replace github.com/pingcap/parser => github.com/lysu/parser v0.0.0-20181109033026-4a9af9229072

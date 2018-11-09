@@ -1088,6 +1088,11 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t1 value(1,2),(1,1),(2,2),(2,2),(3,2),(3,2)")
 	tk.MustExec("set @@tidb_max_chunk_size=2;")
 	tk.MustQuery("select count(*) from (select a as c, a as d from t1 union all select a, b from t1) t;").Check(testkit.Rows("12"))
+
+	// #issue 8201
+	for i := 0; i < 4; i++ {
+		tk.MustQuery("SELECT(SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a ASC  LIMIT 1) AS dev").Check(testkit.Rows("0"))
+	}
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
