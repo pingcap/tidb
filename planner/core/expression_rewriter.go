@@ -203,10 +203,8 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	default:
 		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
 		var expr1, expr2, expr3 expression.Expression
-		if op == ast.LT || op == ast.GT || op == ast.LE || op == ast.GE {
-			expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		}
+		expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		var err error
 		l, err = expression.PopRowFirstArg(er.ctx, l)
 		if err != nil {
