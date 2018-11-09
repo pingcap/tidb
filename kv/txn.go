@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -48,8 +47,6 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 
 		err = f(txn)
 		if err != nil {
-			err1 := txn.Rollback()
-			terror.Log(errors.Trace(err1))
 			if retryable && IsRetryableError(err) {
 				log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
 				continue
@@ -63,8 +60,6 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		}
 		if retryable && IsRetryableError(err) {
 			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
-			err1 := txn.Rollback()
-			terror.Log(errors.Trace(err1))
 			BackOff(i)
 			continue
 		}
