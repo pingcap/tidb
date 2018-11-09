@@ -386,11 +386,13 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	}
 	err := s.doCommitWithRetry(ctx)
 	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
-	label := metrics.LblOK
-	if err != nil {
-		label = metrics.LblError
+	if !s.GetSessionVars().InRestrictedSQL {
+		label := metrics.LblOK
+		if err != nil {
+			label = metrics.LblError
+		}
+		metrics.TransactionCounter.WithLabelValues(label).Inc()
 	}
-	metrics.TransactionCounter.WithLabelValues(label).Inc()
 	return errors.Trace(err)
 }
 
@@ -398,7 +400,9 @@ func (s *session) RollbackTxn(ctx context.Context) error {
 	var err error
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
-		metrics.TransactionCounter.WithLabelValues(metrics.LblRollback).Inc()
+		if !s.GetSessionVars().InRestrictedSQL {
+			metrics.TransactionCounter.WithLabelValues(metrics.LblRollback).Inc()
+		}
 	}
 	s.cleanRetryInfo()
 	s.txn.changeToInvalid()
