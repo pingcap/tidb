@@ -241,10 +241,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		return a.handleNoDelayExecutor(ctx, sctx, e)
 	}
 
+	var txnStartTS uint64
+	if sctx.Txn() != nil {
+		txnStartTS = sctx.Txn().StartTS()
+	}
 	return &recordSet{
 		executor:   e,
 		stmt:       a,
-		txnStartTS: sctx.Txn().StartTS(),
+		txnStartTS: txnStartTS,
 	}, nil
 }
 
@@ -269,6 +273,15 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.LogSlowQuery(txnTS, err == nil)
 	}()
 
+	if sctx.Txn() == nil {
+		if _, ok := e.(*SetExecutor); !ok {
+			err := sctx.ActivePendingTxn()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
+
 	err = e.Next(ctx, e.newFirstChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -287,9 +300,6 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		if isPointGet {
 			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
-		} else {
-			log.Debugf("con:%d ActivePendingTxn %s", ctx.GetSessionVars().ConnectionID, a.Text)
-			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
 			return nil, errors.Trace(err)

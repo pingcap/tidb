@@ -89,6 +89,11 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 
 // Open implements the Executor Open interface.
 func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
+	if e.ctx.Txn() == nil {
+		err := e.ctx.ActivePendingTxn()
+		return errors.Trace(err)
+	}
+
 	tCols := e.table.Cols()
 	for _, ic := range e.index.Columns {
 		col := tCols[ic.Offset]
@@ -193,6 +198,11 @@ func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
 
 // Open implements the Executor Open interface.
 func (e *RecoverIndexExec) Open(ctx context.Context) error {
+	if e.ctx.Txn() == nil {
+		err := e.ctx.ActivePendingTxn()
+		return errors.Trace(err)
+	}
+
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -633,6 +643,11 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 
 // Open implements the Executor Open interface.
 func (e *CleanupIndexExec) Open(ctx context.Context) error {
+	if e.ctx.Txn() == nil {
+		err := e.ctx.ActivePendingTxn()
+		return errors.Trace(err)
+	}
+
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}

@@ -138,9 +138,9 @@ func (s *testSessionSuite) TestForCoverage(c *C) {
 	_, err := tk.Se.FieldList("t")
 	c.Check(err, IsNil)
 
-	// Cover the error branch, althrough this never happen.
-	err = tk.Se.ActivePendingTxn()
-	c.Assert(err, NotNil)
+	// // Cover the error branch, althrough this never happen.
+	// err = tk.Se.ActivePendingTxn()
+	// c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestErrorRollback(c *C) {
@@ -301,6 +301,16 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
 	tk.MustExec("set autocommit='On'")
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("rollback")
+	tk.MustExec("set @@autocommit = 0")
+
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("insert into t select 1")
+
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 }
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {

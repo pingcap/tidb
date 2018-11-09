@@ -31,6 +31,10 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
+	startTS, err := b.getStartTS()
+	if err != nil {
+		b.err = err
+	}
 	return &PointGetExecutor{
 		ctx:     b.ctx,
 		schema:  p.Schema(),
@@ -38,7 +42,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		idxInfo: p.IndexInfo,
 		idxVals: p.IndexValues,
 		handle:  p.Handle,
-		startTS: b.getStartTS(),
+		startTS: startTS,
 	}
 }
 

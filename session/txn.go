@@ -58,6 +58,10 @@ func (st *TxnState) Valid() bool {
 	return st.Transaction != nil && st.Transaction.Valid()
 }
 
+func (st *TxnState) pending() bool {
+	return st.txnFuture != nil && st.Transaction == nil
+}
+
 func (st *TxnState) validOrPending() bool {
 	return st.txnFuture != nil || st.Valid()
 }

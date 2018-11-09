@@ -338,6 +338,12 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
+	if e.ctx.Txn() == nil {
+		err := e.ctx.ActivePendingTxn()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
 	if err != nil {
 		return errors.Trace(err)
