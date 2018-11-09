@@ -74,7 +74,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
 
 [[constraint]]
   name = "github.com/pingcap/kvproto"
-  branch = "master"
+  branch = "release-2.1"
 	
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
