@@ -68,8 +68,8 @@ require (
 	github.com/pingcap/errcode v0.0.0-20180921232412-a1a7271709d9 // indirect
 	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20181028030329-855d2192cdc7
-	github.com/pingcap/parser v0.0.0-20181102070703-4acd198f5092
+	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26
+	github.com/pingcap/parser v0.0.0-20181108112017-a63108d7da4c
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v0.0.0-20181101090416-cfac1096162e
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323

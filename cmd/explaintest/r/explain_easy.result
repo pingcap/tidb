@@ -159,18 +159,18 @@ TableReader_5	10000.00	root	data:TableScan_4
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 id	count	task	operator info
 Union_17	26000.00	root	
-├─TableReader_20	10000.00	root	data:TableScan_19
-│ └─TableScan_19	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
-└─HashAgg_24	16000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
-  └─Union_25	16000.00	root	
-    ├─StreamAgg_38	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
-    │ └─IndexReader_39	8000.00	root	index:StreamAgg_29
-    │   └─StreamAgg_29	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
-    │     └─IndexScan_37	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
-    └─StreamAgg_55	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
-      └─IndexReader_56	8000.00	root	index:StreamAgg_46
-        └─StreamAgg_46	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
-          └─IndexScan_54	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+├─HashAgg_21	16000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
+│ └─Union_22	16000.00	root	
+│   ├─StreamAgg_35	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
+│   │ └─IndexReader_36	8000.00	root	index:StreamAgg_26
+│   │   └─StreamAgg_26	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
+│   │     └─IndexScan_34	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+│   └─StreamAgg_52	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
+│     └─IndexReader_53	8000.00	root	index:StreamAgg_43
+│       └─StreamAgg_43	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
+│         └─IndexScan_51	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+└─TableReader_59	10000.00	root	data:TableScan_58
+  └─TableScan_58	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	count	task	operator info
 HashAgg_18	24000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
