@@ -16,7 +16,6 @@ package aggfuncs
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -47,13 +46,13 @@ type partialResult4VarianceDecimal struct {
 	variance types.MyDecimal
 }
 
-func (p *partialResult4VarianceDecimal) merge(count int64, sum, variance types.MyDecimal) error {
+func (p *partialResult4VarianceDecimal) merge(count int64, sum, variance *types.MyDecimal) error {
 	if p.count == 0 {
-		p.count, p.sum, p.variance = count, sum, variance
+		p.count, p.sum, p.variance = count, *sum, *variance
 	} else {
-		variance, sum, err := types.CalculateMergeDecimal(p.count, count, &p.sum, &sum, &p.variance, &variance)
+		variance, sum, err := types.CalculateMergeDecimal(p.count, count, &p.sum, sum, &p.variance, variance)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.variance = *variance
 		p.sum = *sum
@@ -84,13 +83,13 @@ func (e *baseVarianceDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 		}
 		decimalCount := types.NewDecFromInt(p.count)
 		tmp := new(types.MyDecimal)
-		err := types.DecimalDiv(&p.sum, decimalCount, tmp, types.DivFracIncr)
+		err := types.DecimalDiv(&p.variance, decimalCount, tmp, types.DivFracIncr)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = types.DecimalSqrt(tmp, res, types.SqrtFracIncr)
 		if err != nil && err != types.ErrTruncated {
-			return errors.Trace(err)
+			return err
 		}
 	case varianceStdSamp:
 		// stdSamp is sqrt(variance/(count-1)), so p.count must exceed 1.
@@ -100,13 +99,13 @@ func (e *baseVarianceDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 		}
 		decimalCount := types.NewDecFromInt(p.count - 1)
 		tmp := new(types.MyDecimal)
-		err := types.DecimalDiv(&p.sum, decimalCount, tmp, types.DivFracIncr)
+		err := types.DecimalDiv(&p.variance, decimalCount, tmp, types.DivFracIncr)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		err = types.DecimalSqrt(tmp, res, types.SqrtFracIncr)
 		if err != nil && err != types.ErrTruncated {
-			return errors.Trace(err)
+			return err
 		}
 	case varianceVarPop:
 		if p.count == 0 {
@@ -114,9 +113,9 @@ func (e *baseVarianceDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 			return nil
 		}
 		decimalCount := types.NewDecFromInt(p.count)
-		err := types.DecimalDiv(&p.sum, decimalCount, res, types.DivFracIncr)
+		err := types.DecimalDiv(&p.variance, decimalCount, res, types.DivFracIncr)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	case varianceVarSamp:
 		// varSamp is variance/(count-1), so p.count must exceed 1.
@@ -125,9 +124,9 @@ func (e *baseVarianceDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 			return nil
 		}
 		decimalCount := types.NewDecFromInt(p.count - 1)
-		err := types.DecimalDiv(&p.sum, decimalCount, res, types.DivFracIncr)
+		err := types.DecimalDiv(&p.variance, decimalCount, res, types.DivFracIncr)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
@@ -144,14 +143,14 @@ func (e *varianceOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
 		}
-		err = p.merge(1, *input, *types.NewDecFromInt(0))
+		err = p.merge(1, input, types.NewDecFromInt(0))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -166,7 +165,7 @@ func (e *variancePartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, r
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -174,7 +173,7 @@ func (e *variancePartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, r
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -182,15 +181,15 @@ func (e *variancePartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, r
 
 		inputVariance, isNull, err := e.args[2].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
 		}
 
-		err = p.merge(inputCount, *inputSum, *inputVariance)
+		err = p.merge(inputCount, inputSum, inputVariance)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -198,9 +197,9 @@ func (e *variancePartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, r
 
 func (e *variancePartial4Decimal) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4VarianceDecimal)(src), (*partialResult4VarianceDecimal)(dst)
-	err := p2.merge(p1.count, p1.sum, p1.variance)
+	err := p2.merge(p1.count, &p1.sum, &p1.variance)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -233,15 +232,15 @@ func (e *varianceOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.C
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
 		}
 
-		err = p.merge(1, *input, *types.NewDecFromInt(0))
+		err = p.merge(1, input, types.NewDecFromInt(0))
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.valSet.Insert(input)
 	}
@@ -268,10 +267,11 @@ func (p *partialResult4VarianceFloat64) merge(count int64, sum, variance float64
 	} else {
 		varianceNew, sumNew, err := types.CalculateMergeFloat64(p.count, count, p.sum, sum, p.variance, variance)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.variance = varianceNew
 		p.sum = sumNew
+		p.count += count
 	}
 	return nil
 }
@@ -327,14 +327,14 @@ func (e *varianceOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
 		}
 		err = p.merge(1, input, 0)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -349,7 +349,7 @@ func (e *variancePartial4Float64) UpdatePartialResult(sctx sessionctx.Context, r
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -357,7 +357,7 @@ func (e *variancePartial4Float64) UpdatePartialResult(sctx sessionctx.Context, r
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -365,7 +365,7 @@ func (e *variancePartial4Float64) UpdatePartialResult(sctx sessionctx.Context, r
 
 		inputVariance, isNull, err := e.args[2].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull {
 			continue
@@ -373,7 +373,7 @@ func (e *variancePartial4Float64) UpdatePartialResult(sctx sessionctx.Context, r
 
 		err = p.merge(inputCount, inputSum, inputVariance)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 	return nil
@@ -383,7 +383,7 @@ func (e *variancePartial4Float64) MergePartialResult(sctx sessionctx.Context, sr
 	p1, p2 := (*partialResult4VarianceFloat64)(src), (*partialResult4VarianceFloat64)(dst)
 	err := p2.merge(p1.count, p1.sum, p1.variance)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
@@ -415,7 +415,7 @@ func (e *varianceOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.C
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
@@ -423,7 +423,7 @@ func (e *varianceOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.C
 
 		err = p.merge(1, input, 0)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		p.valSet.Insert(input)
 	}

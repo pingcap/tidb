@@ -2164,7 +2164,8 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	return err
 }
 
-// DecimalSqrt does the square root calculations of one decimal
+// DecimalSqrt does the square root calculations of one decimal.
+// Its algorithm is Newton iteration method.
 // from     - radicand
 // to       - result
 // fracIncr - increment of fraction
@@ -2174,7 +2175,7 @@ func DecimalSqrt(from, to *MyDecimal, fracIncr int) error {
 	}
 
 	deviationStr := "0."
-	frac := fracIncr + (int)(from.digitsFrac)
+	frac := fracIncr + (int)(from.resultFrac)
 	for i := 1; i < frac; i++ {
 		deviationStr += "0"
 	}
@@ -2198,7 +2199,7 @@ func DecimalSqrt(from, to *MyDecimal, fracIncr int) error {
 		}
 		resAddFromDivRes := new(MyDecimal)
 		err = DecimalAdd(&res, fromDivRes, resAddFromDivRes)
-		if err != nil {
+		if err != nil && err != ErrTruncated {
 			return err
 		}
 		decimalIntTwo := NewDecFromInt(2)
@@ -2209,7 +2210,7 @@ func DecimalSqrt(from, to *MyDecimal, fracIncr int) error {
 		}
 		res = *tmpRes
 		err = DecimalSub(&res, &lastRes, &delta)
-		if err != nil {
+		if err != nil && err != ErrTruncated {
 			return err
 		}
 		delta.negative = false
