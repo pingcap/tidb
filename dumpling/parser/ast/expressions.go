@@ -700,6 +700,8 @@ type PositionExpr struct {
 	exprNode
 	// N is the position, started from 1 now.
 	N int
+	// P is the parameterized position.
+	P ExprNode
 	// Refer is the result field the position refers to.
 	Refer *ResultField
 }
@@ -716,6 +718,13 @@ func (n *PositionExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*PositionExpr)
+	if n.P != nil {
+		node, ok := n.P.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.P = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
