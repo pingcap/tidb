@@ -667,6 +667,10 @@ func main() {
 		log.Fatalf("set @@tidb_hash_join_concurrency=1 err[%v]", err)
 	}
 
+	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
+		log.Fatalf("set sql_mode='STRICT_TRANS_TABLES' err[%v]", err)
+	}
+
 	tests := flag.Args()
 
 	// we will run all tests if no tests assigned

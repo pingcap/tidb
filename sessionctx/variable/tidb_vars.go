@@ -41,6 +41,9 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
+	TiDBOptWriteRowID = "tidb_opt_write_row_id"
+
 	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
 
@@ -95,7 +98,13 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
-	// tidb_retry_limit is the maximun number of retries when committing a transaction.
+	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
+	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// tidb_query_log_max_len is used to set the max length of the query in the log.
+	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
+
+	// tidb_retry_limit is the maximum number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
 
 	// tidb_disable_txn_auto_retry disables transaction auto retry.
@@ -223,6 +232,7 @@ const (
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
+	DefOptWriteRowID                 = false
 	DefOptInSubqToJoinAndAgg         = true
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false

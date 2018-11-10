@@ -65,7 +65,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		dbInfo.Charset = charsetInfo.Chs
 		dbInfo.Collate = charsetInfo.Col
 	} else {
-		dbInfo.Charset, dbInfo.Collate = getDefaultCharsetAndCollate()
+		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 
 	job := &model.Job{
@@ -116,13 +116,6 @@ func checkTooLongIndex(index model.CIStr) error {
 		return ErrTooLongIdent.GenWithStackByArgs(index)
 	}
 	return nil
-}
-
-func getDefaultCharsetAndCollate() (string, string) {
-	// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
-	// TODO: Change TableOption parser to parse collate.
-	// This is a tmp solution.
-	return "utf8", "utf8_bin"
 }
 
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
@@ -204,7 +197,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
-			tp.Charset, tp.Collate = getDefaultCharsetAndCollate()
+			tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
 		default:
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
@@ -1193,11 +1186,15 @@ func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Id
 	return schema, t, nil
 }
 
-func checkColumnConstraint(constraints []*ast.ColumnOption) error {
-	for _, constraint := range constraints {
+func checkColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
+	for _, constraint := range col.Options {
 		switch constraint.Tp {
-		case ast.ColumnOptionAutoIncrement, ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return errUnsupportedAddColumn.GenWithStack("unsupported add column constraint - %v", constraint.Tp)
+		case ast.ColumnOptionAutoIncrement:
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionPrimaryKey:
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint PRIMARY KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionUniqKey:
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint UNIQUE KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
 		}
 	}
 
@@ -1208,7 +1205,7 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(specNewColumn.Options)
+	err := checkColumnConstraint(specNewColumn, ti)
 	if err != nil {
 		return errors.Trace(err)
 	}

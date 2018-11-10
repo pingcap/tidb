@@ -339,13 +339,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.StartTime)
-	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level < log.DebugLevel {
 		return
 	}
 	sql := a.Text
-	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
-		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
+	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(len(sql)) > maxQueryLen {
+		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, len(a.Text))
 	}
 	sessVars := a.Ctx.GetSessionVars()
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()

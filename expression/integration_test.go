@@ -135,6 +135,7 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	// for uuid
 	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
 	for _, it := range r.Rows() {
@@ -2886,6 +2887,18 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a bigint unsigned)")
 	tk.MustExec("insert into t value(17666000000000000000)")
 	tk.MustQuery("select * from t where a = 17666000000000000000").Check(testkit.Rows("17666000000000000000"))
+
+	// test for compare row
+	result = tk.MustQuery(`select row(1,2,3)=row(1,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1,2,3)=row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
@@ -3667,4 +3680,14 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	tk.MustExec("insert into t select 0.5999991229316*0.918755041726043;")
 	res := tk.MustQuery("select * from t;")
 	res.Check(testkit.Rows("0.55125221922461136"))
+}
+
+func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);`)
+	tk.MustExec(`insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");`)
+	res := tk.MustQuery(`select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;`)
+	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
 }
