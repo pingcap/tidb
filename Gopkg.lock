@@ -273,8 +273,8 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
-  branch = "master"
-  digest = "1:84db0209caf3c48beaec43d15bd22ca6256d958b807c2ac626e2425e232e92c4"
+  branch = "release-2.1"
+  digest = "1:85aa2923e4dac3cef4dda68972f580cbc10dc1450f019f98a8b7e476f5eb2b07"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -287,7 +287,7 @@
     "pkg/tikvpb",
   ]
   pruneopts = "NUT"
-  revision = "529c652955d8fa74faf56f91b2f428d5779fd7d5"
+  revision = "8e3f33ac49297d7c93b61a955531191084a2f685"
 
 [[projects]]
   branch = "master"
@@ -561,6 +561,7 @@
     "github.com/pingcap/kvproto/pkg/metapb",
     "github.com/pingcap/kvproto/pkg/tikvpb",
     "github.com/pingcap/pd/client",
+    "github.com/pingcap/tidb-tools/tidb-binlog/node",
     "github.com/pingcap/tidb-tools/tidb-binlog/pump_client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
