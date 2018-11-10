@@ -275,6 +275,9 @@ func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, 
 				return nil, errors.Trace(err)
 			}
 		}
+		if op == ast.NE {
+			return ComposeDNFCondition(sr.ctx, funcs...), nil
+		}
 		return ComposeCNFCondition(sr.ctx, funcs...), nil
 	default:
 		larg0, rarg0 := GetFuncArg(l, 0), GetFuncArg(r, 0)
