@@ -338,12 +338,6 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if e.ctx.Txn() == nil {
-		err := e.ctx.ActivePendingTxn()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
 	if err != nil {
 		return errors.Trace(err)
@@ -741,10 +735,6 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plannercore.EvalSubquery = func(p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
-		err = sctx.ActivePendingTxn()
-		if err != nil {
-			return rows, errors.Trace(err)
-		}
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {

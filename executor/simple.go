@@ -113,10 +113,13 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
+	// Call ctx.Txn() to active pending txn.
+	e.ctx.Txn()
 	return nil
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
+	// Active pending txn.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
 }
 

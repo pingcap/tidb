@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -179,13 +180,6 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		jobIDs:       v.JobIDs,
 	}
-
-	if e.ctx.Txn() == nil {
-		if err := e.ctx.ActivePendingTxn(); err != nil {
-			b.err = errors.Trace(err)
-			return e
-		}
-	}
 	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.jobIDs)
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -220,12 +214,6 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		return nil
 	}
 
-	if e.ctx.Txn() == nil {
-		if err := e.ctx.ActivePendingTxn(); err != nil {
-			b.err = errors.Trace(err)
-			return e
-		}
-	}
 	ddlInfo, err := admin.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -415,10 +403,7 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) Execu
 		tables:       make(map[int64]*checksumContext),
 		done:         false,
 	}
-	startTs, err := b.getStartTS()
-	if err != nil {
-		b.err = err
-	}
+	startTs := b.getStartTS()
 	for _, t := range v.Tables {
 		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs)
 	}
@@ -1189,28 +1174,25 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 		baseExecutor: base,
 		numDualRows:  v.RowCount,
 	}
-	// Init the startTS for later use.
-	// b.getStartTS()
 	return e
 }
 
-func (b *executorBuilder) getStartTS() (uint64, error) {
+func (b *executorBuilder) getStartTS() uint64 {
 	if b.startTS != 0 {
 		// Return the cached value.
-		return b.startTS, nil
-	}
-
-	err := b.ctx.ActivePendingTxn()
-	if err != nil {
-		return 0, errors.Trace(err)
+		return b.startTS
 	}
 
 	startTS := b.ctx.GetSessionVars().SnapshotTS
-	if startTS == 0 && b.ctx.Txn() != nil {
+	if startTS == 0 && b.ctx.Txn().Valid() {
 		startTS = b.ctx.Txn().StartTS()
 	}
 	b.startTS = startTS
-	return startTS, nil
+	if b.startTS == 0 {
+		// The the code should never run here if there is no bug.
+		log.Error(errors.ErrorStack(ErrGetStartTS))
+	}
+	return startTS
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
@@ -1544,11 +1526,7 @@ func constructDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan
 
 func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
-	dagReq.StartTs, err = b.getStartTS()
-	if err != nil {
-		err = errors.Trace(err)
-		return
-	}
+	dagReq.StartTs = b.getStartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)

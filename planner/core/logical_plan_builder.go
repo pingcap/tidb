@@ -1891,7 +1891,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	// If this SQL is executed in a non-readonly transaction, we need a
 	// "UnionScan" operator to read the modifications of former SQLs, which is
 	// buffered in tidb-server memory.
-	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {
+	if b.ctx.Txn(struct{}{}).Valid() && !b.ctx.Txn(struct{}{}).IsReadOnly() {
 		us := LogicalUnionScan{}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
