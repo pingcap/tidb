@@ -87,7 +87,7 @@ During the logical optimization phase, the `DataSource` plan is translated into 
 The drawbacks of this implementation are:
 
 * If the table has many partitions, there will be many readers, and then the `explain` result is not friendly to the user
-* The `UnionAll` executor can't keep order, so if some executor need ordered result such as `IndexReader`, an extra `Sort` executor is needed
+* The `UnionAll` executor cannot keep the results in order, so if some executor needs ordered results such as `IndexReader`, an extra `Sort` executor is needed
 
 If [partition selection](https://dev.mysql.com/doc/refman/5.7/en/partitioning-selection.html) is used, planner should translate table ID to partition ID, and turn off partition pruning.
 
