@@ -41,32 +41,6 @@ func calcFraction(lower, upper, value float64) float64 {
 	return frac
 }
 
-func calcFloatRangeFraction(lower, upper, valLow, valHigh float64) float64 {
-	if upper <= lower {
-		return 0.5
-	}
-	if valHigh > upper {
-		valHigh = upper
-	}
-	if valLow < lower {
-		valLow = lower
-	}
-	return (valHigh - valLow) / (upper - lower)
-}
-
-func calcIntRangeFraction(lower, upper, valLow, valHigh float64) float64 {
-	if upper <= lower {
-		return 0.5
-	}
-	if valHigh > upper {
-		valHigh = upper
-	}
-	if valLow < lower {
-		valLow = lower
-	}
-	return (valHigh - valLow + 1) / (upper - lower + 1)
-}
-
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
 	case types.KindMysqlDecimal:
@@ -157,70 +131,6 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:
 		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, hg.scalars[index].commonPfxLen))
-	}
-	return 0.5
-}
-
-// CalcRangeFraction calculates the fraction between [valLow, valHigh] and hg's indexth Bucket.
-func (hg *Histogram) CalcRangeFraction(index int, dLow, dHigh *types.Datum) float64 {
-	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
-	k := dLow.Kind()
-	if k == types.KindNull || k == types.KindMinNotNull {
-		k = dHigh.Kind()
-	}
-	switch k {
-	case types.KindFloat32:
-		var varLow, varHigh float64
-		if dLow.IsNull() || dLow.Kind() == types.KindMinNotNull {
-			varLow = float64(lower.GetFloat32(0))
-		} else {
-			varLow = float64(dLow.GetFloat32())
-		}
-		if dHigh.Kind() == types.KindMaxValue {
-			varHigh = float64(upper.GetFloat32(0))
-		} else {
-			varHigh = float64(dHigh.GetFloat32())
-		}
-		return calcFloatRangeFraction(float64(lower.GetFloat32(0)), float64(upper.GetFloat32(0)), varLow, varHigh)
-	case types.KindFloat64:
-		var varLow, varHigh float64
-		if dLow.IsNull() || dLow.Kind() == types.KindMinNotNull {
-			varLow = lower.GetFloat64(0)
-		} else {
-			varLow = dLow.GetFloat64()
-		}
-		if dHigh.Kind() == types.KindMaxValue {
-			varHigh = upper.GetFloat64(0)
-		} else {
-			varHigh = dHigh.GetFloat64()
-		}
-		return calcFloatRangeFraction(lower.GetFloat64(0), upper.GetFloat64(0), varLow, varHigh)
-	case types.KindInt64:
-		var varLow, varHigh float64
-		if dLow.IsNull() || dLow.Kind() == types.KindMinNotNull {
-			varLow = float64(lower.GetInt64(0))
-		} else {
-			varLow = float64(dLow.GetInt64())
-		}
-		if dHigh.Kind() == types.KindMaxValue {
-			varHigh = float64(upper.GetInt64(0))
-		} else {
-			varHigh = float64(dHigh.GetInt64())
-		}
-		return calcIntRangeFraction(float64(lower.GetInt64(0)), float64(upper.GetInt64(0)), varLow, varHigh)
-	case types.KindUint64:
-		var varLow, varHigh float64
-		if dLow.IsNull() || dLow.Kind() == types.KindMinNotNull {
-			varLow = float64(lower.GetUint64(0))
-		} else {
-			varLow = float64(dLow.GetUint64())
-		}
-		if dHigh.Kind() == types.KindMaxValue {
-			varHigh = float64(upper.GetUint64(0))
-		} else {
-			varHigh = float64(dHigh.GetUint64())
-		}
-		return calcIntRangeFraction(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)), varLow, varHigh)
 	}
 	return 0.5
 }

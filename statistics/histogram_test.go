@@ -88,7 +88,6 @@ num: 30 lower_bound: 27 upper_bound: 29 repeats: 0`
 	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("bbb"), HighVal: types.MakeDatums("cccc")})
 	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ddd"), HighVal: types.MakeDatums("fff")})
 	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ggg"), HighVal: []types.Datum{types.MaxValueDatum()}})
-	newColl, _ := coll.NewHistCollBySelectivity(sc, []*StatsNode{node, node2})
 	stringColResult := `column:2 ndv:9 totColSize:0
 num: 60 lower_bound: a upper_bound: aaaabbbb repeats: 0
 num: 60 lower_bound: bbbb upper_bound: fdsfdsfds repeats: 20
@@ -96,9 +95,11 @@ num: 60 lower_bound: kkkkk upper_bound: ooooo repeats: 20
 num: 60 lower_bound: oooooo upper_bound: sssss repeats: 20
 num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0`
 
+	newColl, _ := coll.NewHistCollBySelectivity(sc, []*StatsNode{node, node2})
 	c.Assert(newColl.Columns[1].String(), Equals, intColResult)
 	c.Assert(newColl.Columns[2].String(), Equals, stringColResult)
-	idx := Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
+
+	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
 	for i := 0; i < 5; i++ {
 		low, err1 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3)))
@@ -109,19 +110,18 @@ num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0`
 		idx.Bounds.AppendBytes(0, high)
 		idx.Buckets = append(idx.Buckets, Bucket{Repeat: 10, Count: int64(30*i + 30)})
 	}
-	node.Tp = indexType
-	node.ID = 0
-	node.Selectivity = 0.47
-	node.Ranges = node.Ranges[:0]
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(2), HighVal: types.MakeDatums(3)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(7), HighVal: types.MakeDatums(11)})
-	newIdx, err := idx.newIndexBySelectivity(sc, node)
-	c.Assert(err, IsNil, Commentf("Test failed: %v", err))
+	idx.PreCalculateScalar()
+	node3 := &StatsNode{ID: 0, Tp: indexType, Selectivity: 0.47}
+	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(2), HighVal: types.MakeDatums(3)})
+	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(7), HighVal: types.MakeDatums(11)})
+
 	idxResult := `index:0 ndv:7
 num: 30 lower_bound: 0 upper_bound: 2 repeats: 10
 num: 30 lower_bound: 3 upper_bound: 5 repeats: 10
 num: 30 lower_bound: 6 upper_bound: 8 repeats: 10
 num: 30 lower_bound: 9 upper_bound: 11 repeats: 10`
-	c.Assert(newIdx.String(), Equals, idxResult)
 
+	newIdx, err := idx.newIndexBySelectivity(sc, node3)
+	c.Assert(err, IsNil, Commentf("Test failed: %v", err))
+	c.Assert(newIdx.String(), Equals, idxResult)
 }
