@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -705,12 +706,28 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 	tk.MustQuery("select last_insert_id(20)").Check(testkit.Rows(fmt.Sprint(20)))
 	tk.MustQuery("select last_insert_id()").Check(testkit.Rows(fmt.Sprint(20)))
 
+	// Corner cases for unsigned bigint auto_increment Columns.
 	tk.MustExec("drop table if exists autoid")
 	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
 	tk.MustExec("insert into autoid values(9223372036854775808);")
 	tk.MustExec("insert into autoid values();")
 	tk.MustExec("insert into autoid values();")
 	tk.MustQuery("select * from autoid").Check(testkit.Rows("9223372036854775808", "9223372036854775810", "9223372036854775812"))
+	tk.MustExec("insert into autoid values(18446744073709551614);")
+	_, err := tk.Exec("insert into autoid values()")
+	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
+	// FixMe: MySQL works fine with the this sql.
+	_, err = tk.Exec("insert into autoid values(18446744073709551615)")
+	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
+
+	// Corner cases for signed bigint auto_increment Columns.
+	tk.MustExec("drop table if exists autoid")
+	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
+	tk.MustExec("insert into autoid values(9223372036854775806);")
+	tk.MustExec("insert into autoid values();")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9223372036854775806", "9223372036854775807"))
+	_, err = tk.Exec("insert into autoid values();")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
 }
 
 func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {

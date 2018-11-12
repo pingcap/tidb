@@ -137,13 +137,12 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 		if allocIDs {
 			if alloc.isUnsigned {
 				uNewBase = mathutil.MaxUint64(uCurrentEnd, uRequiredBase)
-				uNewEnd = uNewBase + uint64(step)
+				uNewEnd = mathutil.MinUint64(math.MaxUint64-uint64(step), uNewBase) + uint64(step)
 			} else {
 				newBase = mathutil.MaxInt64(currentEnd, requiredBase)
-				newEnd = newBase + step
+				newEnd = mathutil.MinInt64(math.MaxInt64-step, newBase) + step
 			}
 		} else {
-
 			if !alloc.isUnsigned && currentEnd >= requiredBase {
 				newBase = currentEnd
 				newEnd = currentEnd
@@ -164,7 +163,6 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 				uNewBase = uRequiredBase
 				uNewEnd = uRequiredBase
 			}
-
 		}
 		if !alloc.isUnsigned {
 			_, err1 = m.GenAutoTableID(alloc.dbID, tableID, newEnd-currentEnd)
@@ -177,7 +175,11 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 	if err != nil {
 		return errors.Trace(err)
 	}
-	alloc.base, alloc.end = newBase, newEnd
+	if !alloc.isUnsigned {
+		alloc.base, alloc.end = newBase, newEnd
+	} else {
+		alloc.base, alloc.end = int64(uNewBase), int64(uNewEnd)
+	}
 	return nil
 }
 
@@ -198,7 +200,13 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, step)
+			tmpStep := step
+			if alloc.isUnsigned {
+				tmpStep = int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(step)))
+			} else {
+				tmpStep = mathutil.MinInt64(math.MaxInt64-newBase, step)
+			}
+			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, tmpStep)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
@@ -206,13 +214,24 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 		})
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
+	log.Warning(uint64(alloc.base), uint64(alloc.end))
 
-	alloc.base++
-	log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", alloc.base, tableID, alloc, alloc.dbID)
+	if alloc.isUnsigned {
+		if uint64(alloc.base) == math.MaxUint64 {
+			return 0, ErrAutoincReadFailed
+		}
+		alloc.base = int64(uint64(alloc.base) + 1)
+		log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", uint64(alloc.base), tableID, alloc, alloc.dbID)
+	} else {
+		if alloc.base < alloc.end {
+			alloc.base++
+		}
+		log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", alloc.base, tableID, alloc, alloc.dbID)
+	}
 	return alloc.base, nil
 }
 
