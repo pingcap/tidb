@@ -242,9 +242,30 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
 // be lost.
-func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (string, error) {
+func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
+	// round function is to round returning int string base on float string
+	round := func(numNextDot byte) string {
+		if numNextDot < '5' {
+			return intStr
+		}
+		retStr := []byte(intStr)
+		l := len(intStr)
+		for l--; l >= 0; l-- {
+			if retStr[l] == '9' {
+				retStr[l] = '0'
+			} else {
+				retStr[l]++
+				break
+			}
+		}
+		if l < 0 {
+			retStr[0] = '1'
+			retStr = append(retStr, '0')
+		}
+		return string(retStr)
+	}
 	for i := 0; i < len(validFloat); i++ {
 		switch validFloat[i] {
 		case '.':
@@ -255,12 +276,17 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	}
 	if eIdx == -1 {
 		if dotIdx == -1 {
-			return validFloat, nil
+			intStr = validFloat
 		}
 		if dotIdx == 0 {
-			return "0", nil
+			intStr = "0"
+		} else {
+			intStr = validFloat[:dotIdx]
 		}
-		return validFloat[:dotIdx], nil
+		if len(validFloat) > dotIdx+1 {
+			intStr = round(validFloat[dotIdx+1])
+		}
+		return intStr, nil
 	}
 	var intCnt int
 	digits := make([]byte, 0, len(validFloat))
@@ -283,14 +309,26 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	}
 	intCnt += exp
 	if intCnt <= 0 {
-		return "0", nil
+		intStr = "0"
+		if intCnt == 0 && len(digits) > 0 {
+			dotIdx = -1
+			intStr = round(digits[0])
+		}
+		return intStr, nil
 	}
 	if intCnt == 1 && (digits[0] == '-' || digits[0] == '+') {
-		return "0", nil
+		intStr = "0"
+		dotIdx = 0
+		if len(digits) > 1 {
+			intStr = round(digits[1])
+		}
+		return string(digits[:1]) + intStr, nil
 	}
-	var validInt string
 	if intCnt <= len(digits) {
-		validInt = string(digits[:intCnt])
+		intStr = string(digits[:intCnt])
+		if intCnt < len(digits) {
+			intStr = round(digits[intCnt])
+		}
 	} else {
 		// convert scientific notation decimal number
 		extraZeroCount := intCnt - len(digits)
@@ -299,9 +337,9 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 			sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
 			return validFloat[:eIdx], nil
 		}
-		validInt = string(digits) + strings.Repeat("0", extraZeroCount)
+		intStr = string(digits) + strings.Repeat("0", extraZeroCount)
 	}
-	return validInt, nil
+	return intStr, nil
 }
 
 // StrToFloat converts a string to a float64 at the best-effort.
