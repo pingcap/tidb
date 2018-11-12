@@ -15,6 +15,7 @@ create=0
 create_case=""
 
 set -eu
+trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
 
 function help_message()
 {
