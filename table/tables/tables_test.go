@@ -84,7 +84,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(autoid, Greater, int64(0))
 
 	ctx := ts.se
-	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpClient()
+	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpsClient()
 	ctx.GetSessionVars().InRestrictedSQL = false
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
@@ -317,6 +317,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(), IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	tbInfo.Columns[0].GeneratedExprString = "test"
 	tables.TableFromMeta(nil, tbInfo)
@@ -339,13 +340,12 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 
-	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	_, err := ts.se.Execute(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	c.Assert(p0.Name, Equals, model.NewCIStr("p0"))
@@ -393,6 +393,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 	c.Assert(ts.se.NewTxn(), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
 	tbInfo = tb.Meta()
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
@@ -408,13 +409,12 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 
-	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
+	_, err := ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	ps := tbInfo.GetPartitionInfo()
 	c.Assert(ps, NotNil)
@@ -428,7 +428,6 @@ PARTITION BY RANGE ( id ) (
 func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	_, err := ts.se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)

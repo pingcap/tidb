@@ -6,8 +6,8 @@ insert into t2 values(1, 0), (2, 1);
 create table t3 (a bigint, b bigint, c bigint, d bigint);
 create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
 
-set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;
 
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 explain select * from t1;
@@ -35,7 +35,7 @@ explain select if(10, t1.c1, t1.c2) from t1;
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
 
-set @@session.tidb_opt_insubquery_unfold = 0;
+set @@session.tidb_opt_insubq_to_join_and_agg=0;
 
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 explain select 1 in (select c2 from t2) from t1;
@@ -82,6 +82,13 @@ insert tb values ('1');
 explain select * from ta where a = 1;
 rollback;
 
+# outer join elimination
+drop table if exists t1, t2;
+create table t1(a int, b int, c int, primary key(a, b));
+create table t2(a int, b int, c int, primary key(a));
+explain select t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+
 # https://github.com/pingcap/tidb/issues/7918
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
@@ -92,4 +99,22 @@ explain select ifnull(a, 0), ifnull(nb, 0) from t;
 explain select ifnull(nb, 0), ifnull(nb, 0) from t;
 explain select 1+ifnull(nb, 0) from t;
 explain select 1+ifnull(a, 0) from t;
+explain select 1+ifnull(nb, 0) from t where nb=1;
+# ifnull can be eliminated
+explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(ta.nb, 1) or ta.nb is null;
+explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
+explain select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
+explain select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
+# ifnull cannot be eliminated
+explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
+explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
+# when it comes to inner join case, ifnull can always be eliminated on not null column
+explain select ifnull(t.a, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 drop table if exists t;
+create table t(a int);
+explain select * from t where _tidb_rowid = 0;
+explain select * from t where _tidb_rowid > 0;
+explain select a, _tidb_rowid from t where a > 0;
+explain select * from t where _tidb_rowid > 0 and a > 0;
+drop table if exists t;
+set @@session.tidb_opt_insubq_to_join_and_agg=1;

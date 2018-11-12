@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -122,7 +123,7 @@ func (s *testSessionSuite) TestForCoverage(c *C) {
 	tk.MustExec("admin check table t")
 
 	// Cover dirty table operations in StateTxn.
-	tk.Se.GetSessionVars().BinlogClient = &mockBinlogPump{}
+	tk.Se.GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(&mockBinlogPump{})
 	tk.MustExec("begin")
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert t values ()")
@@ -2033,8 +2034,9 @@ func (s *testSessionSuite) TestDBUserNameLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table if not exists t (a int)")
 	// Test user name length can be longer than 16.
-	tk.MustExec(`grant all privileges on test.* to 'abcddfjakldfjaldddds'@'%' identified by ''`)
-	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%' identified by ''`)
+	tk.MustExec(`CREATE USER 'abcddfjakldfjaldddds'@'%' identified by ''`)
+	tk.MustExec(`grant all privileges on test.* to 'abcddfjakldfjaldddds'@'%'`)
+	tk.MustExec(`grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%'`)
 }
 
 func (s *testSessionSuite) TestKVVars(c *C) {

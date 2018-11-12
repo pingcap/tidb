@@ -16,10 +16,10 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

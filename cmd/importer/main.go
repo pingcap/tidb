@@ -17,7 +17,7 @@ import (
 	"flag"
 	"os"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 	log "github.com/sirupsen/logrus"
 )
 

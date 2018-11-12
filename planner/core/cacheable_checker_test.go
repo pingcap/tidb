@@ -27,17 +27,8 @@ type testCacheableSuite struct {
 }
 
 func (s *testCacheableSuite) TestCacheable(c *C) {
-	// test non-SelectStmt
-	var stmt ast.Node = &ast.DeleteStmt{}
-	c.Assert(Cacheable(stmt), IsFalse)
-
-	stmt = &ast.InsertStmt{}
-	c.Assert(Cacheable(stmt), IsFalse)
-
-	stmt = &ast.UnionStmt{}
-	c.Assert(Cacheable(stmt), IsFalse)
-
-	stmt = &ast.UpdateStmt{}
+	// test non-SelectStmt/-InsertStmt/-DeleteStmt/-UpdateStmt/-SelectStmt
+	var stmt ast.Node = &ast.UnionStmt{}
 	c.Assert(Cacheable(stmt), IsFalse)
 
 	stmt = &ast.ShowStmt{}
@@ -46,8 +37,107 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	stmt = &ast.LoadDataStmt{}
 	c.Assert(Cacheable(stmt), IsFalse)
 
-	// test SelectStmt
+	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: &ast.TableName{}}}}
+	// test InsertStmt
+	stmt = &ast.InsertStmt{Table: tableRefsClause}
+	c.Assert(Cacheable(stmt), IsTrue)
+
+	// test DeleteStmt
 	whereExpr := &ast.FuncCallExpr{}
+	stmt = &ast.DeleteStmt{
+		TableRefs: tableRefsClause,
+		Where:     whereExpr,
+	}
+	c.Assert(Cacheable(stmt), IsTrue)
+
+	for funcName := range expression.UnCacheableFunctions {
+		whereExpr.FnName = model.NewCIStr(funcName)
+		c.Assert(Cacheable(stmt), IsFalse)
+	}
+
+	whereExpr.FnName = model.NewCIStr(ast.Rand)
+	c.Assert(Cacheable(stmt), IsTrue)
+
+	stmt = &ast.DeleteStmt{
+		TableRefs: tableRefsClause,
+		Where:     &ast.ExistsSubqueryExpr{},
+	}
+	c.Assert(Cacheable(stmt), IsFalse)
+
+	limitStmt := &ast.Limit{
+		Count: &driver.ParamMarkerExpr{},
+	}
+	stmt = &ast.DeleteStmt{
+		TableRefs: tableRefsClause,
+		Limit:     limitStmt,
+	}
+	c.Assert(Cacheable(stmt), IsFalse)
+
+	limitStmt = &ast.Limit{
+		Offset: &driver.ParamMarkerExpr{},
+	}
+	stmt = &ast.DeleteStmt{
+		TableRefs: tableRefsClause,
+		Limit:     limitStmt,
+	}
+	c.Assert(Cacheable(stmt), IsFalse)
+
+	limitStmt = &ast.Limit{}
+	stmt = &ast.DeleteStmt{
+		TableRefs: tableRefsClause,
+		Limit:     limitStmt,
+	}
+	c.Assert(Cacheable(stmt), IsTrue)
+
+	// test UpdateStmt
+	whereExpr = &ast.FuncCallExpr{}
+	stmt = &ast.UpdateStmt{
+		TableRefs: tableRefsClause,
+		Where:     whereExpr,
+	}
+	c.Assert(Cacheable(stmt), IsTrue)
+
+	for funcName := range expression.UnCacheableFunctions {
+		whereExpr.FnName = model.NewCIStr(funcName)
+		c.Assert(Cacheable(stmt), IsFalse)
+	}
+
+	whereExpr.FnName = model.NewCIStr(ast.Rand)
+	c.Assert(Cacheable(stmt), IsTrue)
+
+	stmt = &ast.UpdateStmt{
+		TableRefs: tableRefsClause,
+		Where:     &ast.ExistsSubqueryExpr{},
+	}
+	c.Assert(Cacheable(stmt), IsFalse)
+
+	limitStmt = &ast.Limit{
+		Count: &driver.ParamMarkerExpr{},
+	}
+	stmt = &ast.UpdateStmt{
+		TableRefs: tableRefsClause,
+		Limit:     limitStmt,
+	}
+	c.Assert(Cacheable(stmt), IsFalse)
+
+	limitStmt = &ast.Limit{
+		Offset: &driver.ParamMarkerExpr{},
+	}
+	stmt = &ast.UpdateStmt{
+		TableRefs: tableRefsClause,
+		Limit:     limitStmt,
+	}
+	c.Assert(Cacheable(stmt), IsFalse)
+
+	limitStmt = &ast.Limit{}
+	stmt = &ast.UpdateStmt{
+		TableRefs: tableRefsClause,
+		Limit:     limitStmt,
+	}
+	c.Assert(Cacheable(stmt), IsTrue)
+
+	// test SelectStmt
+	whereExpr = &ast.FuncCallExpr{}
 	stmt = &ast.SelectStmt{
 		Where: whereExpr,
 	}
@@ -66,7 +156,7 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	}
 	c.Assert(Cacheable(stmt), IsFalse)
 
-	limitStmt := &ast.Limit{
+	limitStmt = &ast.Limit{
 		Count: &driver.ParamMarkerExpr{},
 	}
 	stmt = &ast.SelectStmt{

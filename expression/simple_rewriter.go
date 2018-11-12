@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pkg/errors"
 )
 
 type simpleRewriter struct {
@@ -150,9 +150,11 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			sr.inToExpression(len(v.List), v.Not, &v.Type)
 		}
 	case *driver.ParamMarkerExpr:
-		tp := types.NewFieldType(mysql.TypeUnspecified)
-		types.DefaultParamTypeForValue(v.GetValue(), tp)
-		value := &Constant{Value: v.ValueExpr.Datum, RetType: tp}
+		var value Expression
+		value, sr.err = GetParamExpression(sr.ctx, v, sr.useCache())
+		if sr.err != nil {
+			return retNode, false
+		}
 		sr.push(value)
 	case *ast.RowExpr:
 		sr.rowToScalarFunc(v)
@@ -166,6 +168,10 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		return retNode, false
 	}
 	return originInNode, true
+}
+
+func (sr *simpleRewriter) useCache() bool {
+	return sr.ctx.GetSessionVars().StmtCtx.UseCache
 }
 
 func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
@@ -268,6 +274,9 @@ func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+		}
+		if op == ast.NE {
+			return ComposeDNFCondition(sr.ctx, funcs...), nil
 		}
 		return ComposeCNFCondition(sr.ctx, funcs...), nil
 	default:

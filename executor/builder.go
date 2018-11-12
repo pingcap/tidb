@@ -24,6 +24,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -47,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -112,6 +112,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plannercore.CancelDDLJobs:
 		return b.buildCancelDDLJobs(v)
+	case *plannercore.ShowNextRowID:
+		return b.buildShowNextRowID(v)
 	case *plannercore.ShowDDL:
 		return b.buildShowDDL(v)
 	case *plannercore.ShowDDLJobs:
@@ -181,6 +183,14 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
+	}
+	return e
+}
+
+func (b *executorBuilder) buildShowNextRowID(v *plannercore.ShowNextRowID) Executor {
+	e := &ShowNextRowIDExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		tblName:      v.TableName,
 	}
 	return e
 }
@@ -1000,7 +1010,7 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 
 	return &ProjectionExec{
 		baseExecutor:  newBaseExecutor(b.ctx, expression.NewSchema(projSchemaCols...), projFromID, src),
-		evaluatorSuit: expression.NewEvaluatorSuit(projExprs),
+		evaluatorSuit: expression.NewEvaluatorSuite(projExprs, false),
 	}
 }
 
@@ -1139,7 +1149,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
 		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency,
-		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
+		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
 

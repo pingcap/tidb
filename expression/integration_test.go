@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -135,6 +135,7 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	// for uuid
 	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
 	for _, it := range r.Rows() {
@@ -1807,6 +1808,11 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 		{"\"2009-01-01\"", "6/4", "HOUR_MINUTE", "2009-01-04 12:20:00", "2008-12-28 11:40:00"},
 		{"\"2009-01-01\"", "6/0", "HOUR_MINUTE", "<nil>", "<nil>"},
 		{"\"1970-01-01 12:00:00\"", "CAST(6/4 AS DECIMAL(3,1))", "HOUR_MINUTE", "1970-01-01 13:05:00", "1970-01-01 10:55:00"},
+		//for issue #8077
+		{"\"2012-01-02\"", "\"prefix8\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
+		{"\"2012-01-02\"", "\"prefix8prefix\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
+		{"\"2012-01-02\"", "\"8:00\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
+		{"\"2012-01-02\"", "\"8:00:00\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
 	}
 	for _, tc := range dateArithmeticalTests {
 		addDate := fmt.Sprintf("select adddate(%s, interval %s %s);", tc.Date, tc.Interval, tc.Unit)
@@ -2881,6 +2887,18 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a bigint unsigned)")
 	tk.MustExec("insert into t value(17666000000000000000)")
 	tk.MustQuery("select * from t where a = 17666000000000000000").Check(testkit.Rows("17666000000000000000"))
+
+	// test for compare row
+	result = tk.MustQuery(`select row(1,2,3)=row(1,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1,2,3)=row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
@@ -3127,6 +3145,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	rs, err := tk.Exec("select date '0000-00-00';")
+	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("0000-00-00")), IsTrue)
@@ -3156,6 +3175,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	c.Assert(rs.Close(), IsNil)
 
 	rs, err = tk.Exec("select date '0000-00-00';")
+	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("0000-00-00")), IsTrue)
@@ -3660,4 +3680,14 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	tk.MustExec("insert into t select 0.5999991229316*0.918755041726043;")
 	res := tk.MustQuery("select * from t;")
 	res.Check(testkit.Rows("0.55125221922461136"))
+}
+
+func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);`)
+	tk.MustExec(`insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");`)
+	res := tk.MustQuery(`select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;`)
+	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
 }

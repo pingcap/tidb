@@ -255,6 +255,13 @@ func MockTable() *model.TableInfo {
 		FieldType: newLongType(),
 		ID:        10,
 	}
+	col6 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    10,
+		Name:      model.NewCIStr("h"),
+		FieldType: newLongType(),
+		ID:        10,
+	}
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
@@ -262,8 +269,9 @@ func MockTable() *model.TableInfo {
 	col2.Flag = mysql.NotNullFlag
 	col4.Flag = mysql.NotNullFlag
 	col5.Flag = mysql.NotNullFlag
+	col6.Flag = mysql.NoDefaultValueFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
@@ -366,8 +374,8 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best: "Join{DataScan(ta)->Join{DataScan(tb)->DataScan(tc)}(tb.b,tc.b)}(ta.a,tb.a)(ta.c,tc.c)->Sel([or(gt(tc.d, 0), gt(ta.d, 0))])->Projection",
 		},
 		{
-			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ifnull(tb.d, null) or tb.d is null",
-			best: "Join{DataScan(ta)->DataScan(tb)}(ta.d,tb.d)->Sel([or(ifnull(tb.d, <nil>), isnull(tb.d))])->Projection",
+			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ifnull(tb.d, 1) or tb.d is null",
+			best: "Join{DataScan(ta)->DataScan(tb)}(ta.d,tb.d)->Sel([or(ifnull(tb.d, 1), isnull(tb.d))])->Projection",
 		},
 		{
 			sql:  "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
@@ -1247,8 +1255,8 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 
 func (s *testPlanSuite) TestAllocID(c *C) {
 	ctx := mockContext()
-	pA := DataSource{}.init(ctx)
-	pB := DataSource{}.init(ctx)
+	pA := DataSource{}.Init(ctx)
+	pB := DataSource{}.Init(ctx)
 	c.Assert(pA.id+1, Equals, pB.id)
 }
 
@@ -1803,7 +1811,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		},
 		{
 			sql:  "select a from t union select a from t union all select a from t",
-			best: "UnionAll{DataScan(t)->Projection->UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))->Projection}",
+			best: "UnionAll{UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))->Projection->DataScan(t)->Projection}",
 			err:  false,
 		},
 		{
@@ -1815,6 +1823,11 @@ func (s *testPlanSuite) TestUnion(c *C) {
 			sql:  "select a from t union select a, b from t",
 			best: "",
 			err:  true,
+		},
+		{
+			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by a",
+			best: "UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Projection->Sort",
+			err:  false,
 		},
 	}
 	for i, tt := range tests {
@@ -1830,7 +1843,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		plan, err := builder.Build(stmt)
 		if tt.err {
 			c.Assert(err, NotNil)
-			return
+			continue
 		}
 		c.Assert(err, IsNil)
 		p := plan.(LogicalPlan)
@@ -1941,7 +1954,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test `ByItem` containing column from both sides.
 		{
 			sql:  "select ifnull(t1.b, t2.a) from t t1 left join t t2 on t1.e=t2.e order by ifnull(t1.b, t2.a) limit 5",
-			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->TopN([ifnull(t1.b, t2.a)],0,5)->Projection->Projection",
+			best: "Join{DataScan(t1)->TopN([t1.b],0,5)->DataScan(t2)}(t1.e,t2.e)->TopN([t1.b],0,5)->Projection",
+		},
+		// Test ifnull cannot be eliminated
+		{
+			sql:  "select ifnull(t1.h, t2.b) from t t1 left join t t2 on t1.e=t2.e order by ifnull(t1.h, t2.b) limit 5",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->TopN([ifnull(t1.h, t2.b)],0,5)->Projection->Projection",
 		},
 	}
 	for i, tt := range tests {
@@ -2006,5 +2024,69 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		} else {
 			c.Assert(err.Error(), Equals, t.err)
 		}
+	}
+}
+
+func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Test left outer join + distinct
+		{
+			sql:  "select distinct t1.a, t1.b from t t1 left outer join t t2 on t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(firstrow(t1.a),firstrow(t1.b))",
+		},
+		// Test right outer join + distinct
+		{
+			sql:  "select distinct t2.a, t2.b from t t1 right outer join t t2 on t1.b = t2.b",
+			best: "DataScan(t2)->Aggr(firstrow(t2.a),firstrow(t2.b))",
+		},
+		// Test duplicate agnostic agg functions on join
+		{
+			sql:  "select max(t1.a), min(t1.b) from t t1 left join t t2 on t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(max(t1.a),min(t1.b))->Projection",
+		},
+		{
+			sql:  "select sum(distinct t1.a) from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(sum(t1.a))->Projection",
+		},
+		{
+			sql:  "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(count(t1.a, t1.b))->Projection",
+		},
+		// Test left outer join
+		{
+			sql:  "select t1.b from t t1 left outer join t t2 on t1.a = t2.a",
+			best: "DataScan(t1)->Projection",
+		},
+		// Test right outer join
+		{
+			sql:  "select t2.b from t t1 right outer join t t2 on t1.a = t2.a",
+			best: "DataScan(t2)->Projection",
+		},
+		// For complex join query
+		{
+			sql:  "select max(t3.b) from (t t1 left join t t2 on t1.a = t2.a) right join t t3 on t1.b = t3.b",
+			best: "DataScan(t3)->TopN([t3.b true],0,1)->Aggr(max(t3.b))->Projection",
+		},
+	}
+
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       mockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }

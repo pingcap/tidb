@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -82,8 +82,8 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	mCollation := charset.CharsetBin
 	mFlag := mysql.UnsignedFlag
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
-		mCharset = mysql.DefaultCharset
-		mCollation = mysql.DefaultCollationName
+		mCharset = charset.CharsetUTF8MB4
+		mCollation = charset.CollationUTF8MB4
 		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
@@ -881,7 +881,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			if collation == "" {
-				collation = charset.CollationUTF8
+				collation = mysql.DefaultCollationName
 			}
 			createTime := types.Time{
 				Time: types.FromGoTime(table.GetUpdateTime()),
@@ -1183,8 +1183,8 @@ func dataForPseudoProfiling() [][]types.Datum {
 		0,                      // PAGE_FAULTS_MAJOR
 		0,                      // PAGE_FAULTS_MINOR
 		0,                      // SWAPS
-		0,                      // SOURCE_FUNCTION
-		0,                      // SOURCE_FILE
+		"",                     // SOURCE_FUNCTION
+		"",                     // SOURCE_FILE
 		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)
