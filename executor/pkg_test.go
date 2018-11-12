@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
+	"testing"
 )
 
 var _ = Suite(&pkgTestSuite{})
@@ -115,23 +116,21 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	}
 }
 
-func prepareOneColChildExec(sctx sessionctx.Context) Executor {
+func prepareOneColChildExec(sctx sessionctx.Context, rowCount int) Executor {
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	schema := expression.NewSchema(col0)
 	exec := &MockExec{
 		baseExecutor: newBaseExecutor(sctx, schema, ""),
-		Rows:         make([]chunk.MutRow, 200)}
+		Rows:         make([]chunk.MutRow, rowCount)}
 	for i := 0; i < len(exec.Rows); i++ {
 		exec.Rows[i] = chunk.MutRowFromDatums(types.MakeDatums(i % 10))
 	}
 	return exec
 }
 
-func (s *pkgTestSuite) TestRadixPartition(c *C) {
-	sctx := mock.NewContext()
-
-	childExec0 := prepareOneColChildExec(sctx)
-	childExec1 := prepareOneColChildExec(sctx)
+func prepare4RadixPartition(sctx sessionctx.Context, rowCount int) *HashJoinExec {
+	childExec0 := prepareOneColChildExec(sctx, rowCount)
+	childExec1 := prepareOneColChildExec(sctx, rowCount)
 
 	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	col1 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
@@ -149,6 +148,12 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 		innerExec:       childExec0,
 		outerExec:       childExec1,
 	}
+	return hashJoinExec
+}
+
+func (s *pkgTestSuite) TestRadixPartition(c *C) {
+	sctx := mock.NewContext()
+	hashJoinExec := prepare4RadixPartition(sctx, 200)
 	sv := sctx.GetSessionVars()
 	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
 	sv.L2CacheSize = 100
@@ -236,5 +241,35 @@ func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
 		for j, db := range dbs {
 			c.Check(dbss[i][j], Equals, db)
 		}
+	}
+}
+
+func BenchmarkPartitionInnerRows(b *testing.B) {
+	sctx := mock.NewContext()
+	hashJoinExec := prepare4RadixPartition(sctx, 10000)
+	sv := sctx.GetSessionVars()
+	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
+	sv.L2CacheSize = 100
+	sv.EnableRadixJoin = true
+	sv.MaxChunkSize = 100
+	defer func() {
+		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
+	}()
+	sv.StmtCtx.MemTracker = memory.NewTracker("RootMemTracker", variable.DefTiDBMemQuotaHashJoin)
+
+	ctx := context.Background()
+	hashJoinExec.Open(ctx)
+	innerResultCh := make(chan *chunk.Chunk, hashJoinExec.joinConcurrency)
+	doneCh := make(chan struct{})
+	go func() {
+		for range innerResultCh {
+		}
+	}()
+
+	hashJoinExec.fetchInnerRows(ctx, innerResultCh, doneCh)
+	hashJoinExec.evalRadixBit()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		hashJoinExec.partitionInnerRows()
 	}
 }
