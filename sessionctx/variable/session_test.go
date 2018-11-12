@@ -35,11 +35,35 @@ func (*testSessionSuite) TestSession(c *C) {
 	ss.AddAffectedRows(1)
 	c.Assert(ss.AffectedRows(), Equals, uint64(2))
 
+	// For RecordRows
+	ss.AddRecordRows(1)
+	c.Assert(ss.RecordRows(), Equals, uint64(1))
+	ss.AddRecordRows(1)
+	c.Assert(ss.RecordRows(), Equals, uint64(2))
+
 	// For FoundRows
 	ss.AddFoundRows(1)
 	c.Assert(ss.FoundRows(), Equals, uint64(1))
 	ss.AddFoundRows(1)
 	c.Assert(ss.FoundRows(), Equals, uint64(2))
+
+	// For UpdatedRows
+	ss.AddUpdatedRows(1)
+	c.Assert(ss.UpdatedRows(), Equals, uint64(1))
+	ss.AddUpdatedRows(1)
+	c.Assert(ss.UpdatedRows(), Equals, uint64(2))
+
+	// For TouchedRows
+	ss.AddTouchedRows(1)
+	c.Assert(ss.TouchedRows(), Equals, uint64(1))
+	ss.AddTouchedRows(1)
+	c.Assert(ss.TouchedRows(), Equals, uint64(2))
+
+	// For CopiedRows
+	ss.AddCopiedRows(1)
+	c.Assert(ss.CopiedRows(), Equals, uint64(1))
+	ss.AddCopiedRows(1)
+	c.Assert(ss.CopiedRows(), Equals, uint64(2))
 
 	// For last insert id
 	ctx.GetSessionVars().SetLastInsertID(1)
@@ -48,5 +72,9 @@ func (*testSessionSuite) TestSession(c *C) {
 	ss.ResetForRetry()
 	c.Assert(ss.AffectedRows(), Equals, uint64(0))
 	c.Assert(ss.FoundRows(), Equals, uint64(0))
+	c.Assert(ss.UpdatedRows(), Equals, uint64(0))
+	c.Assert(ss.RecordRows(), Equals, uint64(0))
+	c.Assert(ss.TouchedRows(), Equals, uint64(0))
+	c.Assert(ss.CopiedRows(), Equals, uint64(0))
 	c.Assert(ss.WarningCount(), Equals, uint16(0))
 }
