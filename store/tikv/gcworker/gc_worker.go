@@ -117,6 +117,11 @@ const (
 	gcMaxConcurrency     = 128
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
+
+	gcEnableKey          = "tikv_gc_enable"
+	gcEnableValue        = "True"
+	gcDisableValue       = "False"
+	gcDefaultEnablevalue = true
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -130,6 +135,7 @@ var gcVariableComments = map[string]string{
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
 	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 2",
+	gcEnableKey:      "Current GC enable status",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -250,6 +256,14 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 // prepare checks preconditions for starting a GC job. It returns a bool
 // that indicates whether the GC job should start and the new safePoint.
 func (w *GCWorker) prepare() (bool, uint64, error) {
+	enable, err := w.checkGCEnable()
+	if !enable {
+		log.Warn("[gc worker] gc status is disabled.")
+		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
 	now, err := w.getOracleTime()
 	if err != nil {
 		return false, 0, errors.Trace(err)
@@ -281,6 +295,10 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 	physical := oracle.ExtractPhysical(currentVer.Ver)
 	sec, nsec := physical/1e3, (physical%1e3)*1e6
 	return time.Unix(sec, nsec), nil
+}
+
+func (w *GCWorker) checkGCEnable() (bool, error) {
+	return w.loadGCEnableStatus()
 }
 
 func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
@@ -493,6 +511,25 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	}
 
 	return jobConcurrency, nil
+}
+
+func (w *GCWorker) loadGCEnableStatus() (bool, error) {
+	str, err := w.loadValueFromSysTable(gcEnableKey)
+	if err != nil {
+		return gcDefaultEnablevalue, errors.Trace(err)
+	}
+	if str == "" {
+		defaultValue := gcDisableValue
+		if gcDefaultEnablevalue {
+			defaultValue = gcEnableValue
+		}
+		err = w.saveValueToSysTable(gcEnableKey, defaultValue)
+		if err != nil {
+			return gcDefaultEnablevalue, errors.Trace(err)
+		}
+		return gcDefaultEnablevalue, nil
+	}
+	return str == gcEnableValue, nil
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
