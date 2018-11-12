@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file. See also [R
 
 ## [2.1.0-rc.5] - 2018-11-12
 ### SQL Optimizer
-* Fix the issue that `inexreader` reads the wrong handle in some cases [#8132](https://github.com/pingcap/tidb/pull/8132)
+* Fix the issue that `indexreader` reads the wrong handle in some cases [#8132](https://github.com/pingcap/tidb/pull/8132)
 * Fix the issue occurred while the `IndexScan Prepared` statement uses `Plan Cache` [#8055](https://github.com/pingcap/tidb/pull/8055)
 * Fix the issue that the result of the `Union` statement is unstable [#8165](https://github.com/pingcap/tidb/pull/8165)
 ### SQL Execution Engine
