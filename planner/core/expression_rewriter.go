@@ -17,18 +17,19 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -36,7 +37,7 @@ var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx sessionctx.C
 
 // evalAstExpr evaluates ast expression directly.
 func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
-	if val, ok := expr.(*ast.ValueExpr); ok {
+	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
 	b := &PlanBuilder{
@@ -195,18 +196,15 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 				return nil, errors.Trace(err)
 			}
 		}
+		if op == ast.NE {
+			return expression.ComposeDNFCondition(er.ctx, funcs...), nil
+		}
 		return expression.ComposeCNFCondition(er.ctx, funcs...), nil
 	default:
 		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
 		var expr1, expr2, expr3 expression.Expression
-		if op == ast.LE || op == ast.GE {
-			expr1 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr1 = expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, expression.Zero)
-			expr2 = expression.Zero
-		} else if op == ast.LT || op == ast.GT {
-			expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		}
+		expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		var err error
 		l, err = expression.PopRowFirstArg(er.ctx, l)
 		if err != nil {
@@ -215,6 +213,18 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		r, err = expression.PopRowFirstArg(er.ctx, r)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if evalexpr, ok := expr1.(*expression.Constant); ok {
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
+			if err1 != nil || isNull {
+				return expr1, err1
+			}
+		}
+		if evalexpr, ok := expr2.(*expression.Constant); ok {
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
+			if err1 != nil || isNull {
+				return expr2, err1
+			}
 		}
 		expr3, err = er.constructBinaryOpFunction(l, r, op)
 		if err != nil {
@@ -392,7 +402,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 // handleOtherComparableSubq handles the queries like < any, < max, etc. For example, if the query is t.id < any (select s.id from s),
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
-	plan4Agg := LogicalAggregation{}.init(er.ctx)
+	plan4Agg := LogicalAggregation{}.Init(er.ctx)
 	plan4Agg.SetChildren(np)
 
 	// Create a "max" or "min" aggregation.
@@ -467,14 +477,14 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	joinSchema := er.p.Schema()
 	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
-	}.init(er.ctx)
+	}.Init(er.ctx)
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
-		ColName:     model.NewCIStr("aux_col"),
-		UniqueID:    er.ctx.GetSessionVars().AllocPlanColumnID(),
-		IsAggOrSubq: true,
-		RetType:     cond.GetType(),
+		ColName:      model.NewCIStr("aux_col"),
+		UniqueID:     er.ctx.GetSessionVars().AllocPlanColumnID(),
+		IsReferenced: true,
+		RetType:      cond.GetType(),
 	})
 	proj.SetChildren(er.p)
 	er.p = proj
@@ -488,7 +498,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
-	}.init(er.ctx)
+	}.Init(er.ctx)
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -514,7 +524,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
-	}.init(er.ctx)
+	}.Init(er.ctx)
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
@@ -583,7 +593,7 @@ out:
 			p = p.Children()[0]
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
-				p = LogicalTableDual{RowCount: 1}.init(er.ctx)
+				p = LogicalTableDual{RowCount: 1}.Init(er.ctx)
 				break out
 			}
 			p = p.Children()[0]
@@ -617,38 +627,6 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 		return v, true
 	}
-	// Sometimes we can unfold the in subquery. For example, a in (select * from t) can rewrite to `a in (1,2,3,4)`.
-	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
-	// We will improve our CBO framework in future.
-	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
-		physicalPlan, err1 := DoOptimize(er.b.optFlag, np)
-		if err1 != nil {
-			er.err = errors.Trace(err1)
-			return v, true
-		}
-		rows, err1 := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
-		if err1 != nil {
-			er.err = errors.Trace(err1)
-			return v, true
-		}
-		for _, row := range rows {
-			con := &expression.Constant{
-				Value:   row[0],
-				RetType: np.Schema().Columns[0].GetType(),
-			}
-			er.ctxStack = append(er.ctxStack, con)
-		}
-		listLen := len(rows)
-		if listLen == 0 {
-			er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
-				Value:   types.NewDatum(v.Not),
-				RetType: types.NewFieldType(mysql.TypeTiny),
-			}
-		} else {
-			er.inToExpression(listLen, v.Not, &v.Type)
-		}
-		return v, true
-	}
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
@@ -670,9 +648,40 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
-	if er.err != nil {
-		return v, true
+	// If it's not the form of `not in (SUBQUERY)`, has no correlated column and don't need to append a scalar value. We can rewrite it to inner join.
+	if er.ctx.GetSessionVars().AllowInSubqToJoinAndAgg && !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
+		// We need to try to eliminate the agg and the projection produced by this operation.
+		er.b.optFlag |= flagEliminateAgg
+		er.b.optFlag |= flagEliminateProjection
+		// Build distinct for the inner query.
+		agg := er.b.buildDistinct(np, np.Schema().Len())
+		for _, col := range agg.schema.Columns {
+			col.IsReferenced = true
+		}
+		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg, false, false)
+		// Build inner join above the aggregation.
+		join := LogicalJoin{
+			JoinType:        InnerJoin,
+			EqualConditions: eq,
+			LeftConditions:  left,
+			RightConditions: right,
+			OtherConditions: other,
+		}.Init(er.ctx)
+		join.SetChildren(er.p, agg)
+		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
+		// Set join hint for this join.
+		if er.b.TableHints() != nil {
+			er.err = join.setPreferredJoinType(er.b.TableHints())
+			if er.err != nil {
+				return v, true
+			}
+		}
+		er.p = join
+	} else {
+		er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
+		if er.err != nil {
+			return v, true
+		}
 	}
 
 	if asScalar {
@@ -753,15 +762,14 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
-	case *ast.ValueExpr:
+	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
-	case *ast.ParamMarkerExpr:
-		tp := types.NewFieldType(mysql.TypeUnspecified)
-		types.DefaultParamTypeForValue(v.GetValue(), tp)
-		value := &expression.Constant{Value: v.Datum, RetType: tp}
-		if er.useCache() {
-			value.DeferredExpr = er.getParamExpression(v)
+	case *driver.ParamMarkerExpr:
+		var value expression.Expression
+		value, er.err = expression.GetParamExpression(er.ctx, v, er.useCache())
+		if er.err != nil {
+			return retNode, false
 		}
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.VariableExpr:
@@ -816,23 +824,6 @@ func (er *expressionRewriter) useCache() bool {
 	return er.ctx.GetSessionVars().StmtCtx.UseCache
 }
 
-func datumToConstant(d types.Datum, tp byte) *expression.Constant {
-	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
-}
-
-func (er *expressionRewriter) getParamExpression(v *ast.ParamMarkerExpr) expression.Expression {
-	f, err := expression.NewFunction(er.ctx,
-		ast.GetParam,
-		&v.Type,
-		datumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
-	if err != nil {
-		er.err = errors.Trace(err)
-		return nil
-	}
-	f.GetType().Tp = v.Type.Tp
-	return f
-}
-
 func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
@@ -842,7 +833,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			er.ctxStack[stkLen-1], er.err = expression.NewFunction(er.ctx,
 				ast.SetVar,
 				er.ctxStack[stkLen-1].GetType(),
-				datumToConstant(types.NewDatum(name), mysql.TypeString),
+				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			return
 		}
@@ -850,7 +841,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			ast.GetVar,
 			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
 			types.NewFieldType(mysql.TypeString),
-			datumToConstant(types.NewStringDatum(name), mysql.TypeString))
+			expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
 		if err != nil {
 			er.err = errors.Trace(err)
 			return
@@ -876,7 +867,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = errors.Trace(err)
 		return
 	}
-	e := datumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	e := expression.DatumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
 	e.RetType.Charset, _ = er.ctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.RetType.Collate, _ = er.ctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStack = append(er.ctxStack, e)
@@ -1174,6 +1165,26 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 // Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
 func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
+	// when column is not null, ifnull on such column is not necessary.
+	case ast.Ifnull:
+		if len(v.Args) != 2 {
+			er.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
+			return true
+		}
+		stackLen := len(er.ctxStack)
+		arg1 := er.ctxStack[stackLen-2]
+		col, isColumn := arg1.(*expression.Column)
+		// if expr1 is a column and column has not null flag, then we can eliminate ifnull on
+		// this column.
+		if isColumn && mysql.HasNotNullFlag(col.RetType.Flag) {
+			newCol := col.Clone().(*expression.Column)
+			newCol.IsReferenced = true
+			er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
+			er.ctxStack = append(er.ctxStack, newCol)
+			return true
+		}
+
+		return false
 	case ast.Nullif:
 		if len(v.Args) != 2 {
 			er.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
@@ -1216,13 +1227,22 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	if er.err != nil {
 		return
 	}
+
 	if er.rewriteFuncCall(v) {
 		return
 	}
+
 	var function expression.Expression
-	function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
-	er.ctxStack = append(er.ctxStack, function)
+	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
+		function, er.err = expression.NewFunctionBase(er.ctx, v.FnName.L, &v.Type, args...)
+		c := &expression.Constant{Value: types.NewDatum(nil), RetType: &v.Type, DeferredExpr: function}
+		c.GetType().Tp = function.GetType().Tp
+		er.ctxStack = append(er.ctxStack, c)
+	} else {
+		function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)
+		er.ctxStack = append(er.ctxStack, function)
+	}
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {

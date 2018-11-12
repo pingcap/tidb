@@ -16,7 +16,7 @@ package core
 import (
 	"sort"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
@@ -72,7 +72,7 @@ func getCartesianJoinGroup(p *LogicalJoin) []LogicalPlan {
 	return append(lhsJoinGroup, rChild)
 }
 
-func findColumnIndexByGroup(groups []LogicalPlan, col *expression.Column) int {
+func findNodeIndexInGroup(groups []LogicalPlan, col *expression.Column) int {
 	for i, plan := range groups {
 		if plan.Schema().Contains(col) {
 			return i
@@ -143,8 +143,8 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 				lCol, lok := f.GetArgs()[0].(*expression.Column)
 				rCol, rok := f.GetArgs()[1].(*expression.Column)
 				if lok && rok {
-					lID := findColumnIndexByGroup(group, lCol)
-					rID := findColumnIndexByGroup(group, rCol)
+					lID := findNodeIndexInGroup(group, lCol)
+					rID := findNodeIndexInGroup(group, rCol)
 					if lID != rID {
 						e.graph[lID] = append(e.graph[lID], &rankInfo{nodeID: rID})
 						e.graph[rID] = append(e.graph[rID], &rankInfo{nodeID: lID})
@@ -156,7 +156,7 @@ func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.
 			rate := 1.0
 			cols := expression.ExtractColumns(f)
 			for _, col := range cols {
-				idx := findColumnIndexByGroup(group, col)
+				idx := findNodeIndexInGroup(group, col)
 				if id == -1 {
 					switch f.FuncName.L {
 					case ast.EQ:
@@ -219,7 +219,7 @@ func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.init(e.ctx)
+	}.Init(e.ctx)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	return join

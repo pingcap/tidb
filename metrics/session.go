@@ -62,14 +62,14 @@ var (
 			Subsystem: "session",
 			Name:      "retry_error_total",
 			Help:      "Counter of session retry error.",
-		}, []string{LblType})
+		}, []string{LblSQLType, LblType})
 	TransactionCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "transaction_total",
 			Help:      "Counter of transactions.",
-		}, []string{LblType})
+		}, []string{LblSQLType, LblType})
 
 	SessionRestrictedSQLCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -86,7 +86,7 @@ var (
 			Name:      "transaction_statement_num",
 			Help:      "Buckated histogram of statements count in each transaction.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 12),
-		}, []string{LblType})
+		}, []string{LblSQLType, LblType})
 
 	TransactionDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -95,7 +95,7 @@ var (
 			Name:      "transaction_duration_seconds",
 			Help:      "Bucketed histogram of a transaction execution duration, including retry.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 16), // range 1ms ~ 64s
-		}, []string{LblType})
+		}, []string{LblSQLType, LblType})
 )
 
 // Label constants.

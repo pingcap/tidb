@@ -19,16 +19,16 @@ import (
 	"io"
 	"unicode/utf8"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pkg/errors"
 )
 
 // EncodeHandle encodes handle in data.
@@ -240,7 +240,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues
 
 // Drop removes the KV index from store.
 func (c *index) Drop(rm kv.RetrieverMutator) error {
-	it, err := rm.Seek(c.prefix)
+	it, err := rm.Iter(c.prefix, c.prefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -270,7 +270,8 @@ func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues
 		return nil, false, errors.Trace(err)
 	}
 
-	it, err := r.Seek(key)
+	upperBound := c.prefix.PrefixNext()
+	it, err := r.Iter(key, upperBound)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -284,7 +285,8 @@ func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues
 
 // SeekFirst returns an iterator which points to the first entry of the KV index.
 func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) {
-	it, err := r.Seek(c.prefix)
+	upperBound := c.prefix.PrefixNext()
+	it, err := r.Iter(c.prefix, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -17,12 +17,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 )
 
 // Plan is the description of an execution flow.
@@ -50,7 +50,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	}
 	tsk = finishCopTask(ctx, tsk)
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.Cols, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Cols))}.init(ctx, tsk.plan().statsInfo(), sortReqProp)
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Cols))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
 	for _, col := range p.Cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.Desc})
 	}

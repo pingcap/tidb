@@ -20,15 +20,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -76,6 +77,10 @@ type twoPhaseCommitter struct {
 	syncLog  bool
 	connID   uint64 // connID is used for log.
 	cleanWg  sync.WaitGroup
+	// The max time a Txn may use (in ms) from its startTS to commitTS.
+	// We use it to guarantee GC worker will not influence any active txn. The value
+	// should be less than GC life time.
+	maxTxnTimeUse uint64
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -140,18 +145,22 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 			connID, tableID, size, len(keys), putCnt, delCnt, lockCnt, txn.startTS)
 	}
 
+	// Convert from sec to ms
+	maxTxnTimeUse := uint64(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse) * 1000
+
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(len(keys)))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(size))
 	return &twoPhaseCommitter{
-		store:     txn.store,
-		txn:       txn,
-		startTS:   txn.StartTS(),
-		keys:      keys,
-		mutations: mutations,
-		lockTTL:   txnLockTTL(txn.startTime, size),
-		priority:  getTxnPriority(txn),
-		syncLog:   getTxnSyncLog(txn),
-		connID:    connID,
+		store:         txn.store,
+		txn:           txn,
+		startTS:       txn.StartTS(),
+		keys:          keys,
+		mutations:     mutations,
+		lockTTL:       txnLockTTL(txn.startTime, size),
+		priority:      getTxnPriority(txn),
+		syncLog:       getTxnSyncLog(txn),
+		connID:        connID,
+		maxTxnTimeUse: maxTxnTimeUse,
 	}, nil
 }
 
@@ -542,11 +551,6 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup, keys)
 }
 
-// The max time a Txn may use (in ms) from its startTS to commitTS.
-// We use it to guarantee GC worker will not influence any active txn. The value
-// should be less than `gcRunInterval`.
-const maxTxnTimeUse = 590000
-
 func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) error {
 	err := c.execute(ctx)
 	if err != nil {
@@ -569,7 +573,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		if !committed && !undetermined {
 			c.cleanWg.Add(1)
 			go func() {
-				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
+				cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
+				err := c.cleanupKeys(NewBackoffer(cleanupKeysCtx, cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
 				if err != nil {
 					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
 					log.Infof("con:%d 2PC cleanup err: %v, tid: %d", c.connID, err, c.startTS)
@@ -612,7 +617,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
+	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
 		err = errors.Errorf("con:%d txn takes too much time, start: %d, commit: %d", c.connID, c.startTS, c.commitTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}

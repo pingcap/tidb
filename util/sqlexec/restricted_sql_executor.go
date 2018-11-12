@@ -14,7 +14,7 @@
 package sqlexec
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
@@ -42,7 +42,7 @@ type RestrictedSQLExecutor interface {
 // For example, privilege/privileges package need execute SQL, if it use
 // session.Session.Execute, then privilege/privileges and tidb would become a circle.
 type SQLExecutor interface {
-	Execute(ctx context.Context, sql string) ([]ast.RecordSet, error)
+	Execute(ctx context.Context, sql string) ([]RecordSet, error)
 }
 
 // SQLParser is an interface provides parsing sql statement.
@@ -51,4 +51,42 @@ type SQLExecutor interface {
 // thus avoid allocating new parser. See session.SQLParser for more information.
 type SQLParser interface {
 	ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error)
+}
+
+// Statement is an interface for SQL execution.
+// NOTE: all Statement implementations must be safe for
+// concurrent using by multiple goroutines.
+// If the Exec method requires any Execution domain local data,
+// they must be held out of the implementing instance.
+type Statement interface {
+	// OriginText gets the origin SQL text.
+	OriginText() string
+
+	// Exec executes SQL and gets a Recordset.
+	Exec(ctx context.Context) (RecordSet, error)
+
+	// IsPrepared returns whether this statement is prepared statement.
+	IsPrepared() bool
+
+	// IsReadOnly returns if the statement is read only. For example: SelectStmt without lock.
+	IsReadOnly() bool
+
+	// RebuildPlan rebuilds the plan of the statement.
+	RebuildPlan() (schemaVersion int64, err error)
+}
+
+// RecordSet is an abstract result set interface to help get data from Plan.
+type RecordSet interface {
+	// Fields gets result fields.
+	Fields() []*ast.ResultField
+
+	// Next reads records into chunk.
+	Next(ctx context.Context, chk *chunk.Chunk) error
+
+	// NewChunk creates a new chunk with initial capacity.
+	NewChunk() *chunk.Chunk
+
+	// Close closes the underlying iterator, call Next after Close will
+	// restart the iteration.
+	Close() error
 }
