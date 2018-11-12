@@ -360,7 +360,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 
 func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
 	job.State = model.JobStateRollingback
-	job.Args = []interface{}{indexInfo.Name}
+	// the second args will be used in onDropIndex.
+	job.Args = []interface{}{indexInfo.Name, getPartitionIDs(tblInfo)}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
 	// The write reorganization state in add index job that likes write only state in drop index job.
@@ -437,7 +438,8 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 			job.Args[0] = indexInfo.ID
-			job.Args = append(job.Args, getPartitionIDs(tblInfo))
+			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compability,
+			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
