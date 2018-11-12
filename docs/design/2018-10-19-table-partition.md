@@ -20,7 +20,7 @@ For current implementation in this proposal, subpartition is not considered. Reo
 
 ## Rationale
 
-The new table partition feature should be problem-solving oriented, and it may not cover all MySQL counterpart at first.
+The new table partition feature should be problem-solving oriented, and it may not cover all MySQL counterparts at first.
 
 The syntax should be always MySQL compatible, as TiDB's promise from the beginning.
 
