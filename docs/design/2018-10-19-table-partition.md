@@ -136,7 +136,7 @@ Refer to [Restrictions and Limitations on Partitioning](https://dev.mysql.com/do
 
 The partition key cannot be an integer column, or an expression which resolves to an integer (or NULL).
 
-The partition key must not be a subquery, even a subquery which resolves to an integer.
+The partition key cannot be a subquery, even a subquery which resolves to an integer.
 
 The maximum partitions count of a table is 8192 in MySQL, but 1024 in TiDB.
 
