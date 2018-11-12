@@ -58,7 +58,7 @@ When a new row is inserted into a partitioned table, if the row doesn't belong t
 
 Refer to the [MySQL document](https://dev.mysql.com/doc/refman/8.0/en/partitioning-handling-nulls.html) for handling `NULL` values.
 
-### How to read from the partitioned table
+### How to read data from the partitioned table
 
 ```
 create table t (id int) partition by range (id)
