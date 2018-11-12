@@ -56,7 +56,7 @@ The relationship of Table ID and partition ID should be maintained in the `Table
 
 When a new row is inserted into a partitioned table, if the row doesn't belong to any partition of the table, the operation fails.
 
-Refer to the MySQL document https://dev.mysql.com/doc/refman/8.0/en/partitioning-handling-nulls.html for handling `NULL` values.
+Refer to the [MySQL document](https://dev.mysql.com/doc/refman/8.0/en/partitioning-handling-nulls.html) for handling `NULL` values.
 
 ### How to read from the partitioned table
 
