@@ -10,7 +10,7 @@ This proposal proposes to support the table partition feature.
 
 ## Background
 
-MySQL has the [table partition](https://dev.mysql.com/doc/refman/8.0/en/partitioning.html) feature. If this feature is supported in TiDB, many issues could be addressed. For example, drop ranged partitions could be used to remove old data; partition by hash could address the hot data issue thus improve the write performance; query on partitioned table could be faster than on manual sharding tables because of the partition pruning.
+MySQL has the [table partition](https://dev.mysql.com/doc/refman/8.0/en/partitioning.html) feature. If this feature is supported in TiDB, many issues could be addressed. For example, drop ranged partitions could be used to remove old data; partition by hash could address the hot data issue and thus the write performance is improved; query on partitioned tables could be faster than on manual sharding tables because of the partition pruning.
 
 ## Proposal
 
