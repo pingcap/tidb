@@ -115,7 +115,7 @@ Trancate partition truncates all data and indexes in a partition, but keeps the 
 
 ### Partition management
 
-There are many statements for partition management, but the current implementation could just parse the SQL and ignore them.
+There are many statements for partition management, but the current implementation could just parse the SQL statements and ignore them.
 
 ```
 ALTER TABLE ... REBUILD PARTITION ...
