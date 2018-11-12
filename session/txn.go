@@ -14,6 +14,7 @@
 package session
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -159,26 +159,26 @@ func (st *TxnState) Delete(k kv.Key) error {
 	return st.buf.Delete(k)
 }
 
-// Seek overrides the Transaction interface.
-func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.Seek(k)
+// Iter overrides the Transaction interface.
+func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.Seek(k)
+	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekReverse overrides the Transaction interface.
-func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.SeekReverse(k)
+// IterReverse overrides the Transaction interface.
+func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.SeekReverse(k)
+	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

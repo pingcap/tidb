@@ -21,14 +21,14 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -334,8 +334,8 @@ func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 
 func (a *AggFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeVarString)
-	a.RetTp.Charset = charset.CharsetUTF8
-	a.RetTp.Collate = charset.CollationUTF8
+	a.RetTp.Charset, a.RetTp.Collate = charset.GetDefaultCharsetAndCollate()
+
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
 }

@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -207,4 +207,34 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	}
 	err = hashJoinExec.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
+	dbss := [][]string{
+		{},
+		{"A", "B", "C", "a", "b", "c"},
+		{"A", "B", "C", "INFORMATION_SCHEMA"},
+		{"A", "B", "INFORMATION_SCHEMA", "a"},
+		{"INFORMATION_SCHEMA"},
+		{"A", "B", "C", "INFORMATION_SCHEMA", "a", "b"},
+	}
+	wanted := [][]string{
+		{},
+		{"A", "B", "C", "a", "b", "c"},
+		{"INFORMATION_SCHEMA", "A", "B", "C"},
+		{"INFORMATION_SCHEMA", "A", "B", "a"},
+		{"INFORMATION_SCHEMA"},
+		{"INFORMATION_SCHEMA", "A", "B", "C", "a", "b"},
+	}
+
+	for _, dbs := range dbss {
+		moveInfoSchemaToFront(dbs)
+	}
+
+	for i, dbs := range wanted {
+		c.Check(len(dbss[i]), Equals, len(dbs))
+		for j, db := range dbs {
+			c.Check(dbss[i][j], Equals, db)
+		}
+	}
 }
