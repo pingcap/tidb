@@ -420,7 +420,7 @@ import (
 	extract			"EXTRACT"
 	getFormat		"GET_FORMAT"
 	groupConcat		"GROUP_CONCAT"
-	next_row_id		"NEXT_ROW_ID"
+	nextRowID		"NEXT_ROW_ID"
 	inplace 		"INPLACE"
 	internal		"INTERNAL"
 	min			"MIN"
