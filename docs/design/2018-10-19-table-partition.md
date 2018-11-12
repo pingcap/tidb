@@ -16,7 +16,7 @@ MySQL has the [table partition](https://dev.mysql.com/doc/refman/8.0/en/partitio
 
 Implement the table partition feature step by step. Partition by range first, then partition by hash.
 
-For current implementation in this proposal, subpartition is not considered. Reorganize partition involving data movement remains unsupported.
+For current implementation in this proposal, subpartition is not considered. Reorganizing partition involving data movement remains unsupported.
 
 ## Rationale
 
