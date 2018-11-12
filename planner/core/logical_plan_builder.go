@@ -309,9 +309,13 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 	// Set join type.
 	switch joinNode.Tp {
 	case ast.LeftJoin:
+		// left outer join need to be checked elimination
+		b.optFlag = b.optFlag | flagEliminateOuterJoin
 		joinPlan.JoinType = LeftOuterJoin
 		resetNotNullFlag(joinPlan.schema, leftPlan.Schema().Len(), joinPlan.schema.Len())
 	case ast.RightJoin:
+		// right outer join need to be checked elimination
+		b.optFlag = b.optFlag | flagEliminateOuterJoin
 		joinPlan.JoinType = RightOuterJoin
 		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len())
 	default:
