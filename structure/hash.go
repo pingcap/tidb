@@ -238,7 +238,7 @@ func (t *TxStructure) HClear(key []byte) error {
 
 func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
-	it, err := t.reader.Iter(dataPrefix, nil)
+	it, err := t.reader.Iter(dataPrefix, dataPrefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}
