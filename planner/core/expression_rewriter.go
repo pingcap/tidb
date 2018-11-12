@@ -196,18 +196,15 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 				return nil, errors.Trace(err)
 			}
 		}
+		if op == ast.NE {
+			return expression.ComposeDNFCondition(er.ctx, funcs...), nil
+		}
 		return expression.ComposeCNFCondition(er.ctx, funcs...), nil
 	default:
 		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
 		var expr1, expr2, expr3 expression.Expression
-		if op == ast.LE || op == ast.GE {
-			expr1 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr1 = expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, expression.Zero)
-			expr2 = expression.Zero
-		} else if op == ast.LT || op == ast.GT {
-			expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		}
+		expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		var err error
 		l, err = expression.PopRowFirstArg(er.ctx, l)
 		if err != nil {
@@ -216,6 +213,18 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		r, err = expression.PopRowFirstArg(er.ctx, r)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if evalexpr, ok := expr1.(*expression.Constant); ok {
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
+			if err1 != nil || isNull {
+				return expr1, err1
+			}
+		}
+		if evalexpr, ok := expr2.(*expression.Constant); ok {
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
+			if err1 != nil || isNull {
+				return expr2, err1
+			}
 		}
 		expr3, err = er.constructBinaryOpFunction(l, r, op)
 		if err != nil {
@@ -472,10 +481,10 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
-		ColName:     model.NewCIStr("aux_col"),
-		UniqueID:    er.ctx.GetSessionVars().AllocPlanColumnID(),
-		IsAggOrSubq: true,
-		RetType:     cond.GetType(),
+		ColName:      model.NewCIStr("aux_col"),
+		UniqueID:     er.ctx.GetSessionVars().AllocPlanColumnID(),
+		IsReferenced: true,
+		RetType:      cond.GetType(),
 	})
 	proj.SetChildren(er.p)
 	er.p = proj
@@ -647,7 +656,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		// Build distinct for the inner query.
 		agg := er.b.buildDistinct(np, np.Schema().Len())
 		for _, col := range agg.schema.Columns {
-			col.IsAggOrSubq = true
+			col.IsReferenced = true
 		}
 		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg, false, false)
 		// Build inner join above the aggregation.
@@ -1164,12 +1173,14 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		}
 		stackLen := len(er.ctxStack)
 		arg1 := er.ctxStack[stackLen-2]
-		newArg1, isColumn := arg1.(*expression.Column)
+		col, isColumn := arg1.(*expression.Column)
 		// if expr1 is a column and column has not null flag, then we can eliminate ifnull on
 		// this column.
-		if isColumn && mysql.HasNotNullFlag(newArg1.RetType.Flag) {
+		if isColumn && mysql.HasNotNullFlag(col.RetType.Flag) {
+			newCol := col.Clone().(*expression.Column)
+			newCol.IsReferenced = true
 			er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
-			er.ctxStack = append(er.ctxStack, newArg1)
+			er.ctxStack = append(er.ctxStack, newCol)
 			return true
 		}
 
