@@ -24,7 +24,7 @@ The new table partition feature should be problem-solving oriented, and it may n
 
 The syntax should be always MySQL compatible, as TiDB's promise from the beginning.
 
-For those partitioned tables which contain unimplemented features, TiDB parses the SQL but ignores its partition attributes, regards the table as a normal one.
+For those partitioned tables which contain unimplemented features, TiDB parses the SQL statements but ignores its partition attributes, and regards the table as a normal one.
 
 ## Compatibility
 
