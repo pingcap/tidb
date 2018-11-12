@@ -107,7 +107,7 @@ Each partition maintains its own index data, and the insert operation should kee
 
 ### DDL operations
 
-DROP/TRUNCATE/ADD, those three operations works on range partition.
+DROP/TRUNCATE/ADD, those three operations work on range partition.
 
 `DROP PARTITION` is similar to `DROP TABLE`, except that partition ID is used. `TableInfo` should be updated after the drop partition operation. Note that if one wants to drop the last partition in a table, he should use drop table rather than drop partition.
 
