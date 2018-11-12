@@ -20,6 +20,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -502,6 +503,10 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ChecksumTable{Tables: as.Tables}
 		p.SetSchema(buildChecksumTableSchema())
 		ret = p
+	case ast.AdminShowNextRowID:
+		p := &ShowNextRowID{TableName: as.Tables[0]}
+		p.SetSchema(buildShowNextRowID())
+		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
@@ -761,6 +766,15 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	return b.buildAnalyzeTable(as)
 }
 
+func buildShowNextRowID() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
+	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, mysql.MaxDatabaseNameLength))
+	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, mysql.MaxTableNameLength))
+	schema.Append(buildColumn("", "COLUMN_NAME", mysql.TypeVarchar, mysql.MaxColumnNameLength))
+	schema.Append(buildColumn("", "NEXT_GLOBAL_ROW_ID", mysql.TypeLonglong, 4))
+	return schema
+}
+
 func buildShowDDLFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
@@ -839,8 +853,8 @@ func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
 	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
-		cs = mysql.DefaultCharset
-		cl = mysql.DefaultCollationName
+		cs = charset.CharsetUTF8MB4
+		cl = charset.CollationUTF8MB4
 		flag = 0
 	}
 

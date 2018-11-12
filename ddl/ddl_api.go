@@ -65,7 +65,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		dbInfo.Charset = charsetInfo.Chs
 		dbInfo.Collate = charsetInfo.Col
 	} else {
-		dbInfo.Charset, dbInfo.Collate = getDefaultCharsetAndCollate()
+		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 
 	job := &model.Job{
@@ -116,13 +116,6 @@ func checkTooLongIndex(index model.CIStr) error {
 		return ErrTooLongIdent.GenWithStackByArgs(index)
 	}
 	return nil
-}
-
-func getDefaultCharsetAndCollate() (string, string) {
-	// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
-	// TODO: Change TableOption parser to parse collate.
-	// This is a tmp solution.
-	return "utf8", "utf8_bin"
 }
 
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
@@ -204,7 +197,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
-			tp.Charset, tp.Collate = getDefaultCharsetAndCollate()
+			tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
 		default:
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
