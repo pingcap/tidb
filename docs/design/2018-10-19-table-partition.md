@@ -99,7 +99,7 @@ For range partition, partition pruning is based on the range filter conditions o
 
 ### How to write to the partitioned table
 
-All the write operation calls functions like `table.AddRecord` eventually, so implement write operation on a partitioned table simply implements this interface method on the `PartitionedTable` struct.
+All the write operation calls functions like `table.AddRecord` eventually, so implementing the write operation on a partitioned table simply implements this interface method on the `PartitionedTable` struct.
 
 `PartitionedTable` implements the `table.Table` interface, and overloads the `AddRecord` method. It also comes with a `locatePartition` method, to decide which partition a row should be insert into.
 
