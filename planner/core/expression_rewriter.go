@@ -203,14 +203,8 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	default:
 		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
 		var expr1, expr2, expr3 expression.Expression
-		if op == ast.LE || op == ast.GE {
-			expr1 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr1 = expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, expression.Zero)
-			expr2 = expression.Zero
-		} else if op == ast.LT || op == ast.GT {
-			expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		}
+		expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
 		var err error
 		l, err = expression.PopRowFirstArg(er.ctx, l)
 		if err != nil {
@@ -219,6 +213,18 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		r, err = expression.PopRowFirstArg(er.ctx, r)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if evalexpr, ok := expr1.(*expression.Constant); ok {
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
+			if err1 != nil || isNull {
+				return expr1, err1
+			}
+		}
+		if evalexpr, ok := expr2.(*expression.Constant); ok {
+			_, isNull, err1 := evalexpr.EvalInt(er.ctx, chunk.Row{})
+			if err1 != nil || isNull {
+				return expr2, err1
+			}
 		}
 		expr3, err = er.constructBinaryOpFunction(l, r, op)
 		if err != nil {
