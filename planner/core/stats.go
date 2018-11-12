@@ -371,6 +371,7 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 	}
 
 	newColID2IdxID := make(map[int64]int64)
+
 	for colID, oldIdxID := range leftProfile.HistColl.ColID2IdxID {
 		newColID2IdxID[colID] = leftIndexReLabel[oldIdxID]
 	}
