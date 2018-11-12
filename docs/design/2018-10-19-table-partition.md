@@ -82,7 +82,7 @@ select * from p2 where id < 20
 select * from p3 where id < 30)
 ```
 
-During logical optimize phase, the `DataSource` plan is translated into `UnionAll`, and then each partition generates its own `TableReader` in the physical optimize phase.
+During the logical optimization phase, the `DataSource` plan is translated into `UnionAll`, and then each partition generates its own `TableReader` in the physical optimization phase.
 
 The drawbacks of this implementation are:
 
