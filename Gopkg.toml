@@ -105,4 +105,4 @@ required = ["github.com/golang/protobuf/jsonpb"]
 
 [[constraint]]
   name = "github.com/pingcap/tidb-tools"
-  revision = "5db58e3b7e6613456551c40d011806a346b2f44a"
+  revision = "8dd71127bcf09130ae032ab6877dd22f32b53e14"
