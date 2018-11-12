@@ -16,10 +16,10 @@ All notable changes to this project will be documented in this file. See also [R
 * Fix the selectivity estimation of statistics for primary key in some cases [#8149](https://github.com/pingcap/tidb/pull/8149)
 * Fix the issue that the statistics of deleted tables are not cleared up for a long period of time [#8182](https://github.com/pingcap/tidb/pull/8182)
 ### Server
-* Improve the readability of logs and make logs better 
+* Improve the readability of logs and make logs better
     - [#8063](https://github.com/pingcap/tidb/pull/8063)
-	- [#8053](https://github.com/pingcap/tidb/pull/8053)
-	- [#8224](https://github.com/pingcap/tidb/pull/8224)
+    - [#8053](https://github.com/pingcap/tidb/pull/8053)
+    - [#8224](https://github.com/pingcap/tidb/pull/8224)
 * Fix the error occurred when obtaining the table data of `infoschema.profiling` [#8096](https://github.com/pingcap/tidb/pull/8096)
 * Replace the unix socket with the pumps client to write binlogs [#8098](https://github.com/pingcap/tidb/pull/8098)
 * Add the threshold value for the `tidb_slow_log_threshold` environment variable, which dynamically sets the slow log [#8094](https://github.com/pingcap/tidb/pull/8094)
