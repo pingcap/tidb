@@ -69,7 +69,7 @@ require (
 	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20181028030329-855d2192cdc7
-	github.com/pingcap/parser v0.0.0-20181102070703-4acd198f5092
+	github.com/pingcap/parser v0.0.0-20181112055336-6cb6cf66c6df
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v0.0.0-20181101090416-cfac1096162e
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
