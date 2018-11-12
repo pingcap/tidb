@@ -132,7 +132,7 @@ INFORMATION_SCHEMA.PARTITIONS table
 
 ### Limitations
 
-Refer to MySQL https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
+Refer to [Restrictions and Limitations on Partitioning](https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html)
 
 The partition key cannot be an integer column, or an expression which resolves to an integer (or NULL).
 
