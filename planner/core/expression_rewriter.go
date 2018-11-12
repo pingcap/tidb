@@ -170,15 +170,11 @@ type expressionRewriter struct {
 }
 
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
-// 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
-// `IF( (a0 op b0) EQ 0, 0,
-//      IF ( (a1 op b1) EQ 0, 0, a2 op b2))`
-// 3. If op are LT or GT, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
-// `IF( a0 NE b0, a0 op b0,
-//      IF( a1 NE b1,
-//          a1 op b1,
-//          a2 op b2)
-// )`
+// 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
+// `IF( (a0 NE b0) EQ 1, a0 op b0,
+// 		IF ( (a0 NE b0) EQ Null, Null,
+//			IF ( (a0 NE b0) EQ 1, a1 op b1,
+//				IF ( (a1 NE b1) EQ Null, Null, a2 op b2))))`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
