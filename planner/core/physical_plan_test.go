@@ -189,7 +189,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 			sql:  "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
 			best: "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,t1.a)->Limit",
 		},
-		// Test nest different size order by.
+		// Test embedded ORDER BY which imposes on different number of columns than outer query.
 		{
 			sql:  "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
 			best: "UnionAll{Dual->Projection->Dual->Projection}->HashAgg->Sort",
