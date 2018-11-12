@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -107,6 +107,36 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 			obtainedResult := fmt.Sprintf("%v %v", row.GetInt64(0), row.GetInt64(1))
 			c.Check(obtainedResult, Equals, correctResult)
 			rowIdx++
+		}
+	}
+}
+
+func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
+	dbss := [][]string{
+		{},
+		{"A", "B", "C", "a", "b", "c"},
+		{"A", "B", "C", "INFORMATION_SCHEMA"},
+		{"A", "B", "INFORMATION_SCHEMA", "a"},
+		{"INFORMATION_SCHEMA"},
+		{"A", "B", "C", "INFORMATION_SCHEMA", "a", "b"},
+	}
+	wanted := [][]string{
+		{},
+		{"A", "B", "C", "a", "b", "c"},
+		{"INFORMATION_SCHEMA", "A", "B", "C"},
+		{"INFORMATION_SCHEMA", "A", "B", "a"},
+		{"INFORMATION_SCHEMA"},
+		{"INFORMATION_SCHEMA", "A", "B", "C", "a", "b"},
+	}
+
+	for _, dbs := range dbss {
+		moveInfoSchemaToFront(dbs)
+	}
+
+	for i, dbs := range wanted {
+		c.Check(len(dbss[i]), Equals, len(dbs))
+		for j, db := range dbs {
+			c.Check(dbss[i][j], Equals, db)
 		}
 	}
 }

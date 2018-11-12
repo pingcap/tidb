@@ -15,9 +15,9 @@ package core
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
@@ -37,7 +37,7 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 		FieldType: *tp,
 	}
 	pc := model.ColumnToProto(col)
-	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
+	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: mysql.DefaultCollationID, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
 	c.Assert(pc, DeepEquals, expect)
 
 	cols := []*model.ColumnInfo{col, col}
