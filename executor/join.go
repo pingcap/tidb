@@ -84,7 +84,7 @@ type HashJoinExec struct {
 	// case radixBits will be 1, we can skip the partition phase.
 	radixBits       uint32
 	innerParts      []partition
-	innerRowPrts    [][]*ptr4Partition
+	innerRowPrts    [][]ptr4Partition
 	partConcurrency int
 }
 
@@ -341,7 +341,7 @@ func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 	hasNull, keyBuf := false, make([]byte, 0, 64)
 	for chkIdx, chkNum := 0, e.innerResult.NumChunks(); chkIdx < chkNum; chkIdx++ {
 		chk := e.innerResult.GetChunk(chkIdx)
-		partPtrs := make([]*ptr4Partition, chk.NumRows())
+		partPtrs := make([]ptr4Partition, chk.NumRows())
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			row := chk.GetRow(rowIdx)
 			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, row, keyBuf)
@@ -354,7 +354,7 @@ func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 			joinHash := murmur3.Sum32(keyBuf)
 			partIdx := e.radixBits & joinHash
 			rowPtr := e.getPartition(partIdx).PreAlloc4Row(row)
-			partPtrs[rowIdx] = &ptr4Partition{partIdx, rowPtr}
+			partPtrs[rowIdx] = ptr4Partition{partIdx, rowPtr}
 		}
 		e.innerRowPrts = append(e.innerRowPrts, partPtrs)
 	}
@@ -371,10 +371,6 @@ func (e *HashJoinExec) getPartition(idx uint32) partition {
 // evalRadixBit evaluates the radix bit numbers.
 func (e *HashJoinExec) evalRadixBit() (needPartition bool) {
 	sv := e.ctx.GetSessionVars()
-	// Calculate the bit number needed when using radix data.
-	if !sv.EnableRadixJoin {
-		return
-	}
 	innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
 	// To ensure that one partition of inner relation, one hash table and one
 	// partition of outer relation fit into the L2 cache when the input data
