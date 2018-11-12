@@ -82,8 +82,8 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	mCollation := charset.CharsetBin
 	mFlag := mysql.UnsignedFlag
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
-		mCharset = mysql.DefaultCharset
-		mCollation = mysql.DefaultCollationName
+		mCharset = charset.CharsetUTF8MB4
+		mCollation = charset.CollationUTF8MB4
 		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
@@ -881,7 +881,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			if collation == "" {
-				collation = charset.CollationUTF8
+				collation = mysql.DefaultCollationName
 			}
 			createTime := types.Time{
 				Time: types.FromGoTime(table.GetUpdateTime()),
