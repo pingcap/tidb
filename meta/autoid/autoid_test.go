@@ -69,7 +69,7 @@ func (*testSuite) TestT(c *C) {
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
-	id, err = alloc.Alloc(0)
+	_, err = alloc.Alloc(0)
 	c.Assert(err, NotNil)
 	globalAutoId, err = alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
