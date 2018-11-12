@@ -39,7 +39,7 @@ A new `PartitionInfo.Enable` flag is introduced to the `TableInfo`, and it's per
 New TiDB running on the old cluster will check this flag and find `PartitionInfo.Enable` is false, so it handles the table as before.
 Old TiDB will not be able to run with partitioned table data, so **the upgrading is incompatible**. (Note that if no partitioned table is created with the new TiDB, i.e, the feature is not used, the cluster is still able to be degraded)
 
-If partition by range is implemented while partition by hash is not, TiDB will not set `PartitionInfo.Enable` to true for `create table ... partition by hash ...`, but it set `PartitionInfo.Enable` to true for `create table ... partition by range ...`.
+If partition by range is implemented while partition by hash is not, TiDB does not set `PartitionInfo.Enable` to true for `create table ... partition by hash ...`, but it sets `PartitionInfo.Enable` to true for `create table ... partition by range ...`.
 
 In a word, only when the persisted `PartitionInfo.Enable` is true, and the code could handle partitioned table, will the table partition feature be supported.
 
