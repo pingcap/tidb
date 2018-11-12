@@ -591,8 +591,8 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeLong, " .002e3  ", "2")
 	signedAccept(c, mysql.TypeLong, " 20e-2  ", "0")
 	signedAccept(c, mysql.TypeLong, " -20e-2  ", "0")
-	signedAccept(c, mysql.TypeLong, " +2.51 ", "2")
-	signedAccept(c, mysql.TypeLong, " -3.58", "-3")
+	signedAccept(c, mysql.TypeLong, " +2.51 ", "3")
+	signedAccept(c, mysql.TypeLong, " -3.58", "-4")
 	signedDeny(c, mysql.TypeLong, " 1a ", "1")
 	signedDeny(c, mysql.TypeLong, " +1+ ", "1")
 

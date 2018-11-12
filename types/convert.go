@@ -276,15 +276,25 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	}
 	if eIdx == -1 {
 		if dotIdx == -1 {
-			intStr = validFloat
+			return validFloat, nil
+		}
+		var digits []byte
+		if validFloat[0] == '-' || validFloat[0] == '+' {
+			dotIdx--
+			digits = []byte(validFloat[1:])
+		} else {
+			digits = []byte(validFloat)
 		}
 		if dotIdx == 0 {
 			intStr = "0"
 		} else {
-			intStr = validFloat[:dotIdx]
+			intStr = string(digits)[:dotIdx]
 		}
-		if len(validFloat) > dotIdx+1 {
-			intStr = round(validFloat[dotIdx+1])
+		if len(digits) > dotIdx+1 {
+			intStr = round(digits[dotIdx+1])
+		}
+		if len(intStr) == 1 && intStr[0] != '0' && validFloat[0] == '-' {
+			intStr = "-" + intStr
 		}
 		return intStr, nil
 	}
@@ -322,7 +332,10 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		if len(digits) > 1 {
 			intStr = round(digits[1])
 		}
-		return string(digits[:1]) + intStr, nil
+		if intStr[0] == '1' {
+			intStr = string(digits[:1]) + intStr
+		}
+		return intStr, nil
 	}
 	if intCnt <= len(digits) {
 		intStr = string(digits[:intCnt])
