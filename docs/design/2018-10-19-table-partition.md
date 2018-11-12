@@ -140,7 +140,7 @@ The partition key cannot be a subquery, even a subquery which resolves to an int
 
 The maximum partitions count of a table is 8192 in MySQL, but 1024 in TiDB.
 
-Functions allowed in partition expressions https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-functions.html
+[Functions allowed in partition expressions](https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-functions.html)
 
 ## Open issues (if applicable)
 
