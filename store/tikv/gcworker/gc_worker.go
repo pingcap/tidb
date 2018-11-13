@@ -258,12 +258,12 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 // that indicates whether the GC job should start and the new safePoint.
 func (w *GCWorker) prepare() (bool, uint64, error) {
 	enable, err := w.checkGCEnable()
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
 	if !enable {
 		log.Warn("[gc worker] gc status is disabled.")
 		return false, 0, nil
-	}
-	if err != nil {
-		return false, 0, errors.Trace(err)
 	}
 	now, err := w.getOracleTime()
 	if err != nil {
@@ -520,17 +520,14 @@ func (w *GCWorker) loadGCEnableStatus() (bool, error) {
 		return gcDefaultEnablevalue, errors.Trace(err)
 	}
 	if str == "" {
-		defaultValue := gcDisableValue
-		if gcDefaultEnablevalue {
-			defaultValue = gcEnableValue
-		}
-		err = w.saveValueToSysTable(gcEnableKey, defaultValue)
+		// Save default value for gc enable key. The default value is always true.
+		err = w.saveValueToSysTable(gcEnableKey, gcEnableValue)
 		if err != nil {
 			return gcDefaultEnablevalue, errors.Trace(err)
 		}
 		return gcDefaultEnablevalue, nil
 	}
-	return strings.ToLower(str) == gcEnableValue, nil
+	return strings.EqualFold(str, gcEnableValue), nil
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
