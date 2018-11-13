@@ -249,6 +249,14 @@ func (s *testExpressionSuite) TestCompareRow(c *C) {
 			exprStr:   "row(1,2,3)<row(2,NULL,3)",
 			resultStr: "1",
 		},
+		{
+			exprStr:   "row(1,2,3)>=row(0,NULL,3)",
+			resultStr: "1",
+		},
+		{
+			exprStr:   "row(1,2,3)<=row(2,NULL,3)",
+			resultStr: "1",
+		},
 	}
 	s.runTests(c, tests)
 }
