@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 const eps = 1e-9
@@ -165,6 +166,142 @@ func (s *testStatisticsSuite) TestCalcFraction(c *C) {
 		hg.AppendBucket(&test.lower, &test.upper, 0, 0)
 		hg.PreCalculateScalar()
 		fraction := hg.calcFraction(0, &test.value)
-		c.Check(math.Abs(fraction-test.fraction) < eps, IsTrue)
+		c.Assert(math.Abs(fraction-test.fraction) < eps, IsTrue)
+	}
+}
+
+func (s *testStatisticsSuite) TestCalcRangeFraction(c *C) {
+	tests := []struct {
+		lower    types.Datum
+		upper    types.Datum
+		lInner   types.Datum
+		uInner   types.Datum
+		fraction float64
+		tp       *types.FieldType
+	}{
+		{
+			lower:    types.NewIntDatum(0),
+			upper:    types.NewIntDatum(4),
+			lInner:   types.NewIntDatum(1),
+			uInner:   types.NewIntDatum(3),
+			fraction: 0.6,
+			tp:       types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			lower:    types.NewIntDatum(0),
+			upper:    types.NewIntDatum(4),
+			lInner:   types.NewIntDatum(0),
+			uInner:   types.NewIntDatum(4),
+			fraction: 1,
+			tp:       types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			lower:    types.NewUintDatum(0),
+			upper:    types.NewUintDatum(4),
+			lInner:   types.NewUintDatum(1),
+			uInner:   types.NewUintDatum(1),
+			fraction: 0.20,
+			tp:       getUnsignedFieldType(),
+		},
+		{
+			lower:    types.NewFloat64Datum(0),
+			upper:    types.NewFloat64Datum(4),
+			lInner:   types.NewFloat64Datum(1.5),
+			uInner:   types.NewFloat64Datum(2.5),
+			fraction: 0.25,
+			tp:       types.NewFieldType(mysql.TypeDouble),
+		},
+		{
+			lower:    types.NewFloat32Datum(0),
+			upper:    types.NewFloat32Datum(4),
+			lInner:   types.NewFloat32Datum(1),
+			uInner:   types.NewFloat32Datum(2),
+			fraction: 0.25,
+			tp:       types.NewFieldType(mysql.TypeFloat),
+		},
+		{
+			lower:    types.NewFloat32Datum(4),
+			upper:    types.NewFloat32Datum(4),
+			lInner:   types.NewFloat32Datum(4),
+			uInner:   types.NewFloat32Datum(4),
+			fraction: 1,
+			tp:       types.NewFieldType(mysql.TypeFloat),
+		},
+		{
+			lower:    types.NewDecimalDatum(getDecimal(0)),
+			upper:    types.NewDecimalDatum(getDecimal(4)),
+			lInner:   types.NewDecimalDatum(getDecimal(1)),
+			uInner:   types.NewDecimalDatum(getDecimal(1.5)),
+			fraction: 0.125,
+			tp:       types.NewFieldType(mysql.TypeNewDecimal),
+		},
+		{
+			lower:    types.NewMysqlBitDatum(getBinaryLiteral("0b0")),
+			upper:    types.NewMysqlBitDatum(getBinaryLiteral("0b100")),
+			lInner:   types.NewMysqlBitDatum(getBinaryLiteral("0b00")),
+			uInner:   types.NewMysqlBitDatum(getBinaryLiteral("0b10")),
+			fraction: 0.5,
+			tp:       types.NewFieldType(mysql.TypeBit),
+		},
+		{
+			lower:    types.NewDurationDatum(getDuration("0:00:00")),
+			upper:    types.NewDurationDatum(getDuration("4:00:00")),
+			lInner:   types.NewDurationDatum(getDuration("1:00:00")),
+			uInner:   types.NewDurationDatum(getDuration("2:00:00")),
+			fraction: 0.25,
+			tp:       types.NewFieldType(mysql.TypeDuration),
+		},
+		{
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeTimestamp)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeTimestamp)),
+			lInner:   types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeTimestamp)),
+			uInner:   types.NewTimeDatum(getTime(2017, 3, 1, mysql.TypeTimestamp)),
+			fraction: 0.3111111111111111,
+			tp:       types.NewFieldType(mysql.TypeTimestamp),
+		},
+		{
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDatetime)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDatetime)),
+			lInner:   types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDatetime)),
+			uInner:   types.NewTimeDatum(getTime(2017, 3, 1, mysql.TypeDatetime)),
+			fraction: 0.3111111111111111,
+			tp:       types.NewFieldType(mysql.TypeDatetime),
+		},
+		{
+			lower:    types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
+			upper:    types.NewTimeDatum(getTime(2017, 4, 1, mysql.TypeDate)),
+			lInner:   types.NewTimeDatum(getTime(2017, 2, 1, mysql.TypeDate)),
+			uInner:   types.NewTimeDatum(getTime(2017, 3, 1, mysql.TypeDate)),
+			fraction: 0.3111111111111111,
+			tp:       types.NewFieldType(mysql.TypeDate),
+		},
+		{
+			lower:    types.NewStringDatum("aasad"),
+			upper:    types.NewStringDatum("addad"),
+			lInner:   types.NewStringDatum("aafsd"),
+			uInner:   types.NewStringDatum("abfsd"),
+			fraction: 0.3399734395750332,
+			tp:       types.NewFieldType(mysql.TypeString),
+		},
+		{
+			lower:    types.NewBytesDatum([]byte("aasad")),
+			upper:    types.NewBytesDatum([]byte("asdff")),
+			lInner:   types.NewBytesDatum([]byte("aafsd")),
+			uInner:   types.NewBytesDatum([]byte("abfsd")),
+			fraction: 0.05573675368834722,
+			tp:       types.NewFieldType(mysql.TypeBlob),
+		},
+	}
+	for i, test := range tests {
+		hg := NewHistogram(0, 0, 0, 0, test.tp, 1, 0)
+		hg.AppendBucket(&test.lower, &test.upper, 0, 0)
+		hg.PreCalculateScalar()
+		chk := chunk.New([]*types.FieldType{test.tp}, 2, 2)
+		chk.AppendDatum(0, &test.lInner)
+		chk.AppendDatum(0, &test.uInner)
+		lInner := chk.GetRow(0)
+		uInner := chk.GetRow(1)
+		fraction := hg.calcRangeFraction(0, lInner, uInner)
+		c.Assert(math.Abs(fraction-test.fraction) < eps, IsTrue, Commentf("Failed at #%v, need: %v, got: %v", i, test.fraction, fraction))
 	}
 }
