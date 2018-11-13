@@ -1368,8 +1368,8 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	writeData(w, clusterInfo)
 }
 
-// DBTableInfo is use ro report the db, table info and the current schema version.
-type DBTableInfo struct {
+// dbTableInfo is used to report the db, table info and the current schema version.
+type dbTableInfo struct {
 	DBInfo        *model.DBInfo    `json:"db_info"`
 	TableInfo     *model.TableInfo `json:"table_info"`
 	SchemaVersion int64            `json:"schema_version"`
@@ -1391,7 +1391,7 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	dbTblInfo := DBTableInfo{
+	dbTblInfo := dbTableInfo{
 		SchemaVersion: schema.SchemaMetaVersion(),
 	}
 	tbl, ok := schema.TableByID(int64(tblID))
