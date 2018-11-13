@@ -238,8 +238,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	return true, tblIDs, nil
 }
 
-// getInfoSchema atomic load infoschema.handle.
-func (do *Domain) getInfoSchema() *infoschema.Handle {
+// getInfoHandle atomic load infoschema.handle.
+func (do *Domain) getInfoHandle() *infoschema.Handle {
 	return (*infoschema.Handle)(atomic.LoadPointer(
 		(*unsafe.Pointer)(unsafe.Pointer(&do.infoHandle)),
 	))
@@ -247,7 +247,7 @@ func (do *Domain) getInfoSchema() *infoschema.Handle {
 
 // InfoSchema gets information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
-	return do.getInfoSchema().Get()
+	return do.getInfoHandle().Get()
 }
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
