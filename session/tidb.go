@@ -162,8 +162,8 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
+			err = se.RollbackTxn(ctx)
+			terror.Log(errors.Trace(err))
 		} else {
 			err = se.CommitTxn(ctx)
 		}
@@ -171,11 +171,15 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 		// So we limit the statement count in a transaction here.
 		history := GetHistory(sctx)
-		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
-			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-				history.Count(), sctx.GetSessionVars().IsAutocommit())
+		perfConfig := config.GetGlobalConfig().Performance
+		if history.Count() > int(perfConfig.StmtCountLimit) {
+			if !perfConfig.BatchCommit {
+				err = se.RollbackTxn(ctx)
+				terror.Log(errors.Trace(err))
+				return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+					history.Count(), sctx.GetSessionVars().IsAutocommit())
+			}
+			err = se.NewTxn()
 		}
 	}
 	return rs, errors.Trace(err)

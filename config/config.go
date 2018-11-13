@@ -155,6 +155,7 @@ type Performance struct {
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
 	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	BatchCommit         bool    `toml:"batch-commit" json:"batch-commit"`
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
@@ -292,6 +293,7 @@ var defaultConf = Config{
 		StatsLease:          "3s",
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
+		BatchCommit:         false,
 		FeedbackProbability: 0.05,
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,

@@ -1925,13 +1925,13 @@ func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
 	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
 }
 
-func (s *testSessionSuite) TestStatementCountLimit(c *C) {
+func (s *testSessionSuite) TestStatementCountLimitAndBatchCommit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table stmt_count_limit (id int)")
-	saved := config.GetGlobalConfig().Performance.StmtCountLimit
+	savedLimit := config.GetGlobalConfig().Performance.StmtCountLimit
 	config.GetGlobalConfig().Performance.StmtCountLimit = 3
 	defer func() {
-		config.GetGlobalConfig().Performance.StmtCountLimit = saved
+		config.GetGlobalConfig().Performance.StmtCountLimit = savedLimit
 	}()
 	tk.MustExec("begin")
 	tk.MustExec("insert into stmt_count_limit values (1)")
@@ -1946,6 +1946,17 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	tk.MustExec("insert into stmt_count_limit values (3)")
 	_, err = tk.Exec("insert into stmt_count_limit values (4)")
 	c.Assert(err, NotNil)
+
+	savedBatchFlag := config.GetGlobalConfig().Performance.BatchCommit
+	config.GetGlobalConfig().Performance.BatchCommit = true
+	defer func() {
+		config.GetGlobalConfig().Performance.BatchCommit = savedBatchFlag
+	}()
+	tk.MustExec("begin")
+	tk.MustExec("insert into stmt_count_limit values (1)")
+	tk.MustExec("insert into stmt_count_limit values (2)")
+	tk.MustExec("insert into stmt_count_limit values (3)")
+	tk.MustExec("commit")
 }
 
 func (s *testSessionSuite) TestCastTimeToDate(c *C) {
