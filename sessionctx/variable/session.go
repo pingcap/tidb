@@ -646,13 +646,23 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 
 // special session variables.
 const (
-	SQLModeVar          = "sql_mode"
-	AutocommitVar       = "autocommit"
-	CharacterSetResults = "character_set_results"
-	MaxAllowedPacket    = "max_allowed_packet"
-	TimeZone            = "time_zone"
-	TxnIsolation        = "tx_isolation"
-	TxnIsolationOneShot = "tx_isolation_one_shot"
+	SQLModeVar           = "sql_mode"
+	AutocommitVar        = "autocommit"
+	CharacterSetResults  = "character_set_results"
+	MaxAllowedPacket     = "max_allowed_packet"
+	TimeZone             = "time_zone"
+	TxnIsolation         = "tx_isolation"
+	TransactionIsolation = "transaction_isolation"
+	TxnIsolationOneShot  = "tx_isolation_one_shot"
+)
+
+var (
+	TxIsolationNames = map[string]struct{}{
+		"READ-UNCOMMITTED": struct{}{},
+		"READ-COMMITTED":   struct{}{},
+		"REPEATABLE-READ":  struct{}{},
+		"SERIALIZABLE":     struct{}{},
+	}
 )
 
 // TableDelta stands for the changed count for one table.
