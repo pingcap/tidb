@@ -1097,7 +1097,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t2 (a int not null, b char (10) not null)")
 	tk.MustExec("insert into t2 values(1,'a'),(2,'b'),(3,'c'),(3,'c')")
 	tk.MustQuery("select a from t1 union select a from t1 order by (select a+1);").Check(testkit.Rows("1", "2", "3"))
-  
+
 	// #issue 8201
 	for i := 0; i < 4; i++ {
 		tk.MustQuery("SELECT(SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a ASC  LIMIT 1) AS dev").Check(testkit.Rows("0"))
