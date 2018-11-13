@@ -4561,14 +4561,18 @@ func (b *builtinMakeTimeSig) Clone() builtinFunc {
 func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	dur := types.ZeroDuration
 	dur.Fsp = types.MaxFsp
-	hour, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	// hour must be round down
+	fhour, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
-	minute, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	hour := int64(fhour)
+	// minute must be round down
+	fminute, isNull, err := b.args[1].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
+	minute := int64(fminute)
 	if minute < 0 || minute >= 60 {
 		return dur, true, nil
 	}
