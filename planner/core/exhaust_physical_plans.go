@@ -744,6 +744,9 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 
 // Check if this prop's columns can match by items totally.
 func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
+	if len(items) < len(p.Cols) {
+		return false
+	}
 	for i, col := range p.Cols {
 		sortItem := items[i]
 		if sortItem.Desc != p.Desc || !sortItem.Expr.Equal(nil, col) {
