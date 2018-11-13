@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -76,7 +77,10 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			newData[i] = v
 		}
 
-		// Rebase auto increment id if the field is changed.
+		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
+		if err != nil {
+			return false, handleChanged, newHandle, 0, errors.Trace(err)
+		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
 				return false, handleChanged, newHandle, 0,
@@ -87,14 +91,13 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				return false, handleChanged, newHandle, 0, errors.Trace(errTI)
 			}
 			lastInsertID = uint64(val)
-			err := t.RebaseAutoID(ctx, val, true)
-			if err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
+			// Rebase auto increment id if the field is changed.
+			if cmp != 0 {
+				err := t.RebaseAutoID(ctx, val, true)
+				if err != nil {
+					return false, handleChanged, newHandle, 0, errors.Trace(err)
+				}
 			}
-		}
-		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
-		if err != nil {
-			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
 		if cmp != 0 {
 			changed = true
@@ -162,7 +165,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 
 	tid := t.Meta().ID
 	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, tid, h, nil)
-	ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
+	if handleChanged {
+		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, newHandle, newData)
+	} else {
+		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
+	}
 
 	if onDup {
 		sc.AddAffectedRows(2)
@@ -554,7 +561,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 // If the number of inserted rows reaches the batchRows, then the second return value is true.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
 func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error) {
-	// TODO: support enclosed and escape.
+	// TODO: support escape.
 	if len(prevData) == 0 && len(curData) == 0 {
 		return nil, false, nil
 	}
@@ -587,7 +594,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			curData = nil
 		}
 
-		cols, err := GetFieldsFromLine(line, e.FieldsInfo)
+		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -614,55 +621,54 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	return curData, reachLimit, nil
 }
 
-// GetFieldsFromLine splits line according to fieldsInfo, this function is exported for testing.
-func GetFieldsFromLine(line []byte, fieldsInfo *ast.FieldsClause) ([]string, error) {
-	var sep []byte
-	if fieldsInfo.Enclosed != 0 {
-		if line[0] != fieldsInfo.Enclosed || line[len(line)-1] != fieldsInfo.Enclosed {
-			return nil, errors.Errorf("line %s should begin and end with %c", string(line), fieldsInfo.Enclosed)
-		}
-		line = line[1 : len(line)-1]
-		sep = make([]byte, 0, len(fieldsInfo.Terminated)+2)
-		sep = append(sep, fieldsInfo.Enclosed)
-		sep = append(sep, fieldsInfo.Terminated...)
-		sep = append(sep, fieldsInfo.Enclosed)
-	} else {
-		sep = []byte(fieldsInfo.Terminated)
-	}
-	rawCols := bytes.Split(line, sep)
-	cols := escapeCols(rawCols)
-	return cols, nil
+type field struct {
+	str       []byte
+	maybeNull bool
 }
 
-func escapeCols(strs [][]byte) []string {
-	ret := make([]string, len(strs))
-	for i, v := range strs {
-		output := escape(v)
-		ret[i] = string(output)
+// getFieldsFromLine splits line according to fieldsInfo.
+func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
+	var sep []byte
+	if e.FieldsInfo.Enclosed != 0 {
+		if line[0] != e.FieldsInfo.Enclosed || line[len(line)-1] != e.FieldsInfo.Enclosed {
+			return nil, errors.Errorf("line %s should begin and end with %c", string(line), e.FieldsInfo.Enclosed)
+		}
+		line = line[1 : len(line)-1]
+		sep = make([]byte, 0, len(e.FieldsInfo.Terminated)+2)
+		sep = append(sep, e.FieldsInfo.Enclosed)
+		sep = append(sep, e.FieldsInfo.Terminated...)
+		sep = append(sep, e.FieldsInfo.Enclosed)
+	} else {
+		sep = []byte(e.FieldsInfo.Terminated)
 	}
-	return ret
+	rawCols := bytes.Split(line, sep)
+	fields := make([]field, 0, len(rawCols))
+	for _, v := range rawCols {
+		f := field{v, false}
+		fields = append(fields, f.escape())
+	}
+	return fields, nil
 }
 
 // escape handles escape characters when running load data statement.
-// TODO: escape need to be improved, it should support ESCAPED BY to specify
-// the escape character and handle \N escape.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-func escape(str []byte) []byte {
+// TODO: escape only support '\' as the `ESCAPED BY` character, it should support specify characters.
+func (f *field) escape() field {
 	pos := 0
-	for i := 0; i < len(str); i++ {
-		c := str[i]
-		if c == '\\' && i+1 < len(str) {
-			c = escapeChar(str[i+1])
+	for i := 0; i < len(f.str); i++ {
+		c := f.str[i]
+		if c == '\\' && i+1 < len(f.str) {
+			c = f.escapeChar(f.str[i+1])
 			i++
 		}
 
-		str[pos] = c
+		f.str[pos] = c
 		pos++
 	}
-	return str[:pos]
+	return field{f.str[:pos], f.maybeNull}
 }
 
-func escapeChar(c byte) byte {
+func (f *field) escapeChar(c byte) byte {
 	switch c {
 	case '0':
 		return 0
@@ -676,19 +682,27 @@ func escapeChar(c byte) byte {
 		return '\t'
 	case 'Z':
 		return 26
-	case '\\':
-		return '\\'
+	case 'N':
+		f.maybeNull = true
+		return c
+	default:
+		return c
 	}
-	return c
 }
 
-func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
+func (e *LoadDataInfo) colsToRow(cols []field) types.DatumRow {
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
-			e.row[i].SetString("")
+			e.row[i].SetNull()
 			continue
 		}
-		e.row[i].SetString(cols[i])
+		// The field with only "\N" in it is handled as NULL in the csv file.
+		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+		if cols[i].maybeNull && string(cols[i].str) == "N" {
+			e.row[i].SetNull()
+		} else {
+			e.row[i].SetString(string(cols[i].str))
+		}
 	}
 	row, err := e.insertVal.fillRowData(e.columns, e.row, true)
 	if err != nil {
@@ -1152,20 +1166,24 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.updateDupKeyValues(keys, oldHandle, newHandle, handleChanged, updatedRow)
+	return e.updateDupKeyValues(oldHandle, newHandle, handleChanged, oldRow, updatedRow)
 }
 
 // updateDupKeyValues updates the dupKeyValues for further duplicate key check.
-func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
-	newHandle int64, handleChanged bool, updatedRow []types.Datum) error {
+func (e *InsertExec) updateDupKeyValues(oldHandle int64, newHandle int64, handleChanged bool,
+	oldRow []types.Datum, updatedRow []types.Datum) error {
+	// Delete key-values belong to the old row.
+	cleanupRows, err := getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{oldRow})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, del := range cleanupRows[0] {
+		delete(e.dupKeyValues, string(del.key))
+	}
 	// There is only one row per update.
 	fillBackKeysInRows, err := getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{updatedRow})
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// Delete key-values belong to the old row.
-	for _, del := range keys {
-		delete(e.dupKeyValues, string(del.key))
 	}
 	// Fill back new key-values of the updated row.
 	if handleChanged {
@@ -1352,6 +1370,9 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	}
 	for _, col := range cols {
 		if col.Name.L == model.ExtraHandleName.L {
+			if !e.ctx.GetSessionVars().AllowWriteRowID {
+				return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+			}
 			e.hasExtraHandle = true
 			break
 		}
@@ -1827,7 +1848,9 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		}
 		oldRow, err1 := e.Table.Row(e.ctx, h)
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			rowStr, err := types.DatumsToString(row, true)
+			terror.Log(err)
+			return nil, errors.Annotatef(err1, "[replace] the %dth of total %d rows, handle %d, row: %s", idx+1, rowsLen, h, rowStr)
 		}
 		rowUnchanged, err1 := types.EqualDatums(sc, oldRow, row)
 		if err1 != nil {
@@ -1899,7 +1922,7 @@ type UpdateExec struct {
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types.DatumRow, error) {
-	assignFlag, err := getUpdateColumns(e.OrderedList, schema.Len())
+	assignFlag, err := getUpdateColumns(e.ctx, e.OrderedList, schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1975,9 +1998,12 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func getUpdateColumns(assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
+func getUpdateColumns(ctx sessionctx.Context, assignList []*expression.Assignment, schemaLen int) ([]bool, error) {
 	assignFlag := make([]bool, schemaLen)
 	for _, v := range assignList {
+		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ColName.L == model.ExtraHandleName.L {
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+		}
 		idx := v.Col.Index
 		assignFlag[idx] = true
 	}

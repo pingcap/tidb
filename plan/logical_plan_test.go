@@ -507,6 +507,10 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 			sql:  "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b)",
 			best: "Join{DataScan(t1)->DataScan(t2)->Aggr(max(t2.a),firstrow(t2.b))}(t1.b,t2.b)->Projection->Sel([eq(t1.b, max(t2.a))])->Projection",
 		},
+		{
+			sql:  "select t1.b from t t1 where t1.b = (select avg(t2.a) from t t2 where t1.g=t2.g and (t1.b = 4 or t2.b = 2))",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(t1.g, t2.g) or(eq(t1.b, 4), eq(t2.b, 2))])->Aggr(avg(t2.a))}->Projection->Sel([eq(cast(t1.b), avg(t2.a))])->Projection",
+		},
 	}
 
 	for _, ca := range tests {
@@ -1577,6 +1581,11 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		{
 			sql:  "select * from t union all (select * from t s order by a) limit 5",
 			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection}->Limit",
+		},
+		// Test `ByItem` containing column from both sides.
+		{
+			sql:  "select ifnull(t1.b, t2.a) from t t1 left join t t2 on t1.e=t2.e order by ifnull(t1.b, t2.a) limit 5",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->TopN([ifnull(t1.b, t2.a)],0,5)->Projection->Projection",
 		},
 	}
 	for i, tt := range tests {

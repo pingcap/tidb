@@ -29,6 +29,7 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	defer store.Close()
 	do, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	do.SetStatsUpdating(true)
 	defer do.Close()
 
 	h := do.StatsHandle()

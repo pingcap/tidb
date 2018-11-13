@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -178,14 +177,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr, err = value.ToString()
 			terror.Log(errors.Trace(err))
 		}
-		log.Infof("[con:%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
-	}
-
-	if name == variable.TxnIsolation {
-		isoLevel, _ := sessionVars.GetSystemVar(variable.TxnIsolation)
-		if isoLevel == ast.ReadCommitted {
-			e.ctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
-		}
+		log.Infof("con:%d %s=%s", sessionVars.ConnectionID, name, valStr)
 	}
 
 	return nil
@@ -259,7 +251,7 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 		vars.SnapshotInfoschema = nil
 		return nil
 	}
-	log.Infof("[con:%d] loadSnapshotInfoSchema, SnapshotTS:%d", vars.ConnectionID, vars.SnapshotTS)
+	log.Infof("con:%d loadSnapshotInfoSchema, SnapshotTS:%d", vars.ConnectionID, vars.SnapshotTS)
 	dom := domain.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
 	if err != nil {

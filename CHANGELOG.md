@@ -2,6 +2,95 @@
 
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV changelog](https://github.com/pingcap/tikv/blob/master/CHANGELOG.md) and [PD changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.0.8] - 2018-10-16
+### Improvements
+- Slow down the AUTO_INCREMENT ID increasing speed when the `Update` statement does not modify the corresponding AUTO_INCREMENT column [#7846](https://github.com/pingcap/tidb/pull/7846) 
+### Bug fixes
+- Quickly create a new etcd session to recover the service when the PD leader goes down [#7810](https://github.com/pingcap/tidb/pull/7810)
+- Fix the issue that the time zone is not considered when the default value of the `DateTime` type is calculated [#7672](https://github.com/pingcap/tidb/pull/7672)
+- Fix the issue that `duplicate key update` inserts values incorrectly in some conditions [#7685](https://github.com/pingcap/tidb/pull/7685)
+- Fix the issue that the predicate conditions of `UnionScan` are not pushed down [#7726](https://github.com/pingcap/tidb/pull/7726)
+- Fix the issue that the time zone is not correctly handled when you add the `TIMESTAMP` index [#7812](https://github.com/pingcap/tidb/pull/7812)
+- Fix the memory leak issue caused by the statistics module in some conditions [#7864](https://github.com/pingcap/tidb/pull/7864) 
+- Fix the issue that the results of `ANALYZE` cannot be obtained in some abnormal conditions [#7871](https://github.com/pingcap/tidb/pull/7871) 
+- Do not fold the function `SYSDATE`, to ensure the returned results are correct [#7894](https://github.com/pingcap/tidb/pull/7894) 
+- Fix the `substring_index` panic issue in some conditions [#7896](https://github.com/pingcap/tidb/pull/7896) 
+- Fix the issue that `OUTER JOIN` is mistakenly converted to `INNER JOIN` in some conditions [#7899](https://github.com/pingcap/tidb/pull/7899) 
+
+
+## [2.0.7] - 2018-09-07
+### New Feature
+  - Add the `PROCESSLIST` table in `information_schema` [#7286](https://github.com/pingcap/tidb/pull/7286)
+### Improvements
+  - Collect more details about SQL statement execution and output the information in the `SLOW QUERY` log [#7364](https://github.com/pingcap/tidb/pull/7364)
+  - Drop the partition information in `SHOW CREATE TABLE` [#7388](https://github.com/pingcap/tidb/pull/7388)
+  - Improve the execution efficiency of the `ANALYZE` statement by setting it to the RC isolation level and low priority [#7500](https://github.com/pingcap/tidb/pull/7500)
+  - Speed up adding a unique index [#7562](https://github.com/pingcap/tidb/pull/7562)
+  - Add an option of controlling the DDL concurrency [#7563](https://github.com/pingcap/tidb/pull/7563)
+### Bug Fixes
+  - Fix the issue that `USE INDEX(`PRIMARY`)` cannot be used in a table whose primary key is an integer [#7298](https://github.com/pingcap/tidb/pull/7298)
+  - Fix the issue that `Merge Join` and `Index Join` output incorrect results when the inner row is `NULL` [#7301](https://github.com/pingcap/tidb/pull/7301)
+  - Fix the issue that `Join` outputs an incorrect result when the chunk size is set too small [#7315](https://github.com/pingcap/tidb/pull/7315)
+  - Fix the panic issue caused by a statement of creating a table involving `range column` [#7379](https://github.com/pingcap/tidb/pull/7379)
+  - Fix the issue that `admin check table` mistakenly reports an error of a time-type column [#7457](https://github.com/pingcap/tidb/pull/7457)
+  - Fix the issue that the data with a default value `current_timestamp` cannot be queried using the `=` condition [#7467](https://github.com/pingcap/tidb/pull/7467)
+  - Fix the issue that the zero-length parameter inserted by using the `ComStmtSendLongData` command is mistakenly parsed to NULL [#7508](https://github.com/pingcap/tidb/pull/7508)
+  - Fix the issue that `auto analyze` is repeatedly executed in specific scenarios [#7556](https://github.com/pingcap/tidb/pull/7556)
+  - Fix the issue that the parser cannot parse a single line comment ended with a newline character [#7635](https://github.com/pingcap/tidb/pull/7635)
+
+## [2.0.6] - 2018-08-06
+### Improvements
+  - Make “set system variable” log shorter to save disk space [#7031](https://github.com/pingcap/tidb/pull/7031)
+  - Record slow operations during the execution of `ADD INDEX` in the log, to make troubleshooting easier [#7083](https://github.com/pingcap/tidb/pull/7083)
+  - Reduce transaction conflicts when updating statistics [#7138](https://github.com/pingcap/tidb/pull/7138)
+  - Improve the accuracy of row count estimation when the values pending to be estimated exceeds the statistics range [#7185](https://github.com/pingcap/tidb/pull/7185)
+  - Choose the table with a smaller estimated row count as the outer table for `Index Join` to improve its execution efficiency [#7277](https://github.com/pingcap/tidb/pull/7277)
+  - Add the recover mechanism for panics occurred during the execution of `ANALYZE TABLE`, to avoid that the tidb-server is unavailable caused by abnormal behavior in the process of collecting statistics [#7228](https://github.com/pingcap/tidb/pull/7228)
+  - Return `NULL` and the corresponding warning when the results of `RPAD`/`LPAD` exceed the value of the `max_allowed_packet` system variable, compatible with MySQL [#7244](https://github.com/pingcap/tidb/pull/7244)
+  - Set the upper limit of placeholders count in the `PREPARE` statement to 65535, compatible with MySQL [#7250](https://github.com/pingcap/tidb/pull/7250)
+### Bug Fixes
+  - Fix the issue that the `DROP USER` statement is incompatible with MySQL behavior in some cases [#7014](https://github.com/pingcap/tidb/pull/7014)
+  - Fix the issue that statements like `INSERT`/`LOAD DATA` meet OOM aftering opening `tidb_batch_insert` [#7092](https://github.com/pingcap/tidb/pull/7092)
+  - Fix the issue that the statistics fail to automatically update when the data of a table keeps updating [#7093](https://github.com/pingcap/tidb/pull/7093)
+  - Fix the issue that the firewall breaks inactive gPRC connections [#7099](https://github.com/pingcap/tidb/pull/7099)
+  - Fix the issue that prefix index returns a wrong result in some scenarios [#7126](https://github.com/pingcap/tidb/pull/7126)
+  - Fix the panic issue caused by outdated statistics in some scenarios [#7155](https://github.com/pingcap/tidb/pull/7155)
+  - Fix the issue that one piece of index data is missed after the `ADD INDEX` operation in some scenarios [#7156](https://github.com/pingcap/tidb/pull/7156)
+  - Fix the wrong result issue when querying `NULL` values using the unique index in some scenarios [#7172](https://github.com/pingcap/tidb/pull/7172)
+  - Fix the messy code issue of the `DECIMAL` multiplication result in some scenarios [#7212](https://github.com/pingcap/tidb/pull/7212)
+  - Fix the wrong result issue of `DECIMAL` modulo operation in some scenarios [#7245](https://github.com/pingcap/tidb/pull/7245)
+  - Fix the issue that the `UPDATE`/`DELETE` statement in a transaction returns a wrong result under some special sequence of statements [#7219](https://github.com/pingcap/tidb/pull/7219)
+  - Fix the panic issue of the `UNION ALL`/`UPDATE` statement during the process of building the execution plan in some scenarios [#7225](https://github.com/pingcap/tidb/pull/7225)
+  - Fix the issue that the range of prefix index is calculated incorrectly in some scenarios [#7231](https://github.com/pingcap/tidb/pull/7231)
+  - Fix the issue that the `LOAD DATA` statement fails to write the binlog in some scenarios [#7242](https://github.com/pingcap/tidb/pull/7242)
+  - Fix the wrong result issue of `SHOW CREATE TABLE` during the execution process of `ADD INDEX` in some scenarios [#7243](https://github.com/pingcap/tidb/pull/7243)
+  - Fix the issue that panic occurs when `Index Join` does not initialize timestamps in some scenarios [#7246](https://github.com/pingcap/tidb/pull/7246)
+  - Fix the false alarm issue when `ADMIN CHECK TABLE` mistakenly uses the timezone in the session [#7258](https://github.com/pingcap/tidb/pull/7258)
+  - Fix the issue that `ADMIN CLEANUP INDEX` does not clean up the index in some scenarios [#7265](https://github.com/pingcap/tidb/pull/7265)
+  - Disable the Read Committed isolation level [#7282](https://github.com/pingcap/tidb/pull/7282)
+
+## [2.0.5] - 2018-07-06
+### New Features
+  - Add the `tidb_disable_txn_auto_retry` system variable which is used to disable the automatic retry of transactions [#6877](https://github.com/pingcap/tidb/pull/6877)
+### Improvements
+  - Optimize the cost calculation of `Selection` to make the result more accurate [#6989](https://github.com/pingcap/tidb/pull/6989)
+  - Select the query condition that completely matches the unique index or the primary key as the query path directly [#6966](https://github.com/pingcap/tidb/pull/6966)
+  - Execute necessary cleanup when failing to start the service [#6964](https://github.com/pingcap/tidb/pull/6964)
+  - Handle `\N` as NULL in the `Load Data` statement [#6962](https://github.com/pingcap/tidb/pull/6962)
+  - Optimize the code structure of CBO [#6953](https://github.com/pingcap/tidb/pull/6953)
+  - Report the monitoring metrics earlier when starting the service [#6931](https://github.com/pingcap/tidb/pull/6931)
+  - Optimize the format of slow queries by removing the line breaks in SQL statements and adding user information [#6931](https://github.com/pingcap/tidb/pull/6931)
+  - Support multiple asterisks in comments [#6931](https://github.com/pingcap/tidb/pull/6931)
+### Bug Fixes
+  - Fix the issue that `KILL QUERY` always requires SUPER privilege [#6931](https://github.com/pingcap/tidb/pull/6931)
+  - Fix the issue that users might fail to login when the number of users exceeds 1024 [#6986](https://github.com/pingcap/tidb/pull/6986)
+  - Fix an issue about inserting unsigned `float`/`double` data [#6940](https://github.com/pingcap/tidb/pull/6940)
+  - Fix the compatibility of the `COM_FIELD_LIST` command to resolve the panic issue in some MariaDB clients [#6929](https://github.com/pingcap/tidb/pull/6929)
+  - Fix the `CREATE TABLE IF NOT EXISTS LIKE` behavior [#6928](https://github.com/pingcap/tidb/pull/6928)
+  - Fix an issue in the process of TopN pushdown [#6923](https://github.com/pingcap/tidb/pull/6923)
+  - Fix the ID record issue of the currently processing row when an error occurs in executing `Add Index` [#6903](https://github.com/pingcap/tidb/pull/6903)
+
+
 ## [2.0.4] - 2018-06-15
 ### New Features
   - Support the `ALTER TABLE t DROP COLUMN a CASCADE` syntax

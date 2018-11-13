@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -90,6 +89,8 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 	builder.Request.StartTs = ana.StartTs
 	builder.Request.Data, builder.err = ana.Marshal()
 	builder.Request.NotFillCache = true
+	builder.Request.IsolationLevel = kv.RC
+	builder.Request.Priority = kv.PriorityLow
 	return builder
 }
 
@@ -124,15 +125,9 @@ func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 	return builder
 }
 
-func (builder *RequestBuilder) getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
-	var isoLevel string
-	if sv.TxnIsolationLevelOneShot.State == 2 {
-		isoLevel = sv.TxnIsolationLevelOneShot.Value
-	}
-	if isoLevel == "" {
-		isoLevel, _ = sv.GetSystemVar(variable.TxnIsolation)
-	}
-	if isoLevel == ast.ReadCommitted {
+func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
+	switch builder.Tp {
+	case kv.ReqTypeAnalyze:
 		return kv.RC
 	}
 	return kv.SI
@@ -142,7 +137,7 @@ func (builder *RequestBuilder) getIsolationLevel(sv *variable.SessionVars) kv.Is
 // "Concurrency", "IsolationLevel", "NotFillCache".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
 	builder.Request.Concurrency = sv.DistSQLScanConcurrency
-	builder.Request.IsolationLevel = builder.getIsolationLevel(sv)
+	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	return builder
 }
@@ -306,8 +301,22 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.NewRange) ([]byte,
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	if !ran.HighExclude {
 		high = []byte(kv.Key(high).PrefixNext())
+	}
+
+	var hasNull bool
+	for _, highVal := range ran.HighVal {
+		if highVal.IsNull() {
+			hasNull = true
+			break
+		}
+	}
+
+	if hasNull {
+		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
+		high = []byte(kv.Key(high).Next())
 	}
 	return low, high, nil
 }

@@ -477,6 +477,8 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("100 123 123 120"))
 	result = tk.MustQuery("SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);")
 	result.Check(testkit.Rows("100 123.45 123.4 123.456 1.230000000000000000000000000000 123.45"))
+	result = tk.MustQuery("SELECT truncate(9223372036854775807, -7), truncate(9223372036854775808, -10), truncate(cast(-1 as unsigned), -10);")
+	result.Check(testkit.Rows("9223372036850000000 9223372030000000000 18446744070000000000"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a date, b datetime, c timestamp, d varchar(20));`)
@@ -736,6 +738,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("www.pingcap 12345 45 2017 01:01"))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
 	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
+	tk.MustQuery(`select substring_index('xyz', 'abc', 9223372036854775808)`).Check(testkit.Rows(``))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
 	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
 	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
@@ -870,8 +873,8 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 
 	// for convert
-	result = tk.MustQuery(`select convert("123" using "866"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert(cast("中文" as binary) using "utf8");`)
-	result.Check(testkit.Rows("123 123 中文 中文 中文"))
+	result = tk.MustQuery(`select convert("123" using "866"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
+	result.Check(testkit.Rows("123 123 中文 中文 中文 中文"))
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
@@ -3351,4 +3354,53 @@ func (s *testIntegrationSuite) TestTwoDecimalAssignTruncate(c *C) {
 	tk.MustExec("update t1 set b = a")
 	res := tk.MustQuery("select a, b from t1")
 	res.Check(testkit.Rows("123.12345 123.1"))
+}
+
+func (s *testIntegrationSuite) TestPrefixIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (
+  			name varchar(12) DEFAULT NULL,
+  			KEY pname (name(12))
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+
+	tk.MustExec("insert into t1 values('借款策略集_网页');")
+	res := tk.MustQuery("select * from t1 where name = '借款策略集_网页';")
+	res.Check(testkit.Rows("借款策略集_网页"))
+
+	tk.MustExec(`CREATE TABLE prefix (
+		a int(11) NOT NULL,
+		b varchar(55) DEFAULT NULL,
+		c int(11) DEFAULT NULL,
+		PRIMARY KEY (a),
+		KEY prefix_index (b(2)),
+		KEY prefix_complex (a,b(2))
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;`)
+
+	tk.MustExec("INSERT INTO prefix VALUES(0, 'b', 2), (1, 'bbb', 3), (2, 'bbc', 4), (3, 'bbb', 5), (4, 'abc', 6), (5, 'abc', 7), (6, 'abc', 7), (7, 'ÿÿ', 8), (8, 'ÿÿ0', 9), (9, 'ÿÿÿ', 10);")
+	res = tk.MustQuery("select c, b from prefix where b > 'ÿ' and b < 'ÿÿc'")
+	res.Check(testkit.Rows("8 ÿÿ", "9 ÿÿ0"))
+
+	res = tk.MustQuery("select a, b from prefix where b LIKE 'ÿÿ%'")
+	res.Check(testkit.Rows("7 ÿÿ", "8 ÿÿ0", "9 ÿÿÿ"))
+}
+
+func (s *testIntegrationSuite) TestDecimalMul(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test")
+	tk.MustExec("create table t(a decimal(38, 17));")
+	tk.MustExec("insert into t select 0.5999991229316*0.918755041726043;")
+	res := tk.MustQuery("select * from t;")
+	res.Check(testkit.Rows("0.55125221922461136"))
+}
+
+func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);`)
+	tk.MustExec(`insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");`)
+	res := tk.MustQuery(`select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;`)
+	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
 }

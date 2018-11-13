@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -203,8 +204,13 @@ func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 // Used only for test.
 type mockResultSubset struct{ data []byte }
 
-// GetData implements kv.Response interface.
+// GetData implements kv.ResultSubset interface.
 func (r *mockResultSubset) GetData() []byte { return r.data }
 
-// GetStartKey implements kv.Response interface.
+// GetStartKey implements kv.ResultSubset interface.
 func (r *mockResultSubset) GetStartKey() kv.Key { return nil }
+
+// GetExecDetails implements kv.ResultSubset interface.
+func (r *mockResultSubset) GetExecDetails() *execdetails.ExecDetails {
+	return &execdetails.ExecDetails{}
+}

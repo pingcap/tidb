@@ -183,9 +183,11 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()
-	chk := rs.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
 	for {
+		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
+		// The result will reference memory in the chunk, so the chunk must not be reused
+		// here, otherwise some werid bug will happen!
+		chk := rs.NewChunk()
 		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -193,6 +195,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		if chk.NumRows() == 0 {
 			return nil
 		}
+		it := chunk.NewIterator4Chunk(chk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			err = decodeTableRow(row, fs)
 			if err != nil {

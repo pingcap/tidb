@@ -210,9 +210,9 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 
 			if isUnsigned {
-				args[i] = uint64(paramValues[pos])
+				args[i] = uint8(paramValues[pos])
 			} else {
-				args[i] = int64(paramValues[pos])
+				args[i] = int8(paramValues[pos])
 			}
 
 			pos++
@@ -225,9 +225,9 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 			valU16 := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
 			if isUnsigned {
-				args[i] = uint64(valU16)
+				args[i] = valU16
 			} else {
-				args[i] = int64(valU16)
+				args[i] = int16(valU16)
 			}
 			pos += 2
 			continue
@@ -239,9 +239,9 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 			valU32 := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 			if isUnsigned {
-				args[i] = uint64(valU32)
+				args[i] = valU32
 			} else {
-				args[i] = int64(valU32)
+				args[i] = int32(valU32)
 			}
 			pos += 4
 			continue
@@ -266,7 +266,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 				return
 			}
 
-			args[i] = float64(math.Float32frombits(binary.LittleEndian.Uint32(paramValues[pos : pos+4])))
+			args[i] = math.Float32frombits(binary.LittleEndian.Uint32(paramValues[pos : pos+4]))
 			pos += 4
 			continue
 

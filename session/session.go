@@ -347,7 +347,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
-			log.Warnf("[con:%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
+			log.Warnf("con:%d retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -372,7 +372,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 
 	if err != nil {
-		log.Warnf("[con:%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
+		log.Warnf("con:%d finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
@@ -390,7 +390,13 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		defer span.Finish()
 	}
 
+	stmt := executor.ExecStmt{
+		Text:      "commit",
+		Ctx:       s,
+		StartTime: time.Now(),
+	}
 	err := s.doCommitWithRetry(ctx)
+	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
 	label := metrics.LblOK
 	if err != nil {
 		label = metrics.LblError
@@ -480,6 +486,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 
 	nh := GetHistory(s)
 	var err error
+	orgStartTS := s.GetSessionVars().TxnCtx.StartTS
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
@@ -495,9 +502,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warnf("[con:%d] Retry:%d query:%d %s", connID, retryCnt, i, sqlForLog(st.OriginText()))
+				log.Warnf("con:%d retry_cnt:%d query_num:%d sql:%s", connID, retryCnt, i, sqlForLog(st.OriginText()))
 			} else {
-				log.Warnf("[con:%d] Retry:%d query:%d", connID, retryCnt, i)
+				log.Warnf("con:%d retry_cnt:%d query_num:%d", connID, retryCnt, i)
 			}
 			s.sessionVars.StmtCtx = sr.stmtCtx
 			s.sessionVars.StmtCtx.ResetForRetry()
@@ -508,6 +515,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 			s.StmtCommit()
 		}
+		log.Warnf("con:%d retrying_txn_start_ts:%d original_txn_start_ts:(%d)",
+			connID, s.GetSessionVars().TxnCtx.StartTS, orgStartTS)
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
 			hook.(func())()
@@ -519,17 +528,17 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("[con:%d] session:%v, err:%v in retry", connID, s, err)
+			log.Warnf("con:%d session:%v, err:%v in retry", connID, s, err)
 			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblUnretryable)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
-			log.Warnf("[con:%d] Retry reached max count %d", connID, retryCnt)
+			log.Warnf("con:%d Retry reached max count %d", connID, retryCnt)
 			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblReachMax)
 			return errors.Trace(err)
 		}
-		log.Warnf("[con:%d] retryable error: %v, txn: %v", connID, err, s.txn)
+		log.Warnf("con:%d retryable error: %v, txn: %v", connID, err, s.txn)
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -539,9 +548,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 
 func sqlForLog(sql string) string {
 	if len(sql) > sqlLogMaxLen {
-		return sql[:sqlLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
+		sql = sql[:sqlLogMaxLen] + fmt.Sprintf("(len:%d)", len(sql))
 	}
-	return sql
+	return executor.QueryReplacer.Replace(sql)
 }
 
 func (s *session) sysSessionPool() *pools.ResourcePool {
@@ -750,7 +759,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
-			log.Warnf("[%d] session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
+			log.Warnf("con:%d session error:\n%v\n%s", connID, errors.ErrorStack(err), s)
 		}
 		return nil, errors.Trace(err)
 	}
@@ -815,7 +824,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			log.Warnf("[con:%d] parse error:\n%v\n%s", connID, err, sql)
+			log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
 		metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
@@ -831,7 +840,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			stmt, err := compiler.Compile(ctx, stmtNode)
 			if err != nil {
 				s.rollbackOnError(ctx)
-				log.Warnf("[con:%d] compile error:\n%v\n%s", connID, err, sql)
+				log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
 				return nil, errors.Trace(err)
 			}
 			metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -983,7 +992,7 @@ func (s *session) NewTxn() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Infof("[con:%d] NewTxn() inside a transaction auto commit: %d", s.GetSessionVars().ConnectionID, txnID)
+		log.Infof("con:%d NewTxn() inside a transaction auto commit: %d", s.GetSessionVars().ConnectionID, txnID)
 	}
 
 	txn, err := s.store.Begin()
@@ -992,7 +1001,13 @@ func (s *session) NewTxn() error {
 	}
 	txn.SetCap(s.getMembufCap())
 	s.txn.changeInvalidToValid(txn)
-	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
+	is := domain.GetDomain(s).InfoSchema()
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:    is,
+		SchemaVersion: is.SchemaMetaVersion(),
+		CreateTime:    time.Now(),
+		StartTS:       txn.StartTS(),
+	}
 	return nil
 }
 
@@ -1098,8 +1113,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
-	// Add statsUpdateHandle.
-	if do.StatsHandle() != nil {
+	// Add stats collector, and it will be freed by background stats worker
+	// which periodically updates stats using the collected data.
+	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
 	}
 
@@ -1279,6 +1295,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
 	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
+	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBDisableTxnAutoRetry + "')"
 
@@ -1354,10 +1371,6 @@ func (s *session) ActivePendingTxn() error {
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	isoLevel, _ := s.sessionVars.GetSystemVar(variable.TxnIsolation)
-	if isoLevel == ast.ReadCommitted {
-		s.txn.SetOption(kv.IsolationLevel, kv.RC)
-	}
 	return nil
 }
 
@@ -1405,9 +1418,9 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
-			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, ss.SecureText(), user)
+			log.Infof("[CRUCIAL OPERATION] con:%d %s (by %s).", vars.ConnectionID, ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] [con:%v] %s (by %s).", vars.ConnectionID, stmt.Text(), user)
+			log.Infof("[CRUCIAL OPERATION] con:%d %s (by %s).", vars.ConnectionID, stmt.Text(), user)
 		}
 	default:
 		logQuery(node.Text(), vars)
@@ -1416,6 +1429,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
-		log.Infof("[con:%d][txn:%d] %s", vars.ConnectionID, vars.TxnCtx.StartTS, query)
+		query = executor.QueryReplacer.Replace(query)
+		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d start_ts:%d sql:%s", vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query)
 	}
 }

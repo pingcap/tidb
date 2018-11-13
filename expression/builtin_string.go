@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
@@ -230,7 +231,7 @@ func (b *builtinASCIISig) Clone() builtinFunc {
 	return newSig
 }
 
-// eval evals a builtinASCIISig.
+// evalInt evals a builtinASCIISig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
 func (b *builtinASCIISig) evalInt(row types.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -283,6 +284,7 @@ func (b *builtinConcatSig) Clone() builtinFunc {
 	return newSig
 }
 
+// evalString evals a builtinConcatSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) evalString(row types.Row) (d string, isNull bool, err error) {
 	var s []byte
@@ -552,27 +554,35 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	sig := &builtinRepeatSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinRepeatSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinRepeatSig) Clone() builtinFunc {
 	newSig := &builtinRepeatSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
-// eval evals a builtinRepeatSig.
+// evalString evals a builtinRepeatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
 func (b *builtinRepeatSig) evalString(row types.Row) (d string, isNull bool, err error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
+	byteLength := len(str)
 
 	num, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -585,7 +595,12 @@ func (b *builtinRepeatSig) evalString(row types.Row) (d string, isNull bool, err
 		num = math.MaxInt32
 	}
 
-	if int64(len(str)) > int64(b.tp.Flen)/num {
+	if uint64(byteLength)*uint64(num) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("repeat", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
+	if int64(byteLength) > int64(b.tp.Flen)/num {
 		return "", true, nil
 	}
 	return strings.Repeat(str, int(num)), false, nil
@@ -706,17 +721,24 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
-	sig := &builtinSpaceSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinSpaceSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinSpaceSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinSpaceSig) Clone() builtinFunc {
 	newSig := &builtinSpaceSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -729,11 +751,15 @@ func (b *builtinSpaceSig) evalString(row types.Row) (d string, isNull bool, err 
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	if x > mysql.MaxBlobWidth {
-		return d, true, nil
-	}
 	if x < 0 {
 		x = 0
+	}
+	if uint64(x) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("space", b.maxAllowedPacket))
+		return d, true, nil
+	}
+	if x > mysql.MaxBlobWidth {
+		return d, true, nil
 	}
 	return strings.Repeat(" ", int(x)), false, nil
 }
@@ -1183,6 +1209,11 @@ func (b *builtinSubstringIndexSig) evalString(row types.Row) (d string, isNull b
 	} else {
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
+		if count < 0 {
+			// -count overflows max int64, returns an empty string.
+			return "", false, nil
+		}
+
 		if count < end {
 			start = end - count
 		}
@@ -1502,6 +1533,7 @@ type trimFunctionClass struct {
 	baseFunctionClass
 }
 
+// getFunction sets trim built-in function signature.
 // The syntax of trim in mysql is 'TRIM([{BOTH | LEADING | TRAILING} [remstr] FROM] str), TRIM([remstr FROM] str)',
 // but we wil convert it into trim(str), trim(str, remstr) and trim(str, remstr, direction) in AST.
 func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1759,24 +1791,33 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		sig := &builtinLpadBinarySig{bf}
+		sig := &builtinLpadBinarySig{bf, maxAllowedPacket}
 		return sig, nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinLpadSig{bf}
+	sig := &builtinLpadSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinLpadBinarySig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinLpadBinarySig) Clone() builtinFunc {
 	newSig := &builtinLpadBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -1794,6 +1835,11 @@ func (b *builtinLpadBinarySig) evalString(row types.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 	targetLength := int(length)
+
+	if uint64(targetLength) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("lpad", b.maxAllowedPacket))
+		return "", true, nil
+	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1814,11 +1860,13 @@ func (b *builtinLpadBinarySig) evalString(row types.Row) (string, bool, error) {
 
 type builtinLpadSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinLpadSig) Clone() builtinFunc {
 	newSig := &builtinLpadSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -1836,6 +1884,11 @@ func (b *builtinLpadSig) evalString(row types.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 	targetLength := int(length)
+
+	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("lpad", b.maxAllowedPacket))
+		return "", true, nil
+	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1866,24 +1919,33 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		sig := &builtinRpadBinarySig{bf}
+		sig := &builtinRpadBinarySig{bf, maxAllowedPacket}
 		return sig, nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinRpadSig{bf}
+	sig := &builtinRpadSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinRpadBinarySig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinRpadBinarySig) Clone() builtinFunc {
 	newSig := &builtinRpadBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -1901,6 +1963,10 @@ func (b *builtinRpadBinarySig) evalString(row types.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 	targetLength := int(length)
+	if uint64(targetLength) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("rpad", b.maxAllowedPacket))
+		return "", true, nil
+	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1921,11 +1987,13 @@ func (b *builtinRpadBinarySig) evalString(row types.Row) (string, bool, error) {
 
 type builtinRpadSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinRpadSig) Clone() builtinFunc {
 	newSig := &builtinRpadSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -1943,6 +2011,11 @@ func (b *builtinRpadSig) evalString(row types.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 	targetLength := int(length)
+
+	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("rpad", b.maxAllowedPacket))
+		return "", true, nil
+	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -2428,8 +2501,8 @@ func (b *builtinOctStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// // evalString evals OCT(N).
-// // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
+// evalString evals OCT(N).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
 func (b *builtinOctStringSig) evalString(row types.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -2903,18 +2976,39 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxBlobWidth
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinFromBase64Sig{bf}
+	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
 	return sig, nil
+}
+
+// base64NeededDecodedLength return the base64 decoded string length.
+func base64NeededDecodedLength(n int) int {
+	// Returns -1 indicate the result will overflow.
+	if strconv.IntSize == 64 && n > math.MaxInt64/3 {
+		return -1
+	}
+	if strconv.IntSize == 32 && n > math.MaxInt32/3 {
+		return -1
+	}
+	return n * 3 / 4
 }
 
 type builtinFromBase64Sig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinFromBase64Sig) Clone() builtinFunc {
 	newSig := &builtinFromBase64Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -2925,6 +3019,16 @@ func (b *builtinFromBase64Sig) evalString(row types.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
+
+	needDecodeLen := base64NeededDecodedLength(len(str))
+	if needDecodeLen == -1 {
+		return "", true, nil
+	}
+	if needDecodeLen > int(b.maxAllowedPacket) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("from_base64", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
 	str = strings.Replace(str, "\t", "", -1)
 	str = strings.Replace(str, " ", "", -1)
 	result, err := base64.StdEncoding.DecodeString(str)
@@ -2945,17 +3049,26 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
-	sig := &builtinToBase64Sig{bf}
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinToBase64Sig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinToBase64Sig) Clone() builtinFunc {
 	newSig := &builtinToBase64Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -2989,7 +3102,14 @@ func (b *builtinToBase64Sig) evalString(row types.Row) (d string, isNull bool, e
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-
+	needEncodeLen := base64NeededEncodedLength(len(str))
+	if needEncodeLen == -1 {
+		return "", true, nil
+	}
+	if needEncodeLen > int(b.maxAllowedPacket) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("to_base64", b.maxAllowedPacket))
+		return "", true, nil
+	}
 	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
 		return "", true, nil
 	}
@@ -3030,21 +3150,30 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if types.IsBinaryStr(args[0].GetType()) {
-		sig = &builtinInsertBinarySig{bf}
+		sig = &builtinInsertBinarySig{bf, maxAllowedPacket}
 	} else {
-		sig = &builtinInsertSig{bf}
+		sig = &builtinInsertSig{bf, maxAllowedPacket}
 	}
 	return sig, nil
 }
 
 type builtinInsertBinarySig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinInsertBinarySig) Clone() builtinFunc {
 	newSig := &builtinInsertBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3076,18 +3205,26 @@ func (b *builtinInsertBinarySig) evalString(row types.Row) (string, bool, error)
 	}
 
 	if length > strLength-pos+1 || length < 0 {
-		return str[0:pos-1] + newstr, false, nil
+		length = strLength - pos + 1
 	}
+
+	if uint64(strLength-length+int64(len(newstr))) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
 	return str[0:pos-1] + newstr + str[pos+length-1:], false, nil
 }
 
 type builtinInsertSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinInsertSig) Clone() builtinFunc {
 	newSig := &builtinInsertSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3120,9 +3257,16 @@ func (b *builtinInsertSig) evalString(row types.Row) (string, bool, error) {
 	}
 
 	if length > runeLength-pos+1 || length < 0 {
-		return string(runes[0:pos-1]) + newstr, false, nil
+		length = runeLength - pos + 1
 	}
-	return string(runes[0:pos-1]) + newstr + string(runes[pos+length-1:]), false, nil
+
+	strHead := string(runes[0 : pos-1])
+	strTail := string(runes[pos+length-1:])
+	if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
+		return "", true, nil
+	}
+	return strHead + newstr + strTail, false, nil
 }
 
 type instrFunctionClass struct {

@@ -160,11 +160,13 @@ func (r *selectResult) getSelectResp() error {
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 		}
+		sc := r.ctx.GetSessionVars().StmtCtx
 		for _, warning := range r.selectResp.Warnings {
-			r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
+		sc.MergeExecDetails(re.result.GetExecDetails())
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}

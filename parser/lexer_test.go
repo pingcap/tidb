@@ -166,6 +166,10 @@ SELECT`, selectKwd},
 SELECT`, selectKwd},
 		{"#comment\n123", intLit},
 		{"--5", int('-')},
+		{"--\nSELECT", selectKwd},
+		{"--\tSELECT", 0},
+		{"--\r\nSELECT", selectKwd},
+		{"--", 0},
 	}
 	runTest(c, table)
 }

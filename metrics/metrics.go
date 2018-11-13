@@ -33,6 +33,7 @@ const (
 	LabelDDLOwner = "ddl-owner"
 	LabelDDL      = "ddl"
 	LabelGCWorker = "gcworker"
+	LabelAnalyze  = "analyze"
 
 	opSucc   = "ok"
 	opFailed = "err"

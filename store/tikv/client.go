@@ -35,11 +35,21 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
 )
 
 // MaxConnectionCount is the max gRPC connections that will be established with
 // each tikv-server.
 var MaxConnectionCount uint = 16
+
+// GrpcKeepAliveTime is the duration of time after which if the client doesn't see
+// any activity it pings the server to see if the transport is still alive.
+var GrpcKeepAliveTime = time.Duration(10) * time.Second
+
+// GrpcKeepAliveTimeout is the duration of time for which the client waits after having
+// pinged for keepalive check and if no activity is seen even after that the connection
+// is closed.
+var GrpcKeepAliveTimeout = time.Duration(3) * time.Second
 
 // MaxSendMsgSize set max gRPC request message size sent to server. If any request message size is larger than
 // current value, an error will be reported from gRPC.
@@ -121,6 +131,11 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxCallMsgSize)),
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
 			grpc.WithBackoffMaxDelay(time.Second*3),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                GrpcKeepAliveTime,
+				Timeout:             GrpcKeepAliveTimeout,
+				PermitWithoutStream: true,
+			}),
 		)
 		cancel()
 		if err != nil {

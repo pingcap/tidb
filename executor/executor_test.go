@@ -24,7 +24,7 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/coreos/gofail/runtime"
+	gofail "github.com/etcd-io/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -107,6 +107,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	}
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
 	s.domain = d
 }
 
@@ -234,6 +235,51 @@ func (s *testSuite) TestAdmin(c *C) {
 	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
 	// For "checksum_without_index", we only have one checksum, so the result will be 1.
 	res.Sort().Check(testkit.Rows("test checksum_with_index 0 2 2", "test checksum_without_index 1 1 1"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (c2 BOOL, PRIMARY KEY (c2));")
+	tk.MustExec("INSERT INTO t1 SET c2 = '0';")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c3 DATETIME NULL DEFAULT '2668-02-03 17:19:31';")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx2 (c3);")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 bit(10) default 127;")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
+	tk.MustExec("admin check table t1;")
+
+	// For add index on virtual column
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1 (
+		a int             as (JSON_EXTRACT(k,'$.a')),
+		c double          as (JSON_EXTRACT(k,'$.c')),
+		d decimal(20,10)  as (JSON_EXTRACT(k,'$.d')),
+		e char(10)        as (JSON_EXTRACT(k,'$.e')),
+		f date            as (JSON_EXTRACT(k,'$.f')),
+		g time            as (JSON_EXTRACT(k,'$.g')),
+		h datetime        as (JSON_EXTRACT(k,'$.h')),
+		i timestamp       as (JSON_EXTRACT(k,'$.i')),
+		j year            as (JSON_EXTRACT(k,'$.j')),
+		k json);`)
+
+	tk.MustExec("insert into t1 set k='{\"a\": 100,\"c\":1.234,\"d\":1.2340000000,\"e\":\"abcdefg\",\"f\":\"2018-09-28\",\"g\":\"12:59:59\",\"h\":\"2018-09-28 12:59:59\",\"i\":\"2018-09-28 16:40:33\",\"j\":\"2018\"}';")
+	tk.MustExec("alter table t1 add index idx_a(a);")
+	tk.MustExec("alter table t1 add index idx_c(c);")
+	tk.MustExec("alter table t1 add index idx_d(d);")
+	tk.MustExec("alter table t1 add index idx_e(e);")
+	tk.MustExec("alter table t1 add index idx_f(f);")
+	tk.MustExec("alter table t1 add index idx_g(g);")
+	tk.MustExec("alter table t1 add index idx_h(h);")
+	tk.MustExec("alter table t1 add index idx_j(j);")
+	tk.MustExec("alter table t1 add index idx_i(i);")
+	tk.MustExec("alter table t1 add index idx_m(a,c,d,e,f,g,h,i,j);")
+	tk.MustExec("admin check table t1;")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (c1 int);")
+	tk.MustExec("INSERT INTO t1 SET c1 = 1;")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN cc1 CHAR(36)    NULL DEFAULT '';")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN cc2 VARCHAR(36) NULL DEFAULT ''")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx1 (cc1);")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx2 (cc2);")
+	tk.MustExec("admin check table t1;")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -631,6 +677,10 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 100;")
 	r.Check(testkit.Rows())
 
+	// Test limit exceeds int range.
+	r = tk.MustQuery("select id from select_order_test order by name, id limit 18446744073709551615;")
+	r.Check(testkit.Rows("1", "2"))
+
 	// Test multiple field
 	r = tk.MustQuery("select id, name from select_order_test where id = 1 group by id, name limit 1 offset 0;")
 	r.Check(testkit.Rows("1 hello"))
@@ -981,6 +1031,46 @@ func (s *testSuite) TestUnion(c *C) {
 
 	tk.MustQuery("select 1 union select 1 union all select 1").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select 1 union all select 1 union select 1").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1(a bigint, b bigint);`)
+	tk.MustExec(`create table t2(a bigint, b bigint);`)
+	tk.MustExec(`insert into t1 values(1, 1);`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t2 values(1, 1);`)
+	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustQuery(`select count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("128"))
+	tk.MustQuery(`select tmp.a, count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("1 128"))
+
+	// #issue 8141
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("insert into t1 value(1,2),(1,1),(2,2),(2,2),(3,2),(3,2)")
+	tk.MustExec("set @@tidb_max_chunk_size=2;")
+	tk.MustQuery("select count(*) from (select a as c, a as d from t1 union all select a, b from t1) t;").Check(testkit.Rows("12"))
+}
+
+func (s *testSuite) TestNeighbouringProj(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 value(1, 1), (2, 2)")
+	tk.MustExec("insert into t2 value(1, 1), (2, 2)")
+	tk.MustQuery("select sum(c) from (select t1.a as a, t1.a as c, length(t1.b) from t1  union select a, b, b from t2) t;").Check(testkit.Rows("5"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint, b bigint, c bigint);")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3);")
+	rs := tk.MustQuery("select cast(count(a) as signed), a as another, a from t group by a order by cast(count(a) as signed), a limit 10;")
+	rs.Check(testkit.Rows("1 1 1", "1 2 2", "1 3 3"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1269,6 +1359,21 @@ func (s *testSuite) TestJSON(c *C) {
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
 	result.Check(testkit.Rows(`3 {} <nil>`))
+
+	// Check cast json to decimal.
+	tk.MustExec("drop table if exists test_json")
+	tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
+	tk.MustExec(`insert into test_json (b) values
+		('{"c": "1267.1"}'),
+		('{"c": "1267.01"}'),
+		('{"c": "1267.1234"}'),
+		('{"c": "1267.3456"}'),
+		('{"c": "1234567890123456789012345678901234567890123456789012345"}'),
+		('{"c": "1234567890123456789012345678901234567890123456789012345.12345"}');`)
+
+	tk.MustQuery("select a from test_json;").Check(testkit.Rows("1267.10", "1267.01", "1267.12",
+		"1267.35", "1234567890123456789012345678901234567890123456789012345.00",
+		"1234567890123456789012345678901234567890123456789012345.12"))
 }
 
 func (s *testSuite) TestMultiUpdate(c *C) {
@@ -2813,4 +2918,48 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 
 	_, err = tk1.Exec("commit")
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
+	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
+	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
+		Check(testkit.Rows("1 a"))
+}
+
+func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,t1")
+
+	tk.MustExec("create table t (id int, t0 timestamp null default current_timestamp, t1 timestamp(1) null default current_timestamp(1), t2 timestamp(2) null default current_timestamp(2) on update current_timestamp(2))")
+	tk.MustExec("insert into t (id) values (1)")
+	rs := tk.MustQuery("select t0, t1, t2 from t where id = 1")
+	t0 := rs.Rows()[0][0].(string)
+	t1 := rs.Rows()[0][1].(string)
+	t2 := rs.Rows()[0][2].(string)
+	c.Assert(len(strings.Split(t0, ".")), Equals, 1)
+	c.Assert(len(strings.Split(t1, ".")[1]), Equals, 1)
+	c.Assert(len(strings.Split(t2, ".")[1]), Equals, 2)
+	tk.MustQuery("select id from t where t0 = ?", t0).Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where t1 = ?", t1).Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where t2 = ?", t2).Check(testkit.Rows("1"))
+	time.Sleep(time.Second / 2)
+	tk.MustExec("update t set t0 = now() where id = 1")
+	rs = tk.MustQuery("select t2 from t where id = 1")
+	newT2 := rs.Rows()[0][0].(string)
+	c.Assert(newT2 != t2, IsTrue)
+
+	tk.MustExec("create table t1 (id int, a timestamp, b timestamp(2), c timestamp(3))")
+	tk.MustExec("insert into t1 (id, a, b, c) values (1, current_timestamp(2), current_timestamp, current_timestamp(3))")
+	rs = tk.MustQuery("select a, b, c from t1 where id = 1")
+	a := rs.Rows()[0][0].(string)
+	b := rs.Rows()[0][1].(string)
+	d := rs.Rows()[0][2].(string)
+	c.Assert(len(strings.Split(a, ".")), Equals, 1)
+	c.Assert(strings.Split(b, ".")[1], Equals, "00")
+	c.Assert(len(strings.Split(d, ".")[1]), Equals, 3)
 }

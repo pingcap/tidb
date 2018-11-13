@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -221,16 +223,22 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 		return errors.Trace(err)
 	}
 	version := h.ctx.Txn().StartTS()
-
-	for key, val := range delta.ColSize {
-		if val == 0 {
+	values := make([]string, 0, len(delta.ColSize))
+	for histID, deltaColSize := range delta.ColSize {
+		if deltaColSize == 0 {
 			continue
 		}
-		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", version, val, key, id)
-		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d, %d)", id, histID, deltaColSize, version))
+	}
+	if len(values) == 0 {
+		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "rollback")
+		return errors.Trace(err)
+	}
+	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size, version) "+
+		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size), version = values(version)", strings.Join(values, ","))
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
 	return errors.Trace(err)
@@ -254,7 +262,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debugf("error occurred when encoding feedback, err: ", errors.ErrorStack(err))
+		log.Debugf("error occurred when encoding feedback, err: %s", errors.ErrorStack(err))
 		return nil
 	}
 	var isIndex int64
@@ -281,80 +289,90 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	if len(rows) == 0 || err != nil {
 		return errors.Trace(err)
 	}
-	tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
-	q := &QueryFeedback{}
-	var (
-		cms  *CMSketch
-		hist *Histogram
-	)
-	for _, row := range rows {
-		// merge into previous feedback
-		if row.GetInt64(0) == tableID && row.GetInt64(1) == histID && row.GetInt64(2) == isIndex {
-			err = decodeFeedback(row.GetBytes(3), q, cms)
-			if err != nil {
-				log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
-			}
-			continue
+
+	var groupedRows [][]types.Row
+	preIdx := 0
+	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
+	for i := 1; i < len(rows); i++ {
+		row := rows[i]
+		if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
+			groupedRows = append(groupedRows, rows[preIdx:i])
+			tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+			preIdx = i
 		}
-		// dump the stats into kv
-		if hist != nil {
-			err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
-			if err != nil {
-				return errors.Trace(err)
-			}
+	}
+	groupedRows = append(groupedRows, rows[preIdx:])
+
+	for _, rows := range groupedRows {
+		if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+			return errors.Trace(err)
 		}
-		// initialize new feedback
-		tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := is.TableByID(tableID)
-		if !ok {
-			hist, cms = nil, nil
-			continue
+	}
+	return nil
+}
+
+// handleSingleHistogramUpdate updates the Histogram and CM Sketch using these feedbacks. All the feedbacks for
+// the same index or column are gathered in `rows`.
+func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []types.Row) (err error) {
+	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
+	defer func() {
+		if err == nil {
+			err = errors.Trace(h.deleteOutdatedFeedback(tableID, histID, isIndex))
 		}
-		tbl := h.GetTableStats(table.Meta())
-		if isIndex == 1 {
-			idx, ok := tbl.Indices[histID]
-			if !ok {
-				hist, cms = nil, nil
-				continue
-			}
-			hist = &idx.Histogram
+	}()
+	table, ok := is.TableByID(tableID)
+	// The table has been deleted.
+	if !ok {
+		return nil
+	}
+	tbl := h.GetTableStats(table.Meta())
+	var cms *CMSketch
+	var hist *Histogram
+	if isIndex == 1 {
+		idx, ok := tbl.Indices[histID]
+		if ok {
+			idxHist := idx.Histogram
+			hist = &idxHist
 			cms = idx.CMSketch.copy()
-		} else {
-			col, ok := tbl.Columns[histID]
-			if !ok {
-				hist, cms = nil, nil
-				continue
-			}
-			hist = &col.Histogram
-			cms = nil
 		}
-		err = decodeFeedback(row.GetBytes(3), q, cms)
-		if err != nil {
+	} else {
+		col, ok := tbl.Columns[histID]
+		if ok {
+			colHist := col.Histogram
+			hist = &colHist
+		}
+	}
+	// The column or index has been deleted.
+	if hist == nil {
+		return nil
+	}
+	q := &QueryFeedback{}
+	for _, row := range rows {
+		err1 := decodeFeedback(row.GetBytes(3), q, cms)
+		if err1 != nil {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
 	}
-	// dump the last feedback into kv
-	err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
+	// Update the NDV of primary key column.
+	if table.Meta().PKIsHandle && isIndex == 0 {
+		hist.NDV = int64(hist.totalRowCount())
+	}
+	err = h.dumpStatsUpdateToKV(tableID, isIndex, q, hist, cms)
 	return errors.Trace(err)
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedback, hist *Histogram, cms *CMSketch) (err error) {
-	defer func() {
-		if err != nil {
-			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblError).Inc()
-		} else {
-			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblOK).Inc()
-		}
-	}()
-	hist = UpdateHistogram(hist, q)
-	err = SaveStatsToStorage(h.ctx, tableID, -1, isIndex, hist, cms)
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	h.ctx.GetSessionVars().BatchDelete = true
-	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, hist.ID, isIndex)
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	q.feedback = q.feedback[:0]
+	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex)
+	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	h.ctx.GetSessionVars().BatchDelete = false
+	return errors.Trace(err)
+}
+
+func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *QueryFeedback, hist *Histogram, cms *CMSketch) error {
+	hist = UpdateHistogram(hist, q)
+	err := SaveStatsToStorage(h.ctx, tableID, -1, int(isIndex), hist, cms)
+	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
 
@@ -368,28 +386,37 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
-func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
-	if tbl.ModifyCount == 0 || tbl.Count < AutoAnalyzeMinCnt {
-		return false
-	}
-	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-	if time.Since(t) < limit {
-		return false
-	}
-	if autoAnalyzeRatio > 0 && float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio {
-		return true
-	}
+// TableAnalyzed checks if the table is analyzed.
+func TableAnalyzed(tbl *Table) bool {
 	for _, col := range tbl.Columns {
 		if col.Count > 0 {
-			return false
+			return true
 		}
 	}
 	for _, idx := range tbl.Indices {
-		if idx.Len() > 0 {
-			return false
+		if idx.Histogram.Len() > 0 {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+// needAnalyzeTable checks if we need to analyze the table:
+// 1. If the table has never been analyzed, we need to analyze it when it has
+//    not been modified for a time.
+// 2. If the table had been analyzed before, we need to analyze it when
+//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
+func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
+	analyzed := TableAnalyzed(tbl)
+	if !analyzed {
+		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
+		return time.Since(t) >= limit
+	}
+	// Auto analyze is disabled.
+	if autoAnalyzeRatio == 0 {
+		return false
+	}
+	return float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio
 }
 
 const minAutoAnalyzeRatio = 0.3
@@ -422,7 +449,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			statsTbl := h.GetTableStats(tblInfo)
-			if statsTbl.Pseudo || statsTbl.Count == 0 {
+			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 				continue
 			}
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"

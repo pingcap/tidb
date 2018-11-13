@@ -37,6 +37,8 @@ const (
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
+
+	outOfRangeBetweenRate = 100
 )
 
 // Table represents statistics for a table.
@@ -146,8 +148,9 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 					LastUpdateVersion: histVer,
 					TotColSize:        totColSize,
 				},
-				Info:  colInfo,
-				Count: count + nullCount,
+				Info:     colInfo,
+				Count:    count + nullCount,
+				isHandle: tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			break
 		}
@@ -165,6 +168,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Info:      colInfo,
 				CMSketch:  cms,
 				Count:     int64(hg.totalRowCount()),
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 		}
 		break
@@ -327,7 +331,7 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(t.Count)), nil
 	}
 	c := t.Columns[colID]
-	result, err := c.getColumnRowCount(sc, intRanges)
+	result, err := c.getColumnRowCount(sc, intRanges, t.ModifyCount)
 	result *= c.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -338,7 +342,7 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)
 	}
 	c := t.Columns[colID]
-	result, err := c.getColumnRowCount(sc, colRanges)
+	result, err := c.getColumnRowCount(sc, colRanges, t.ModifyCount)
 	result *= c.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -353,7 +357,7 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 		}
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count), colsLen)
 	}
-	result, err := idx.getRowCount(sc, indexRanges)
+	result, err := idx.getRowCount(sc, indexRanges, t.ModifyCount)
 	result *= idx.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -370,7 +374,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
-			t.Columns[col.ID] = &Column{Info: col}
+			t.Columns[col.ID] = &Column{Info: col, isHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag)}
 		}
 	}
 	for _, idx := range tblInfo.Indices {

@@ -110,6 +110,14 @@ timezone.*
     curl -x POST -d "log_level=info" http://{TiDBIP}:10080/settings
     ```
 
+1. Change TiDB DDL slow log threshold
+
+    The unit is millisecond.
+
+    ```shell
+    curl -x POST -d "ddl_slow_threshold=300" http://{TiDBIP}:10080/settings
+    ```
+
 1. Get the column value by an encoded row and some information that can be obtained from a column of the table schema information. 
 
     Argument example: rowBin=base64_encoded_row_value

@@ -23,6 +23,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -80,6 +81,10 @@ type twoPhaseCommitter struct {
 	syncLog  bool
 	connID   uint64 // connID is used for log.
 	cleanWg  sync.WaitGroup
+	// The max time a Txn may use (in ms) from its startTS to commitTS.
+	// We use it to guarantee GC worker will not influence any active txn. The value
+	// should be less than GC life time.
+	maxTxnTimeUse uint64
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -140,22 +145,26 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	const logSize = 4 * 1024 * 1024 // 4MB
 	if len(keys) > logEntryCount || size > logSize {
 		tableID := tablecodec.DecodeTableID(keys[0])
-		log.Infof("[BIG_TXN] [con:%d] table id:%d size:%d, keys:%d, puts:%d, dels:%d, locks:%d, startTS:%d",
+		log.Infof("[BIG_TXN] con:%d table id:%d size:%d, keys:%d, puts:%d, dels:%d, locks:%d, startTS:%d",
 			connID, tableID, size, len(keys), putCnt, delCnt, lockCnt, txn.startTS)
 	}
+
+	// Convert from sec to ms
+	maxTxnTimeUse := uint64(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse) * 1000
 
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(len(keys)))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(size))
 	return &twoPhaseCommitter{
-		store:     txn.store,
-		txn:       txn,
-		startTS:   txn.StartTS(),
-		keys:      keys,
-		mutations: mutations,
-		lockTTL:   txnLockTTL(txn.startTime, size),
-		priority:  getTxnPriority(txn),
-		syncLog:   getTxnSyncLog(txn),
-		connID:    connID,
+		store:         txn.store,
+		txn:           txn,
+		startTS:       txn.StartTS(),
+		keys:          keys,
+		mutations:     mutations,
+		lockTTL:       txnLockTTL(txn.startTime, size),
+		priority:      getTxnPriority(txn),
+		syncLog:       getTxnSyncLog(txn),
+		connID:        connID,
+		maxTxnTimeUse: maxTxnTimeUse,
 	}, nil
 }
 
@@ -229,7 +238,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		twoPhaseCommitGP.Go(func() {
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
-				log.Debugf("[con:%d] 2PC async doActionOnBatches %s err: %v", c.connID, action, e)
+				log.Debugf("con:%d 2PC async doActionOnBatches %s err: %v", c.connID, action, e)
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
 			}
 		})
@@ -256,7 +265,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	if len(batches) == 1 {
 		e := singleBatchActionFunc(bo, batches[0])
 		if e != nil {
-			log.Debugf("[con:%d] 2PC doActionOnBatches %s failed: %v, tid: %d", c.connID, action, e, c.startTS)
+			log.Debugf("con:%d 2PC doActionOnBatches %s failed: %v, tid: %d", c.connID, action, e, c.startTS)
 		}
 		return errors.Trace(e)
 	}
@@ -294,10 +303,10 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	var err error
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			log.Debugf("[con:%d] 2PC doActionOnBatches %s failed: %v, tid: %d", c.connID, action, e, c.startTS)
+			log.Debugf("con:%d 2PC doActionOnBatches %s failed: %v, tid: %d", c.connID, action, e, c.startTS)
 			// Cancel other requests and return the first error.
 			if cancel != nil {
-				log.Debugf("[con:%d] 2PC doActionOnBatches %s to cancel other actions, tid: %d", c.connID, action, c.startTS)
+				log.Debugf("con:%d 2PC doActionOnBatches %s to cancel other actions, tid: %d", c.connID, action, c.startTS)
 				cancel()
 			}
 			if err == nil {
@@ -370,7 +379,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			log.Debugf("[con:%d] 2PC prewrite encounters lock: %v", c.connID, lock)
+			log.Debugf("con:%d 2PC prewrite encounters lock: %v", c.connID, lock)
 			locks = append(locks, lock)
 		}
 		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
@@ -478,7 +487,7 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	if keyErr := commitResp.GetError(); keyErr != nil {
 		c.mu.RLock()
 		defer c.mu.RUnlock()
-		err = errors.Errorf("[con:%d] 2PC commit failed: %v", c.connID, keyErr.String())
+		err = errors.Errorf("con:%d 2PC commit failed: %v", c.connID, keyErr.String())
 		if c.mu.committed {
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
@@ -527,7 +536,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		return errors.Trace(err)
 	}
 	if keyErr := resp.BatchRollback.GetError(); keyErr != nil {
-		err = errors.Errorf("[con:%d] 2PC cleanup failed: %s", c.connID, keyErr)
+		err = errors.Errorf("con:%d 2PC cleanup failed: %s", c.connID, keyErr)
 		log.Debugf("2PC failed cleanup key: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
@@ -546,11 +555,6 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 	return c.doActionOnKeys(bo, actionCleanup, keys)
 }
 
-// The max time a Txn may use (in ms) from its startTS to commitTS.
-// We use it to guarantee GC worker will not influence any active txn. The value
-// should be less than `gcRunInterval`.
-const maxTxnTimeUse = 590000
-
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	defer func() {
@@ -565,9 +569,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff), c.keys)
 				if err != nil {
 					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
-					log.Infof("[con:%d] 2PC cleanup err: %v, tid: %d", c.connID, err, c.startTS)
+					log.Infof("con:%d 2PC cleanup err: %v, tid: %d", c.connID, err, c.startTS)
 				} else {
-					log.Infof("[con:%d] 2PC clean up done, tid: %d", c.connID, c.startTS)
+					log.Infof("con:%d 2PC clean up done, tid: %d", c.connID, c.startTS)
 				}
 				c.cleanWg.Done()
 			})
@@ -597,19 +601,19 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		}
 	}
 	if err != nil {
-		log.Debugf("[con:%d] 2PC failed on prewrite: %v, tid: %d", c.connID, err, c.startTS)
+		log.Debugf("con:%d 2PC failed on prewrite: %v, tid: %d", c.connID, err, c.startTS)
 		return errors.Trace(err)
 	}
 
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff))
 	if err != nil {
-		log.Warnf("[con:%d] 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
+		log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
 		return errors.Trace(err)
 	}
 
 	// check commitTS
 	if commitTS <= c.startTS {
-		err = errors.Errorf("[con:%d] Invalid transaction tso with start_ts=%v while commit_ts=%v",
+		err = errors.Errorf("con:%d Invalid transaction tso with start_ts=%v while commit_ts=%v",
 			c.connID, c.startTS, commitTS)
 		log.Error(err)
 		return errors.Trace(err)
@@ -619,22 +623,22 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
-		err = errors.Errorf("[con:%d] txn takes too much time, start: %d, commit: %d", c.connID, c.startTS, c.commitTS)
+	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
+		err = errors.Errorf("con:%d txn takes too much time, start: %d, commit: %d", c.connID, c.startTS, c.commitTS)
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
 	err = c.commitKeys(NewBackoffer(ctx, CommitMaxBackoff), c.keys)
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
-			log.Warnf("[con:%d] 2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", c.connID, err, undeterminedErr, c.startTS)
+			log.Warnf("con:%d 2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", c.connID, err, undeterminedErr, c.startTS)
 			err = errors.Wrap(err, terror.ErrResultUndetermined)
 		}
 		if !c.mu.committed {
-			log.Debugf("[con:%d] 2PC failed on commit: %v, tid: %d", c.connID, err, c.startTS)
+			log.Debugf("con:%d 2PC failed on commit: %v, tid: %d", c.connID, err, c.startTS)
 			return errors.Trace(err)
 		}
-		log.Debugf("[con:%d] 2PC succeed with error: %v, tid: %d", c.connID, err, c.startTS)
+		log.Debugf("con:%d 2PC succeed with error: %v, tid: %d", c.connID, err, c.startTS)
 	}
 	return nil
 }
@@ -679,6 +683,7 @@ func (c *twoPhaseCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int
 	binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
 	binInfo.Data.Tp = tp
 	binInfo.Data.CommitTs = commitTS
+	binInfo.Data.PrewriteValue = nil
 	go func() {
 		err := binInfo.WriteBinlog(c.store.clusterID)
 		if err != nil {

@@ -259,11 +259,11 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
-	_, _, err = generateCert(1, "TiDB Server Certificate", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
 	c.Assert(err, IsNil)
 	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key.pem", "/tmp/client-cert.pem")
 	c.Assert(err, IsNil)
-	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "TiDB Server Certificate", true)
+	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "tidb-server", true)
 	c.Assert(err, IsNil)
 
 	defer func() {
@@ -319,7 +319,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4003"
 	}
 	err = runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil, Commentf("%v", errors.ErrorStack(err)))
 	runTestRegression(c, connOverrider, "TLSRegression")
 	server.Close()
 

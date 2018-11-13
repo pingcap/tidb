@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -233,6 +234,14 @@ func (s *testStatsCacheSuite) TestAvgColLen(c *C) {
 	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count), Equals, 10.5)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count), Equals, 4.0)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count), Equals, 16.0)
+}
+
+func (s *testStatsCacheSuite) TestDurationToTS(c *C) {
+	tests := []time.Duration{time.Millisecond, time.Second, time.Minute, time.Hour}
+	for _, t := range tests {
+		ts := statistics.DurationToTS(t)
+		c.Assert(oracle.ExtractPhysical(ts)*int64(time.Millisecond), Equals, int64(t))
+	}
 }
 
 func (s *testStatsCacheSuite) TestVersion(c *C) {
@@ -445,5 +454,6 @@ func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain
 	session.SetStatsLease(statsLease)
 	domain.RunAutoAnalyze = false
 	do, err := session.BootstrapSession(store)
+	do.SetStatsUpdating(true)
 	return store, do, errors.Trace(err)
 }

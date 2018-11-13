@@ -40,6 +40,7 @@ var UnCacheableFunctions = map[string]struct{}{
 
 // unFoldableFunctions stores functions which can not be folded duration constant folding stage.
 var unFoldableFunctions = map[string]struct{}{
+	ast.Sysdate:   {},
 	ast.FoundRows: {},
 	ast.Rand:      {},
 	ast.UUID:      {},

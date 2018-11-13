@@ -1509,11 +1509,11 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(row types.Row) (res *types.MyD
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	f64, err := types.ConvertJSONToFloat(sc, val)
-	if err == nil {
-		res = new(types.MyDecimal)
-		err = res.FromFloat64(f64)
+	res, err = types.ConvertJSONToDecimal(sc, val)
+	if err != nil {
+		return res, false, errors.Trace(err)
 	}
+	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 

@@ -81,7 +81,7 @@ type Log struct {
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
 	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint   `toml:"slow-threshold" json:"slow-threshold"`
+	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen     uint   `toml:"query-log-max-len" json:"query-log-max-len"`
 }
@@ -217,8 +217,16 @@ type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
 	GrpcConnectionCount uint `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	// After a duration of this time in seconds if the client doesn't see any activity it pings
+	// the server to see if the transport is still alive.
+	GrpcKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
+	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
+	// and if no activity is seen even after that the connection is closed.
+	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
+	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
 }
 
 // Binlog is the config for binlog.
@@ -250,7 +258,7 @@ var defaultConf = Config{
 			LogRotate: true,
 			MaxSize:   logutil.DefaultLogMaxSize,
 		},
-		SlowThreshold:      300,
+		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
 		QueryLogMaxLen:     2048,
 	},
@@ -296,8 +304,11 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount: 16,
-		CommitTimeout:       "41s",
+		GrpcConnectionCount:  16,
+		GrpcKeepAliveTime:    10,
+		GrpcKeepAliveTimeout: 3,
+		CommitTimeout:        "41s",
+		MaxTxnTimeUse:        590,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

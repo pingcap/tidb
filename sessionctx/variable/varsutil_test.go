@@ -74,6 +74,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
 	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
 	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
+	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
 }
 
 func (s *testVarsutilSuite) TestVarsutil(c *C) {
@@ -204,6 +205,16 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.OptimizerSelectivityLevel, Equals, DefTiDBOptimizerSelectivityLevel)
 	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
+
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
+
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(maxDDLReorgWorkerCount))
 }
 
 type mockGlobalAccessor struct {

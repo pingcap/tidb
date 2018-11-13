@@ -251,9 +251,14 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	if !ok {
 		return nil
 	}
-	indices := x.availableIndices.indices
-	includeTableScan := x.availableIndices.includeTableScan
-	if includeTableScan && len(innerJoinKeys) == 1 {
+	var tblPath *accessPath
+	for _, path := range x.possibleAccessPaths {
+		if path.isTablePath {
+			tblPath = path
+			break
+		}
+	}
+	if tblPath != nil && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
 			innerPlan := x.forceToTableScan(pkCol)
@@ -267,7 +272,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		remainedOfBest []expression.Expression
 		keyOff2IdxOff  []int
 	)
-	for _, indexInfo := range indices {
+	for _, path := range x.possibleAccessPaths {
+		if path.isTablePath {
+			continue
+		}
+		indexInfo := path.index
 		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
 		// We choose the index by the number of used columns of the range, the much the better.
 		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
@@ -376,22 +385,29 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 			plans = append(plans, join...)
 		}
 	case InnerJoin:
-		join := p.getIndexJoinByOuterIdx(prop, 0)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if leftOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
+		lhsCardinality := p.Children()[0].StatsInfo().Count()
+		rhsCardinality := p.Children()[1].StatsInfo().Count()
+
+		leftJoins := p.getIndexJoinByOuterIdx(prop, 0)
+		if leftOuter && leftJoins != nil {
+			return leftJoins, true
 		}
-		join = p.getIndexJoinByOuterIdx(prop, 1)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if rightOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
+
+		rightJoins := p.getIndexJoinByOuterIdx(prop, 1)
+		if rightOuter && rightJoins != nil {
+			return rightJoins, true
 		}
+
+		if leftJoins != nil && lhsCardinality < rhsCardinality {
+			return leftJoins, leftOuter
+		}
+
+		if rightJoins != nil && rhsCardinality < lhsCardinality {
+			return rightJoins, rightOuter
+		}
+
+		plans = append(plans, leftJoins...)
+		plans = append(plans, rightJoins...)
 	}
 	return plans, false
 }
@@ -448,8 +464,9 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *requiredProp) []PhysicalP
 		return nil
 	}
 	proj := PhysicalProjection{
-		Exprs:            p.Exprs,
-		CalculateNoDelay: p.calculateNoDelay,
+		Exprs:                p.Exprs,
+		CalculateNoDelay:     p.calculateNoDelay,
+		AvoidColumnEvaluator: p.avoidColumnEvaluator,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}

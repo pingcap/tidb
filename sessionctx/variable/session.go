@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 const (
@@ -237,6 +238,10 @@ type SessionVars struct {
 
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
+
+	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
+	// This variable is currently not recommended to be turned on.
+	AllowWriteRowID bool
 
 	// AllowInSubqueryUnFolding can be set to true to fold in subquery
 	AllowInSubqueryUnFolding bool
@@ -517,6 +522,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptWriteRowID:
+		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqUnFolding:
 		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
@@ -561,12 +568,17 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBSlowLogThreshold:
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBDisableTxnAutoRetry:
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
+	case TiDBDDLReorgWorkerCount:
+		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
+		SetDDLReorgWorkerCounter(int32(workerCnt))
 	}
 	s.systems[name] = val
 	return nil

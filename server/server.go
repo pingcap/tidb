@@ -300,9 +300,9 @@ func (s *Server) onConn(c net.Conn) {
 		terror.Log(errors.Trace(err))
 		return
 	}
-	log.Infof("[con:%d] new connection %s", conn.connectionID, c.RemoteAddr().String())
+	log.Infof("con:%d new connection %s", conn.connectionID, c.RemoteAddr().String())
 	defer func() {
-		log.Infof("[con:%d] close connection", conn.connectionID)
+		log.Infof("con:%d close connection", conn.connectionID)
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -314,14 +314,15 @@ func (s *Server) onConn(c net.Conn) {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() []util.ProcessInfo {
-	var rs []util.ProcessInfo
+func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
 	s.rwlock.RLock()
+	rs := make(map[uint64]util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
-		rs = append(rs, client.ctx.ShowProcess())
+		pi := client.ctx.ShowProcess()
+		rs[pi.ID] = pi
 	}
 	s.rwlock.RUnlock()
 	return rs

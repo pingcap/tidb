@@ -122,7 +122,7 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
-	log.Debugf("[con:%d] execute rollback statement", sessVars.ConnectionID)
+	log.Debugf("con:%d execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	if e.ctx.Txn().Valid() {
 		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
@@ -230,18 +230,46 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 			}
 			continue
 		}
+
+		// begin a transaction to delete a user.
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "begin"); err != nil {
+			return errors.Trace(err)
+		}
 		sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.UserTable, user.Hostname, user.Username)
-		_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
-		if err != nil {
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
+		// delete privileges from mysql.db
+		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.DBTable, user.Hostname, user.Username)
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
+		// delete privileges from mysql.tables_priv
+		sql = fmt.Sprintf(`DELETE FROM %s.%s WHERE Host = "%s" and User = "%s";`, mysql.SystemDB, mysql.TablePrivTable, user.Hostname, user.Username)
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "rollback"); err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+
+		//TODO: need delete columns_priv once we implement columns_priv functionality.
+		if _, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), "commit"); err != nil {
 			failedUsers = append(failedUsers, user.String())
 		}
 	}
 	if len(failedUsers) > 0 {
-		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(sessionctx.SetConnID2Ctx(context.Background(), e.ctx))
-		if err != nil {
-			return errors.Trace(err)
-		}
 		errMsg := "Operation DROP USER failed for " + strings.Join(failedUsers, ",")
 		return terror.ClassExecutor.New(CodeCannotUser, errMsg)
 	}

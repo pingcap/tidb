@@ -87,8 +87,6 @@ type PhysicalIndexLookUpReader struct {
 type PhysicalIndexScan struct {
 	physicalSchemaProducer
 
-	// conditions stores the original conditions, when it's prepare && execute, we use it to build ranges.
-	conditions []expression.Expression
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
@@ -165,8 +163,9 @@ type PhysicalTableScan struct {
 type PhysicalProjection struct {
 	physicalSchemaProducer
 
-	Exprs            []expression.Expression
-	CalculateNoDelay bool
+	Exprs                []expression.Expression
+	CalculateNoDelay     bool
+	AvoidColumnEvaluator bool
 }
 
 // PhysicalTopN is the physical operator of topN.

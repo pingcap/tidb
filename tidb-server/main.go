@@ -137,10 +137,10 @@ func main() {
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
+	setupMetrics()
 	createStoreAndDomain()
 	createServer()
 	setupSignalHandler()
-	setupMetrics()
 	runServer()
 	cleanup()
 	os.Exit(0)
@@ -377,6 +377,9 @@ func setGlobalVars() {
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
+	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
+	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
+
 	if cfg.PlanCache.Enabled {
 		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(cfg.PlanCache.Capacity, cfg.PlanCache.Shards)
 	}
@@ -389,9 +392,8 @@ func setGlobalVars() {
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
-
-	// set lower_case_table_names
-	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
+	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
+	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
@@ -414,7 +416,8 @@ func createServer() {
 	driver = server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
-	terror.MustNil(err)
+	// Both domain and storage have started, so we have to clean them before exiting.
+	terror.MustNil(err, closeDomainAndStorage)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
 			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
@@ -422,7 +425,7 @@ func createServer() {
 			TokenLimit: cfg.TokenLimit,
 		}
 		xsvr, err = xserver.NewServer(xcfg)
-		terror.MustNil(err)
+		terror.MustNil(err, closeDomainAndStorage)
 	}
 }
 
@@ -484,11 +487,15 @@ func runServer() {
 	}
 }
 
+func closeDomainAndStorage() {
+	dom.Close()
+	err := storage.Close()
+	terror.Log(errors.Trace(err))
+}
+
 func cleanup() {
 	if graceful {
 		svr.GracefulDown()
 	}
-	dom.Close()
-	err := storage.Close()
-	terror.Log(errors.Trace(err))
+	closeDomainAndStorage()
 }

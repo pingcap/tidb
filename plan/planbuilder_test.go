@@ -16,6 +16,7 @@ package plan
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/model"
 )
 
 var _ = Suite(&testPlanBuilderSuite{})
@@ -55,4 +56,35 @@ func (s *testPlanBuilderSuite) TestShow(c *C) {
 			c.Assert(col.RetType.Flen, Greater, 0)
 		}
 	}
+}
+
+func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
+	tblInfo := &model.TableInfo{
+		Indices:    make([]*model.IndexInfo, 0),
+		PKIsHandle: true,
+	}
+
+	accessPath := []*accessPath{
+		{isTablePath: true},
+		{index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
+	}
+
+	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)
+	c.Assert(path, NotNil)
+	c.Assert(path, Equals, accessPath[1])
+
+	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
+	c.Assert(path, NotNil)
+	c.Assert(path, Equals, accessPath[0])
+
+	path = getPathByIndexName(accessPath, model.NewCIStr("not exists"), tblInfo)
+	c.Assert(path, IsNil)
+
+	tblInfo = &model.TableInfo{
+		Indices:    make([]*model.IndexInfo, 0),
+		PKIsHandle: false,
+	}
+
+	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
+	c.Assert(path, IsNil)
 }

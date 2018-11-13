@@ -379,6 +379,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t (a,b) fields terminated by 'ab'", false},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by ''", true},
 
 		// select for update
 		{"SELECT * from t for update", true},

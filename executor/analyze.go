@@ -14,13 +14,14 @@
 package executor
 
 import (
+	"runtime"
 	"strconv"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -68,7 +69,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	close(taskCh)
 	dom := domain.GetDomain(e.ctx)
 	lease := dom.StatsHandle().Lease
-	if lease > 0 {
+	// The analyze result will be consumed by background stats worker.
+	if lease > 0 && dom.StatsUpdating() {
 		var err1 error
 		for i := 0; i < len(e.tasks); i++ {
 			result := <-resultCh
@@ -85,10 +87,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	results := make([]statistics.AnalyzeResult, 0, len(e.tasks))
 	var err1 error
-	for i := 0; i < len(e.tasks); i++ {
+	for i, panicCnt := 0, 0; i < len(e.tasks) && panicCnt < concurrency; i++ {
 		result := <-resultCh
 		if result.Err != nil {
 			err1 = result.Err
+			if errors.Trace(err1) == errAnalyzeWorkerPanic {
+				panicCnt++
+			}
 			log.Error(errors.ErrorStack(err1))
 			continue
 		}
@@ -135,7 +140,21 @@ type analyzeTask struct {
 	colExec  *AnalyzeColumnsExec
 }
 
+var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
+
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- statistics.AnalyzeResult{
+				Err: errAnalyzeWorkerPanic,
+			}
+		}
+	}()
 	for task := range taskCh {
 		switch task.taskType {
 		case colTask:
@@ -179,10 +198,8 @@ func (e *AnalyzeIndexExec) open() error {
 	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullNewRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
-		SetPriority(e.priority).
+		SetConcurrency(e.concurrency).
 		Build()
-	kvReq.Concurrency = e.concurrency
-	kvReq.IsolationLevel = kv.RC
 	ctx := context.TODO()
 	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
 	if err != nil {
@@ -296,10 +313,8 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.Selec
 	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
+		SetConcurrency(e.concurrency).
 		Build()
-	kvReq.IsolationLevel = kv.RC
-	kvReq.Concurrency = e.concurrency
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
+	"github.com/ngaut/sync2"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -41,6 +42,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -51,6 +53,7 @@ type Domain struct {
 	privHandle      *privileges.Handle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
+	statsUpdating   sync2.AtomicInt32
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
@@ -351,13 +354,12 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
-			do.SchemaValidator.Stop()
 			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
 			}
-			do.SchemaValidator.Restart()
+			log.Info("[ddl] schema syncer restarted.")
 		case <-do.exit:
 			return
 		}
@@ -471,6 +473,12 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+					grpc.WithBackoffMaxDelay(time.Second * 3),
+					grpc.WithKeepaliveParams(keepalive.ClientParameters{
+						Time:                time.Duration(10) * time.Second,
+						Timeout:             time.Duration(3) * time.Second,
+						PermitWithoutStream: true,
+					}),
 				},
 				TLS: ebd.TLSConfig(),
 			})
@@ -586,6 +594,20 @@ func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
+// StatsUpdating checks if the stats worker is updating.
+func (do *Domain) StatsUpdating() bool {
+	return do.statsUpdating.Get() > 0
+}
+
+// SetStatsUpdating sets the value of stats updating.
+func (do *Domain) SetStatsUpdating(val bool) {
+	if val {
+		do.statsUpdating.Set(1)
+	} else {
+		do.statsUpdating.Set(0)
+	}
+}
+
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 
@@ -602,6 +624,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	owner := do.newStatsOwner()
 	do.wg.Add(1)
+	do.SetStatsUpdating(true)
 	go do.updateStatsWorker(ctx, owner)
 	if RunAutoAnalyze {
 		do.wg.Add(1)
@@ -622,7 +645,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner(cancelCtx)
 	if err != nil {
-		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+		log.Warnf("[stats] campaign owner fail: %s", errors.ErrorStack(err))
 	}
 	return statsOwner
 }
@@ -650,7 +673,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	} else {
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
-	defer recoverInDomain("updateStatsWorker", false)
+	defer func() {
+		do.SetStatsUpdating(false)
+		recoverInDomain("updateStatsWorker", false)
+		do.wg.Done()
+	}()
 	for {
 		select {
 		case <-loadTicker.C:
@@ -659,7 +686,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				log.Debug("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
-			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
 		case t := <-statsHandle.DDLEventCh():

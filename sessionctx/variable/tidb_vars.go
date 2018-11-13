@@ -39,6 +39,9 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
+	TiDBOptWriteRowID = "tidb_opt_write_row_id"
+
 	// tidb_opt_insubquery_unfold is used to enable/disable the optimizer rule of in subquery unfold.
 	TiDBOptInSubqUnFolding = "tidb_opt_insubquery_unfold"
 
@@ -99,6 +102,9 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
+	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
+	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
@@ -153,6 +159,9 @@ const (
 
 	// tidb_disable_txn_auto_retry disables transaction auto retry.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
+
+	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
+	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 )
 
 // Default TiDB system variable values.
@@ -169,6 +178,7 @@ const (
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
 	DefOptInSubqUnfolding            = false
+	DefOptWriteRowID                 = false
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
 	DefCurretTS                      = 0
@@ -185,9 +195,14 @@ const (
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBOptimizerSelectivityLevel = 0
 	DefTiDBDisableTxnAutoRetry       = false
+	DefTiDBDDLReorgWorkerCount       = 16
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog uint32
+	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	DDLSlowOprThreshold    uint32 = 300
+	ddlReorgWorkerCounter  int32  = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32  = 128
 )

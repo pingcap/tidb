@@ -15,6 +15,7 @@ package kv
 
 import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/execdetails"
 	"golang.org/x/net/context"
 )
 
@@ -207,6 +208,8 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
+	// GetExecDetails gets the detail information.
+	GetExecDetails() *execdetails.ExecDetails
 }
 
 // Response represents the response returned from KV layer.

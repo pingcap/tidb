@@ -102,6 +102,28 @@ func IsNonBinaryStr(ft *FieldType) bool {
 	return false
 }
 
+var kind2Str = map[byte]string{
+	KindNull:          "null",
+	KindInt64:         "bigint",
+	KindUint64:        "unsigned bigint",
+	KindFloat32:       "float",
+	KindFloat64:       "double",
+	KindString:        "char",
+	KindBytes:         "bytes",
+	KindBinaryLiteral: "bit/hex literal",
+	KindMysqlDecimal:  "decimal",
+	KindMysqlDuration: "time",
+	KindMysqlEnum:     "enum",
+	KindMysqlBit:      "bit",
+	KindMysqlSet:      "set",
+	KindMysqlTime:     "datetime",
+	KindInterface:     "interface",
+	KindMinNotNull:    "min_not_null",
+	KindMaxValue:      "max_value",
+	KindRaw:           "raw",
+	KindMysqlJSON:     "json",
+}
+
 var type2Str = map[byte]string{
 	mysql.TypeBit:        "bit",
 	mysql.TypeBlob:       "text",
@@ -135,6 +157,11 @@ var type2Str = map[byte]string{
 // TypeStr converts tp to a string.
 func TypeStr(tp byte) (r string) {
 	return type2Str[tp]
+}
+
+// KindStr converts kind to a string.
+func KindStr(kind byte) (r string) {
+	return kind2Str[kind]
 }
 
 // TypeToStr converts a field to a string.
