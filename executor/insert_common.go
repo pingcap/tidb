@@ -450,9 +450,9 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 	}
 	if !d.IsNull() {
 		sc := e.ctx.GetSessionVars().StmtCtx
-		datum, err := d.ConvertTo(sc, &c.FieldType)
-		if e.filterErr(err) != nil {
-			return types.Datum{}, err
+		datum, err1 := d.ConvertTo(sc, &c.FieldType)
+		if e.filterErr(err1) != nil {
+			return types.Datum{}, err1
 		}
 		recordID = datum.GetInt64()
 	}
