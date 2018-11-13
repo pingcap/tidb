@@ -145,11 +145,11 @@ func (s *testSuite) TestJoin(c *C) {
 
 	// The physical plans of the two sql are tested at physical_plan_test.go
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
-	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
 	// Test single index reader.
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
-	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
-	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
 
 	// Test that two conflict hints will return error.
 	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
@@ -169,8 +169,8 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("insert into t values(1, 3), (2, 2), (3, 1)")
 	tk.MustExec("insert into t1 values(0, 0), (1, 2), (1, 3), (3, 4)")
-	tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("3 1 3 4", "1 3 1 2", "1 3 1 3"))
-	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t.a, t.b from t join t1 on t.a=t1.a where t1.b = 4 limit 1").Check(testkit.Rows("3 1"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("3 1 3 4", "1 3 1 2", "1 3 1 3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t) */ t.a, t.b from t join t1 on t.a=t1.a where t1.b = 4 limit 1").Check(testkit.Rows("3 1"))
 	tk.MustQuery("select /*+ TIDB_INLJ(t, t1) */ * from t right join t1 on t.a=t1.a order by t.b").Check(testkit.Rows("<nil> <nil> 0 0", "3 1 3 4", "1 3 1 2", "1 3 1 3"))
 
 	// join reorder will disorganize the resulting schema
@@ -187,7 +187,7 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("insert into t values(1,2), (5,3), (6,4)")
 	tk.MustExec("insert into t1 values(1), (2), (3)")
-	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ t1.a from t1, t where t.a = 5 and t.b = t1.a").Check(testkit.Rows("3"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t) */ t1.a from t1, t where t.a = 5 and t.b = t1.a").Check(testkit.Rows("3"))
 
 	// test issue#4997
 	tk.MustExec("drop table if exists t1, t2")
@@ -326,7 +326,7 @@ func (s *testSuite) TestJoinCast(c *C) {
 	tk.MustExec("create index k1 on t1(c1)")
 	tk.MustExec("insert into t values(0), (2)")
 	tk.MustExec("insert into t1 values(0), (9)")
-	result = tk.MustQuery("select /*+ TIDB_INLJ(t) */ * from t left join t1 on t1.c1 = t.c1")
+	result = tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t left join t1 on t1.c1 = t.c1")
 	result.Sort().Check(testkit.Rows("0.0 0.00", "2.0 <nil>"))
 
 	tk.MustExec("drop table if exists t")
@@ -672,7 +672,7 @@ func (s *testSuite) TestSubquery(c *C) {
 	tk.MustExec("CREATE TABLE t1(a int, b int default 0)")
 	tk.MustExec("create index k1 on t1(a)")
 	tk.MustExec("INSERT INTO t1 (a) values(1), (2), (3), (4), (5)")
-	result = tk.MustQuery("select (select /*+ TIDB_INLJ(x1) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
+	result = tk.MustQuery("select (select /*+ TIDB_INLJ(x2) */ x2.a from t1 x1, t1 x2 where x1.a = t1.a and x1.a = x2.a) from t1")
 	result.Check(testkit.Rows("1", "2", "3", "4", "5"))
 
 	tk.MustExec("drop table if exists t1, t2")
@@ -809,7 +809,7 @@ func (s *testSuite) TestIssue5255(c *C) {
 	tk.MustExec("create table t2(a int primary key)")
 	tk.MustExec("insert into t1 values(1, '2017-11-29', 2.2)")
 	tk.MustExec("insert into t2 values(1)")
-	tk.MustQuery("select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a=t2.a").Check(testkit.Rows("1 2017-11-29 2.2 1"))
+	tk.MustQuery("select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a=t2.a").Check(testkit.Rows("1 2017-11-29 2.2 1"))
 }
 
 func (s *testSuite) TestIssue5278(c *C) {
@@ -847,7 +847,7 @@ func (s *testSuite) TestIndexLookupJoin(c *C) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a decimal(6,2), index idx(a));`)
 	tk.MustExec(`insert into t values(1.01), (2.02), (NULL);`)
-	tk.MustQuery(`select /*+ TIDB_INLJ(t1) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;`).Check(testkit.Rows(
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;`).Check(testkit.Rows(
 		`1.01`,
 		`2.02`,
 	))
@@ -856,7 +856,7 @@ func (s *testSuite) TestIndexLookupJoin(c *C) {
 	tk.MustExec(`create table t(a bigint, b bigint, unique key idx1(a, b));`)
 	tk.MustExec(`insert into t values(1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6);`)
 	tk.MustExec(`set @@tidb_max_chunk_size = 2;`)
-	tk.MustQuery(`select /*+ TIDB_INLJ(t1) */ * from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b + 4;`).Check(testkit.Rows(
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b + 4;`).Check(testkit.Rows(
 		`1 1 <nil> <nil>`,
 		`1 2 <nil> <nil>`,
 		`1 3 <nil> <nil>`,
