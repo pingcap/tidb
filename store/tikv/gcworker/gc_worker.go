@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -119,8 +120,8 @@ const (
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
 
 	gcEnableKey          = "tikv_gc_enable"
-	gcEnableValue        = "True"
-	gcDisableValue       = "False"
+	gcEnableValue        = "true"
+	gcDisableValue       = "false"
 	gcDefaultEnablevalue = true
 )
 
@@ -529,7 +530,7 @@ func (w *GCWorker) loadGCEnableStatus() (bool, error) {
 		}
 		return gcDefaultEnablevalue, nil
 	}
-	return str == gcEnableValue, nil
+	return strings.ToLower(str) == gcEnableValue, nil
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
