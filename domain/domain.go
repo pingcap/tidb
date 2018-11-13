@@ -238,9 +238,16 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	return true, tblIDs, nil
 }
 
+// getInfoSchema atomic load infoschema.handle.
+func (do *Domain) getInfoSchema() *infoschema.Handle {
+	return (*infoschema.Handle)(atomic.LoadPointer(
+		(*unsafe.Pointer)(unsafe.Pointer(&do.infoHandle)),
+	))
+}
+
 // InfoSchema gets information schema from domain.
 func (do *Domain) InfoSchema() infoschema.InfoSchema {
-	return do.infoHandle.Get()
+	return do.getInfoSchema().Get()
 }
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
@@ -535,7 +542,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 // ResetHandle resets the domain's infoschema handle. It is used for testing.
 func (do *Domain) ResetHandle(store kv.Storage) {
-	do.infoHandle = infoschema.NewHandle(store)
+	// `do.infoHandle` may refer to being accessed concurrently, so atomic operations are performed here.
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&do.infoHandle)), unsafe.Pointer(infoschema.NewHandle(store)))
 }
 
 // Init initializes a domain.
