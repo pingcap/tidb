@@ -1952,11 +1952,25 @@ func (s *testSessionSuite) TestStatementCountLimitAndBatchCommit(c *C) {
 	defer func() {
 		config.GetGlobalConfig().Performance.BatchCommit = savedBatchFlag
 	}()
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("SET SESSION autocommit = 1")
 	tk.MustExec("begin")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	tk.MustExec("insert into stmt_count_limit values (3)")
+	tk.MustExec("insert into stmt_count_limit values (5)")
+	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows())
+	tk.MustExec("insert into stmt_count_limit values (6)")
+	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows())
+	tk.MustExec("insert into stmt_count_limit values (7)")
+	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into stmt_count_limit values (8)")
+	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into stmt_count_limit values (9)")
+	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into stmt_count_limit values (10)")
+	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7"))
 	tk.MustExec("commit")
+	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7", "8", "9", "10"))
+	tk.MustExec("insert into stmt_count_limit values (11)")
+	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7", "8", "9", "10", "11"))
 }
 
 func (s *testSessionSuite) TestCastTimeToDate(c *C) {
