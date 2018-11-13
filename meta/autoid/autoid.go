@@ -218,7 +218,6 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
-	log.Warning(uint64(alloc.base), uint64(alloc.end))
 
 	if alloc.isUnsigned {
 		if uint64(alloc.base) == math.MaxUint64 {
@@ -227,9 +226,10 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 		alloc.base = int64(uint64(alloc.base) + 1)
 		log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", uint64(alloc.base), tableID, alloc, alloc.dbID)
 	} else {
-		if alloc.base < alloc.end {
-			alloc.base++
+		if alloc.base == math.MaxInt64 {
+			return 0, ErrAutoincReadFailed
 		}
+		alloc.base++
 		log.Debugf("[kv] Alloc id %d, table ID:%d, from %p, database ID:%d", alloc.base, tableID, alloc, alloc.dbID)
 	}
 	return alloc.base, nil
