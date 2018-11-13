@@ -258,15 +258,15 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 		p.preferJoinType |= preferHashJoin
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsIndexOuter
+		p.preferJoinType |= preferLeftAsIndexInner
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsIndexOuter
+		p.preferJoinType |= preferRightAsIndexInner
 	}
 
 	// If there're multiple join types and one of them is not index join hint,
 	// then there is a conflict of join types.
-	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexOuter^preferLeftAsIndexOuter) > 0 {
+	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexInner^preferLeftAsIndexInner) > 0 {
 		return errors.New("Join hints are conflict, you can only specify one type of join")
 	}
 	return nil
@@ -2031,9 +2031,8 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		if b.TableHints().ifPreferHashJoin(outerAlias, innerAlias) {
 			joinPlan.preferJoinType |= preferHashJoin
 		}
-		// semi join's outer is always the left side.
-		if b.TableHints().ifPreferINLJ(outerAlias) {
-			joinPlan.preferJoinType = preferLeftAsIndexOuter
+		if b.TableHints().ifPreferINLJ(innerAlias) {
+			joinPlan.preferJoinType = preferLeftAsIndexInner
 		}
 		// If there're multiple join hints, they're conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
