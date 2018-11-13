@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
@@ -39,6 +40,16 @@ func calcFraction(lower, upper, value float64) float64 {
 		return 0.5
 	}
 	return frac
+}
+
+func calcRangeFraction(left, right, lInner, rInner float64) float64 {
+	if left == right {
+		if lInner == rInner && lInner == left {
+			return 1
+		}
+		return 0
+	}
+	return (rInner - lInner) / (right - left)
 }
 
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
@@ -135,6 +146,43 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:
 		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, hg.scalars[index].commonPfxLen))
+	}
+	return 0.5
+}
+
+func (hg *Histogram) calcRangeFraction(index int, lInner, rInner chunk.Row) float64 {
+	left, right := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
+	switch hg.tp.Tp {
+	// TODO: support more types.
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		if mysql.HasUnsignedFlag(hg.tp.Flag) {
+			return calcRangeFraction(float64(left.GetUint64(0)), float64(right.GetUint64(0))+1, float64(lInner.GetUint64(0)), float64(rInner.GetUint64(0))+1)
+		}
+		return calcRangeFraction(float64(left.GetInt64(0)), float64(right.GetInt64(0))+1, float64(lInner.GetInt64(0)), float64(rInner.GetInt64(0))+1)
+	case mysql.TypeFloat:
+		return calcRangeFraction(float64(left.GetFloat32(0)), float64(right.GetFloat32(0)), float64(lInner.GetFloat32(0)), float64(rInner.GetFloat32(0)))
+	case mysql.TypeDouble:
+		return calcRangeFraction(left.GetFloat64(0), right.GetFloat64(0), lInner.GetFloat64(0), rInner.GetFloat64(0))
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		commonLen := commonPrefixLength(left.GetBytes(0), right.GetBytes(0))
+		return calcRangeFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertBytesToScalar(lInner.GetBytes(0)[commonLen:]), convertBytesToScalar(rInner.GetBytes(0)[commonLen:]))
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		lTime := lInner.GetTime(0)
+		rTime := rInner.GetTime(0)
+		return calcRangeFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertTimeToScalar(&lTime), convertTimeToScalar(&rTime))
+	case mysql.TypeNewDecimal:
+		lDec, err := lInner.GetMyDecimal(0).ToFloat64()
+		if err != nil {
+			return 0
+		}
+		rDec, err := rInner.GetMyDecimal(0).ToFloat64()
+		if err != nil {
+			return 0
+		}
+		return calcRangeFraction(hg.scalars[index].lower, hg.scalars[index].upper, lDec, rDec)
+	case mysql.TypeDuration:
+		return calcRangeFraction(float64(left.GetDuration(0, 0).Duration), float64(right.GetDuration(0, 0).Duration), float64(lInner.GetDuration(0, 0).Duration), float64(rInner.GetDuration(0, 0).Duration))
 	}
 	return 0.5
 }

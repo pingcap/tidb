@@ -345,7 +345,7 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 	}
 	count := leftProfile.RowCount / leftNdv * rightProfile.RowCount / rightNdv * ndv
 
-	// Update column map in `HistColl`.
+	// Update left column map in `HistColl`.
 	for uniqID, colHist := range leftProfile.HistColl.Columns {
 		_, ok := newColID2Hist[uniqID]
 		if ok {
@@ -354,7 +354,16 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 		newColID2Hist[uniqID] = colHist
 	}
 
-	// Update index map in `HistColl`.
+	// Update right column map in `HistColl`.
+	for uniqID, colHist := range rightProfile.HistColl.Columns {
+		_, ok := newColID2Hist[uniqID]
+		if ok {
+			continue
+		}
+		newColID2Hist[uniqID] = colHist
+	}
+
+	// Update index map and indexID2ColIDs map of left side in `HistColl`.
 	for oldID, idxHist := range leftProfile.HistColl.Indices {
 		newIdxID2Hist[idxHistID] = idxHist
 		leftIndexReLabel[oldID] = idxHistID
@@ -362,7 +371,7 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 		idxHistID++
 	}
 
-	// Update indexID2ColIDs map in `HistColl`.
+	// Update index map and indexID2ColIDs map of right side in `HistColl`.
 	for oldID, idxHist := range rightProfile.HistColl.Indices {
 		newIdxID2Hist[idxHistID] = idxHist
 		leftIndexReLabel[oldID] = idxHistID
