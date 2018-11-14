@@ -658,10 +658,10 @@ const (
 
 var (
 	TxIsolationNames = map[string]struct{}{
-		"READ-UNCOMMITTED": struct{}{},
-		"READ-COMMITTED":   struct{}{},
-		"REPEATABLE-READ":  struct{}{},
-		"SERIALIZABLE":     struct{}{},
+		"READ-UNCOMMITTED": {},
+		"READ-COMMITTED":   {},
+		"REPEATABLE-READ":  {},
+		"SERIALIZABLE":     {},
 	}
 )
 
