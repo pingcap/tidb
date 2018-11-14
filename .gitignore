@@ -15,5 +15,6 @@ y.output
 profile.coverprofile
 explain_test
 cmd/explaintest/explain-test.out
+cmd/explaintest/explaintest_tidb-server
 _tools/
 *.fail.go
