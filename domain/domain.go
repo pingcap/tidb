@@ -45,6 +45,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
+	"pkg/mod/github.com/grpc-ecosystem/go-grpc-prometheus@v1.2.0"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -225,7 +226,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.infoHandle).InitWithOldInfoSchema()
+	builder := infoschema.NewBuilder(do.getInfoHandle()).InitWithOldInfoSchema()
 	tblIDs := make([]int64, 0, len(diffs))
 	for _, diff := range diffs {
 		ids, err := builder.ApplyDiff(m, diff)
@@ -252,8 +253,8 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
-	snapHandle := do.infoHandle.EmptyClone()
-	_, _, _, err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
+	snapHandle := do.getInfoHandle().EmptyClone()
+	_, _, _, err := do.loadInfoSchema(snapHandle, do.getInfoHandle().Get().SchemaMetaVersion(), snapshotTS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -308,7 +309,7 @@ func (do *Domain) Reload() error {
 	}
 
 	schemaVersion := int64(0)
-	oldInfoSchema := do.infoHandle.Get()
+	oldInfoSchema := do.getInfoHandle().Get()
 	if oldInfoSchema != nil {
 		schemaVersion = oldInfoSchema.SchemaMetaVersion()
 	}
@@ -317,7 +318,7 @@ func (do *Domain) Reload() error {
 		fullLoad        bool
 		changedTableIDs []int64
 	)
-	latestSchemaVersion, changedTableIDs, fullLoad, err = do.loadInfoSchema(do.infoHandle, schemaVersion, ver.Ver)
+	latestSchemaVersion, changedTableIDs, fullLoad, err = do.loadInfoSchema(do.getInfoHandle(), schemaVersion, ver.Ver)
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
@@ -585,7 +586,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx := context.Background()
 	callback := &ddlCallback{do: do}
-	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
+	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.getInfoHandle(), callback, ddlLease, sysCtxPool)
 
 	err := do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
