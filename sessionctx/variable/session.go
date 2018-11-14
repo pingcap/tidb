@@ -657,6 +657,7 @@ const (
 )
 
 var (
+	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
 	TxIsolationNames = map[string]struct{}{
 		"READ-UNCOMMITTED": {},
 		"READ-COMMITTED":   {},
