@@ -558,7 +558,6 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("drop table if exists test_add_index")
 	s.tk.MustExec(createTableSQL)
-	defer s.tk.MustExec("drop table test_add_index")
 
 	done := make(chan error, 1)
 	start := -10
@@ -595,8 +594,11 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 	tbl, err := is.TableByName(schemaName, tableName)
 	c.Assert(err, IsNil)
 
-	// Split table to multi region.
-	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
+	if !testPartition {
+		// Split table to multi region.
+		s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
+	}
+
 	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
 	deletedKeys := make(map[int]struct{})
@@ -732,6 +734,7 @@ LOOP:
 		delete(handles, h)
 	}
 	c.Assert(handles, HasLen, 0)
+	s.tk.MustExec("drop table test_add_index")
 }
 
 func (s *testDBSuite) TestDropIndex(c *C) {
