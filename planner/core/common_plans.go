@@ -19,20 +19,20 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 )
 
 // ShowDDL is for showing DDL information.
@@ -61,13 +61,19 @@ type ShowDDLJobQueries struct {
 	JobIDs []int64
 }
 
+// ShowNextRowID is for showing the next global row ID.
+type ShowNextRowID struct {
+	baseSchemaProducer
+	TableName *ast.TableName
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	baseSchemaProducer
 
 	Tables []*ast.TableName
 
-	GenExprs map[string]expression.Expression
+	GenExprs map[model.TableColumnID]expression.Expression
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
@@ -208,6 +214,7 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 func (e *Execute) rebuildRange(p Plan) error {
 	sctx := p.context()
 	sc := p.context().GetSessionVars().StmtCtx
+	var err error
 	switch x := p.(type) {
 	case *PhysicalTableReader:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
@@ -218,7 +225,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 		}
 		if pkCol != nil {
-			var err error
 			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
 				return errors.Trace(err)
@@ -228,25 +234,48 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		var err error
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		var err error
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return errors.Trace(err)
 		}
+	case *PointGetPlan:
+		if x.HandleParam != nil {
+			x.Handle, err = x.HandleParam.Datum.ToInt64(sc)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}
+		for i, param := range x.IndexValueParams {
+			if param != nil {
+				x.IndexValues[i] = param.Datum
+			}
+		}
+		return nil
 	case PhysicalPlan:
-		var err error
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
 			if err != nil {
 				return errors.Trace(err)
 			}
+		}
+	case *Insert:
+		if x.SelectPlan != nil {
+			return e.rebuildRange(x.SelectPlan)
+		}
+	case *Update:
+		if x.SelectPlan != nil {
+			return e.rebuildRange(x.SelectPlan)
+		}
+	case *Delete:
+		if x.SelectPlan != nil {
+			return e.rebuildRange(x.SelectPlan)
 		}
 	}
 	return nil

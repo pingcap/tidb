@@ -20,24 +20,24 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -241,10 +241,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		return a.handleNoDelayExecutor(ctx, sctx, e)
 	}
 
+	var txnStartTS uint64
+	if sctx.Txn(false).Valid() {
+		txnStartTS = sctx.Txn().StartTS()
+	}
 	return &recordSet{
 		executor:   e,
 		stmt:       a,
-		txnStartTS: sctx.Txn().StartTS(),
+		txnStartTS: txnStartTS,
 	}, nil
 }
 
@@ -263,7 +267,8 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 	defer func() {
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
-		if sctx.Txn() != nil {
+		// Don't active pending txn here.
+		if sctx.Txn(false).Valid() {
 			txnTS = sctx.Txn().StartTS()
 		}
 		a.LogSlowQuery(txnTS, err == nil)
@@ -287,9 +292,6 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		if isPointGet {
 			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
-		} else {
-			log.Debugf("con:%d ActivePendingTxn %s", ctx.GetSessionVars().ConnectionID, a.Text)
-			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -339,13 +341,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.StartTime)
-	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level < log.DebugLevel {
 		return
 	}
 	sql := a.Text
-	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
-		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
+	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(len(sql)) > maxQueryLen {
+		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, len(a.Text))
 	}
 	sessVars := a.Ctx.GetSessionVars()
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
@@ -405,7 +407,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
-//  2. txn is nil
+//  2. txn is not valid
 //  2. plan is point get by pk or unique key
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) bool {
 	// check auto commit
@@ -414,7 +416,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	}
 
 	// check txn
-	if ctx.Txn() != nil {
+	if ctx.Txn(false).Valid() {
 		return false
 	}
 

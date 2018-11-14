@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
@@ -80,6 +80,8 @@ type StatementContext struct {
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexIDs         []int64
+	NowTs            time.Time
+	SysTs            time.Time
 }
 
 // AddAffectedRows adds affected rows.

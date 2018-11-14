@@ -24,10 +24,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -39,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
@@ -782,7 +782,8 @@ func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMu
 // IterRecords implements table.Table IterRecords interface.
 func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	it, err := ctx.Txn().Seek(startKey)
+	prefix := t.RecordPrefix()
+	it, err := ctx.Txn().Iter(startKey, prefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -798,7 +799,6 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 	for _, col := range cols {
 		colMap[col.ID] = &col.FieldType
 	}
-	prefix := t.RecordPrefix()
 	defaultVals := make([]types.Datum, len(cols))
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
@@ -912,7 +912,7 @@ func (t *tableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetS
 // Seek implements table.Table Seek interface.
 func (t *tableCommon) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	seekKey := tablecodec.EncodeRowKeyWithHandle(t.physicalTableID, h)
-	iter, err := ctx.Txn().Seek(seekKey)
+	iter, err := ctx.Txn().Iter(seekKey, t.RecordPrefix().PrefixNext())
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
 		// No more records in the table, skip to the end.
 		return 0, false, nil
@@ -1042,7 +1042,7 @@ func (ctx *ctxForPartitionExpr) NewTxn() error {
 }
 
 // Txn returns the current transaction which is created before executing a statement.
-func (ctx *ctxForPartitionExpr) Txn() kv.Transaction {
+func (ctx *ctxForPartitionExpr) Txn(...bool) kv.Transaction {
 	panic("not support")
 }
 

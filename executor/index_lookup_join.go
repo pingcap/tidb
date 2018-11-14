@@ -21,18 +21,18 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -129,6 +129,25 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
+	// Be careful, very dirty hack in this line!!!
+	// IndexLookUpJoin need to rebuild executor (the dataReaderBuilder) during
+	// executing. However `executor.Next()` is lazy evaluation when the RecordSet
+	// result is drained.
+	// Lazy evaluation means the saved session context may change during executor's
+	// building and its running.
+	// A specific sequence for example:
+	//
+	// e := buildExecutor()   // txn at build time
+	// recordSet := runStmt(e)
+	// session.CommitTxn()    // txn closed
+	// recordSet.Next()
+	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
+	//
+	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
+	// so even txn is destroyed later, the dataReaderBuilder could still use the
+	// cached start ts to construct DAG.
+	e.innerCtx.readerBuilder.getStartTS()
+
 	err := e.children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)

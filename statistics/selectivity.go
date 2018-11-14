@@ -16,12 +16,12 @@ package statistics
 import (
 	"math"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -180,7 +180,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				return 0, errors.Trace(err)
 			}
 			sets = append(sets, &exprSet{tp: colType, ID: id, mask: maskCovered, ranges: ranges, numCols: 1})
-			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
+			if colInfo.isHandle {
 				sets[len(sets)-1].tp = pkType
 			}
 		}
@@ -234,7 +234,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	var accessConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].ColName)
+		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].UniqueID)
 		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType)
 	case ranger.IndexRangeType:
 		ranges, accessConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)

@@ -17,16 +17,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
 )
@@ -314,9 +316,18 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
+func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
+	output <- &AfFinalResult{err: errors.Errorf("%v", r)}
+	buf := util.GetStack()
+	log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
+}
+
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
 	defer func() {
+		if r := recover(); r != nil {
+			recoveryHashAgg(w.globalOutputCh, r)
+		}
 		if needShuffle {
 			w.shuffleIntermData(sc, finalConcurrency)
 		}
@@ -492,6 +503,9 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
 	defer func() {
+		if r := recover(); r != nil {
+			recoveryHashAgg(w.outputCh, r)
+		}
 		waitGroup.Done()
 	}()
 	if err := w.consumeIntermData(ctx); err != nil {
@@ -521,6 +535,9 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 		err   error
 	)
 	defer func() {
+		if r := recover(); r != nil {
+			recoveryHashAgg(e.finalOutputCh, r)
+		}
 		for i := range e.partialInputChs {
 			close(e.partialInputChs[i])
 		}
