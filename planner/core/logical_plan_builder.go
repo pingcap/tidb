@@ -705,6 +705,8 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 		unionPlan = unionAllPlan
 	}
 
+	oldLen := unionPlan.Schema().Len()
+
 	if union.OrderBy != nil {
 		unionPlan, err = b.buildSort(unionPlan, union.OrderBy.Items, nil)
 		if err != nil {
@@ -718,6 +720,20 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 			return nil, errors.Trace(err)
 		}
 	}
+
+	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
+	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
+	if oldLen != unionPlan.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(unionPlan.Schema().Columns[:oldLen])}.init(b.ctx)
+		proj.SetChildren(unionPlan)
+		schema := expression.NewSchema(unionPlan.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		}
+		proj.SetSchema(schema)
+		return proj, nil
+	}
+
 	return unionPlan, nil
 }
 
@@ -860,7 +876,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 	return li, nil
 }
 
-// colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
+// colMatch means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
 // Because column a want column from database test exactly.
 func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
 	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
@@ -917,7 +933,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 	return
 }
 
-// AggregateFuncExtractor visits Expr tree.
+// havingAndOrderbyExprResolver visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type havingAndOrderbyExprResolver struct {
 	inAggFunc    bool
