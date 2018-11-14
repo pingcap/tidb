@@ -1190,7 +1190,7 @@ func (b *executorBuilder) getStartTS() uint64 {
 	b.startTS = startTS
 	if b.startTS == 0 {
 		// The the code should never run here if there is no bug.
-		log.Error(errors.ErrorStack(ErrGetStartTS))
+		log.Error(errors.ErrorStack(errors.Trace(ErrGetStartTS)))
 	}
 	return startTS
 }
