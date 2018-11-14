@@ -558,6 +558,7 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("drop table if exists test_add_index")
 	s.tk.MustExec(createTableSQL)
+	defer s.tk.MustExec("drop table test_add_index")
 
 	done := make(chan error, 1)
 	start := -10
@@ -731,8 +732,6 @@ LOOP:
 		delete(handles, h)
 	}
 	c.Assert(handles, HasLen, 0)
-
-	s.tk.MustExec("drop table test_add_index")
 }
 
 func (s *testDBSuite) TestDropIndex(c *C) {
