@@ -35,7 +35,7 @@ type Context interface {
 
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but maybe pending or invalid.
-	Txn(...struct{}) kv.Transaction
+	Txn(...bool) kv.Transaction
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client

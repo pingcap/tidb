@@ -31,7 +31,7 @@ const (
 
 // Error instances.
 var (
-	ErrGetStartTS      = terror.ClassExecutor.New(codeGetStartTS, "Get Start TS")
+	ErrGetStartTS      = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
 	ErrUnknownPlan     = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti    = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
 	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")

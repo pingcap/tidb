@@ -242,7 +242,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	}
 
 	var txnStartTS uint64
-	if sctx.Txn(struct{}{}).Valid() {
+	if sctx.Txn(false).Valid() {
 		txnStartTS = sctx.Txn().StartTS()
 	}
 	return &recordSet{
@@ -268,7 +268,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
 		// Don't active pending txn here.
-		if sctx.Txn(struct{}{}).Valid() {
+		if sctx.Txn(false).Valid() {
 			txnTS = sctx.Txn().StartTS()
 		}
 		a.LogSlowQuery(txnTS, err == nil)
@@ -416,7 +416,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	}
 
 	// check txn
-	if ctx.Txn(struct{}{}).Valid() {
+	if ctx.Txn(false).Valid() {
 		return false
 	}
 

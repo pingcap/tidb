@@ -938,7 +938,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn(opt ...struct{}) kv.Transaction {
+func (s *session) Txn(opt ...bool) kv.Transaction {
 	if s.txn.pending() && len(opt) == 0 {
 		// Transaction is lazy intialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,

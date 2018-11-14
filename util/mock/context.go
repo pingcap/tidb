@@ -88,7 +88,7 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(...struct{}) kv.Transaction {
+func (c *Context) Txn(...bool) kv.Transaction {
 	return &c.txn
 }
 

@@ -330,7 +330,7 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("set @@autocommit = 0")
-	c.Assert(tk.Se.Txn(struct{}{}).Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(false).Valid(), IsFalse)
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
@@ -346,15 +346,15 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 
 	// Begin statement should start a new transaction.
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn(struct{}{}).Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
 	tk.MustExec("rollback")
 
 	tk.MustExec("select * from t")
-	c.Assert(tk.Se.Txn(struct{}{}).Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
 	tk.MustExec("rollback")
 
 	tk.MustExec("insert into t values (1)")
-	c.Assert(tk.Se.Txn(struct{}{}).Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
 	tk.MustExec("rollback")
 }
 

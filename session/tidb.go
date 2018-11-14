@@ -151,7 +151,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
-		if sctx.Txn(struct{}{}).Valid() {
+		if sctx.Txn(false).Valid() {
 			if err != nil {
 				sctx.StmtRollback()
 			} else {
