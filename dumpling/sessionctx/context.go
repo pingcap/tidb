@@ -34,7 +34,8 @@ type Context interface {
 	NewTxn() error
 
 	// Txn returns the current transaction which is created before executing a statement.
-	Txn() kv.Transaction
+	// The returned kv.Transaction is not nil, but maybe pending or invalid.
+	Txn(...bool) kv.Transaction
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
