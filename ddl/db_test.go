@@ -588,16 +588,28 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 	s.mustExec(c, sql)
 	otherKeys = append(otherKeys, v)
 
+	is := s.dom.InfoSchema()
+	schemaName := model.NewCIStr(s.schemaName)
+	tableName := model.NewCIStr("test_add_index")
+	tbl, err := is.TableByName(schemaName, tableName)
+	c.Assert(err, IsNil)
+
+	// Split table to multi region.
+	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
 	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
 	deletedKeys := make(map[int]struct{})
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
+	ticker2 := time.NewTicker(10 * time.Millisecond)
+	defer ticker2.Stop()
+	startReorganization := false
+
 LOOP:
 	for {
 		select {
-		case err := <-done:
+		case err = <-done:
 			if err == nil {
 				break LOOP
 			}
@@ -620,6 +632,21 @@ LOOP:
 				s.mustExec(c, sql)
 			}
 			num += step
+		case <-ticker2.C:
+			if !startReorganization {
+				is = s.dom.InfoSchema()
+				tbl, err = is.TableByName(schemaName, tableName)
+				c.Assert(err, IsNil)
+				for _, idx := range tbl.Meta().Indices {
+					if idx.Name.L == "c3_index" && idx.State == model.StateWriteReorganization {
+						startReorganization = true
+					}
+				}
+			}
+			if startReorganization {
+				workerCnt := rand.Intn(8) + 8
+				s.mustExec(c, fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", workerCnt))
+			}
 		}
 	}
 
@@ -665,7 +692,7 @@ LOOP:
 	t := s.testGetTable(c, "test_add_index")
 	handles := make(map[int64]struct{})
 	startKey := t.RecordKey(math.MinInt64)
-	err := t.IterRecords(ctx, startKey, t.Cols(),
+	err = t.IterRecords(ctx, startKey, t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			handles[h] = struct{}{}
 			return true, nil
