@@ -556,19 +556,20 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 }
 
 func checkColumnValueConstraint(col *table.Column) error {
-	if col.Tp == mysql.TypeEnum || col.Tp == mysql.TypeSet {
-		valueMap := make(map[string]string, len(col.Elems))
-		for i := range col.Elems {
-			val := strings.ToLower(col.Elems[i])
-			if _, ok := valueMap[val]; ok {
-				tpStr := "ENUM"
-				if col.Tp == mysql.TypeSet {
-					tpStr = "SET"
-				}
-				return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, valueMap[val], tpStr)
+	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
+		return nil
+	}
+	valueMap := make(map[string]string, len(col.Elems))
+	for i := range col.Elems {
+		val := strings.ToLower(col.Elems[i])
+		if _, ok := valueMap[val]; ok {
+			tpStr := "ENUM"
+			if col.Tp == mysql.TypeSet {
+				tpStr = "SET"
 			}
-			valueMap[val] = col.Elems[i]
+			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, valueMap[val], tpStr)
 		}
+		valueMap[val] = col.Elems[i]
 	}
 	return nil
 }
