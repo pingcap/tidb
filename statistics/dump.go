@@ -171,16 +171,28 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
 func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) (*Table, error) {
-	newHistColl := HistColl{
+
+	coll, err := HistCollFromJSON(tableInfo, physicalID, jsonTbl)
+	if err != nil {
+		return nil, err
+	}
+
+	tbl := &Table{
+		HistColl: *coll,
+	}
+
+	return tbl, nil
+}
+
+// HistCollFromJSON build HistColl from JSONTable.
+func HistCollFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) (*HistColl, error) {
+	newHistColl := &HistColl{
 		PhysicalID:     physicalID,
 		HavePhysicalID: true,
 		Count:          jsonTbl.Count,
 		ModifyCount:    jsonTbl.ModifyCount,
 		Columns:        make(map[int64]*Column, len(jsonTbl.Columns)),
 		Indices:        make(map[int64]*Index, len(jsonTbl.Indices)),
-	}
-	tbl := &Table{
-		HistColl: newHistColl,
 	}
 	for id, jsonIdx := range jsonTbl.Indices {
 		for _, idxInfo := range tableInfo.Indices {
@@ -194,7 +206,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				CMSketch:  CMSketchFromProto(jsonIdx.CMSketch),
 				Info:      idxInfo,
 			}
-			tbl.Indices[idx.ID] = idx
+			newHistColl.Indices[idx.ID] = idx
 		}
 	}
 
@@ -208,7 +220,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize
 			col := &Column{
@@ -218,8 +230,8 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				Count:     count,
 				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
-			tbl.Columns[col.ID] = col
+			newHistColl.Columns[col.ID] = col
 		}
 	}
-	return tbl, nil
+	return newHistColl, nil
 }
