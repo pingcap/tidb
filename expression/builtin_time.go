@@ -4540,7 +4540,18 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	default:
 		flen, decimal = 17, 6
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, types.ETReal, types.ETReal, types.ETReal)
+	arg0Type, arg1Type := args[0].GetType().EvalType(), args[1].GetType().EvalType()
+	if arg0Type == types.ETString {
+		arg0Type = types.ETReal
+	} else {
+		arg0Type = types.ETInt
+	}
+	if arg1Type == types.ETString {
+		arg1Type = types.ETReal
+	} else {
+		arg1Type = types.ETInt
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, arg0Type, arg1Type, types.ETReal)
 	bf.tp.Flen, bf.tp.Decimal = flen, decimal
 	sig := &builtinMakeTimeSig{bf}
 	return sig, nil
@@ -4561,18 +4572,34 @@ func (b *builtinMakeTimeSig) Clone() builtinFunc {
 func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	dur := types.ZeroDuration
 	dur.Fsp = types.MaxFsp
-	// hour must be round down
-	fhour, isNull, err := b.args[0].EvalReal(b.ctx, row)
-	if isNull || err != nil {
-		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	var hour int64
+	if b.args[0].GetType().EvalType() == types.ETReal {
+		fhour, isNull, err := b.args[0].EvalReal(b.ctx, row)
+		if isNull || err != nil {
+			return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		}
+		hour = int64(fhour)
+	} else {
+		ihour, isNull, err := b.args[0].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		}
+		hour = ihour
 	}
-	hour := int64(fhour)
-	// minute must be round down
-	fminute, isNull, err := b.args[1].EvalReal(b.ctx, row)
-	if isNull || err != nil {
-		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	var minute int64
+	if b.args[1].GetType().EvalType() == types.ETReal {
+		fminute, isNull, err := b.args[1].EvalReal(b.ctx, row)
+		if isNull || err != nil {
+			return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		}
+		minute = int64(fminute)
+	} else {
+		iminute, isNull, err := b.args[1].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		}
+		minute = iminute
 	}
-	minute := int64(fminute)
 	if minute < 0 || minute >= 60 {
 		return dur, true, nil
 	}
