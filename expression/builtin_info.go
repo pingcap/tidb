@@ -54,6 +54,7 @@ var (
 	_ builtinFunc = &builtinVersionSig{}
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
+	_ builtinFunc = &builtinBenchmarkSig{}
 )
 
 type databaseFunctionClass struct {
@@ -384,7 +385,39 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "BENCHMARK")
+	//return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "BENCHMARK")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETString)
+	sig := &builtinBenchmarkSig{bf}
+	return sig, nil
+
+}
+
+type builtinBenchmarkSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBenchmarkSig) evalInt(row chunk.Row) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	var i int64 = 0
+	for ; i < x; i++ {
+		_, isNull, err := b.args[1].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, errors.Trace(err)
+		}
+	}
+	return 0, false, nil
+}
+
+func (b *builtinBenchmarkSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 type charsetFunctionClass struct {
