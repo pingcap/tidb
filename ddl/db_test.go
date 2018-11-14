@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -456,6 +455,7 @@ LOOP:
 	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
 }
 
+// TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
