@@ -473,7 +473,6 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		log.Infof("hook.OnJobRunBeforeExported, job: %v", job)
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
 			jobIDs := []int64{job.ID}
 			hookCtx := mock.NewContext()
