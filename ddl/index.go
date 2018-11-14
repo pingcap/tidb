@@ -1080,6 +1080,11 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, indexInfo *model.
 			idxWorkers = append(idxWorkers, idxWorker)
 			go idxWorkers[i].run(reorgInfo.d)
 		}
+		if len(idxWorkers) > int(workerCnt) {
+			workers := idxWorkers[workerCnt:]
+			idxWorkers = idxWorkers[:workerCnt]
+			closeAddIndexWorkers(workers)
+		}
 
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
 		if err != nil {
