@@ -59,6 +59,21 @@ func (s *testFailDBSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
+// TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when
+// doing the operation of 'modify column'.
+func (s *testStateChangeSuite) TestInitializeOffsetAndState(c *C) {
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table t")
+
+	gofail.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`)
+	_, err = s.se.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
+	c.Assert(err, IsNil)
+	gofail.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState")
+}
+
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
 func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	gofail.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`)
