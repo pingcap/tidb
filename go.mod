@@ -49,7 +49,6 @@ require (
 	github.com/juju/loggo v0.0.0-20180524022052-584905176618 // indirect
 	github.com/juju/testing v0.0.0-20180920084828-472a3e8b2073 // indirect
 	github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5
-	github.com/konsorten/go-windows-terminal-sequences v1.0.1 // indirect
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/kr/pty v1.1.3 // indirect
 	github.com/mattn/go-shellwords v1.0.3 // indirect
@@ -83,7 +82,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20170806203942-52369c62f446 // indirect
 	github.com/satori/go.uuid v1.2.0 // indirect
 	github.com/siddontang/go v0.0.0-20180604090527-bdc77568d726 // indirect
-	github.com/sirupsen/logrus v1.1.1
+	github.com/sirupsen/logrus v1.2.0
 	github.com/soheilhy/cmux v0.1.4 // indirect
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/spf13/cobra v0.0.2 // indirect
@@ -105,7 +104,7 @@ require (
 	golang.org/x/lint v0.0.0-20181026193005-c67002cb31c3 // indirect
 	golang.org/x/net v0.0.0-20181029044818-c44066c5c816
 	golang.org/x/oauth2 v0.0.0-20181031022657-8527f56f7107 // indirect
-	golang.org/x/sys v0.0.0-20181030150119-7e31e0c00fa0 // indirect
+	golang.org/x/sys v0.0.0-20181031143558-9b800f95dbbc // indirect
 	golang.org/x/text v0.3.0
 	golang.org/x/time v0.0.0-20180412165947-fbb02b2291d2 // indirect
 	golang.org/x/tools v0.0.0-20181030221726-6c7e314b6563 // indirect
