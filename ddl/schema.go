@@ -128,9 +128,8 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func getIDs(tables []*model.TableInfo) []int64 {
 	ids := make([]int64, 0, len(tables))
 	for _, t := range tables {
-		if t.GetPartitionInfo() == nil {
-			ids = append(ids, t.ID)
-		} else {
+		ids = append(ids, t.ID)
+		if t.GetPartitionInfo() != nil {
 			ids = append(ids, getPartitionIDs(t)...)
 		}
 	}

@@ -3648,7 +3648,7 @@ func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
 		err = historyJob.DecodeArgs(&tableIDs)
 		c.Assert(err, IsNil)
 		// There is 2 partitions.
-		c.Assert(len(tableIDs), Equals, 2)
+		c.Assert(len(tableIDs), Equals, 3)
 		return nil
 	})
 
