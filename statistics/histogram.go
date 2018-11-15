@@ -933,19 +933,21 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 		if err != nil {
 			return nil, err
 		}
-		for ; highBucketIdx*2 < idx.Bounds.NumRows(); highBucketIdx++ {
+		for ; highBucketIdx < idx.Len(); highBucketIdx++ {
 			// Encoded value can only go to its next quickly. So ranHighEncode is actually range.HighVal's PrefixNext value.
 			// So the Bound should also go to its PrefixNext.
-			if bytes.Compare(ranHighEncode, kv.Key(idx.Bounds.GetRow(highBucketIdx*2).GetBytes(0)).PrefixNext()) < 0 {
+			bucketLowerEncoded := idx.Bounds.GetRow(highBucketIdx * 2).GetBytes(0)
+			if bytes.Compare(ranHighEncode, kv.Key(bucketLowerEncoded).PrefixNext()) < 0 {
 				break
 			}
 		}
 		for ; lowBucketIdx < highBucketIdx; lowBucketIdx++ {
-			if bytes.Compare(ranLowEncode, idx.Bounds.GetRow(lowBucketIdx*2+1).GetBytes(0)) <= 0 {
+			bucketUpperEncoded := idx.Bounds.GetRow(lowBucketIdx*2 + 1).GetBytes(0)
+			if bytes.Compare(ranLowEncode, bucketUpperEncoded) <= 0 {
 				break
 			}
 		}
-		if lowBucketIdx*2 >= idx.Bounds.NumRows() {
+		if lowBucketIdx >= idx.Len() {
 			break
 		}
 		for i := lowBucketIdx; i < highBucketIdx; i++ {
@@ -980,26 +982,25 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 				continue
 			}
 			newColl.Indices[node.ID] = newIdxHist
-		} else {
-
-			oldCol, ok := coll.Columns[node.ID]
-			if !ok {
-				continue
-			}
-			newCol := &Column{Info: oldCol.Info}
-			newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
-			var err error
-			if oldCol.isHandle {
-				err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, node.Ranges, coll.GetRowCountByIntColumnRanges)
-			} else {
-				err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, node.Ranges, coll.GetRowCountByColumnRanges)
-			}
-			if err != nil {
-				log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v", err)
-				continue
-			}
-			newColl.Columns[node.ID] = newCol
+			continue
 		}
+		oldCol, ok := coll.Columns[node.ID]
+		if !ok {
+			continue
+		}
+		newCol := &Column{Info: oldCol.Info}
+		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
+		var err error
+		if oldCol.isHandle {
+			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, node.Ranges, coll.GetRowCountByIntColumnRanges)
+		} else {
+			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, node.Ranges, coll.GetRowCountByColumnRanges)
+		}
+		if err != nil {
+			log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v", err)
+			continue
+		}
+		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {
 		_, ok := newColl.Indices[id]

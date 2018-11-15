@@ -113,13 +113,13 @@ num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0`
 	idx.PreCalculateScalar()
 	node3 := &StatsNode{ID: 0, Tp: indexType, Selectivity: 0.47}
 	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(2), HighVal: types.MakeDatums(3)})
-	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(7), HighVal: types.MakeDatums(11)})
+	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(10), HighVal: types.MakeDatums(13)})
 
 	idxResult := `index:0 ndv:7
 num: 30 lower_bound: 0 upper_bound: 2 repeats: 10
 num: 30 lower_bound: 3 upper_bound: 5 repeats: 10
-num: 30 lower_bound: 6 upper_bound: 8 repeats: 10
-num: 30 lower_bound: 9 upper_bound: 11 repeats: 10`
+num: 30 lower_bound: 9 upper_bound: 11 repeats: 10
+num: 30 lower_bound: 12 upper_bound: 14 repeats: 10`
 
 	newIdx, err := idx.newIndexBySelectivity(sc, node3)
 	c.Assert(err, IsNil, Commentf("Test failed: %v", err))
