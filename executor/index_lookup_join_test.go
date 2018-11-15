@@ -29,7 +29,7 @@ func (s *testSuite) TestIndexLookupJoinHang(c *C) {
 	tk.Se.GetSessionVars().IndexJoinBatchSize = 1
 	tk.Se.GetSessionVars().IndexLookupJoinConcurrency = 1
 
-	rs, err := tk.Exec("select /*+ TIDB_INLJ(o, i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
+	rs, err := tk.Exec("select /*+ TIDB_INLJ(i)*/ * from idxJoinOuter o left join idxJoinInner i on o.a = i.a where o.a in (1, 2) and (i.a - 3) > 0")
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
 	for i := 0; i < 5; i++ {
