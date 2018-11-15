@@ -3607,3 +3607,42 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	tk.MustExec("admin check table partition_add_idx")
 	tk.MustExec("drop table partition_add_idx")
 }
+
+func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("drop database if exists test_db_with_partition")
+	s.tk.MustExec("create database test_db_with_partition")
+	s.tk.MustExec("use test_db_with_partition")
+	s.tk.MustExec(`create table part1 (
+		col1 int not null,
+		col2 date not null,
+		col3 int not null,
+		col4 int not null,
+		unique key (col1, col2)
+	)
+	partition by range( col1 + col2 ) (
+	partition p1 values less than (11),
+	partition p2 values less than (15)
+	);`)
+	s.tk.MustExec("drop database if exists test_db_with_partition")
+
+	rs, err := s.tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	rows, err := session.GetRows4Test(context.Background(), s.tk.Se, rs)
+	c.Assert(err, IsNil)
+	row := rows[0]
+	c.Assert(row.GetString(3), Equals, "drop schema")
+	jobID := row.GetInt64(0)
+
+	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err := t.GetHistoryDDLJob(jobID)
+		c.Assert(err, IsNil)
+		var tableIDs []int64
+		err = historyJob.DecodeArgs(&tableIDs)
+		c.Assert(err, IsNil)
+		// There is 2 partitions.
+		c.Assert(len(tableIDs), Equals, 2)
+		return nil
+	})
+}
