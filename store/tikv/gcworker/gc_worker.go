@@ -122,7 +122,7 @@ const (
 	gcEnableKey          = "tikv_gc_enable"
 	gcEnableValue        = "true"
 	gcDisableValue       = "false"
-	gcDefaultEnableValue = true
+	gcDefaultEnablevalue = true
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -257,31 +257,54 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 // prepare checks preconditions for starting a GC job. It returns a bool
 // that indicates whether the GC job should start and the new safePoint.
 func (w *GCWorker) prepare() (bool, uint64, error) {
+	ctx := context.Background()
+	_, err := w.session.Execute(ctx, "BEGIN")
+	if err != nil {
+		return false, 0, errors.Trace(err)
+	}
 	enable, err := w.checkGCEnable()
 	if err != nil {
+		_, err1 := w.session.Execute(ctx, "ROLLBACK")
+		terror.Log(errors.Trace(err1))
 		return false, 0, errors.Trace(err)
 	}
 	if !enable {
 		log.Warn("[gc worker] gc status is disabled.")
+		_, err1 := w.session.Execute(ctx, "ROLLBACK")
+		terror.Log(errors.Trace(err1))
 		return false, 0, nil
 	}
 	now, err := w.getOracleTime()
 	if err != nil {
+		_, err1 := w.session.Execute(ctx, "ROLLBACK")
+		terror.Log(errors.Trace(err1))
 		return false, 0, errors.Trace(err)
 	}
 	ok, err := w.checkGCInterval(now)
 	if err != nil || !ok {
+		_, err1 := w.session.Execute(ctx, "ROLLBACK")
+		terror.Log(errors.Trace(err1))
 		return false, 0, errors.Trace(err)
 	}
 	newSafePoint, err := w.calculateNewSafePoint(now)
 	if err != nil || newSafePoint == nil {
+		_, err1 := w.session.Execute(ctx, "ROLLBACK")
+		terror.Log(errors.Trace(err1))
 		return false, 0, errors.Trace(err)
 	}
 	err = w.saveTime(gcLastRunTimeKey, now)
 	if err != nil {
+		_, err1 := w.session.Execute(ctx, "ROLLBACK")
+		terror.Log(errors.Trace(err1))
 		return false, 0, errors.Trace(err)
 	}
 	err = w.saveTime(gcSafePointKey, *newSafePoint)
+	if err != nil {
+		_, err1 := w.session.Execute(ctx, "ROLLBACK")
+		terror.Log(errors.Trace(err1))
+		return false, 0, errors.Trace(err)
+	}
+	_, err = w.session.Execute(ctx, "COMMIT")
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -517,15 +540,15 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 func (w *GCWorker) loadGCEnableStatus() (bool, error) {
 	str, err := w.loadValueFromSysTable(gcEnableKey)
 	if err != nil {
-		return gcDefaultEnableValue, errors.Trace(err)
+		return gcDefaultEnablevalue, errors.Trace(err)
 	}
 	if str == "" {
 		// Save default value for gc enable key. The default value is always true.
 		err = w.saveValueToSysTable(gcEnableKey, gcEnableValue)
 		if err != nil {
-			return gcDefaultEnableValue, errors.Trace(err)
+			return gcDefaultEnablevalue, errors.Trace(err)
 		}
-		return gcDefaultEnableValue, nil
+		return gcDefaultEnablevalue, nil
 	}
 	return strings.EqualFold(str, gcEnableValue), nil
 }
