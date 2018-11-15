@@ -904,38 +904,17 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if pi != nil {
-		if pi.Type == model.PartitionTypeRange {
-			// Only range type partition is now supported.
-			// Range columns partition only implements the parser, so it will not be checked.
-			if s.Partition.ColumnNames == nil {
-				if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
-					return errors.Trace(err)
-				}
-
-				if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
-					return errors.Trace(err)
-				}
-
-				if err = checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
-					return errors.Trace(err)
-				}
-
-				if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-					return errors.Trace(err)
-				}
-
-				if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-					return errors.Trace(err)
-				}
-
-				if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
-					return errors.Trace(err)
-				}
-			}
-		} else if pi.Type == model.PartitionTypeHash {
-			if err = checkAddPartitionTooManyPartitions(pi.Num); err != nil {
-				return errors.Trace(err)
-			}
+		switch pi.Type {
+		case model.PartitionTypeRange:
+			err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
+		case model.PartitionTypeHash:
+			err = checkPartitionByHash(pi)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+			return errors.Trace(err)
 		}
 		tbInfo.Partition = pi
 	}
@@ -971,6 +950,41 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkPartitionByHash(pi *model.PartitionInfo) error {
+	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
+	// Range columns partition only implements the parser, so it will not be checked.
+	if s.Partition.ColumnNames != nil {
+		return nil
+	}
+
+	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func checkCharsetAndCollation(cs string, co string) error {
