@@ -15,7 +15,6 @@ package core
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"path/filepath"
 
@@ -137,33 +136,4 @@ num: 1 lower_bound: 13 upper_bound: 13 repeats: 1
 num: 1 lower_bound: 14 upper_bound: 14 repeats: 1
 num: 1 lower_bound: 15 upper_bound: 15 repeats: 1`
 	c.Assert(finalStats.HistColl.Columns[4].String(), Equals, ans4)
-	c.Assert(len(finalStats.HistColl.Indices), Equals, 2)
-	ans5 := `index:1 ndv:9
-num: 1 lower_bound: (1, 1) upper_bound: (1, 1) repeats: 1
-num: 1 lower_bound: (2, 2) upper_bound: (2, 2) repeats: 1
-num: 1 lower_bound: (3, 3) upper_bound: (3, 3) repeats: 1
-num: 1 lower_bound: (4, 4) upper_bound: (4, 4) repeats: 1
-num: 1 lower_bound: (5, 5) upper_bound: (5, 5) repeats: 1
-num: 1 lower_bound: (6, 6) upper_bound: (6, 6) repeats: 1
-num: 1 lower_bound: (7, 7) upper_bound: (7, 7) repeats: 1
-num: 1 lower_bound: (8, 8) upper_bound: (8, 8) repeats: 1
-num: 1 lower_bound: (9, 9) upper_bound: (9, 9) repeats: 1`
-	c.Assert(finalStats.HistColl.Indices[0].String(), Equals, ans5)
-	ans6 := `index:1 ndv:8
-num: 1 lower_bound: (8, 8) upper_bound: (8, 8) repeats: 1
-num: 1 lower_bound: (9, 9) upper_bound: (9, 9) repeats: 1
-num: 1 lower_bound: (10, 10) upper_bound: (10, 10) repeats: 1
-num: 1 lower_bound: (11, 11) upper_bound: (11, 11) repeats: 1
-num: 1 lower_bound: (12, 12) upper_bound: (12, 12) repeats: 1
-num: 1 lower_bound: (13, 13) upper_bound: (13, 13) repeats: 1
-num: 1 lower_bound: (14, 14) upper_bound: (14, 14) repeats: 1
-num: 1 lower_bound: (15, 15) upper_bound: (15, 15) repeats: 1`
-	c.Assert(finalStats.HistColl.Indices[1].String(), Equals, ans6)
-	// TODO: https://go-review.googlesource.com/c/go/+/142737/ After thie pr merged into release branch. We can just compare fmt's print result of map.
-	c.Assert(len(finalStats.HistColl.ColID2IdxID), Equals, 2)
-	c.Assert(finalStats.HistColl.ColID2IdxID[1], Equals, int64(0))
-	c.Assert(finalStats.HistColl.ColID2IdxID[3], Equals, int64(1))
-	c.Assert(len(finalStats.HistColl.Idx2ColumnIDs), Equals, 2)
-	c.Assert(fmt.Sprintf("%v", finalStats.HistColl.Idx2ColumnIDs[0]), Equals, "[1 2]")
-	c.Assert(fmt.Sprintf("%v", finalStats.HistColl.Idx2ColumnIDs[1]), Equals, "[3 4]")
 }

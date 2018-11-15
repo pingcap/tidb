@@ -312,12 +312,7 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 	cardinality = append(cardinality, rightProfile.Cardinality...)
 
 	ndv, leftNdv, rightNdv := float64(1), float64(1), float64(1)
-	idxHistID := int64(0)
 	newColID2Hist := make(map[int64]*statistics.Column)
-	newIdxID2Hist := make(map[int64]*statistics.Index)
-	leftIndexReLabel := make(map[int64]int64)
-	rightIndexReLabel := make(map[int64]int64)
-	newIdx2ColumnIDs := make(map[int64][]int64)
 
 	// TODO: Support using index histogram to calculate the NDV after join and the final row count.
 	for i := range leftKeys {
@@ -363,37 +358,10 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 		newColID2Hist[uniqID] = colHist
 	}
 
-	// Update index map and indexID2ColIDs map of left side in `HistColl`.
-	for oldID, idxHist := range leftProfile.HistColl.Indices {
-		newIdxID2Hist[idxHistID] = idxHist
-		leftIndexReLabel[oldID] = idxHistID
-		newIdx2ColumnIDs[idxHistID] = leftProfile.HistColl.Idx2ColumnIDs[oldID]
-		idxHistID++
-	}
-
-	// Update index map and indexID2ColIDs map of right side in `HistColl`.
-	for oldID, idxHist := range rightProfile.HistColl.Indices {
-		newIdxID2Hist[idxHistID] = idxHist
-		rightIndexReLabel[oldID] = idxHistID
-		newIdx2ColumnIDs[idxHistID] = rightProfile.HistColl.Idx2ColumnIDs[oldID]
-		idxHistID++
-	}
-
-	newColID2IdxID := make(map[int64]int64)
-
-	for colID, oldIdxID := range leftProfile.HistColl.ColID2IdxID {
-		newColID2IdxID[colID] = leftIndexReLabel[oldIdxID]
-	}
-	for colID, oldIdxID := range rightProfile.HistColl.ColID2IdxID {
-		newColID2IdxID[colID] = rightIndexReLabel[oldIdxID]
-	}
-
+	// TODO: support calculate index histogram.
 	newHistColl := statistics.HistColl{
-		Count:         int64(count),
-		Columns:       newColID2Hist,
-		Indices:       newIdxID2Hist,
-		Idx2ColumnIDs: newIdx2ColumnIDs,
-		ColID2IdxID:   newColID2IdxID,
+		Count:   int64(count),
+		Columns: newColID2Hist,
 	}
 	p.stats = &property.StatsInfo{
 		RowCount:    count,
