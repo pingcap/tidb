@@ -68,6 +68,7 @@ var (
 
 // Error instances.
 var (
+	ErrGetStartTS                  = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
 	ErrUnknownPlan                 = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti                = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
 	ErrPrepareDDL                  = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
@@ -95,6 +96,7 @@ const (
 	codePasswordFormat                 terror.ErrCode = 1827 // MySQL error code
 	codeErrCantChangeTxCharacteristics terror.ErrCode = 1568
 	codeErrPsManyParam                 terror.ErrCode = 1390
+	codeGetStartTS                     terror.ErrCode = 11
 )
 
 type baseExecutor struct {
@@ -615,10 +617,6 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
-		err = sctx.ActivePendingTxn()
-		if err != nil {
-			return rows, errors.Trace(err)
-		}
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
