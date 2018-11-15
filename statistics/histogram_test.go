@@ -95,7 +95,7 @@ num: 60 lower_bound: kkkkk upper_bound: ooooo repeats: 20
 num: 60 lower_bound: oooooo upper_bound: sssss repeats: 20
 num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0`
 
-	newColl, _ := coll.NewHistCollBySelectivity(sc, []*StatsNode{node, node2})
+	newColl := coll.NewHistCollBySelectivity(sc, []*StatsNode{node, node2})
 	c.Assert(newColl.Columns[1].String(), Equals, intColResult)
 	c.Assert(newColl.Columns[2].String(), Equals, stringColResult)
 

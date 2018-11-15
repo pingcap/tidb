@@ -84,7 +84,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.Sta
 		selectivity = selectionFactor
 	}
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && ds.stats.HistColl != nil {
-		finalHist, err := ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
+		finalHist := ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
 		if err != nil {
 			log.Warnf("[stats-in-datasource]: An error happened: %v", err.Error())
 		}

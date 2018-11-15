@@ -873,20 +873,19 @@ type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) 
 // TODO: Datum is not efficient, try to avoid using it here.
 //  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
 func newHistogramBySelectivity(sc *stmtctx.StatementContext, histID int64, oldHist, newHist *Histogram, ranges []*ranger.Range, cntByRangeFunc countByRangeFunc) error {
-	splitRanges := oldHist.SplitRange(ranges, false)
 	cntPerVal := int64(oldHist.AvgCountPerValue(int64(oldHist.totalRowCount())))
 	var totCnt int64 = 0
-	for boundIdx, ranIdx, highRangeIdx := 0, 0, 0; boundIdx < oldHist.Bounds.NumRows() && ranIdx < len(splitRanges); boundIdx, ranIdx = boundIdx+2, highRangeIdx {
-		for highRangeIdx < len(splitRanges) && chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &splitRanges[highRangeIdx].HighVal[0]) >= 0 {
+	for boundIdx, ranIdx, highRangeIdx := 0, 0, 0; boundIdx < oldHist.Bounds.NumRows() && ranIdx < len(ranges); boundIdx, ranIdx = boundIdx+2, highRangeIdx {
+		for highRangeIdx < len(ranges) && chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &ranges[highRangeIdx].HighVal[0]) >= 0 {
 			highRangeIdx++
 		}
-		if boundIdx+2 >= oldHist.Bounds.NumRows() && highRangeIdx < len(splitRanges) && splitRanges[highRangeIdx].HighVal[0].Kind() == types.KindMaxValue {
+		if boundIdx+2 >= oldHist.Bounds.NumRows() && highRangeIdx < len(ranges) && ranges[highRangeIdx].HighVal[0].Kind() == types.KindMaxValue {
 			highRangeIdx++
 		}
 		if ranIdx == highRangeIdx {
 			continue
 		}
-		cnt, err := cntByRangeFunc(sc, histID, splitRanges[ranIdx:highRangeIdx])
+		cnt, err := cntByRangeFunc(sc, histID, ranges[ranIdx:highRangeIdx])
 		// This should not happen.
 		if err != nil {
 			return err
@@ -901,7 +900,7 @@ func newHistogramBySelectivity(sc *stmtctx.StatementContext, histID int64, oldHi
 		newHist.Bounds.AppendRow(oldHist.Bounds.GetRow(boundIdx + 1))
 		totCnt += int64(cnt)
 		bkt := Bucket{Count: totCnt}
-		if chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &splitRanges[highRangeIdx-1].HighVal[0]) == 0 && !splitRanges[highRangeIdx-1].HighExclude {
+		if chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &ranges[highRangeIdx-1].HighVal[0]) == 0 && !ranges[highRangeIdx-1].HighExclude {
 			bkt.Repeat = cntPerVal
 		}
 		newHist.Buckets = append(newHist.Buckets, bkt)
@@ -962,7 +961,7 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 }
 
 // NewHistCollBySelectivity creates new HistColl by the given statsNodes.
-func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, statsNodes []*StatsNode) (*HistColl, error) {
+func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, statsNodes []*StatsNode) *HistColl {
 	newColl := &HistColl{
 		Columns:       make(map[int64]*Column),
 		Indices:       make(map[int64]*Index),
@@ -991,10 +990,23 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 		newCol := &Column{Info: oldCol.Info}
 		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		var err error
+		splitRanges := oldCol.Histogram.SplitRange(node.Ranges, false)
+		// Deal with some corner case.
+		if len(splitRanges) > 0 {
+			// Deal with NULL values.
+			if splitRanges[0].LowVal[0].IsNull() {
+				newCol.NullCount = oldCol.NullCount
+				if splitRanges[0].HighVal[0].IsNull() {
+					splitRanges = splitRanges[1:]
+				} else {
+					splitRanges[0].LowVal[0].SetMinNotNull()
+				}
+			}
+		}
 		if oldCol.isHandle {
-			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, node.Ranges, coll.GetRowCountByIntColumnRanges)
+			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByIntColumnRanges)
 		} else {
-			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, node.Ranges, coll.GetRowCountByColumnRanges)
+			err = newHistogramBySelectivity(sc, node.ID, &oldCol.Histogram, &newCol.Histogram, splitRanges, coll.GetRowCountByColumnRanges)
 		}
 		if err != nil {
 			log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v", err)
@@ -1014,7 +1026,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			newColl.Columns[id] = col
 		}
 	}
-	return newColl, nil
+	return newColl
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {

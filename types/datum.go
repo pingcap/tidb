@@ -218,6 +218,11 @@ func (d *Datum) SetNull() {
 	d.x = nil
 }
 
+func (d *Datum) SetMinNotNull() {
+	d.k = KindMinNotNull
+	d.x = nil
+}
+
 // GetBinaryLiteral gets Bit value
 func (d *Datum) GetBinaryLiteral() BinaryLiteral {
 	return d.b
