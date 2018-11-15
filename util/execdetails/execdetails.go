@@ -99,5 +99,5 @@ func (e *RuntimeStats) String() string {
 	if e == nil {
 		return ""
 	}
-	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(atomic.LoadInt64(&e.consume)), atomic.LoadInt32(&e.loop), atomic.LoadInt64(&e.rows))
+	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 }
