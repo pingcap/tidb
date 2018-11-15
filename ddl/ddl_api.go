@@ -913,7 +913,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
 			return errors.Trace(err)
 		}
 		tbInfo.Partition = pi
