@@ -77,3 +77,7 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 [[constraint]]
   branch = "master"
   name = "github.com/etcd-io/gofail"
+
+[[constraint]]
+  name = "github.com/pingcap/kvproto"
+  branch = "release-2.0"
