@@ -1461,17 +1461,12 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		},
 		{
 			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by a",
-			best: "UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Projection->Sort",
+			best: "UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Projection->Sort",
 			err:  false,
 		},
 		{
 			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by (select a)",
-			best: "Apply{UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
-			err:  false,
-		},
-		{
-			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by a",
-			best: "UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Projection->Sort",
+			best: "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
 			err:  false,
 		},
 	}
