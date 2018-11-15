@@ -257,6 +257,12 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 // prepare checks preconditions for starting a GC job. It returns a bool
 // that indicates whether the GC job should start and the new safePoint.
 func (w *GCWorker) prepare() (bool, uint64, error) {
+	// Add a transaction here is to prevent following situations:
+	// 1. GC check gcEnable is true, continue to do GC
+	// 2. User set gcEnable to false
+	// 3. User get `tikv_gc_safe_point` value is t1, then user think data after time t1 won't be clean by GC.
+	// 4. GC update `tikv_gc_safe_point` value to t2, continue do gc in this round.
+	// Then the data record that has been dropped between time t1 and t2, will be cleaned by GC, but user think data after t1 won't be clean by GC.
 	ctx := context.Background()
 	_, err := w.session.Execute(ctx, "BEGIN")
 	if err != nil {
