@@ -51,6 +51,7 @@ const latchListCount = 5
 
 func (scheduler *LatchesScheduler) run() {
 	var counter int
+	var safeTS uint64
 	wakeupList := make([]*Lock, 0)
 	for lock := range scheduler.unlockCh {
 		wakeupList = scheduler.latches.release(lock, wakeupList)
@@ -62,9 +63,12 @@ func (scheduler *LatchesScheduler) run() {
 			currentTS := lock.commitTS
 			elapsed := tsoSub(currentTS, scheduler.lastRecycleTime)
 			if elapsed > checkInterval || counter > checkCounter {
-				go scheduler.latches.recycle(lock.commitTS)
+				go scheduler.latches.recycle(lock.commitTS, safeTS)
 				scheduler.lastRecycleTime = currentTS
 				counter = 0
+			}
+			if elapsed > checkInterval {
+				_, safeTS = gAlloc.Alloc(0)
 			}
 		}
 		counter++

@@ -19,6 +19,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/cznic/mathutil"
 	log "github.com/sirupsen/logrus"
@@ -32,6 +33,15 @@ type node struct {
 	value       *Lock
 
 	next *node
+}
+
+const szUint64 = unsafe.Sizeof(uint64(0))
+
+func (n *node) refresh(safeTS uint64) {
+	createTime := *((*uint64)(unsafe.Pointer(uintptr(unsafe.Pointer(&n.key[0])) - szUint64)))
+	if createTime <= safeTS {
+		n.key = allocKey(n.key)
+	}
 }
 
 // latch stores a key's waiting transactions information.
@@ -169,6 +179,14 @@ func (latches *Latches) release(lock *Lock, wakeupList []*Lock) []*Lock {
 	return wakeupList
 }
 
+func allocKey(key []byte) []byte {
+	ptr, ver := gAlloc.Alloc(int(szUint64) + len(key))
+	*((*uint64)(unsafe.Pointer(&ptr[0]))) = ver
+	copyKey := ptr[szUint64:]
+	copy(copyKey, key)
+	return copyKey
+}
+
 func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 	key := lock.keys[lock.acquiredCount-1]
 	slotID := lock.requiredSlots[lock.acquiredCount-1]
@@ -186,9 +204,7 @@ func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 	// Make a copy of the key, so latch does not reference the transaction's memory.
 	// If we do not do it, transaction memory can't be recycle by GC and there will
 	// be a leak.
-	copyKey := make([]byte, len(find.key))
-	copy(copyKey, find.key)
-	find.key = copyKey
+	find.key = allocKey(find.key)
 	if len(latch.waiting) == 0 {
 		return nil
 	}
@@ -227,7 +243,7 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 
 	// Try to recycle to limit the memory usage.
 	if latch.count >= latchListCount {
-		latch.recycle(lock.startTS)
+		latch.recycle(lock.startTS, 0)
 	}
 
 	find := findNode(latch.queue, key)
@@ -262,7 +278,7 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 }
 
 // recycle is not thread safe, the latch should acquire its lock before executing this function.
-func (l *latch) recycle(currentTS uint64) int {
+func (l *latch) recycle(currentTS uint64, safeTS uint64) int {
 	total := 0
 	fakeHead := node{next: l.queue}
 	prev := &fakeHead
@@ -272,6 +288,7 @@ func (l *latch) recycle(currentTS uint64) int {
 			prev.next = curr.next
 			total++
 		} else {
+			curr.refresh(safeTS)
 			prev = curr
 		}
 	}
@@ -279,14 +296,15 @@ func (l *latch) recycle(currentTS uint64) int {
 	return total
 }
 
-func (latches *Latches) recycle(currentTS uint64) {
+func (latches *Latches) recycle(currentTS uint64, safeTS uint64) {
 	total := 0
 	for i := 0; i < len(latches.slots); i++ {
 		latch := &latches.slots[i]
 		latch.Lock()
-		total += latch.recycle(currentTS)
+		total += latch.recycle(currentTS, safeTS)
 		latch.Unlock()
 	}
+	gAlloc.GC(safeTS)
 	log.Debugf("recycle run at %v, recycle count = %d...\n", time.Now(), total)
 }
 

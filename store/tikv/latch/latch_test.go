@@ -143,7 +143,7 @@ func (s *testLatchSuite) TestRecycle(c *C) {
 	c.Assert(allEmpty, IsFalse)
 
 	currentTS := oracle.ComposeTS(oracle.GetPhysical(now.Add(expireDuration)), 3)
-	latches.recycle(currentTS)
+	latches.recycle(currentTS, 0)
 
 	for i := 0; i < len(latches.slots); i++ {
 		latch := &latches.slots[i]
