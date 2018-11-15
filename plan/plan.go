@@ -100,6 +100,9 @@ func (p *requiredProp) isPrefix(prop *requiredProp) bool {
 
 // Check if this prop's columns can match by items totally.
 func (p *requiredProp) matchItems(items []*ByItems) bool {
+	if len(items) < len(p.cols) {
+		return false
+	}
 	for i, col := range p.cols {
 		sortItem := items[i]
 		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(nil, col) {

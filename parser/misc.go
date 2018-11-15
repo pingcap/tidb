@@ -352,6 +352,7 @@ var tokenMap = map[string]int{
 	"NAMES":                    names,
 	"NATIONAL":                 national,
 	"NATURAL":                  natural,
+	"NEXT_ROW_ID":              nextRowID,
 	"NO":                       no,
 	"NO_WRITE_TO_BINLOG":       noWriteToBinLog,
 	"NONE":                     none,

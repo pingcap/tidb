@@ -698,7 +698,8 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	if unionDistinctPlan != nil {
 		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
 		if len(allSelectPlans) > 0 {
-			allSelectPlans = append(allSelectPlans, unionDistinctPlan)
+			// Can't change the statements order in order to get the correct column info.
+			allSelectPlans = append([]LogicalPlan{unionDistinctPlan}, allSelectPlans...)
 		}
 	}
 
@@ -712,6 +713,8 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	if unionAllPlan != nil {
 		unionPlan = unionAllPlan
 	}
+
+	oldLen := unionPlan.Schema().Len()
 
 	if union.OrderBy != nil {
 		unionPlan = b.buildSort(unionPlan, union.OrderBy.Items, nil)
@@ -727,6 +730,20 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			return nil
 		}
 	}
+
+	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
+	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
+	if oldLen != unionPlan.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(unionPlan.Schema().Columns[:oldLen])}.init(b.ctx)
+		proj.SetChildren(unionPlan)
+		schema := expression.NewSchema(unionPlan.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.FromID = proj.ID()
+		}
+		proj.SetSchema(schema)
+		return proj
+	}
+
 	return unionPlan
 }
 
@@ -862,7 +879,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	return li
 }
 
-// colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
+// colMatch means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
 // Because column a want column from database test exactly.
 func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
 	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
@@ -912,7 +929,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 	return
 }
 
-// AggregateFuncExtractor visits Expr tree.
+// havingAndOrderbyExprResolver visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type havingAndOrderbyExprResolver struct {
 	inAggFunc    bool
