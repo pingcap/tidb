@@ -1026,7 +1026,7 @@ func (ctx *ctxForPartitionExpr) NewTxn() error {
 }
 
 // Txn returns the current transaction which is created before executing a statement.
-func (ctx *ctxForPartitionExpr) Txn() kv.Transaction {
+func (ctx *ctxForPartitionExpr) Txn(...bool) kv.Transaction {
 	panic("not support")
 }
 

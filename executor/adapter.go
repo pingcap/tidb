@@ -240,11 +240,15 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
 	}
 
+	var txnStartTS uint64
+	if sctx.Txn(false).Valid() {
+		txnStartTS = sctx.Txn().StartTS()
+	}
 	return &recordSet{
 		executor:    e,
 		stmt:        a,
 		processinfo: pi,
-		txnStartTS:  sctx.Txn().StartTS(),
+		txnStartTS:  txnStartTS,
 	}, nil
 }
 
@@ -266,7 +270,8 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		}
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
-		if sctx.Txn() != nil {
+		// Don't active pending txn here.
+		if sctx.Txn(false).Valid() {
 			txnTS = sctx.Txn().StartTS()
 		}
 		a.LogSlowQuery(txnTS, err == nil)
@@ -290,9 +295,6 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		if isPointGet {
 			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
-		} else {
-			log.Debugf("con:%d ActivePendingTxn %s", ctx.GetSessionVars().ConnectionID, a.Text)
-			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -408,7 +410,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
-//  2. txn is nil
+//  2. txn is not valid
 //  2. plan is point get by pk or unique key
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) bool {
 	// check auto commit
@@ -417,7 +419,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	}
 
 	// check txn
-	if ctx.Txn() != nil {
+	if ctx.Txn(false).Valid() {
 		return false
 	}
 

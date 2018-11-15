@@ -343,6 +343,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", errors.Trace(err)
 		}
 		return v, nil
+	case TxnIsolation, TransactionIsolation:
+		upVal := strings.ToUpper(value)
+		_, exists := TxIsolationNames[upVal]
+		if !exists {
+			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return upVal, nil
 	}
 	return value, nil
 }
