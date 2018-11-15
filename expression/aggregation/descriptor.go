@@ -84,12 +84,12 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 // final phase individually.
 // This function is only used when executing aggregate function parallelly.
 // ordinal indicates the column ordinal of the intermediate result.
-func (a *AggFuncDesc) Split(ordinal []int) (finalAggDesc *AggFuncDesc) {
+func (a *AggFuncDesc) Split(ordinal []int, isPreparedCacheEnable bool) (finalAggDesc *AggFuncDesc) {
 	if a.Mode == CompleteMode {
 		a.Mode = Partial1Mode
 	} else if a.Mode == FinalMode {
 		a.Mode = Partial2Mode
-	} else {
+	} else if !isPreparedCacheEnable {
 		return
 	}
 	finalAggDesc = &AggFuncDesc{

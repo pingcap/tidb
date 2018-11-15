@@ -37,7 +37,7 @@ func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	finalDesc := desc.Split([]int{0})
+	finalDesc := desc.Split([]int{0}, false)
 
 	// build sum func for partial phase.
 	partialSumFunc := aggfuncs.Build(s.ctx, desc, 0)
@@ -93,7 +93,7 @@ func (s *testSuite) TestMergePartialResult4SumFloat(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeDouble),
 	}
-	finalDesc := desc.Split([]int{0})
+	finalDesc := desc.Split([]int{0}, false)
 
 	// build sum func for partial phase.
 	partialSumFunc := aggfuncs.Build(s.ctx, desc, 0)

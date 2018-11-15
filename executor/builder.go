@@ -1075,7 +1075,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 				ordinal = append(ordinal, partialOrdinal+1)
 				partialOrdinal++
 			}
-			finalDesc := aggDesc.Split(ordinal)
+			finalDesc := aggDesc.Split(ordinal, sessionVars.StmtCtx.UseCache)
 			partialAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
 			finalAggFunc := aggfuncs.Build(b.ctx, finalDesc, i)
 			e.PartialAggFuncs = append(e.PartialAggFuncs, partialAggFunc)

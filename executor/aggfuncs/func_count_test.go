@@ -36,7 +36,7 @@ func (s *testSuite) TestMergePartialResult4Count(c *C) {
 		Mode: aggregation.CompleteMode,
 		Args: []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLong), Index: 0}},
 	}
-	finalDesc := desc.Split([]int{0})
+	finalDesc := desc.Split([]int{0}, false)
 
 	// build count func for partial phase.
 	partialCountFunc := aggfuncs.Build(s.ctx, desc, 0)
