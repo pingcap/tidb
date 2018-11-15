@@ -334,8 +334,8 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 			ndv *= float64(newHist.NDV)
 			lPosNew := p.schema.ColumnIndex(leftKeys[i])
 			rPosNew := p.schema.ColumnIndex(rightKeys[i])
-			cardinality[lPosNew] = ndv
-			cardinality[rPosNew] = ndv
+			cardinality[lPosNew] = float64(newHist.NDV)
+			cardinality[rPosNew] = float64(newHist.NDV)
 			newColID2Hist[leftKeys[i].UniqueID] = leftCol
 			newColID2Hist[rightKeys[i].UniqueID] = rightCol
 			continue

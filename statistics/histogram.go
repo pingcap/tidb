@@ -698,19 +698,19 @@ func MergeHistogramForInnerJoin(lSide *Histogram, rSide *Histogram, tp *types.Fi
 	totCnt := int64(0)
 	totNdv := float64(0)
 	newHist := NewHistogram(0, 0, 0, 0, tp, 256, 0)
-	for i, j := 0, 0; i < lSide.Bounds.NumRows() && j < rSide.Bounds.NumRows(); {
-		lLow := lSide.Bounds.GetRow(i)
-		lHigh := lSide.Bounds.GetRow(i + 1)
-		rLow := rSide.Bounds.GetRow(j)
-		rHigh := rSide.Bounds.GetRow(j + 1)
+	for i, j := 0, 0; i < lSide.Len() && j < rSide.Len(); {
+		lLow := lSide.Bounds.GetRow(i * 2)
+		lHigh := lSide.Bounds.GetRow(i*2 + 1)
+		rLow := rSide.Bounds.GetRow(j * 2)
+		rHigh := rSide.Bounds.GetRow(j*2 + 1)
 		// If [lLow, lHigh] is totally behind [rLow, rHigh], move r point.
 		if cmpFunc(lLow, 0, rHigh, 0) > 0 {
-			j += 2
+			j += 1
 			continue
 		}
 		// If [rLow, rHigh] is totally behind [lLow, lHigh], move l point.
 		if cmpFunc(rLow, 0, lHigh, 0) > 0 {
-			i += 2
+			i += 1
 			continue
 		}
 		var overlapLow, overLapHigh chunk.Row
@@ -725,14 +725,14 @@ func MergeHistogramForInnerJoin(lSide *Histogram, rSide *Histogram, tp *types.Fi
 			overLapHigh = lHigh
 		}
 		// Calculate overlap ratio.
-		leftOverLap := lSide.calcRangeFraction(i/2, overlapLow, overLapHigh)
-		rightOverLap := rSide.calcRangeFraction(j/2, overlapLow, overLapHigh)
-		lCount := float64(lSide.bucketCount(i/2)) * leftOverLap
-		rCount := float64(rSide.bucketCount(j/2)) * rightOverLap
+		leftOverLap := lSide.calcRangeFraction(i, overlapLow, overLapHigh)
+		rightOverLap := rSide.calcRangeFraction(j, overlapLow, overLapHigh)
+		lCount := float64(lSide.bucketCount(i)) * leftOverLap
+		rCount := float64(rSide.bucketCount(j)) * rightOverLap
 		lNdv := lCount / lAvgPerVal
 		rNdv := rCount / rAvgPerVal
 		// bucketCount is lCount/lNdv * rCount/rNdv * finalNdv, where finalNdv is min(lNdv, rNdv).
-		bucketCount := lCount * rCount / math.Max(lNdv, rNdv)
+		bucketCount := lAvgPerVal * rAvgPerVal * math.Min(lNdv, rNdv)
 		// Update histogram.
 		totCnt += int64(bucketCount)
 		newHist.Bounds.AppendRow(overlapLow)
@@ -742,12 +742,12 @@ func MergeHistogramForInnerJoin(lSide *Histogram, rSide *Histogram, tp *types.Fi
 		// Move i and j by compare result.
 		switch cmpFunc(lHigh, 0, rHigh, 0) {
 		case -1:
-			i += 2
+			i += 1
 		case 0:
-			i += 2
-			j += 2
+			i += 1
+			j += 1
 		case 1:
-			j += 2
+			j += 1
 		}
 	}
 	newHist.NDV = int64(totNdv)
