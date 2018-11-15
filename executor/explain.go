@@ -40,9 +40,6 @@ func (e *ExplainExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *ExplainExec) Close() error {
-	if e.analyzeExec != nil {
-		e.analyzeExec.Close()
-	}
 	e.rows = nil
 	return nil
 }
@@ -84,6 +81,7 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 				break
 			}
 		}
+		e.analyzeExec.Close()
 	}
 	e.explain.RenderResult()
 	if e.analyzeExec != nil {
