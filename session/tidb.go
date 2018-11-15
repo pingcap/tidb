@@ -181,9 +181,9 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			}
 			err = se.NewTxn()
 			// The transaction does not committed yet, we need to keep it in transaction.
-			// The last history could not be "commit" statement.
-			// It means it is impossible to start a new transaction at the end of the transaction (the "commit" statement).
-			// Because after the server executed "commit" statement, the session is out of the transaction.
+			// The last history could not be "commit"/"rollback" statement.
+			// It means it is impossible to start a new transaction at the end of the transaction.
+			// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
 			se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 	}

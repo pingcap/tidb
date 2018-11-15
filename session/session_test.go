@@ -1925,7 +1925,7 @@ func (s *testSessionSuite) TestStatementErrorInTransaction(c *C) {
 	tk.MustQuery("select * from test where a = 1 and b = 11").Check(testkit.Rows())
 }
 
-func (s *testSessionSuite) TestStatementCountLimitAndBatchCommit(c *C) {
+func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table stmt_count_limit (id int)")
 	savedLimit := config.GetGlobalConfig().Performance.StmtCountLimit
@@ -1946,31 +1946,53 @@ func (s *testSessionSuite) TestStatementCountLimitAndBatchCommit(c *C) {
 	tk.MustExec("insert into stmt_count_limit values (3)")
 	_, err = tk.Exec("insert into stmt_count_limit values (4)")
 	c.Assert(err, NotNil)
+}
 
-	savedBatchFlag := config.GetGlobalConfig().Performance.BatchCommit
+func (s *testSessionSuite) TestBatchCommit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int)")
+	saved := config.GetGlobalConfig().Performance
+	config.GetGlobalConfig().Performance.StmtCountLimit = 3
 	config.GetGlobalConfig().Performance.BatchCommit = true
 	defer func() {
-		config.GetGlobalConfig().Performance.BatchCommit = savedBatchFlag
+		config.GetGlobalConfig().Performance = saved
 	}()
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("SET SESSION autocommit = 1")
 	tk.MustExec("begin")
-	tk.MustExec("insert into stmt_count_limit values (5)")
-	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows())
-	tk.MustExec("insert into stmt_count_limit values (6)")
-	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows())
-	tk.MustExec("insert into stmt_count_limit values (7)")
-	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7"))
-	tk.MustExec("insert into stmt_count_limit values (8)")
-	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7"))
-	tk.MustExec("insert into stmt_count_limit values (9)")
-	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7"))
-	tk.MustExec("insert into stmt_count_limit values (10)")
-	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into t values (1)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (2)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("rollback")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+
+	// The above rollback will not make the session in transaction.
+	tk.MustExec("insert into t values (1)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (5)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (6)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (7)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+
+	// The session is still in transaction.
+	tk.MustExec("insert into t values (8)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into t values (9)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into t values (10)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
 	tk.MustExec("commit")
-	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7", "8", "9", "10"))
-	tk.MustExec("insert into stmt_count_limit values (11)")
-	tk1.MustQuery("select * from stmt_count_limit").Check(testkit.Rows("5", "6", "7", "8", "9", "10", "11"))
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7", "8", "9", "10"))
+
+	// The above commit will not make the session in transaction.
+	tk.MustExec("insert into t values (11)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7", "8", "9", "10", "11"))
 }
 
 func (s *testSessionSuite) TestCastTimeToDate(c *C) {
