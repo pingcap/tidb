@@ -525,3 +525,32 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 		c.Assert(row.GetString(3), Equals, "Compact")
 	}
 }
+
+func (s *testSuite) TestShowEscape(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists `t``abl\"e`")
+	tk.MustExec("create table `t``abl\"e`(`c``olum\"n` int(11) primary key)")
+	tk.MustQuery("show create table `t``abl\"e`").Check(testutil.RowsWithSep("|",
+		""+
+			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
+			"  `c``olum\"n` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`c``olum\"n`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+
+	// ANSI_QUOTES will change the SHOW output
+	tk.MustExec("set @old_sql_mode=@@sql_mode")
+	tk.MustExec("set sql_mode=ansi_quotes")
+	tk.MustQuery("show create table \"t`abl\"\"e\"").Check(testutil.RowsWithSep("|",
+		""+
+			"t`abl\"e CREATE TABLE \"t`abl\"\"e\" (\n"+
+			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (\"c`olum\"\"n\")\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+
+	tk.MustExec("rename table \"t`abl\"\"e\" to t")
+	tk.MustExec("set sql_mode=@old_sql_mode")
+}

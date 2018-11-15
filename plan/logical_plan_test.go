@@ -1446,7 +1446,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		},
 		{
 			sql:  "select a from t union select a from t union all select a from t",
-			best: "UnionAll{DataScan(t)->Projection->UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))->Projection}",
+			best: "UnionAll{UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))->Projection->DataScan(t)->Projection}",
 			err:  false,
 		},
 		{
@@ -1458,6 +1458,16 @@ func (s *testPlanSuite) TestUnion(c *C) {
 			sql:  "select a from t union select a, b from t",
 			best: "",
 			err:  true,
+		},
+		{
+			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by a",
+			best: "UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Projection->Sort",
+			err:  false,
+		},
+		{
+			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by (select a)",
+			best: "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
+			err:  false,
 		},
 	}
 	for i, tt := range tests {
@@ -1474,7 +1484,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		plan := builder.build(stmt)
 		if tt.err {
 			c.Assert(builder.err, NotNil)
-			return
+			continue
 		}
 		c.Assert(builder.err, IsNil)
 		p := plan.(LogicalPlan)
