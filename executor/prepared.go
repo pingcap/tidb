@@ -239,6 +239,11 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
+	if plannercore.PreparedPlanCacheEnabled() {
+		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
+			vars, id, vars.PreparedStmts[id].SchemaVersion,
+		))
+	}
 	delete(vars.PreparedStmts, id)
 	return nil
 }
