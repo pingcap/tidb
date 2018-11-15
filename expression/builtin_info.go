@@ -54,7 +54,13 @@ var (
 	_ builtinFunc = &builtinVersionSig{}
 	_ builtinFunc = &builtinTiDBVersionSig{}
 	_ builtinFunc = &builtinRowCountSig{}
-	_ builtinFunc = &builtinBenchmarkSig{}
+	_ builtinFunc = &builtinBenchmarkStringSig{}
+	_ builtinFunc = &builtinBenchmarkIntSig{}
+	_ builtinFunc = &builtinBenchmarkDecimalSig{}
+	_ builtinFunc = &builtinBenchmarkJsonSig{}
+	_ builtinFunc = &builtinBenchmarkRealSig{}
+	_ builtinFunc = &builtinBenchmarkDurationSig{}
+	_ builtinFunc = &builtinBenchmarkTimeSig{}
 )
 
 type databaseFunctionClass struct {
@@ -385,37 +391,209 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	//return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "BENCHMARK")
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, types.ETString)
-	sig := &builtinBenchmarkSig{bf}
+	argFieldTp := args[1].GetType()
+	argTp := argFieldTp.EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, argTp)
+	var sig builtinFunc
+	switch argTp {
+	case types.ETString:
+		sig = &builtinBenchmarkStringSig{bf}
+	case types.ETInt:
+		sig = &builtinBenchmarkIntSig{bf}
+	case types.ETJson:
+		sig = &builtinBenchmarkJsonSig{bf}
+	case types.ETReal:
+		sig = &builtinBenchmarkRealSig{bf}
+	case types.ETDecimal:
+		sig = &builtinBenchmarkDecimalSig{bf}
+	case types.ETDuration:
+		sig = &builtinBenchmarkTimeSig{bf}
+	case types.ETDatetime:
+		sig = &builtinBenchmarkTimeSig{bf}
+	case types.ETTimestamp:
+		sig = &builtinBenchmarkTimeSig{bf}
+	default:
+		return nil, errors.New("FUNCTION benchmark has wrong arg2")
+	}
+
 	return sig, nil
 
 }
 
-type builtinBenchmarkSig struct {
+type builtinBenchmarkStringSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinBenchmarkSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinBenchmarkStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
 	var i int64 = 0
 	for ; i < x; i++ {
-		_, isNull, err := b.args[1].EvalString(b.ctx, row)
-		if isNull || err != nil {
+		_, _, err := b.args[1].EvalString(b.ctx, row)
+		if err != nil {
 			return 0, isNull, errors.Trace(err)
 		}
 	}
 	return 0, false, nil
 }
 
-func (b *builtinBenchmarkSig) Clone() builtinFunc {
-	newSig := &builtinBenchmarkSig{}
+func (b *builtinBenchmarkStringSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+type builtinBenchmarkJsonSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBenchmarkJsonSig) evalInt(row chunk.Row) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	var i int64 = 0
+	for ; i < x; i++ {
+		_, _, err := b.args[1].EvalJSON(b.ctx, row)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+	}
+	return 0, false, nil
+}
+
+func (b *builtinBenchmarkJsonSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkJsonSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+type builtinBenchmarkIntSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBenchmarkIntSig) evalInt(row chunk.Row) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	var i int64 = 0
+	for ; i < x; i++ {
+		_, _, err := b.args[1].EvalInt(b.ctx, row)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+	}
+	return 0, false, nil
+}
+
+func (b *builtinBenchmarkIntSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+type builtinBenchmarkDecimalSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBenchmarkDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	var i int64 = 0
+	for ; i < x; i++ {
+		_, _, err := b.args[1].EvalDecimal(b.ctx, row)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+	}
+	return 0, false, nil
+}
+
+func (b *builtinBenchmarkDecimalSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+type builtinBenchmarkRealSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBenchmarkRealSig) evalInt(row chunk.Row) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	var i int64 = 0
+	for ; i < x; i++ {
+		_, _, err := b.args[1].EvalReal(b.ctx, row)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+	}
+	return 0, false, nil
+}
+
+func (b *builtinBenchmarkRealSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+type builtinBenchmarkDurationSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBenchmarkDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	var i int64 = 0
+	for ; i < x; i++ {
+		_, _, err := b.args[1].EvalDuration(b.ctx, row)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+	}
+	return 0, false, nil
+}
+
+func (b *builtinBenchmarkDurationSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+type builtinBenchmarkTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBenchmarkTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	var i int64 = 0
+	for ; i < x; i++ {
+		_, _, err := b.args[1].EvalTime(b.ctx, row)
+		if err != nil {
+			return 0, false, errors.Trace(err)
+		}
+	}
+	return 0, false, nil
+}
+
+func (b *builtinBenchmarkTimeSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
