@@ -405,14 +405,14 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			Column: &ast.ColumnName{Name: model.NewCIStr("c1")},
 			Length: -1,
 		}}, nil}
-	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &test.cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	test = &tests[1]
-	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &test.cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	test = &tests[2]
 	// When the job satisfies this test case, the option will be rollback, so the job's schema state is none.
 	cancelState := model.StateNone
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	test = &tests[1]
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	test = &tests[2]
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	test = &tests[3]
