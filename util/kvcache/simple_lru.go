@@ -89,3 +89,11 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		l.size--
 	}
 }
+
+// Delete delete the key and its from the LRU Cache.
+func (l *SimpleLRUCache) Delete(key Key) {
+	k := string(key.Hash())
+	l.cache.Remove(l.elements[k])
+	delete(l.elements, k)
+	l.size--
+}

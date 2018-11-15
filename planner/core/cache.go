@@ -87,6 +87,19 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 	return key.hash
 }
 
+// PstmtCacheKeyMutator is the interface that change Prepared statement's cache key.
+type PstmtCacheKeyMutator interface {
+	SetPstmtIDSchemaVersion(pstmtID uint32, schemaVersion int64)
+}
+
+// SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
+// so we can reuse Key instead of new every time.
+func (key *pstmtPlanCacheKey) SetPstmtIDSchemaVersion(pstmtID uint32, schemaVersion int64) {
+	key.pstmtID = pstmtID
+	key.schemaVersion = schemaVersion
+	key.hash = nil
+}
+
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
 func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
 	timezoneOffset := 0
