@@ -84,13 +84,14 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 // final phase individually.
 // This function is only used when executing aggregate function parallelly.
 // ordinal indicates the column ordinal of the intermediate result.
-func (a *AggFuncDesc) Split(ordinal []int, isPreparedCacheEnable bool) (finalAggDesc *AggFuncDesc) {
+func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFuncDesc) {
+	partialAggDesc = a.Clone()
 	if a.Mode == CompleteMode {
-		a.Mode = Partial1Mode
+		partialAggDesc.Mode = Partial1Mode
 	} else if a.Mode == FinalMode {
-		a.Mode = Partial2Mode
-	} else if !isPreparedCacheEnable {
-		return
+		partialAggDesc.Mode = Partial2Mode
+	} else {
+		panic("Error happened during AggFuncDesc.Split, the AggFunctionMode is not CompleteMode or FinalMode.")
 	}
 	finalAggDesc = &AggFuncDesc{
 		Name:        a.Name,
@@ -124,7 +125,7 @@ func (a *AggFuncDesc) Split(ordinal []int, isPreparedCacheEnable bool) (finalAgg
 			finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
 		}
 	}
-	return finalAggDesc
+	return
 }
 
 // String implements the fmt.Stringer interface.

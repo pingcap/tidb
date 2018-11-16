@@ -37,10 +37,10 @@ func (s *testSuite) TestMergePartialResult4MaxDecimal(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	finalDesc := desc.Split([]int{0}, false)
+	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build max func for partial phase.
-	partialMaxFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialMaxFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialMaxFunc.AllocPartialResult()
 	partialPr2 := partialMaxFunc.AllocPartialResult()
 
@@ -90,10 +90,10 @@ func (s *testSuite) TestMergePartialResult4MaxFloat(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeDouble),
 	}
-	finalDesc := desc.Split([]int{0}, false)
+	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build max func for partial phase.
-	partialMaxFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialMaxFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialMaxFunc.AllocPartialResult()
 	partialPr2 := partialMaxFunc.AllocPartialResult()
 
@@ -143,10 +143,10 @@ func (s *testSuite) TestMergePartialResult4MinDecimal(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	finalDesc := desc.Split([]int{0}, false)
+	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build min func for partial phase.
-	partialMinFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialMinFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialMinFunc.AllocPartialResult()
 	partialPr2 := partialMinFunc.AllocPartialResult()
 
@@ -198,10 +198,10 @@ func (s *testSuite) TestMergePartialResult4MinFloat(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeDouble),
 	}
-	finalDesc := desc.Split([]int{0}, false)
+	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build min func for partial phase.
-	partialMinFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialMinFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialMinFunc.AllocPartialResult()
 	partialPr2 := partialMinFunc.AllocPartialResult()
 
