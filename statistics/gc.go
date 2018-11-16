@@ -107,7 +107,7 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), physicalID))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn(true).StartTS(), physicalID))
 	if err != nil {
 		return
 	}
@@ -134,7 +134,7 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 	// We only update the version so that other tidb will know that this table is deleted.
-	sql := fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), physicalID)
+	sql := fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn(true).StartTS(), physicalID)
 	_, err = exec.Execute(context.Background(), sql)
 	if err != nil {
 		return

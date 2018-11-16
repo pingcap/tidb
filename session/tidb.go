@@ -151,7 +151,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
-		if sctx.Txn() != nil {
+		if sctx.Txn(false).Valid() {
 			if err != nil {
 				sctx.StmtRollback()
 			} else {
@@ -186,6 +186,17 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
 			se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
+	}
+	if se.txn.pending() {
+		// After run statement finish, txn state is still pending means the
+		// statement never need a Txn(), such as:
+		//
+		// set @@tidb_general_log = 1
+		// set @@autocommit = 0
+		// select 1
+		//
+		// Reset txn state to invalid to dispose the pending start ts.
+		se.txn.changeToInvalid()
 	}
 	return rs, errors.Trace(err)
 }

@@ -117,4 +117,10 @@ explain select * from t where _tidb_rowid > 0;
 explain select a, _tidb_rowid from t where a > 0;
 explain select * from t where _tidb_rowid > 0 and a > 0;
 drop table if exists t;
+create table t(a int, b int, c int);
+explain select * from (select * from t order by (select 2)) t order by a, b;
+explain select * from (select * from t order by c) t order by a, b;
+drop table if exists t;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
+explain SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
+explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)

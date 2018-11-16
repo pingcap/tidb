@@ -137,10 +137,6 @@ func (s *testSessionSuite) TestForCoverage(c *C) {
 	tk.MustExec("show processlist")
 	_, err := tk.Se.FieldList("t")
 	c.Check(err, IsNil)
-
-	// Cover the error branch, althrough this never happen.
-	err = tk.Se.ActivePendingTxn()
-	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestErrorRollback(c *C) {
@@ -243,7 +239,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
-	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 	tk.MustExec("insert t values (12, 2, 3)")
@@ -301,6 +297,61 @@ func (s *testSessionSuite) TestAutocommit(c *C) {
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Equals, 0)
 	tk.MustExec("set autocommit='On'")
 	c.Assert(int(tk.Se.Status()&mysql.ServerStatusAutocommit), Greater, 0)
+
+	// When autocommit is 0, transaction start ts should be the first *valid*
+	// statement, rather than *any* statement.
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("rollback")
+	tk.MustExec("set @@autocommit = 0")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("insert into t select 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+
+	// TODO: MySQL compatibility for setting global variable.
+	// tk.MustExec("begin")
+	// tk.MustExec("insert into t values (42)")
+	// tk.MustExec("set @@global.autocommit = 1")
+	// tk.MustExec("rollback")
+	// tk.MustQuery("select count(*) from t where id = 42").Check(testkit.Rows("0"))
+	// Even the transaction is rollbacked, the set statement succeed.
+	// tk.MustQuery("select @@global.autocommit").Rows("1")
+}
+
+// TestTxnLazyInitialize tests that when autocommit = 0, not all statement starts
+// a new transaction.
+func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	tk.MustExec("set @@autocommit = 0")
+	c.Assert(tk.Se.Txn(false).Valid(), IsFalse)
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+
+	// Those statement should not start a new transaction automacally.
+	tk.MustQuery("select 1")
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_general_log = 0")
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+
+	tk.MustQuery("explain select * from t")
+	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
+
+	// Begin statement should start a new transaction.
+	tk.MustExec("begin")
+	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
+	tk.MustExec("rollback")
+
+	tk.MustExec("select * from t")
+	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
+	tk.MustExec("rollback")
+
+	tk.MustExec("insert into t values (1)")
+	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
+	tk.MustExec("rollback")
 }
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
@@ -428,7 +479,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
 }
 
@@ -503,39 +554,39 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	tk.MustExec("insert t values ()")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("drop table if exists t;")
-	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("commit")
 	tk.MustExec("insert t values ()")
 
 	tk.MustExec("set autocommit=0")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("commit")
-	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("commit")
-	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 
 	tk.MustExec("set autocommit=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("rollback")
-	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 }
 
 func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
@@ -544,7 +595,7 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
-	c.Assert(tk.Se.Txn(), IsNil)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 
