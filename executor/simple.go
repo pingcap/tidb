@@ -113,6 +113,8 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
+	// Call ctx.Txn(true) to active pending txn.
+	e.ctx.Txn(true)
 	return nil
 }
 
@@ -124,9 +126,9 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	log.Debugf("con:%d execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	if e.ctx.Txn().Valid() {
+	if e.ctx.Txn(true).Valid() {
 		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
-		return e.ctx.Txn().Rollback()
+		return e.ctx.Txn(true).Rollback()
 	}
 	return nil
 }
@@ -206,7 +208,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
+		err := e.ctx.Txn(true).Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
 		if err != nil {
 			return errors.Trace(err)
 		}

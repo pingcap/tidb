@@ -19,6 +19,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -181,14 +183,26 @@ func (s *testSuite) TestIssue2456(c *C) {
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
 
+func (s *testSuite) TestNoAutoCreateUser(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	tk.MustExec(`SET sql_mode='NO_AUTO_CREATE_USER'`)
+	_, err := tk.Exec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
+	c.Check(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue)
+}
+
 func (s *testSuite) TestCreateUserWhenGrant(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	// This only applies to sql_mode:NO_AUTO_CREATE_USER off
+	tk.MustExec(`SET SQL_MODE=''`)
 	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
 	// Make sure user is created automatically when grant to a non-exists one.
 	tk.MustQuery(`SELECT user FROM mysql.user WHERE user='test' and host='%'`).Check(
 		testkit.Rows("test"),
 	)
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 }
 
 func (s *testSuite) TestIssue2654(c *C) {

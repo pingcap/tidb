@@ -341,7 +341,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
-			log.Warnf("con:%d retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
+			log.Warnf("[%s] con:%d retryable error: %v, txn: %v", s.getSQLLabel(), s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -349,10 +349,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			err = s.retry(ctx, uint(maxRetryCount))
 		}
 	}
+	label := s.getSQLLabel()
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
-	metrics.StatementPerTransaction.WithLabelValues(metrics.RetLabel(err)).Observe(float64(counter))
-	metrics.TransactionDuration.WithLabelValues(metrics.RetLabel(err)).Observe(float64(duration))
+	metrics.StatementPerTransaction.WithLabelValues(label, metrics.RetLabel(err)).Observe(float64(counter))
+	metrics.TransactionDuration.WithLabelValues(label, metrics.RetLabel(err)).Observe(float64(duration))
 	s.cleanRetryInfo()
 
 	if isoLevelOneShot := &s.sessionVars.TxnIsolationLevelOneShot; isoLevelOneShot.State != 0 {
@@ -390,7 +391,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	if err != nil {
 		label = metrics.LblError
 	}
-	metrics.TransactionCounter.WithLabelValues(label).Inc()
+	metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), label).Inc()
 	return errors.Trace(err)
 }
 
@@ -398,7 +399,7 @@ func (s *session) RollbackTxn(ctx context.Context) error {
 	var err error
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
-		metrics.TransactionCounter.WithLabelValues(metrics.LblRollback).Inc()
+		metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), metrics.LblRollback).Inc()
 	}
 	s.cleanRetryInfo()
 	s.txn.changeToInvalid()
@@ -443,6 +444,13 @@ const sqlLogMaxLen = 1024
 // SchemaChangedWithoutRetry is used for testing.
 var SchemaChangedWithoutRetry bool
 
+func (s *session) getSQLLabel() string {
+	if s.sessionVars.InRestrictedSQL {
+		return metrics.LblInternal
+	}
+	return metrics.LblGeneral
+}
+
 func (s *session) isRetryableError(err error) bool {
 	if SchemaChangedWithoutRetry {
 		return kv.IsRetryableError(err)
@@ -469,6 +477,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 	var err error
 	var schemaVersion int64
 	orgStartTS := s.GetSessionVars().TxnCtx.StartTS
+	label := s.getSQLLabel()
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
@@ -512,17 +521,17 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("con:%d session:%v, err:%v in retry", connID, s, err)
-			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblUnretryable)
+			log.Warnf("[%s] con:%d session:%v, err:%v in retry", label, connID, s, err)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
-			log.Warnf("con:%d Retry reached max count %d", connID, retryCnt)
-			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblReachMax)
+			log.Warnf("[%s] con:%d Retry reached max count %d", label, connID, retryCnt)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
 			return errors.Trace(err)
 		}
-		log.Warnf("con:%d retryable error: %v, txn: %v", connID, err, s.txn)
+		log.Warnf("[%s] con:%d retryable error: %v, txn: %v", label, connID, err, s.txn)
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -750,11 +759,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, errors.Trace(err)
 	}
-	label := metrics.LblGeneral
-	if s.sessionVars.InRestrictedSQL {
-		label = metrics.LblInternal
-	}
-	metrics.SessionExecuteRunDuration.WithLabelValues(label).Observe(time.Since(startTime).Seconds())
+	metrics.SessionExecuteRunDuration.WithLabelValues(s.getSQLLabel()).Observe(time.Since(startTime).Seconds())
 
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
@@ -788,10 +793,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
 		return nil, errors.Trace(err)
 	}
-	label := metrics.LblGeneral
-	if s.sessionVars.InRestrictedSQL {
-		label = metrics.LblInternal
-	}
+	label := s.getSQLLabel()
 	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
 
 	compiler := executor.Compiler{Ctx: s}
@@ -938,9 +940,20 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn() kv.Transaction {
-	if !s.txn.Valid() {
-		return nil
+func (s *session) Txn(active bool) kv.Transaction {
+	if s.txn.pending() && active {
+		// Transaction is lazy intialized.
+		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
+		// If Txn() is called later, wait for the future to get a valid txn.
+		txnCap := s.getMembufCap()
+		if err := s.txn.changePendingToValid(txnCap); err != nil {
+			s.txn.fail = errors.Trace(err)
+		} else {
+			s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
+		}
+		if !s.sessionVars.IsAutocommit() {
+			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+		}
 	}
 	return &s.txn
 }
@@ -1358,9 +1371,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 	}
-	if !s.sessionVars.IsAutocommit() {
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-	}
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
@@ -1370,20 +1380,6 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	}
 
 	return errors.Trace(s.NewTxn())
-}
-
-// ActivePendingTxn implements Context.ActivePendingTxn interface.
-func (s *session) ActivePendingTxn() error {
-	if s.txn.Valid() {
-		return nil
-	}
-	txnCap := s.getMembufCap()
-	// The transaction status should be pending.
-	if err := s.txn.changePendingToValid(txnCap); err != nil {
-		return errors.Trace(err)
-	}
-	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	return nil
 }
 
 // InitTxnWithStartTS create a transaction with startTS.

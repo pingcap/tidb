@@ -135,7 +135,7 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 	conds = expression.PropagateConstant(ctx, conds)
 
 	// Calculate the column range to prune.
-	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.ColName)
+	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
 	r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
 	if err != nil {
 		return false, errors.Trace(err)
