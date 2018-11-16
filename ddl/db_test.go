@@ -683,12 +683,12 @@ LOOP:
 	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
-	ctx.Txn().Rollback()
+	ctx.Txn(true).Rollback()
 
 	c.Assert(ctx.NewTxn(), IsNil)
-	defer ctx.Txn().Rollback()
+	defer ctx.Txn(true).Rollback()
 
-	it, err := nidx.SeekFirst(ctx.Txn())
+	it, err := nidx.SeekFirst(ctx.Txn(true))
 	c.Assert(err, IsNil)
 	defer it.Close()
 
@@ -784,9 +784,9 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 		handles := make(map[int64]struct{})
 
 		c.Assert(ctx.NewTxn(), IsNil)
-		defer ctx.Txn().Rollback()
+		defer ctx.Txn(true).Rollback()
 
-		it, err := idx.SeekFirst(ctx.Txn())
+		it, err := idx.SeekFirst(ctx.Txn(true))
 		c.Assert(err, IsNil)
 		defer it.Close()
 
@@ -1026,7 +1026,7 @@ LOOP:
 	i := 0
 	j := 0
 	ctx.NewTxn()
-	defer ctx.Txn().Rollback()
+	defer ctx.Txn(true).Rollback()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
@@ -3460,7 +3460,7 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 			return
 		}
 		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
+		errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -3470,7 +3470,7 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 			checkErr = errors.Trace(errs[0])
 			return
 		}
-		err = hookCtx.Txn().Commit(context.Background())
+		err = hookCtx.Txn(true).Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -3539,7 +3539,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 		}
 
 		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
+		errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -3550,7 +3550,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 			return
 		}
 
-		err = hookCtx.Txn().Commit(context.Background())
+		err = hookCtx.Txn(true).Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
