@@ -91,56 +91,8 @@ type connArray struct {
 
 	// For batch commands.
 	batchCommandsCh        chan *batchCommandsEntry
-	batchStatistics        batchStatistics
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
-}
-
-// Some internal flags used in batching.
-type batchStatistics struct {
-	// 10 slots per second.
-	reqCountSlots [10]int
-	reqTsSlots    [10]int64
-	curSlot       int
-}
-
-func newBatchStatus() batchStatistics {
-	return batchStatistics{
-		reqCountSlots: [10]int{0},
-		reqTsSlots:    [10]int64{0},
-		curSlot:       0,
-	}
-}
-
-// Update the batchStatistics with a latest batch. batchStatistics holds 10 slots
-// for last 10 0.1s. When update is called, if the current slot is not passed, add
-// the latest batch size in place. Otherwise clean stale slots first and then add
-// the latest batch size in a new slot.
-func (b *batchStatistics) update(batch int) {
-	// normalize it with unit 0.1s.
-	now := time.Now().UnixNano() / 100000000
-	if b.reqTsSlots[b.curSlot] != now {
-		// Clean all stale counts.
-		for i := range b.reqCountSlots {
-			if b.reqTsSlots[i] > 0 && b.reqTsSlots[i] <= int64(now-10) {
-				// The slot lives more than 1s, clean it.
-				b.reqCountSlots[i] = 0
-				b.reqTsSlots[i] = 0
-			}
-		}
-		b.curSlot = int(now % 10)
-		b.reqTsSlots[b.curSlot] = now
-		b.reqCountSlots[b.curSlot] = 0
-	}
-	b.reqCountSlots[b.curSlot] += batch
-}
-
-func (b *batchStatistics) inHeavyLoad(heavyLoad uint) bool {
-	reqSpeed := 0
-	for _, count := range b.reqCountSlots {
-		reqSpeed += count
-	}
-	return uint(reqSpeed) >= heavyLoad
 }
 
 type batchCommandsClient struct {
@@ -312,7 +264,6 @@ func (a *connArray) Init(addr string, security config.Security) error {
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
 	if allowBatch {
-		a.batchStatistics = newBatchStatus()
 		go a.batchSendLoop(cfg.TiKVClient)
 	}
 
@@ -402,9 +353,6 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 					break Loop
 				}
 			default:
-				if cfg.HeavyLoadToBatch > 0 && !inHeavyLoad {
-					inHeavyLoad = a.batchStatistics.inHeavyLoad(cfg.HeavyLoadToBatch)
-				}
 				break Loop
 			}
 		}
@@ -428,10 +376,6 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 					break BackoffLoop
 				}
 			}
-		}
-
-		if cfg.HeavyLoadToBatch > 0 {
-			a.batchStatistics.update(len(requests))
 		}
 
 		length := len(requests)

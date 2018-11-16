@@ -230,7 +230,6 @@ grpc-keepalive-timeout = 3
 commit-timeout = "41s"
 
 max-batch-size = 128
-heavy-load-to-batch = 0
 tikv-heavy-load-to-batch = 100
 batch-wait-time = 1000000
 batch-wait-size = 8

@@ -241,8 +241,6 @@ type TiKVClient struct {
 
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
-	// If QPS is greater than HeavyLoadToBatch, TiDB will wait for a while to avoid little batch.
-	HeavyLoadToBatch uint `toml:"heavy-load-to-batch" json:"heavy-load-to-batch"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
 	TiKVHeavyLoadToBatch uint `toml:"tikv-heavy-load-to-batch" json:"tikv-heavy-load-to-batch"`
 	// BatchWaitTime in nanosecond is the max wait time for batch.
@@ -336,7 +334,6 @@ var defaultConf = Config{
 		CommitTimeout:        "41s",
 
 		MaxBatchSize:         128,
-		HeavyLoadToBatch:     0,
 		TiKVHeavyLoadToBatch: 100,
 		BatchWaitTime:        1000 * time.Microsecond,
 		BatchWaitSize:        8,
