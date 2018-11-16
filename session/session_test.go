@@ -2044,6 +2044,16 @@ func (s *testSessionSuite) TestBatchCommit(c *C) {
 	// The above commit will not make the session in transaction.
 	tk.MustExec("insert into t values (11)")
 	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7", "8", "9", "10", "11"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("SET SESSION autocommit = 0")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t values (3)")
+	tk.MustExec("rollback")
+	tk1.MustExec("insert into t values (4)")
+	tk1.MustExec("insert into t values (5)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("4", "5"))
 }
 
 func (s *testSessionSuite) TestCastTimeToDate(c *C) {
