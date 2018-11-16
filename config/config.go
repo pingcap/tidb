@@ -249,6 +249,9 @@ type TiKVClient struct {
 	BatchWaitTime time.Duration `toml:"batch-wait-time" json:"batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
+
+	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
+	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
 }
 
 // Binlog is the config for binlog.
@@ -337,6 +340,8 @@ var defaultConf = Config{
 		TiKVHeavyLoadToBatch: 100,
 		BatchWaitTime:        1000 * time.Microsecond,
 		BatchWaitSize:        8,
+
+		MaxTxnTimeUse: 590,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

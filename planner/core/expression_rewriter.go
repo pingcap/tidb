@@ -170,15 +170,11 @@ type expressionRewriter struct {
 }
 
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
-// 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
-// `IF( (a0 op b0) EQ 0, 0,
-//      IF ( (a1 op b1) EQ 0, 0, a2 op b2))`
-// 3. If op are LT or GT, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
+// 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( a0 NE b0, a0 op b0,
-//      IF( a1 NE b1,
-//          a1 op b1,
-//          a2 op b2)
-// )`
+// 		IF ( isNull(a0 NE b0), Null,
+// 			IF ( a1 NE b1, a1 op b1,
+// 				IF ( isNull(a1 NE b1), Null, a2 op b2))))`
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
@@ -196,18 +192,16 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 				return nil, errors.Trace(err)
 			}
 		}
+		if op == ast.NE {
+			return expression.ComposeDNFCondition(er.ctx, funcs...), nil
+		}
 		return expression.ComposeCNFCondition(er.ctx, funcs...), nil
 	default:
 		larg0, rarg0 := expression.GetFuncArg(l, 0), expression.GetFuncArg(r, 0)
-		var expr1, expr2, expr3 expression.Expression
-		if op == ast.LE || op == ast.GE {
-			expr1 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr1 = expression.NewFunctionInternal(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), expr1, expression.Zero)
-			expr2 = expression.Zero
-		} else if op == ast.LT || op == ast.GT {
-			expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-			expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
-		}
+		var expr1, expr2, expr3, expr4, expr5 expression.Expression
+		expr1 = expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		expr2 = expression.NewFunctionInternal(er.ctx, op, types.NewFieldType(mysql.TypeTiny), larg0, rarg0)
+		expr3 = expression.NewFunctionInternal(er.ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr1)
 		var err error
 		l, err = expression.PopRowFirstArg(er.ctx, l)
 		if err != nil {
@@ -217,11 +211,15 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		expr3, err = er.constructBinaryOpFunction(l, r, op)
+		expr4, err = er.constructBinaryOpFunction(l, r, op)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr3)
+		expr5, err = expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), expr3, expression.Null, expr4)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr5)
 	}
 }
 
@@ -472,10 +470,10 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
-		ColName:     model.NewCIStr("aux_col"),
-		UniqueID:    er.ctx.GetSessionVars().AllocPlanColumnID(),
-		IsAggOrSubq: true,
-		RetType:     cond.GetType(),
+		ColName:      model.NewCIStr("aux_col"),
+		UniqueID:     er.ctx.GetSessionVars().AllocPlanColumnID(),
+		IsReferenced: true,
+		RetType:      cond.GetType(),
 	})
 	proj.SetChildren(er.p)
 	er.p = proj
@@ -647,7 +645,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		// Build distinct for the inner query.
 		agg := er.b.buildDistinct(np, np.Schema().Len())
 		for _, col := range agg.schema.Columns {
-			col.IsAggOrSubq = true
+			col.IsReferenced = true
 		}
 		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg, false, false)
 		// Build inner join above the aggregation.
@@ -1164,12 +1162,14 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		}
 		stackLen := len(er.ctxStack)
 		arg1 := er.ctxStack[stackLen-2]
-		newArg1, isColumn := arg1.(*expression.Column)
+		col, isColumn := arg1.(*expression.Column)
 		// if expr1 is a column and column has not null flag, then we can eliminate ifnull on
 		// this column.
-		if isColumn && mysql.HasNotNullFlag(newArg1.RetType.Flag) {
+		if isColumn && mysql.HasNotNullFlag(col.RetType.Flag) {
+			newCol := col.Clone().(*expression.Column)
+			newCol.IsReferenced = true
 			er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
-			er.ctxStack = append(er.ctxStack, newArg1)
+			er.ctxStack = append(er.ctxStack, newCol)
 			return true
 		}
 

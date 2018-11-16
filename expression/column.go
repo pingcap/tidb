@@ -153,9 +153,10 @@ type Column struct {
 	ID int64
 	// UniqueID is the unique id of this column.
 	UniqueID int64
-	// IsAggOrSubq means if this column is referenced to a Aggregation column or a Subquery column.
+	// IsReferenced means if this column is referenced to an Aggregation column, or a Subquery column,
+	// or an argument column of function IfNull.
 	// If so, this column's name will be the plain sql text.
-	IsAggOrSubq bool
+	IsReferenced bool
 
 	// Index is used for execution, to tell the column's position in the given row.
 	Index int
