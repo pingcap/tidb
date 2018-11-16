@@ -553,6 +553,9 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
 	if e.finished.Load().(bool) {
+		// wait fetchInnerRows goroutine exit.
+		for range innerResultCh {
+		}
 		return
 	}
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
@@ -587,6 +590,9 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) er
 	chkIdx := uint32(0)
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
+			// wait fetchInnerRows goroutine exit.
+			for range innerResultCh {
+			}
 			return nil
 		}
 		numRows := chk.NumRows()
