@@ -379,3 +379,24 @@ Projection_5	8000.00	root	test.ta.a
     └─TableReader_9	10000.00	root	data:TableScan_8
       └─TableScan_8	10000.00	cop	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
 rollback;
+explain SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
+id	count	task	operator info
+Sort_13	2.00	root	a:asc
+└─HashAgg_17	2.00	root	group by:a, funcs:firstrow(join_agg_0)
+  └─Union_18	2.00	root	
+    ├─HashAgg_21	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+    │ └─Projection_22	1.00	root	0
+    │   └─TableDual_23	1.00	root	rows:1
+    └─HashAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+      └─Projection_27	1.00	root	1
+        └─TableDual_28	1.00	root	rows:1
+explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)
+id	count	task	operator info
+HashAgg_15	2.00	root	group by:a, funcs:firstrow(join_agg_0)
+└─Union_16	2.00	root	
+  ├─HashAgg_19	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+  │ └─Projection_20	1.00	root	0
+  │   └─TableDual_21	1.00	root	rows:1
+  └─StreamAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+    └─Projection_31	1.00	root	1
+      └─TableDual_32	1.00	root	rows:1
