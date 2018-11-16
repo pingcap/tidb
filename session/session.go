@@ -176,10 +176,10 @@ func (s *session) Status() uint16 {
 }
 
 func (s *session) LastInsertID() uint64 {
-	if s.sessionVars.LastInsertID > 0 {
-		return s.sessionVars.LastInsertID
+	if s.sessionVars.StmtCtx.LastInsertID > 0 {
+		return s.sessionVars.StmtCtx.LastInsertID
 	}
-	return s.sessionVars.InsertID
+	return s.sessionVars.StmtCtx.InsertID
 }
 
 func (s *session) AffectedRows() uint64 {
@@ -427,8 +427,8 @@ func (s *session) String() string {
 	if sessVars.SnapshotTS != 0 {
 		data["snapshotTS"] = sessVars.SnapshotTS
 	}
-	if sessVars.LastInsertID > 0 {
-		data["lastInsertID"] = sessVars.LastInsertID
+	if sessVars.StmtCtx.LastInsertID > 0 {
+		data["lastInsertID"] = sessVars.StmtCtx.LastInsertID
 	}
 	if len(sessVars.PreparedStmts) > 0 {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)

@@ -75,6 +75,10 @@ type StatementContext struct {
 	PrevAffectedRows int64
 	// PrevLastInsertID is the last insert ID of previous statement.
 	PrevLastInsertID uint64
+	// LastInsertID is the auto-generated ID in the current statement.
+	LastInsertID uint64
+	// InsertID is the given insert ID of an auto_increment column.
+	InsertID uint64
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone         *time.Location

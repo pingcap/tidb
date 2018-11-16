@@ -193,11 +193,8 @@ type SessionVars struct {
 		Value string
 	}
 
-	// Following variables are special for current session.
-
-	Status       uint16
-	LastInsertID uint64 // LastInsertID is the auto-generated ID in the current statement.
-	InsertID     uint64 // InsertID is the given insert ID of an auto_increment column.
+	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
+	Status uint16
 
 	// ClientCapability is client's capability.
 	ClientCapability uint32
@@ -414,7 +411,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
-	s.LastInsertID = insertID
+	s.StmtCtx.LastInsertID = insertID
 }
 
 // SetStatusFlag sets the session server status variable.

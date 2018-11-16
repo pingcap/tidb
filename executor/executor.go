@@ -1256,9 +1256,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = priority
 		}
 	}
-	if vars.LastInsertID > 0 {
-		sc.PrevLastInsertID = vars.LastInsertID
-		vars.LastInsertID = 0
+	if vars.StmtCtx.LastInsertID > 0 {
+		sc.PrevLastInsertID = vars.StmtCtx.LastInsertID
 	} else {
 		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
@@ -1276,7 +1275,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	vars.InsertID = 0
 	vars.StmtCtx = sc
 	return
 }
