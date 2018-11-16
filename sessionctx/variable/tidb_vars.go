@@ -78,9 +78,6 @@ const (
 	// User could change it to a smaller one to avoid breaking the transaction size limitation.
 	TiDBDMLBatchSize = "tidb_dml_batch_size"
 
-	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
-	TiDBMaxChunkSize = "tidb_max_chunk_size"
-
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
 	// "tidb_mem_quota_hashjoin": 			control the memory quota of "HashJoinExec".
@@ -148,6 +145,9 @@ const (
 	// tidb_index_serial_scan_concurrency is used for controlling the concurrency of index scan operation
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
+
+	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
+	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
 	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 	// the input string values are valid, we can skip the check.
