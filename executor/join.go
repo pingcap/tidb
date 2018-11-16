@@ -82,8 +82,10 @@ type HashJoinExec struct {
 	// will be split to 2^radixBitsNumber sub-relations before building the hash
 	// tables. If the complete inner relation can be hold in L2Cache in which
 	// case radixBits will be 1, we can skip the partition phase.
-	radixBits       uint32
-	innerParts      []partition
+	radixBits  uint32
+	innerParts []partition
+	// innerRowPrts indicates the position in corresponding partition of every
+	// row in innerResult.
 	innerRowPrts    [][]ptr4Partition
 	partConcurrency int
 }

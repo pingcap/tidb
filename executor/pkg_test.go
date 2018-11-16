@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -16,7 +17,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
-	"testing"
 )
 
 var _ = Suite(&pkgTestSuite{})
@@ -168,7 +168,6 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	err := hashJoinExec.Open(ctx)
 	c.Assert(err, IsNil)
 
-	//chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLong), types.NewFieldType(mysql.TypeLong)}, 100)
 	innerResultCh := make(chan *chunk.Chunk, hashJoinExec.joinConcurrency)
 	doneCh := make(chan struct{})
 	go func() {
