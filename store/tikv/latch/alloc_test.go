@@ -77,7 +77,7 @@ func (s *testAllocSuite) TestAllocKey(c *C) {
 	for i := 0; i < count; i++ {
 		length := 10 + rand.Intn(40)
 		src := make([]byte, length)
-		for idx, _ := range src {
+		for idx := range src {
 			src[idx] = xx
 			xx++
 		}
