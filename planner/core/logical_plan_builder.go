@@ -821,6 +821,21 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	sort := LogicalSort{}.Init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
+		switch x := item.Expr.(type) {
+		case *driver.ParamMarkerExpr:
+			if b.ctx.GetSessionVars().InPrepare {
+				continue
+			}
+			newItem, isNull, err := expression.ParamToByItemNode(b.ctx, x)
+			if err != nil {
+				err := errors.Errorf("Unknown column '%+v' in 'order clause'", "?")
+				return nil, errors.Trace(err)
+			}
+			if isNull {
+				continue
+			}
+			item = newItem
+		}
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1559,14 +1574,37 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		schema: p.Schema(),
 	}
 	for _, item := range gby.Items {
+		hasParam := false
 		resolver.inExpr = false
-		retExpr, _ := item.Expr.Accept(resolver)
+		var retExpr ast.Node
+		switch x := item.Expr.(type) {
+		case *driver.ParamMarkerExpr:
+			hasParam = true
+			if b.ctx.GetSessionVars().InPrepare {
+				continue
+			}
+			newItem, isNull, err := expression.ParamToByItemNode(b.ctx, x)
+			if err != nil {
+				err := errors.Errorf("Unknown column '%+v' in 'group statement'", "?")
+				return nil, nil, errors.Trace(err)
+			}
+			if isNull {
+				continue
+			}
+			retExpr, _ = newItem.Expr.Accept(resolver)
+		default:
+			retExpr, _ = item.Expr.Accept(resolver)
+		}
+
 		if resolver.err != nil {
 			return nil, nil, errors.Trace(resolver.err)
 		}
+		if !hasParam {
+			item.Expr = retExpr.(ast.ExprNode)
+		}
 
-		item.Expr = retExpr.(ast.ExprNode)
-		expr, np, err := b.rewrite(item.Expr, p, nil, true)
+		itemExpr := retExpr.(ast.ExprNode)
+		expr, np, err := b.rewrite(itemExpr, p, nil, true)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
