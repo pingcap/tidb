@@ -62,6 +62,9 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	tk.MustExec(`prepare stmt5 from "select c from t order by c"`)
 	tk.MustQuery("execute stmt5").Check(testkit.Rows("1", "2", "2", "3", "4", "5"))
 	tk.MustQuery("execute stmt5").Check(testkit.Rows("1", "2", "2", "3", "4", "5"))
+	tk.MustExec(`prepare stmt6 from "select distinct a from t order by a"`)
+	tk.MustQuery("execute stmt6").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	tk.MustQuery("execute stmt6").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
 func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
