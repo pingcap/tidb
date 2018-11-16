@@ -396,30 +396,31 @@ import (
 	yearType	"YEAR"
 
 	/* The following tokens belong to NotKeywordToken. */
-	addDate		"ADDDATE"
-	bitAnd		"BIT_AND"
-	bitOr		"BIT_OR"
-	bitXor		"BIT_XOR"
-	cast		"CAST"
-	copyKwd		"COPY"
-	count		"COUNT"
-	curTime		"CURTIME"
-	dateAdd		"DATE_ADD"
-	dateSub		"DATE_SUB"
-	extract		"EXTRACT"
-	getFormat	"GET_FORMAT"
-	groupConcat	"GROUP_CONCAT"
-	inplace 	"INPLACE"
-	min		"MIN"
-	max		"MAX"
-	now		"NOW"
-	position	"POSITION"
-	subDate		"SUBDATE"
-	sum		"SUM"
-	substring	"SUBSTRING"
-	timestampAdd	"TIMESTAMPADD"
-	timestampDiff	"TIMESTAMPDIFF"
-	trim		"TRIM"
+	addDate			"ADDDATE"
+	bitAnd			"BIT_AND"
+	bitOr			"BIT_OR"
+	bitXor			"BIT_XOR"
+	cast			"CAST"
+	copyKwd			"COPY"
+	count			"COUNT"
+	curTime			"CURTIME"
+	dateAdd			"DATE_ADD"
+	dateSub			"DATE_SUB"
+	extract			"EXTRACT"
+	getFormat		"GET_FORMAT"
+	groupConcat		"GROUP_CONCAT"
+	nextRowID		"NEXT_ROW_ID"
+	inplace 		"INPLACE"
+	min			"MIN"
+	max			"MAX"
+	now			"NOW"
+	position		"POSITION"
+	subDate			"SUBDATE"
+	sum			"SUM"
+	substring		"SUBSTRING"
+	timestampAdd		"TIMESTAMPADD"
+	timestampDiff		"TIMESTAMPDIFF"
+	trim			"TRIM"
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
@@ -2629,7 +2630,7 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" 
-| "INPLACE" |"MIN" | "MAX" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+| "INPLACE" |"MIN" | "MAX" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM" | "NEXT_ROW_ID"
 
 /************************************************************************************
  *
@@ -4923,6 +4924,13 @@ AdminStmt:
 |	"ADMIN" "SHOW" "DDL" "JOBS"
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
+	}
+|	"ADMIN" "SHOW" TableName "NEXT_ROW_ID"
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowNextRowID,
+			Tables: []*ast.TableName{$3.(*ast.TableName)},
+		}
 	}
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{

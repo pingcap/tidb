@@ -104,6 +104,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plan.CancelDDLJobs:
 		return b.buildCancelDDLJobs(v)
+	case *plan.ShowNextRowID:
+		return b.buildShowNextRowID(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
 	case *plan.ShowDDLJobs:
@@ -173,6 +175,14 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
+	}
+	return e
+}
+
+func (b *executorBuilder) buildShowNextRowID(v *plan.ShowNextRowID) Executor {
+	e := &ShowNextRowIDExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		tblName:      v.TableName,
 	}
 	return e
 }

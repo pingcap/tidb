@@ -261,7 +261,8 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
-  digest = "1:1e5ebc04ecd05c2431b85d327321a3141b39b7298212702f28b16c472707c89a"
+  branch = "release-2.0"
+  digest = "1:265e3cc76720f76dce6977efb2aa62a1b26da4aac43a44a2686bfa1007eade47"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -274,7 +275,7 @@
     "pkg/tikvpb",
   ]
   pruneopts = "NUT"
-  revision = "2cf2492c337c4d0281d8ead8686d47764f1df6c4"
+  revision = "2b379bf42507735a8615f973e1bfd4caa075b155"
 
 [[projects]]
   digest = "1:8d58ffcee10898d71cdc5918795864bf52e4ea7cd354bb839fa7a98abe063b8a"
