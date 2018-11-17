@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -907,8 +908,6 @@ func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		numDualRows:  v.RowCount,
 	}
-	// Init the startTS for later use.
-	b.getStartTS()
 	return e
 }
 
@@ -919,10 +918,14 @@ func (b *executorBuilder) getStartTS() uint64 {
 	}
 
 	startTS := b.ctx.GetSessionVars().SnapshotTS
-	if startTS == 0 && b.ctx.Txn() != nil {
+	if startTS == 0 && b.ctx.Txn().Valid() {
 		startTS = b.ctx.Txn().StartTS()
 	}
 	b.startTS = startTS
+	if b.startTS == 0 {
+		// The the code should never run here if there is no bug.
+		log.Error(errors.ErrorStack(errors.Trace(ErrGetStartTS)))
+	}
 	return startTS
 }
 
