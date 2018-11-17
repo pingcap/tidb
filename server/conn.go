@@ -39,6 +39,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"io"
 	"net"
 	"runtime"
@@ -71,6 +72,9 @@ const (
 	connStatusShutdown     // Closed by server.
 	connStatusWaitShutdown // Notified by server to close.
 )
+
+// errWaitTimeout means the server wait timeout for activity on a noninteractive connection
+var errWaitTimeout = errors.New(variable.WaitTimeout)
 
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
@@ -208,6 +212,35 @@ func (cc *clientConn) writeInitialHandshake() error {
 
 func (cc *clientConn) readPacket() ([]byte, error) {
 	return cc.pkt.readPacket()
+}
+
+func (cc *clientConn) readPacketWithTimeOut() ([]byte, error) {
+	valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		log.Errorf("con:%d get sysval wait_timeout error.", cc.connectionID)
+		// if get waitTimeout error, use default value
+		waitTimeout = 28800
+	}
+
+	chanPacketByte := make(chan []byte, 1)
+	chanPacketErr := make(chan error, 1)
+	go func() {
+		data, err := cc.readPacket()
+		chanPacketErr <- err
+		chanPacketByte <- data
+		close(chanPacketByte)
+		close(chanPacketErr)
+	}()
+	select {
+	case <-time.After(time.Duration(waitTimeout) * time.Second):
+		log.Infof("con:%d connection timeout wait for %ds, close this connection.",
+			cc.connectionID, waitTimeout)
+		return nil, errWaitTimeout
+	case err := <-chanPacketErr:
+		data := <-chanPacketByte
+		return data, err
+	}
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
@@ -447,9 +480,9 @@ func (cc *clientConn) Run() {
 		}
 
 		cc.alloc.Reset()
-		data, err := cc.readPacket()
+		data, err := cc.readPacketWithTimeOut()
 		if err != nil {
-			if terror.ErrorNotEqual(err, io.EOF) {
+			if terror.ErrorNotEqual(err, io.EOF) && terror.ErrorNotEqual(err, errWaitTimeout) {
 				errStack := errors.ErrorStack(err)
 				if !strings.Contains(errStack, "use of closed network connection") {
 					log.Errorf("con:%d read packet error, close this connection %s",
