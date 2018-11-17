@@ -535,7 +535,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_buffer_pool_size", "134217728"},
 	{ScopeGlobal, "innodb_adaptive_flushing", "ON"},
 	{ScopeNone, "datadir", "/usr/local/mysql/data/"},
-	{ScopeGlobal | ScopeSession, "wait_timeout", "28800"},
+	{ScopeGlobal | ScopeSession, WaitTimeout, "28800"},
 	{ScopeGlobal, "innodb_monitor_enable", ""},
 	{ScopeNone, "date_format", "%Y-%m-%d"},
 	{ScopeGlobal, "innodb_buffer_pool_filename", "ib_buffer_pool"},
@@ -774,6 +774,8 @@ const (
 	SyncBinlog = "sync_binlog"
 	// BlockEncryptionMode is the name for 'block_encryption_mode' system variable.
 	BlockEncryptionMode = "block_encryption_mode"
+	// WaitTimeout is the name for 'wait_timeout' system variable.
+	WaitTimeout = "wait_timeout"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

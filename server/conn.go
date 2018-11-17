@@ -39,6 +39,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"io"
 	"net"
 	"runtime"
@@ -210,8 +211,28 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 	return cc.pkt.readPacket()
 }
 
+func (cc *clientConn) readPacketWithTimeout() ([]byte, error) {
+	waitTimeout := cc.getSessionVarsWaitTimeout()
+	if err := cc.bufReadConn.SetReadDeadline(time.Now().Add(time.Duration(waitTimeout) * time.Second)); err != nil {
+		return nil, err
+	}
+	return cc.readPacket()
+}
+
 func (cc *clientConn) writePacket(data []byte) error {
 	return cc.pkt.writePacket(data)
+}
+
+// getSessionVarsWaitTimeout get session variable wait_timeout
+func (cc *clientConn) getSessionVarsWaitTimeout() uint64 {
+	valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		log.Errorf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
+		// if get waitTimeout error, use default value
+		waitTimeout = 28800
+	}
+	return waitTimeout
 }
 
 type handshakeResponse41 struct {
@@ -447,11 +468,13 @@ func (cc *clientConn) Run() {
 		}
 
 		cc.alloc.Reset()
-		data, err := cc.readPacket()
+		data, err := cc.readPacketWithTimeout()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				errStack := errors.ErrorStack(err)
-				if !strings.Contains(errStack, "use of closed network connection") {
+				if strings.Contains(errStack, "i/o timeout") {
+					log.Infof("con:%d read packet timeout, close this connection.", cc.connectionID)
+				} else if !strings.Contains(errStack, "use of closed network connection") {
 					log.Errorf("con:%d read packet error, close this connection %s",
 						cc.connectionID, errStack)
 				}
