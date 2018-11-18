@@ -15,6 +15,15 @@ package ddl
 
 import (
 	"context"
+	"fmt"
+	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/pb"
+	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 	"math"
 	"sync/atomic"
 	"time"
@@ -308,7 +317,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		job.SnapshotVer = 0
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateWriteReorganization:
-		// reorganization -> public
+		//reorganization -> public
 		var tbl table.Table
 		tbl, err = getTable(d.store, schemaID, tblInfo)
 		if err != nil {
@@ -480,6 +489,21 @@ type addIndexWorker struct {
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
+
+	columns       []*model.ColumnInfo
+	colFieldTypes []*types.FieldType
+	srcChunk    *chunk.Chunk
+	idxrows []idxRow
+	idxValsBufs [][]types.Datum
+	handleIdx int
+
+	physicalTableID int64
+
+	// for gen column
+	haveGenCol bool
+	mutRow        chunk.MutRow
+	decodeColMap map[int64]decoder.Column
+	sysZone *time.Location
 }
 
 type reorgIndexTask struct {
@@ -490,6 +514,7 @@ type reorgIndexTask struct {
 	// When the last handle is math.MaxInt64, set endIncluded to true to
 	// tell worker backfilling index of endHandle.
 	endIncluded bool
+	keyRange    kv.KeyRange
 }
 
 type addIndexResult struct {
@@ -515,10 +540,11 @@ func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResu
 	result.scanCount += taskCtx.scanCount
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo,
+	decodeColMap map[int64]decoder.Column, indexColumns []*model.ColumnInfo) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t.Cols(), decodeColMap)
-	return &addIndexWorker{
+	w := &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
 		batchCnt:    DefaultTaskHandleCnt,
@@ -531,7 +557,26 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		priority:    kv.PriorityLow,
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
+		columns:     indexColumns,
+		physicalTableID: t.GetPhysicalID(),
+		decodeColMap: decodeColMap,
+		sysZone : timeutil.SystemLocation(),
 	}
+
+	w.srcChunk = chunk.New(w.columnsTypes(), w.batchCnt, w.batchCnt)
+	w.idxrows = make([]idxRow,w.batchCnt)
+	w.idxValsBufs = make([][]types.Datum,w.batchCnt)
+	w.haveGenCol = len(indexColumns) > (len(indexInfo.Columns)+1)
+	if w.haveGenCol {
+		cols := t.Meta().Cols()
+		tps := make([]*types.FieldType, len(cols))
+		for _, col := range cols {
+			tps[col.Offset] = &col.FieldType
+		}
+		w.mutRow = chunk.MutRowFromTypes(tps)
+	}
+	w.sessCtx.GetSessionVars().MaxChunkSize = w.batchCnt
+	return w
 }
 
 func (w *addIndexWorker) close() {
@@ -679,6 +724,64 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	w.distinctCheckFlags = w.distinctCheckFlags[:0]
 }
 
+
+func (w *addIndexWorker) batchCheckUniqueKeyCS(txn kv.Transaction) error {
+	idxInfo := w.index.Meta()
+	if !idxInfo.Unique {
+		// non-unique key need not to check, just overwrite it,
+		// because in most case, backfilling indices is not exists.
+		return nil
+	}
+
+	w.initBatchCheckBufs(len(w.idxrows))
+	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
+	for i, record := range w.idxrows {
+		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, w.idxValsBufs[i], record.handle, w.idxKeyBufs[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// save the buffer to reduce memory allocations.
+		w.idxKeyBufs[i] = idxKey
+
+		w.batchCheckKeys = append(w.batchCheckKeys, idxKey)
+		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
+	}
+
+	batchVals, err := kv.BatchGetValues(txn, w.batchCheckKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// 1. unique-key is duplicate and the handle is equal, skip it.
+	// 2. unique-key is duplicate and the handle is not equal, return duplicate error.
+	// 3. non-unique-key is duplicate, skip it.
+	for i, key := range w.batchCheckKeys {
+		if val, found := batchVals[string(key)]; found {
+			if w.distinctCheckFlags[i] {
+				handle, err1 := tables.DecodeHandle(val)
+				if err1 != nil {
+					return errors.Trace(err1)
+				}
+
+				if handle != w.idxrows[i].handle {
+					return errors.Trace(kv.ErrKeyExists)
+				}
+			}
+			w.idxrows[i].skip = true
+		} else {
+			// The keys in w.batchCheckKeys also maybe duplicate,
+			// so we need to backfill the not found key into `batchVals` map.
+			if w.distinctCheckFlags[i] {
+				batchVals[string(key)] = tables.EncodeHandle(w.idxrows[i].handle)
+			}
+		}
+	}
+	// Constrains is already checked.
+	stmtCtx.BatchCheck = true
+	return nil
+}
+
+
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
@@ -733,6 +836,326 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	// Constrains is already checked.
 	stmtCtx.BatchCheck = true
 	return nil
+}
+
+
+
+func constructTableScanPB(tableID int64,pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
+	tblScan := &tipb.TableScan{
+		TableId: tableID,
+		Columns: pbColumnInfos,
+	}
+
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
+}
+
+// statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
+func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
+	var flags uint64
+	if sc.InInsertStmt {
+		flags |= model.FlagInInsertStmt
+	} else if sc.InUpdateOrDeleteStmt {
+		flags |= model.FlagInUpdateOrDeleteStmt
+	} else if sc.InSelectStmt {
+		flags |= model.FlagInSelectStmt
+	}
+	if sc.IgnoreTruncate {
+		flags |= model.FlagIgnoreTruncate
+	} else if sc.TruncateAsWarning {
+		flags |= model.FlagTruncateAsWarning
+	}
+	if sc.OverflowAsWarning {
+		flags |= model.FlagOverflowAsWarning
+	}
+	if sc.IgnoreZeroInDate {
+		flags |= model.FlagIgnoreZeroInDate
+	}
+	if sc.DividedByZeroAsWarning {
+		flags |= model.FlagDividedByZeroAsWarning
+	}
+	if sc.PadCharToFullLength {
+		flags |= model.FlagPadCharToFullLength
+	}
+	return flags
+}
+
+func (w *addIndexWorker) buildDAGPB(txn kv.Transaction) (*tipb.DAGRequest, error) {
+	dagReq := &tipb.DAGRequest{}
+	dagReq.StartTs = txn.StartTS()
+
+	//dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(w.sessCtx.GetSessionVars().Location())
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(time.UTC)
+	fmt.Printf("\n\nbuild dag, timezone:%s , offset : %v\n\n",dagReq.TimeZoneName,dagReq.TimeZoneOffset)
+	sc := w.sessCtx.GetSessionVars().StmtCtx
+	dagReq.Flags = statementContextToFlags(sc)
+	for i := range w.columns {
+		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
+
+	tblInfo := w.table.Meta()
+	pbColumnInfos := model.ColumnsToProto(w.columns, tblInfo.PKIsHandle)
+
+	w.sessCtx.GetSessionVars().StmtCtx.TimeZone = timeutil.SystemLocation()
+	err := pb.SetPBColumnsDefaultValue(w.sessCtx, pbColumnInfos, w.columns)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	w.sessCtx.GetSessionVars().StmtCtx.TimeZone = time.UTC
+	w.sessCtx.GetSessionVars().TimeZone = time.UTC
+
+	tblScanExec := constructTableScanPB(w.physicalTableID, pbColumnInfos)
+	dagReq.Executors = append(dagReq.Executors, tblScanExec)
+
+	limitExec := constructLimitPB(uint64(w.batchCnt))
+	dagReq.Executors = append(dagReq.Executors, limitExec)
+
+	return dagReq, nil
+}
+
+func (w *addIndexWorker) columnsTypes() []*types.FieldType {
+	if w.colFieldTypes != nil {
+		return w.colFieldTypes
+	}
+
+	w.colFieldTypes = make([]*types.FieldType, 0, len(w.columns))
+	for _, col := range w.columns {
+		w.colFieldTypes = append(w.colFieldTypes, &col.FieldType)
+	}
+	return w.colFieldTypes
+}
+
+func (w *addIndexWorker) buildTableScan(ctx context.Context, txn kv.Transaction, t table.Table, handleRange reorgIndexTask) (distsql.SelectResult, error) {
+	dagPB, err := w.buildDAGPB(txn)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fmt.Printf("\n\n\nbuild dag, task.start: %v, end:%v, endinclude: %v\n\n\n",handleRange.startHandle,handleRange.endHandle,handleRange.endIncluded)
+	endHandle := handleRange.endHandle
+	if handleRange.endIncluded {
+		endHandle++
+	}
+	if handleRange.startHandle >= endHandle {
+		endHandle = handleRange.startHandle+1
+	}
+
+	fmt.Printf("\n\n\nbuild dag, task.start: %v, end:%v, endinclude: %v, send end: %v, batch count: %v\n\n\n",handleRange.startHandle,handleRange.endHandle,handleRange.endIncluded, endHandle,w.batchCnt)
+	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(handleRange.startHandle)}, HighVal: []types.Datum{types.NewIntDatum(endHandle)}}}
+	var builder distsql.RequestBuilder
+	kvReq, err := builder.SetTableRanges(w.physicalTableID, ranges, nil).
+		SetDAGRequest(dagPB).
+		SetKeepOrder(true).
+		SetConcurrency(1).
+		SetFromSessionVars(w.sessCtx.GetSessionVars()).
+		Build()
+
+	result, err := distsql.Select(ctx, w.sessCtx, kvReq, w.columnsTypes(), statistics.NewQueryFeedback(0, nil, 0, false))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	result.Fetch(ctx)
+	return result, nil
+}
+
+func (w *addIndexWorker) fetchRowColValsCS(ctx context.Context, txn kv.Transaction, taskRange reorgIndexTask) (nextHandle int64,done bool,err error) {
+	if taskRange.startHandle > taskRange.endHandle  || taskRange.startHandle >= taskRange.endHandle && !taskRange.endIncluded{
+		return taskRange.startHandle+1, true, nil
+	}
+	srcResult, err := w.buildTableScan(ctx, txn, w.table, taskRange)
+	if err != nil {
+		return taskRange.startHandle,false, errors.Trace(err)
+	}
+	defer terror.Call(srcResult.Close)
+	return w.fetchBackfillRows(ctx, srcResult, taskRange)
+}
+
+type idxRow struct {
+	handle int64
+	skip bool
+}
+
+func (w *addIndexWorker) fetchBackfillRows(ctx context.Context, srcResult distsql.SelectResult, taskRange reorgIndexTask) (nextHandle int64,done bool,err error) {
+	handleIdx := len(w.index.Meta().Columns)
+	nextHandle = taskRange.startHandle
+	w.idxrows = w.idxrows[:0]
+LOOP1:
+	for {
+		if len(w.idxrows) >= w.batchCnt {
+			break
+		}
+		err = srcResult.Next(ctx, w.srcChunk)
+		if err != nil {
+			break
+		}
+		if w.srcChunk.NumRows() == 0 {
+			break
+		}
+		iter := chunk.NewIterator4Chunk(w.srcChunk)
+		fmt.Printf("\nchunk.len: %v, cap: %v\n", w.srcChunk.NumRows(), w.srcChunk.Capacity())
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			handle := row.GetInt64(handleIdx)
+			w.idxValsBufs[len(w.idxrows)], err = w.decodeIndexVals(row, w.colFieldTypes, handleIdx, w.idxValsBufs[len(w.idxrows)])
+			if err != nil {
+				break LOOP1
+			}
+			//
+			str := ""
+			for i, v := range w.idxValsBufs[len(w.idxrows)] {
+				if i > 0 {
+					str = str + ", "
+				}
+				ss, _ := v.ToString()
+				str = str + ss
+			}
+			fmt.Printf("handle: %d, idxval: %s\n", handle, str)
+			//
+			w.idxrows = append(w.idxrows, idxRow{handle: handle, skip: false})
+			if len(w.idxrows) >= w.batchCnt {
+				break LOOP1
+			}
+		}
+		fmt.Printf("\n\n\n")
+	}
+	done = len(w.idxrows) == 0 || nextHandle > taskRange.endHandle || (nextHandle >= taskRange.endHandle && !taskRange.endIncluded)
+	if !done {
+		nextHandle = w.idxrows[len(w.idxrows)-1].handle + 1
+		return nextHandle, done, errors.Trace(err)
+	}
+	if taskRange.endHandle == math.MaxInt64 || !taskRange.endIncluded {
+		return taskRange.endHandle, done, errors.Trace(err)
+	}
+	return taskRange.endHandle+1, done, errors.Trace(err)
+}
+
+func (w *addIndexWorker) decodeIndexVals (row chunk.Row, tps []*types.FieldType, handleIndex int, idxValues []types.Datum) ([]types.Datum, error) {
+	if idxValues == nil {
+		idxValues = make([]types.Datum,0, handleIndex)
+	} else {
+		idxValues = idxValues[:0]
+	}
+
+	for i:=0;i<handleIndex;i++{
+		colVal := row.GetDatum(i, tps[i])
+		idxValues = append(idxValues, *colVal.Copy())
+		fmt.Printf("\nchunk val: %v\n\n",colVal)
+	}
+	//todo caculated generated column
+	if w.haveGenCol {
+		for i, v := range idxValues {
+			w.mutRow.SetValue(w.columns[i].Offset, v.GetValue())
+		}
+		for i := handleIndex+1; i<len(w.columns); i++ {
+			colVal := row.GetDatum(i, tps[i])
+			w.mutRow.SetValue(w.columns[i].Offset, colVal.GetValue())
+		}
+		for id, col := range w.decodeColMap {
+			if col.GenExpr == nil {
+				continue
+			}
+			// Eval the column value
+			val, err := col.GenExpr.Eval(w.mutRow.ToRow())
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			val, err = table.CastValue(w.sessCtx, val, col.Info)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			fmt.Printf("\ngen val: %v, syszone: %v\n\n",val,w.sysZone)
+			if val.Kind() == types.KindMysqlTime && w.sysZone != time.UTC {
+				t := val.GetMysqlTime()
+				if t.Type == mysql.TypeTimestamp {
+					err := t.ConvertTimeZone(w.sysZone, time.UTC)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					val.SetMysqlTime(t)
+				}
+			}
+			fmt.Printf("\ngen after convert val: %v\n\n",val)
+			idxValues[id] = val
+		}
+	}
+	var err error
+	for i := range idxValues {
+		if idxValues[i].IsNull(){
+			idxValues[i], err = tables.GetColInfoDefaultValue(w.sessCtx, w.columns[i], w.defaultVals)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if idxValues[i].Kind() == types.KindMysqlTime && w.sysZone != time.UTC {
+				t := idxValues[i].GetMysqlTime()
+				if t.Type == mysql.TypeTimestamp {
+					err := t.ConvertTimeZone(w.sysZone, time.UTC)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					idxValues[i].SetMysqlTime(t)
+				}
+			}
+
+			fmt.Printf("\ndefault val: %v\n\n",idxValues[i])
+		}
+
+	}
+	// set default value.
+
+	return idxValues, nil
+}
+
+func (w *addIndexWorker) backfillIndexInTxnCS(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
+	oprStartTime := time.Now()
+	ctx := context.Background()
+	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+		taskCtx.addedCount = 0
+		taskCtx.scanCount = 0
+		txn.SetOption(kv.Priority, w.priority)
+
+		nextHandle, taskDone, err := w.fetchRowColValsCS(ctx, txn, handleRange)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		taskCtx.nextHandle = nextHandle
+		taskCtx.done = taskDone
+
+		err = w.batchCheckUniqueKeyCS(txn)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for i,idxRecord := range w.idxrows {
+			taskCtx.scanCount++
+			// The index is already exists, we skip it, no needs to backfill it.
+			// The following update, delete, insert on these rows, TiDB can handle it correctly.
+			if idxRecord.skip {
+				continue
+			}
+
+			// Lock the row key to notify us that someone delete or update the row,
+			// then we should not backfill the index of it, otherwise the adding index is redundant.
+			recordKey := w.table.RecordKey(idxRecord.handle)
+			err := txn.LockKeys(recordKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// Create the index.
+			handle, err := w.index.Create(w.sessCtx, txn, w.idxValsBufs[i], idxRecord.handle)
+			if err != nil {
+				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
+					// Index already exists, skip it.
+					continue
+				}
+
+				return errors.Trace(err)
+			}
+			taskCtx.addedCount++
+		}
+
+		return nil
+	})
+	w.logSlowOperations(time.Since(oprStartTime), "backfillIndexInTxn", 3000)
+
+	return
 }
 
 // backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
@@ -801,7 +1224,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	startTime := time.Now()
 
 	for {
-		taskCtx, err := w.backfillIndexInTxn(handleRange)
+		taskCtx, err := w.backfillIndexInTxnCS(handleRange)
 		if err == nil {
 			// Because reorgIndexTask may run a long time,
 			// we should check whether this ddl job is still runnable.
@@ -870,31 +1293,51 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 	log.Infof("[ddl-reorg] worker[%v] exit", w.id)
 }
 
-func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
+func buildIndexColsAndDecodeMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) ([]*model.ColumnInfo, map[int64]decoder.Column, error) {
 	cols := t.Cols()
-	decodeColMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
-	for _, v := range indexInfo.Columns {
-		col := cols[v.Offset]
+	columns := make([]*model.ColumnInfo, len(indexInfo.Columns), len(indexInfo.Columns)+1)
+	decodeColMap := make(map[int64]decoder.Column, len(indexInfo.Columns)+1)
+	extraDecodeCols := make(map[int64]*model.ColumnInfo)
+	for i, idxCol := range indexInfo.Columns {
+		col := cols[idxCol.Offset]
+		columns[i] = col.ToInfo()
 		tpExpr := decoder.Column{
-			Info: col.ToInfo(),
+			Info: columns[i],
 		}
 		if col.IsGenerated() && !col.GeneratedStored {
 			for _, c := range cols {
 				if _, ok := col.Dependences[c.Name.L]; ok {
-					decodeColMap[c.ID] = decoder.Column{
-						Info: c.ToInfo(),
-					}
+					extraDecodeCols[c.ID] = c.ToInfo()
 				}
 			}
 			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, nil, errors.Trace(err)
 			}
 			tpExpr.GenExpr = e
 		}
-		decodeColMap[col.ID] = tpExpr
+		decodeColMap[int64(i)] = tpExpr
 	}
-	return decodeColMap, nil
+
+	handleOffset := len(columns)
+	handleColsInfo := &model.ColumnInfo{
+		ID:     model.ExtraHandleID,
+		Name:   model.ExtraHandleName,
+		Offset: handleOffset,
+	}
+	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	columns = append(columns, handleColsInfo)
+	decodeColMap[int64(len(columns)-1)] = decoder.Column{
+		Info: handleColsInfo,
+	}
+
+	for _, extraCol := range extraDecodeCols {
+		columns = append(columns, extraCol)
+		decodeColMap[int64(len(columns)-1)] = decoder.Column{
+			Info: extraCol,
+		}
+	}
+	return columns, decodeColMap, nil
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
@@ -1024,7 +1467,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
 		}
-		task := &reorgIndexTask{physicalTableID, startHandle, endHandle, endIncluded}
+		task := &reorgIndexTask{physicalTableID, startHandle, endHandle, endIncluded, keyRange}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= len(workers) {
@@ -1098,7 +1541,8 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	job := reorgInfo.Job
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	sessCtx := newContext(reorgInfo.d.store)
-	decodeColMap, err := makeupDecodeColMap(sessCtx, t, indexInfo)
+
+	indexCols, decodeColMap, err := buildIndexColsAndDecodeMap(sessCtx, t, indexInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1108,7 +1552,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	idxWorkers := make([]*addIndexWorker, workerCnt)
 	for i := 0; i < int(workerCnt); i++ {
 		sessCtx := newContext(reorgInfo.d.store)
-		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
+		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, indexCols)
 		idxWorkers[i].priority = job.Priority
 		go idxWorkers[i].run(reorgInfo.d)
 	}

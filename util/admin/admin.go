@@ -376,6 +376,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if err != nil {
 			return errors.Trace(err)
 		}
+		fmt.Printf("\nadmin check\n\n, val1:%v, val2: %v\n\n\n",vals1,vals2)
 		adjustDatumKind(vals1, vals2)
 		if !compareDatumSlice(sc, vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}

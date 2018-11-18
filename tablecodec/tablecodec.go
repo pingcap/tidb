@@ -16,6 +16,7 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"time"
 
@@ -216,6 +217,7 @@ func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	b, err := codec.EncodeValue(sc, nil, v)
 	return b, errors.Trace(err)
 }
@@ -252,11 +254,13 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
+		fmt.Printf("\n\ndecode flatten oringin value : %v, sc.timezone: %v",t, sc.TimeZone)
 		if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
 			err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			fmt.Printf("\n\ndecode flatten convert value : %v",t)
 		}
 		v, err := t.ToPackedUint()
 		ret.SetUint64(v)
