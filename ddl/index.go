@@ -491,18 +491,18 @@ type addIndexWorker struct {
 
 	columns       []*model.ColumnInfo
 	colFieldTypes []*types.FieldType
-	srcChunk    *chunk.Chunk
-	idxrows []idxRow
-	idxValsBufs [][]types.Datum
-	handleIdx int
+	srcChunk      *chunk.Chunk
+	idxrows       []idxRow
+	idxValsBufs   [][]types.Datum
+	handleIdx     int
 
 	physicalTableID int64
 
 	// for gen column
-	haveGenCol bool
-	mutRow        chunk.MutRow
+	haveGenCol   bool
+	mutRow       chunk.MutRow
 	decodeColMap map[int64]decoder.Column
-	sysZone *time.Location
+	sysZone      *time.Location
 }
 
 type reorgIndexTask struct {
@@ -544,28 +544,28 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	rowDecoder := decoder.NewRowDecoder(t.Cols(), decodeColMap)
 	w := &addIndexWorker{
-		id:          id,
-		ddlWorker:   worker,
-		batchCnt:    DefaultTaskHandleCnt,
-		sessCtx:     sessCtx,
-		taskCh:      make(chan *reorgIndexTask, 1),
-		resultCh:    make(chan *addIndexResult, 1),
-		index:       index,
-		table:       t,
-		rowDecoder:  rowDecoder,
-		priority:    kv.PriorityLow,
-		defaultVals: make([]types.Datum, len(t.Cols())),
-		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
-		columns:     indexColumns,
+		id:              id,
+		ddlWorker:       worker,
+		batchCnt:        DefaultTaskHandleCnt,
+		sessCtx:         sessCtx,
+		taskCh:          make(chan *reorgIndexTask, 1),
+		resultCh:        make(chan *addIndexResult, 1),
+		index:           index,
+		table:           t,
+		rowDecoder:      rowDecoder,
+		priority:        kv.PriorityLow,
+		defaultVals:     make([]types.Datum, len(t.Cols())),
+		rowMap:          make(map[int64]types.Datum, len(decodeColMap)),
+		columns:         indexColumns,
 		physicalTableID: t.GetPhysicalID(),
-		decodeColMap: decodeColMap,
-		sysZone : timeutil.SystemLocation(),
+		decodeColMap:    decodeColMap,
+		sysZone:         timeutil.SystemLocation(),
 	}
 
 	w.srcChunk = chunk.New(w.columnsTypes(), w.batchCnt, w.batchCnt)
-	w.idxrows = make([]idxRow,w.batchCnt)
-	w.idxValsBufs = make([][]types.Datum,w.batchCnt)
-	w.haveGenCol = len(indexColumns) > (len(indexInfo.Columns)+1)
+	w.idxrows = make([]idxRow, w.batchCnt)
+	w.idxValsBufs = make([][]types.Datum, w.batchCnt)
+	w.haveGenCol = len(indexColumns) > (len(indexInfo.Columns) + 1)
 	if w.haveGenCol {
 		cols := t.Meta().Cols()
 		tps := make([]*types.FieldType, len(cols))
@@ -723,7 +723,6 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	w.distinctCheckFlags = w.distinctCheckFlags[:0]
 }
 
-
 func (w *addIndexWorker) batchCheckUniqueKeyCS(txn kv.Transaction) error {
 	idxInfo := w.index.Meta()
 	if !idxInfo.Unique {
@@ -779,7 +778,6 @@ func (w *addIndexWorker) batchCheckUniqueKeyCS(txn kv.Transaction) error {
 	stmtCtx.BatchCheck = true
 	return nil
 }
-
 
 func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
 	idxInfo := w.index.Meta()
@@ -837,9 +835,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 	return nil
 }
 
-
-
-func constructTableScanPB(tableID int64,pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
+func constructTableScanPB(tableID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
 	tblScan := &tipb.TableScan{
 		TableId: tableID,
 		Columns: pbColumnInfos,
@@ -927,15 +923,7 @@ func (w *addIndexWorker) buildTableScan(ctx context.Context, txn kv.Transaction,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	endHandle := handleRange.endHandle
-	if handleRange.endIncluded {
-		endHandle++
-	}
-	if handleRange.startHandle >= endHandle {
-		endHandle = handleRange.startHandle+1
-	}
-
-	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(handleRange.startHandle)}, HighVal: []types.Datum{types.NewIntDatum(endHandle)}}}
+	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(handleRange.startHandle)}, HighVal: []types.Datum{types.NewIntDatum(handleRange.endHandle)}, HighExclude: !handleRange.endIncluded}}
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(w.physicalTableID, ranges, nil).
 		SetDAGRequest(dagPB).
@@ -952,13 +940,13 @@ func (w *addIndexWorker) buildTableScan(ctx context.Context, txn kv.Transaction,
 	return result, nil
 }
 
-func (w *addIndexWorker) fetchRowColValsCS(ctx context.Context, txn kv.Transaction, taskRange reorgIndexTask) (nextHandle int64,done bool,err error) {
-	if taskRange.startHandle > taskRange.endHandle  || taskRange.startHandle >= taskRange.endHandle && !taskRange.endIncluded{
-		return taskRange.startHandle+1, true, nil
+func (w *addIndexWorker) fetchRowColValsCS(ctx context.Context, txn kv.Transaction, taskRange reorgIndexTask) (nextHandle int64, done bool, err error) {
+	if taskRange.startHandle > taskRange.endHandle || taskRange.startHandle >= taskRange.endHandle && !taskRange.endIncluded {
+		return taskRange.startHandle + 1, true, nil
 	}
 	srcResult, err := w.buildTableScan(ctx, txn, w.table, taskRange)
 	if err != nil {
-		return taskRange.startHandle,false, errors.Trace(err)
+		return taskRange.startHandle, false, errors.Trace(err)
 	}
 	defer terror.Call(srcResult.Close)
 	return w.fetchBackfillRows(ctx, srcResult, taskRange)
@@ -966,10 +954,10 @@ func (w *addIndexWorker) fetchRowColValsCS(ctx context.Context, txn kv.Transacti
 
 type idxRow struct {
 	handle int64
-	skip bool
+	skip   bool
 }
 
-func (w *addIndexWorker) fetchBackfillRows(ctx context.Context, srcResult distsql.SelectResult, taskRange reorgIndexTask) (nextHandle int64,done bool,err error) {
+func (w *addIndexWorker) fetchBackfillRows(ctx context.Context, srcResult distsql.SelectResult, taskRange reorgIndexTask) (nextHandle int64, done bool, err error) {
 	handleIdx := len(w.index.Meta().Columns)
 	nextHandle = taskRange.startHandle
 	w.idxrows = w.idxrows[:0]
@@ -1000,24 +988,26 @@ LOOP1:
 	}
 	done = len(w.idxrows) == 0
 	if !done {
+		done = w.idxrows[len(w.idxrows)-1].handle >= taskRange.endHandle
+	}
+	if !done {
 		nextHandle = w.idxrows[len(w.idxrows)-1].handle + 1
-		done = nextHandle > taskRange.endHandle || (nextHandle >= taskRange.endHandle && !taskRange.endIncluded)
 		return nextHandle, done, errors.Trace(err)
 	}
 	if taskRange.endHandle == math.MaxInt64 || !taskRange.endIncluded {
 		return taskRange.endHandle, done, errors.Trace(err)
 	}
-	return taskRange.endHandle+1, done, errors.Trace(err)
+	return taskRange.endHandle + 1, done, errors.Trace(err)
 }
 
-func (w *addIndexWorker) decodeIndexVals (row chunk.Row, tps []*types.FieldType, handleIndex int, idxValues []types.Datum) ([]types.Datum, error) {
+func (w *addIndexWorker) decodeIndexVals(row chunk.Row, tps []*types.FieldType, handleIndex int, idxValues []types.Datum) ([]types.Datum, error) {
 	if idxValues == nil {
-		idxValues = make([]types.Datum,0, handleIndex)
+		idxValues = make([]types.Datum, 0, handleIndex)
 	} else {
 		idxValues = idxValues[:0]
 	}
 
-	for i:=0;i<handleIndex;i++{
+	for i := 0; i < handleIndex; i++ {
 		colVal := row.GetDatum(i, tps[i])
 		idxValues = append(idxValues, *colVal.Copy())
 	}
@@ -1026,7 +1016,7 @@ func (w *addIndexWorker) decodeIndexVals (row chunk.Row, tps []*types.FieldType,
 		for i, v := range idxValues {
 			w.mutRow.SetValue(w.columns[i].Offset, v.GetValue())
 		}
-		for i := handleIndex+1; i<len(w.columns); i++ {
+		for i := handleIndex + 1; i < len(w.columns); i++ {
 			colVal := row.GetDatum(i, tps[i])
 			w.mutRow.SetValue(w.columns[i].Offset, colVal.GetValue())
 		}
@@ -1058,7 +1048,7 @@ func (w *addIndexWorker) decodeIndexVals (row chunk.Row, tps []*types.FieldType,
 	}
 	var err error
 	for i := range idxValues {
-		if idxValues[i].IsNull(){
+		if idxValues[i].IsNull() {
 			idxValues[i], err = tables.GetColInfoDefaultValue(w.sessCtx, w.columns[i], w.defaultVals)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1102,7 +1092,7 @@ func (w *addIndexWorker) backfillIndexInTxnCS(handleRange reorgIndexTask) (taskC
 			return errors.Trace(err)
 		}
 
-		for i,idxRecord := range w.idxrows {
+		for i, idxRecord := range w.idxrows {
 			taskCtx.scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
