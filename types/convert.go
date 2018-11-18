@@ -241,7 +241,8 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
-// be lost.
+// be lost. For example, the string value "18446744073709551615" which is the max number of unsigned
+// int will cause some precision to lose.
 func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
