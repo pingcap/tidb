@@ -998,9 +998,10 @@ LOOP1:
 			}
 		}
 	}
-	done = len(w.idxrows) == 0 || nextHandle > taskRange.endHandle || (nextHandle >= taskRange.endHandle && !taskRange.endIncluded)
+	done = len(w.idxrows) == 0
 	if !done {
 		nextHandle = w.idxrows[len(w.idxrows)-1].handle + 1
+		done = nextHandle > taskRange.endHandle || (nextHandle >= taskRange.endHandle && !taskRange.endIncluded)
 		return nextHandle, done, errors.Trace(err)
 	}
 	if taskRange.endHandle == math.MaxInt64 || !taskRange.endIncluded {
