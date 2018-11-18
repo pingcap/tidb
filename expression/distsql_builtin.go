@@ -436,6 +436,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinLikeSig{base}
 	case tipb.ScalarFuncSig_JsonLengthSig:
 		f = &builtinJSONLengthSig{base}
+	case tipb.ScalarFuncSig_JsonDepthSig:
+		f = &builtinJSONDepthSig{base}
 
 	case tipb.ScalarFuncSig_InInt:
 		f = &builtinInIntSig{base}
