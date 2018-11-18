@@ -4582,13 +4582,12 @@ func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, 
 				return int64(fRes), isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
 			}
 			return int64(fRes), false, nil
-		} else {
-			iRes, isNull, err := arg.EvalInt(b.ctx, row)
-			if isNull || err != nil {
-				return iRes, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
-			}
-			return iRes, false, nil
 		}
+		iRes, isNull, err := arg.EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return iRes, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		}
+		return iRes, false, nil
 	}
 	hour, isNull, err := evalInt(b.args[0])
 	if isNull || err != nil {
