@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -332,7 +331,6 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 		if e.srcChunk.NumRows() == 0 {
 			break
 		}
-		fmt.Printf("\nchunk.len: %v, cap: %v\n", e.srcChunk.NumRows(), e.srcChunk.Capacity())
 		iter := chunk.NewIterator4Chunk(e.srcChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			if result.scanRowCount >= int64(e.batchSize) {
@@ -342,22 +340,10 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes)
 			e.idxValsBufs[result.scanRowCount] = idxVals
 
-
-			str := ""
-			for i, v := range idxVals {
-				if i > 0 {
-					str = str + ", "
-				}
-				ss, _ := v.ToString()
-				str = str + ss
-			}
-			fmt.Printf("handle: %d, idxval: %s\n", handle, str)
-
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
 			result.scanRowCount++
 			result.nextHandle = handle + 1
 		}
-		fmt.Printf("\n\n\n")
 	}
 
 	return e.recoverRows, nil

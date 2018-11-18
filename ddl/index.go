@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -885,7 +884,6 @@ func (w *addIndexWorker) buildDAGPB(txn kv.Transaction) (*tipb.DAGRequest, error
 
 	//dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(w.sessCtx.GetSessionVars().Location())
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(time.UTC)
-	fmt.Printf("\n\nbuild dag, timezone:%s , offset : %v\n\n",dagReq.TimeZoneName,dagReq.TimeZoneOffset)
 	sc := w.sessCtx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	for i := range w.columns {
@@ -929,7 +927,6 @@ func (w *addIndexWorker) buildTableScan(ctx context.Context, txn kv.Transaction,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fmt.Printf("\n\n\nbuild dag, task.start: %v, end:%v, endinclude: %v\n\n\n",handleRange.startHandle,handleRange.endHandle,handleRange.endIncluded)
 	endHandle := handleRange.endHandle
 	if handleRange.endIncluded {
 		endHandle++
@@ -938,7 +935,6 @@ func (w *addIndexWorker) buildTableScan(ctx context.Context, txn kv.Transaction,
 		endHandle = handleRange.startHandle+1
 	}
 
-	fmt.Printf("\n\n\nbuild dag, task.start: %v, end:%v, endinclude: %v, send end: %v, batch count: %v\n\n\n",handleRange.startHandle,handleRange.endHandle,handleRange.endIncluded, endHandle,w.batchCnt)
 	ranges := []*ranger.Range{{LowVal: []types.Datum{types.NewIntDatum(handleRange.startHandle)}, HighVal: []types.Datum{types.NewIntDatum(endHandle)}}}
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(w.physicalTableID, ranges, nil).
@@ -990,30 +986,17 @@ LOOP1:
 			break
 		}
 		iter := chunk.NewIterator4Chunk(w.srcChunk)
-		fmt.Printf("\nchunk.len: %v, cap: %v\n", w.srcChunk.NumRows(), w.srcChunk.Capacity())
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle := row.GetInt64(handleIdx)
 			w.idxValsBufs[len(w.idxrows)], err = w.decodeIndexVals(row, w.colFieldTypes, handleIdx, w.idxValsBufs[len(w.idxrows)])
 			if err != nil {
 				break LOOP1
 			}
-			//
-			str := ""
-			for i, v := range w.idxValsBufs[len(w.idxrows)] {
-				if i > 0 {
-					str = str + ", "
-				}
-				ss, _ := v.ToString()
-				str = str + ss
-			}
-			fmt.Printf("handle: %d, idxval: %s\n", handle, str)
-			//
 			w.idxrows = append(w.idxrows, idxRow{handle: handle, skip: false})
 			if len(w.idxrows) >= w.batchCnt {
 				break LOOP1
 			}
 		}
-		fmt.Printf("\n\n\n")
 	}
 	done = len(w.idxrows) == 0 || nextHandle > taskRange.endHandle || (nextHandle >= taskRange.endHandle && !taskRange.endIncluded)
 	if !done {
@@ -1036,7 +1019,6 @@ func (w *addIndexWorker) decodeIndexVals (row chunk.Row, tps []*types.FieldType,
 	for i:=0;i<handleIndex;i++{
 		colVal := row.GetDatum(i, tps[i])
 		idxValues = append(idxValues, *colVal.Copy())
-		fmt.Printf("\nchunk val: %v\n\n",colVal)
 	}
 	//todo caculated generated column
 	if w.haveGenCol {
@@ -1060,7 +1042,6 @@ func (w *addIndexWorker) decodeIndexVals (row chunk.Row, tps []*types.FieldType,
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			fmt.Printf("\ngen val: %v, syszone: %v\n\n",val,w.sysZone)
 			if val.Kind() == types.KindMysqlTime && w.sysZone != time.UTC {
 				t := val.GetMysqlTime()
 				if t.Type == mysql.TypeTimestamp {
@@ -1071,7 +1052,6 @@ func (w *addIndexWorker) decodeIndexVals (row chunk.Row, tps []*types.FieldType,
 					val.SetMysqlTime(t)
 				}
 			}
-			fmt.Printf("\ngen after convert val: %v\n\n",val)
 			idxValues[id] = val
 		}
 	}
@@ -1093,7 +1073,6 @@ func (w *addIndexWorker) decodeIndexVals (row chunk.Row, tps []*types.FieldType,
 				}
 			}
 
-			fmt.Printf("\ndefault val: %v\n\n",idxValues[i])
 		}
 
 	}
