@@ -41,7 +41,7 @@ func (s *testSnapshotSuite) SetUpSuite(c *C) {
 
 func (s *testSnapshotSuite) TearDownSuite(c *C) {
 	txn := s.beginTxn(c)
-	scanner, err := txn.Seek(encodeKey(s.prefix, ""))
+	scanner, err := txn.Iter(encodeKey(s.prefix, ""), nil)
 	c.Assert(err, IsNil)
 	c.Assert(scanner, NotNil)
 	for scanner.Valid() {
@@ -69,7 +69,7 @@ func (s *testSnapshotSuite) checkAll(keys []kv.Key, c *C) {
 	m, err := snapshot.BatchGet(keys)
 	c.Assert(err, IsNil)
 
-	scan, err := txn.Seek(encodeKey(s.prefix, ""))
+	scan, err := txn.Iter(encodeKey(s.prefix, ""), nil)
 	c.Assert(err, IsNil)
 	cnt := 0
 	for scan.Valid() {

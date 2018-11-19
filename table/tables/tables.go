@@ -701,7 +701,7 @@ func (t *Table) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator,
 // IterRecords implements table.Table IterRecords interface.
 func (t *Table) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	it, err := ctx.Txn().Seek(startKey)
+	it, err := ctx.Txn().Iter(startKey, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -831,7 +831,7 @@ func (t *Table) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bo
 // Seek implements table.Table Seek interface.
 func (t *Table) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	seekKey := tablecodec.EncodeRowKeyWithHandle(t.ID, h)
-	iter, err := ctx.Txn().Seek(seekKey)
+	iter, err := ctx.Txn().Iter(seekKey, nil)
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
 		// No more records in the table, skip to the end.
 		return 0, false, nil
