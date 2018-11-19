@@ -301,15 +301,19 @@ func (s *testDBSuite) TestRenameIndex(c *C) {
 	s.testErrorCode(c, "alter table t rename key k3 to K2", mysql.ErrDupKeyName)
 }
 
-func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
+func (s *testDBSuite) testGetTableByName(c *C, db, table string) table.Table {
 	ctx := s.s.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	c.Assert(err, IsNil)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	c.Assert(err, IsNil)
 	return tbl
+}
+
+func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
+	return s.testGetTableByName(c, s.schemaName, name)
 }
 
 func backgroundExec(s kv.Storage, sql string, done chan error) {
@@ -713,12 +717,12 @@ LOOP:
 	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
-	ctx.Txn().Rollback()
+	ctx.Txn(true).Rollback()
 
 	c.Assert(ctx.NewTxn(), IsNil)
-	defer ctx.Txn().Rollback()
+	defer ctx.Txn(true).Rollback()
 
-	it, err := nidx.SeekFirst(ctx.Txn())
+	it, err := nidx.SeekFirst(ctx.Txn(true))
 	c.Assert(err, IsNil)
 	defer it.Close()
 
@@ -813,9 +817,9 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 		handles := make(map[int64]struct{})
 
 		c.Assert(ctx.NewTxn(), IsNil)
-		defer ctx.Txn().Rollback()
+		defer ctx.Txn(true).Rollback()
 
-		it, err := idx.SeekFirst(ctx.Txn())
+		it, err := idx.SeekFirst(ctx.Txn(true))
 		c.Assert(err, IsNil)
 		defer it.Close()
 
@@ -1055,7 +1059,7 @@ LOOP:
 	i := 0
 	j := 0
 	ctx.NewTxn()
-	defer ctx.Txn().Rollback()
+	defer ctx.Txn(true).Rollback()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
@@ -1566,6 +1570,23 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 
 	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
 	c.Assert(err, NotNil)
+
+	// test for enum column
+	failSQL := "create table t_enum (a enum('e','e'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('e','E'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('abc','Abc'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	// test for set column
+	failSQL = "create table t_enum (a set('e','e'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('e','E'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('abc','Abc'));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	_, err = s.tk.Exec("create table t_enum (a enum('B','b'));")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
 }
 
 func (s *testDBSuite) TestTableForeignKey(c *C) {
@@ -3472,7 +3493,7 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 			return
 		}
 		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
+		errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -3482,7 +3503,7 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 			checkErr = errors.Trace(errs[0])
 			return
 		}
-		err = hookCtx.Txn().Commit(context.Background())
+		err = hookCtx.Txn(true).Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -3551,7 +3572,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 		}
 
 		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
+		errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -3562,7 +3583,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 			return
 		}
 
-		err = hookCtx.Txn().Commit(context.Background())
+		err = hookCtx.Txn(true).Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -3635,4 +3656,67 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("admin check table partition_add_idx")
 	tk.MustExec("drop table partition_add_idx")
+}
+
+func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("drop database if exists test_db_with_partition")
+	s.tk.MustExec("create database test_db_with_partition")
+	s.tk.MustExec("use test_db_with_partition")
+	s.tk.MustExec(`create table t_part (a int key)
+		partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+		);`)
+	s.tk.MustExec("insert into t_part values (1),(2),(11),(12);")
+	ctx := s.s.(sessionctx.Context)
+	tbl := s.testGetTableByName(c, "test_db_with_partition", "t_part")
+
+	// check records num before drop database.
+	recordsNum := getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+	c.Assert(recordsNum, Equals, 4)
+
+	s.tk.MustExec("drop database if exists test_db_with_partition")
+
+	// check job args.
+	rs, err := s.tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	rows, err := session.GetRows4Test(context.Background(), s.tk.Se, rs)
+	c.Assert(err, IsNil)
+	row := rows[0]
+	c.Assert(row.GetString(3), Equals, "drop schema")
+	jobID := row.GetInt64(0)
+	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err := t.GetHistoryDDLJob(jobID)
+		c.Assert(err, IsNil)
+		var tableIDs []int64
+		err = historyJob.DecodeArgs(&tableIDs)
+		c.Assert(err, IsNil)
+		// There is 2 partitions.
+		c.Assert(len(tableIDs), Equals, 3)
+		return nil
+	})
+
+	// check records num after drop database.
+	recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+	c.Assert(recordsNum, Equals, 0)
+}
+
+func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.PartitionedTable) int {
+	num := 0
+	info := tbl.Meta().GetPartitionInfo()
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		startKey := partition.RecordKey(math.MinInt64)
+		c.Assert(ctx.NewTxn(), IsNil)
+		err := partition.IterRecords(ctx, startKey, partition.Cols(),
+			func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+				num++
+				return true, nil
+			})
+		c.Assert(err, IsNil)
+	}
+	return num
 }

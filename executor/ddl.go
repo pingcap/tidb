@@ -54,7 +54,7 @@ func (e *DDLExec) toErr(err error) error {
 	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
-	schemaInfoErr := checker.Check(e.ctx.Txn().StartTS())
+	schemaInfoErr := checker.Check(e.ctx.Txn(true).StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
