@@ -37,7 +37,7 @@ func (dg *dataGen4Expr2PbTest) genColumn(tp byte, id int64) *Column {
 }
 
 func (s *testEvaluatorSuite) TestConstant2Pb(c *C) {
-	c.Skip("constant pb has changed")
+	c.Skip("constant dagpb has changed")
 	var constExprs []Expression
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)

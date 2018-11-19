@@ -134,7 +134,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, e
 	return true, nil
 }
 
-// composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
+// composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for dagpb decoder/encoder.
 func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
@@ -150,7 +150,7 @@ func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expressio
 	return expr
 }
 
-// ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
+// ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for dagpb decoder/encoder.
 func ComposeCNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
 }

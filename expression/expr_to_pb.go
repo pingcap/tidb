@@ -55,7 +55,7 @@ func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv
 			continue
 		}
 
-		// Merge multiple converted pb expression into a CNF.
+		// Merge multiple converted dagpb expression into a CNF.
 		pbCNF = &tipb.Expr{
 			Tp:        tipb.ExprType_ScalarFunc,
 			Sig:       tipb.ScalarFuncSig_LogicalAnd,
@@ -257,7 +257,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 }
 
-// GroupByItemToPB converts group by items to pb.
+// GroupByItemToPB converts group by items to dagpb.
 func GroupByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expression) *tipb.ByItem {
 	pc := PbConverter{client: client, sc: sc}
 	e := pc.ExprToPB(expr)
@@ -267,7 +267,7 @@ func GroupByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expres
 	return &tipb.ByItem{Expr: e}
 }
 
-// SortByItemToPB converts order by items to pb.
+// SortByItemToPB converts order by items to dagpb.
 func SortByItemToPB(sc *stmtctx.StatementContext, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
 	pc := PbConverter{client: client, sc: sc}
 	e := pc.ExprToPB(expr)

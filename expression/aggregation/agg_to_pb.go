@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// AggFuncToPBExpr converts aggregate function to pb.
+// AggFuncToPBExpr converts aggregate function to dagpb.
 func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
 	if aggFunc.HasDistinct {
 		return nil

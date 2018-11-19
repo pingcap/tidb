@@ -53,7 +53,7 @@ var (
 type PhysicalTableReader struct {
 	physicalSchemaProducer
 
-	// TablePlans flats the tablePlan to construct executor pb.
+	// TablePlans flats the tablePlan to construct executor dagpb.
 	TablePlans []PhysicalPlan
 	tablePlan  PhysicalPlan
 }
@@ -62,7 +62,7 @@ type PhysicalTableReader struct {
 type PhysicalIndexReader struct {
 	physicalSchemaProducer
 
-	// IndexPlans flats the indexPlan to construct executor pb.
+	// IndexPlans flats the indexPlan to construct executor dagpb.
 	IndexPlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 
@@ -74,9 +74,9 @@ type PhysicalIndexReader struct {
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
 
-	// IndexPlans flats the indexPlan to construct executor pb.
+	// IndexPlans flats the indexPlan to construct executor dagpb.
 	IndexPlans []PhysicalPlan
-	// TablePlans flats the tablePlan to construct executor pb.
+	// TablePlans flats the tablePlan to construct executor dagpb.
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan

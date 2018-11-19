@@ -868,27 +868,6 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	return colVal, nil
 }
 
-func GetColInfoDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVals []types.Datum) (
-	colVal types.Datum, err error) {
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		return colVal, errors.New("Miss column")
-	}
-	if col.State != model.StatePublic {
-		return colVal, nil
-	}
-	if defaultVals[col.Offset].IsNull() {
-		colVal, err = table.GetColOriginDefaultValue(ctx, col)
-		if err != nil {
-			return colVal, errors.Trace(err)
-		}
-		defaultVals[col.Offset] = colVal
-	} else {
-		colVal = defaultVals[col.Offset]
-	}
-
-	return colVal, nil
-}
-
 // AllocAutoID implements table.Table AllocAutoID interface.
 func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	rowID, err := t.Allocator(ctx).Alloc(t.tableID)

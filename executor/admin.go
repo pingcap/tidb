@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"github.com/pingcap/tidb/util/dagpb"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -128,7 +129,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq.StartTs = e.ctx.Txn().StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = dagpb.StatementContextToFlags(sc)
 	for i := range e.schema.Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
@@ -226,7 +227,7 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	dagReq.StartTs = txn.StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = dagpb.StatementContextToFlags(sc)
 	for i := range e.columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
@@ -655,7 +656,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 	dagReq.StartTs = txn.StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = dagpb.StatementContextToFlags(sc)
 	for i := range e.idxCols {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}

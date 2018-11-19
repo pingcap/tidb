@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/dagpb"
 	"math"
 	"sort"
 	"strings"
@@ -1426,7 +1427,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			StartTs:        math.MaxUint64,
-			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			Flags:          dagpb.StatementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			TimeZoneOffset: offset,
 		},
 		maxNumBuckets: maxNumBuckets,
@@ -1461,7 +1462,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			StartTs:        math.MaxUint64,
-			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
+			Flags:          dagpb.StatementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			TimeZoneOffset: offset,
 		},
 		maxNumBuckets: maxNumBuckets,
@@ -1529,7 +1530,7 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	dagReq.StartTs = b.getStartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
-	dagReq.Flags = statementContextToFlags(sc)
+	dagReq.Flags = dagpb.StatementContextToFlags(sc)
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
 	return dagReq, streaming, errors.Trace(err)
 }

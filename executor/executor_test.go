@@ -2467,7 +2467,7 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	tk.MustExec("insert into t values (3)")
 
 	// TODO: Those are not point get, but they should be high priority.
-	// cli.priority = pb.CommandPri_High
+	// cli.priority = dagpb.CommandPri_High
 	// tk.MustExec("delete from t where id = 2")
 	// tk.MustExec("update t set id = 2 where id = 1")
 
