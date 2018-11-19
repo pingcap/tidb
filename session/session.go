@@ -168,24 +168,26 @@ func (s *session) cleanRetryInfo() {
 
 	retryInfo := s.sessionVars.RetryInfo
 	defer retryInfo.Clean()
-	if len(retryInfo.DroppedPreparedStmtIDs) > 0 {
-		planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
-		var cacheKey kvcache.Key
+	if len(retryInfo.DroppedPreparedStmtIDs) == 0 {
+		return
+	}
+
+	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
+	var cacheKey kvcache.Key
+	if planCacheEnabled {
+		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
+		cacheKey = plannercore.NewPSTMTPlanCacheKey(
+			s.sessionVars, firstStmtID, s.sessionVars.PreparedStmts[firstStmtID].SchemaVersion,
+		)
+	}
+	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
-			firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
-			cacheKey = plannercore.NewPSTMTPlanCacheKey(
-				s.sessionVars, firstStmtID, s.sessionVars.PreparedStmts[firstStmtID].SchemaVersion,
-			)
-		}
-		for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
-			if planCacheEnabled {
-				if i > 0 {
-					plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, s.sessionVars.PreparedStmts[stmtID].SchemaVersion)
-				}
-				s.PreparedPlanCache().Delete(cacheKey)
+			if i > 0 {
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, s.sessionVars.PreparedStmts[stmtID].SchemaVersion)
 			}
-			delete(s.sessionVars.PreparedStmts, stmtID)
+			s.PreparedPlanCache().Delete(cacheKey)
 		}
+		delete(s.sessionVars.PreparedStmts, stmtID)
 	}
 }
 

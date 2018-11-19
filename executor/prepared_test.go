@@ -575,32 +575,29 @@ func (s *testSuite) TestPrepareDealloc(c *C) {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
 	}()
-	flags := []bool{true}
-	for _, flag := range flags {
-		plannercore.SetPreparedPlanCache(flag)
-		plannercore.PreparedPlanCacheCapacity = 3
+	plannercore.SetPreparedPlanCache(true)
+	plannercore.PreparedPlanCacheCapacity = 3
 
-		tk := testkit.NewTestKit(c, s.store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists prepare_test")
-		tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists prepare_test")
+	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
 
-		c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
-		tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
-		tk.MustExec("execute stmt1")
-		tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
-		tk.MustExec("execute stmt2")
-		tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
-		tk.MustExec("execute stmt3")
-		tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
-		tk.MustExec("execute stmt4")
-		c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 3)
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
+	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt1")
+	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt2")
+	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt3")
+	tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt4")
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 3)
 
-		tk.MustExec("deallocate prepare stmt1")
-		c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 3)
-		tk.MustExec("deallocate prepare stmt2")
-		tk.MustExec("deallocate prepare stmt3")
-		tk.MustExec("deallocate prepare stmt4")
-		c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
-	}
+	tk.MustExec("deallocate prepare stmt1")
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 3)
+	tk.MustExec("deallocate prepare stmt2")
+	tk.MustExec("deallocate prepare stmt3")
+	tk.MustExec("deallocate prepare stmt4")
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
 }
