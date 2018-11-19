@@ -96,6 +96,12 @@ func (s *Scanner) Next() error {
 				continue
 			}
 		}
+		current := s.cache[s.idx]
+		if len(s.endKey) > 0 && kv.Key(current.Key).Cmp(kv.Key(s.endKey)) >= 0 {
+			s.eof = true
+			s.Close()
+			return nil
+		}
 		if err := s.resolveCurrentLock(bo); err != nil {
 			s.Close()
 			return errors.Trace(err)

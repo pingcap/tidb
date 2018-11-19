@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"math"
 	"time"
 
 	"github.com/juju/errors"
@@ -304,7 +305,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	for {
 		startTime := time.Now()
 		handles = handles[:0]
-		err = iterateSnapshotRows(d.store, t, version, seekHandle,
+		err = iterateSnapshotRows(d.store, t, version, seekHandle, math.MaxInt64, true,
 			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 				handles = append(handles, h)
 				if len(handles) == defaultBatchCnt {
