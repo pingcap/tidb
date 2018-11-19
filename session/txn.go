@@ -53,9 +53,13 @@ func (st *TxnState) init() {
 	st.mutations = make(map[int64]*binlog.TableMutation)
 }
 
-// Valid overrides Transaction interface.
+// Valid implements the kv.Transaction interface.
 func (st *TxnState) Valid() bool {
 	return st.Transaction != nil && st.Transaction.Valid()
+}
+
+func (st *TxnState) pending() bool {
+	return st.Transaction == nil && st.txnFuture != nil
 }
 
 func (st *TxnState) validOrPending() bool {
