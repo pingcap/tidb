@@ -259,8 +259,11 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
-func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
-	defer close(chkCh)
+func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}, fetchInnerDone *sync.WaitGroup) {
+	defer func() {
+		close(chkCh)
+		fetchInnerDone.Done()
+	}()
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
@@ -550,16 +553,17 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	// innerResultCh transfer inner result chunk from inner fetch to build hash table.
 	innerResultCh := make(chan *chunk.Chunk, e.concurrency)
 	doneCh := make(chan struct{})
-	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
+	var fetchInnerDone sync.WaitGroup
+	fetchInnerDone.Add(1)
+	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh, &fetchInnerDone) }, nil)
 
 	if e.finished.Load().(bool) {
 		// wait fetchInnerRows goroutine exit.
-		for range innerResultCh {
-		}
+		fetchInnerDone.Wait()
 		return
 	}
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
-	err := e.buildHashTableForList(innerResultCh)
+	err := e.buildHashTableForList(innerResultCh, &fetchInnerDone)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
@@ -574,7 +578,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 // buildHashTableForList builds hash table from `list`.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) error {
+func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk, fetchInnerDone *sync.WaitGroup) error {
 	e.hashTable = mvmap.NewMVMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
@@ -591,8 +595,7 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) er
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
 			// wait fetchInnerRows goroutine exit.
-			for range innerResultCh {
-			}
+			fetchInnerDone.Wait()
 			return nil
 		}
 		numRows := chk.NumRows()
