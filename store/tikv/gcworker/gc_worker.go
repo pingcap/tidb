@@ -122,7 +122,7 @@ const (
 	gcEnableKey          = "tikv_gc_enable"
 	gcEnableValue        = "true"
 	gcDisableValue       = "false"
-	gcDefaultEnablevalue = true
+	gcDefaultEnableValue = true
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -546,15 +546,15 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 func (w *GCWorker) loadGCEnableStatus() (bool, error) {
 	str, err := w.loadValueFromSysTable(gcEnableKey)
 	if err != nil {
-		return gcDefaultEnablevalue, errors.Trace(err)
+		return gcDefaultEnableValue, errors.Trace(err)
 	}
 	if str == "" {
 		// Save default value for gc enable key. The default value is always true.
 		err = w.saveValueToSysTable(gcEnableKey, gcEnableValue)
 		if err != nil {
-			return gcDefaultEnablevalue, errors.Trace(err)
+			return gcDefaultEnableValue, errors.Trace(err)
 		}
-		return gcDefaultEnablevalue, nil
+		return gcDefaultEnableValue, nil
 	}
 	return strings.EqualFold(str, gcEnableValue), nil
 }
