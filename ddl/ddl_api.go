@@ -399,6 +399,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	err = checkColumnValueConstraint(col)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	err = checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -540,6 +544,25 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	// Primary key should not be null.
 	if mysql.HasPriKeyFlag(col.Flag) && hasNullFlag {
 		return ErrPrimaryCantHaveNull
+	}
+	return nil
+}
+
+func checkColumnValueConstraint(col *table.Column) error {
+	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
+		return nil
+	}
+	valueMap := make(map[string]string, len(col.Elems))
+	for i := range col.Elems {
+		val := strings.ToLower(col.Elems[i])
+		if _, ok := valueMap[val]; ok {
+			tpStr := "ENUM"
+			if col.Tp == mysql.TypeSet {
+				tpStr = "SET"
+			}
+			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, valueMap[val], tpStr)
+		}
+		valueMap[val] = col.Elems[i]
 	}
 	return nil
 }
