@@ -278,7 +278,7 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 		_, err1 := w.session.Execute(ctx, "ROLLBACK")
 		terror.Log(errors.Trace(err1))
 	}
-	return doGC, safePoint,errors.Trace(err)
+	return doGC, safePoint, errors.Trace(err)
 }
 
 func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
