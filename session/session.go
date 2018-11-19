@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -1203,7 +1204,9 @@ func createSession(store kv.Storage) (*session, error) {
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity)
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(
+			plannercore.PreparedPlanCacheCapacity, plannercore.PreparedPlanCacheMemoryGuardRatio,
+			config.GetGlobalConfig().MemQuotaQuery)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
@@ -1225,7 +1228,8 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionVars: variable.NewSessionVars(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity)
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
+			plannercore.PreparedPlanCacheMemoryGuardRatio, config.GetGlobalConfig().MemQuotaQuery)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)

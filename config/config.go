@@ -184,8 +184,9 @@ type TxnLocalLatches struct {
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
-	Enabled  bool `toml:"enabled" json:"enabled"`
-	Capacity uint `toml:"capacity" json:"capacity"`
+	Enabled          bool    `toml:"enabled" json:"enabled"`
+	Capacity         uint    `toml:"capacity" json:"capacity"`
+	MemoryGuardRatio float64 `toml:"memory-guard-ratio" json:"memory-guard-ratio"`
 }
 
 // OpenTracing is the opentracing section of the config.
@@ -306,8 +307,9 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:  false,
-		Capacity: 100,
+		Enabled:          false,
+		Capacity:         100,
+		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
 		Enable: false,

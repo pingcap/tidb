@@ -403,6 +403,7 @@ func setGlobalVars() {
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
 	if plannercore.PreparedPlanCacheEnabled() {
 		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = cfg.PreparedPlanCache.MemoryGuardRatio
 	}
 
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
