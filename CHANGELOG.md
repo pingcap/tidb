@@ -23,6 +23,9 @@ All notable changes to this project will be documented in this file. See also [R
 - Fix the escape issue of special characters in the `Show Create Table` statement [#8321](https://github.com/pingcap/tidb/pull/8321)
 - Fix the unexpected errors in the `UNION` statement in some cases [#8318](https://github.com/pingcap/tidb/pull/8318)
 - Fix the issue that canceling a DDL job causes no rollback of a schema in some cases [#8312](https://github.com/pingcap/tidb/pull/8312)
+- Change `tidb_max_chunk_size` to a global variable [#8333](https://github.com/pingcap/tidb/pull/8333)
+- Add an upper bound to the `Scan` command of ticlient, to avoid overbound scan [#8309](https://github.com/pingcap/tidb/pull/8309), [#8310](https://github.com/pingcap/tidb/pull/8310) 
+
 
 
 ## [2.0.8] - 2018-10-16
