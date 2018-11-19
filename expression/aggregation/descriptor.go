@@ -21,14 +21,14 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -84,13 +84,14 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 // final phase individually.
 // This function is only used when executing aggregate function parallelly.
 // ordinal indicates the column ordinal of the intermediate result.
-func (a *AggFuncDesc) Split(ordinal []int) (finalAggDesc *AggFuncDesc) {
+func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFuncDesc) {
+	partialAggDesc = a.Clone()
 	if a.Mode == CompleteMode {
-		a.Mode = Partial1Mode
+		partialAggDesc.Mode = Partial1Mode
 	} else if a.Mode == FinalMode {
-		a.Mode = Partial2Mode
+		partialAggDesc.Mode = Partial2Mode
 	} else {
-		return
+		panic("Error happened during AggFuncDesc.Split, the AggFunctionMode is not CompleteMode or FinalMode.")
 	}
 	finalAggDesc = &AggFuncDesc{
 		Name:        a.Name,
@@ -124,7 +125,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (finalAggDesc *AggFuncDesc) {
 			finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
 		}
 	}
-	return finalAggDesc
+	return
 }
 
 // String implements the fmt.Stringer interface.
@@ -334,8 +335,8 @@ func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 
 func (a *AggFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeVarString)
-	a.RetTp.Charset = charset.CharsetUTF8
-	a.RetTp.Collate = charset.CollationUTF8
+	a.RetTp.Charset, a.RetTp.Collate = charset.GetDefaultCharsetAndCollate()
+
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
 }

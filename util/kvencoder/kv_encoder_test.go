@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testKvEncoderSuite{})
@@ -87,7 +87,7 @@ func getExpectKvPairs(tkExpect *testkit.TestKit, sql string) []KvPair {
 	tkExpect.MustExec("begin")
 	tkExpect.MustExec(sql)
 	kvPairsExpect := make([]KvPair, 0)
-	kv.WalkMemBuffer(tkExpect.Se.Txn().GetMemBuffer(), func(k kv.Key, v []byte) error {
+	kv.WalkMemBuffer(tkExpect.Se.Txn(true).GetMemBuffer(), func(k kv.Key, v []byte) error {
 		kvPairsExpect = append(kvPairsExpect, KvPair{Key: k, Val: v})
 		return nil
 	})
@@ -434,6 +434,7 @@ func (s *testKvEncoderSuite) TestAllocatorRebase(c *C) {
 	alloc := NewAllocator()
 	var tableID int64 = 1
 	encoder, err := New("test", alloc)
+	c.Assert(err, IsNil)
 	err = alloc.Rebase(tableID, 100, false)
 	c.Assert(err, IsNil)
 	defer encoder.Close()

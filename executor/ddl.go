@@ -17,17 +17,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -54,7 +54,7 @@ func (e *DDLExec) toErr(err error) error {
 	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
-	schemaInfoErr := checker.Check(e.ctx.Txn().StartTS())
+	schemaInfoErr := checker.Check(e.ctx.Txn(true).StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
@@ -67,6 +67,11 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		return nil
 	}
 	e.done = true
+
+	// For each DDL, we should commit the previous transaction and create a new transaction.
+	if err = e.ctx.NewTxn(); err != nil {
+		return errors.Trace(err)
+	}
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {

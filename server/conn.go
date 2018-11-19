@@ -49,18 +49,18 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -821,7 +821,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 	}
 
-	txn := loadDataInfo.Ctx.Txn()
+	txn := loadDataInfo.Ctx.Txn(true)
 	loadDataInfo.Ctx.StmtCommit()
 	if err != nil {
 		if txn != nil && txn.Valid() {

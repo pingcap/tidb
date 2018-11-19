@@ -20,19 +20,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -210,7 +210,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn := h.mu.ctx.Txn()
+	txn := h.mu.ctx.Txn(true)
 	version := txn.StartTS()
 	var sql string
 	// If the count is less than 0, then we do not want to update the modify count and count.
@@ -281,7 +281,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 		err = finishTransaction(ctx, exec, err)
 	}()
 	var sql string
-	version := h.mu.ctx.Txn().StartTS()
+	version := h.mu.ctx.Txn(true).StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
 	_, err = exec.Execute(ctx, sql)
 	return
@@ -720,8 +720,9 @@ func (e *ErrorRate) merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
-	Count int64
-	Info  *model.ColumnInfo
+	Count    int64
+	Info     *model.ColumnInfo
+	isHandle bool
 	ErrorRate
 }
 
@@ -729,7 +730,7 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
-func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
+func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil
 	}
@@ -738,7 +739,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (f
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {
-		return c.totalRowCount() / (float64(c.NDV)), nil
+		return float64(modifyCount) / float64(c.NDV), nil
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
@@ -759,7 +760,7 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			// the point case.
 			if !rg.LowExclude && !rg.HighExclude {
 				var cnt float64
-				cnt, err = c.equalRowCount(sc, rg.LowVal[0])
+				cnt, err = c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -773,14 +774,14 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			cnt += float64(modifyCount) / outOfRangeBetweenRate
 		}
 		if rg.LowExclude {
-			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0])
+			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
 		}
 		if !rg.HighExclude {
-			highCnt, err := c.equalRowCount(sc, rg.HighVal[0])
+			highCnt, err := c.equalRowCount(sc, rg.HighVal[0], modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -809,10 +810,10 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
-func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {
+func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) float64 {
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return idx.totalRowCount() / (float64(idx.NDV))
+		return float64(modifyCount) / (float64(idx.NDV))
 	}
 	if idx.CMSketch != nil {
 		return float64(idx.CMSketch.QueryBytes(b))
@@ -834,7 +835,7 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if fullLen && bytes.Equal(lb, rb) {
 			if !indexRange.LowExclude && !indexRange.HighExclude {
-				totalCount += idx.equalRowCount(sc, lb)
+				totalCount += idx.equalRowCount(sc, lb, modifyCount)
 			}
 			continue
 		}

@@ -16,15 +16,15 @@ package expression
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -106,7 +106,7 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 			}
 			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, retType)
 			if err != nil {
-				return c.Value, err
+				return dt, err
 			}
 			c.Value.SetValue(val.GetValue())
 		}

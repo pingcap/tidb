@@ -18,18 +18,18 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -134,6 +134,24 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	tblInfo.ID = tblInfo.ID + 1
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
 
+}
+
+func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
+	store := testCreateStore(c, "test_invalid_ddl_job_type_error")
+	defer store.Close()
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	defer d.Stop()
+	ctx := testNewContext(d)
+
+	job := &model.Job{
+		SchemaID:   0,
+		TableID:    0,
+		Type:       model.ActionNone,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err.Error(), Equals, "[ddl:3]invalid ddl job type: none")
 }
 
 func (s *testDDLSuite) TestForeignKeyError(c *C) {
@@ -350,7 +368,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit(context.Background())
+	err = ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
@@ -371,8 +389,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			checkErr = errors.Trace(err)
 			return
 		}
-		checkCancelState(hookCtx.Txn(), job, test)
-		err = hookCtx.Txn().Commit(context.Background())
+		checkCancelState(hookCtx.Txn(true), job, test)
+		err = hookCtx.Txn(true).Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -400,7 +418,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	test = &tests[3]
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	c.Assert(ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(ctx.Txn(true).Commit(context.Background()), IsNil)
 
 	// for dropping index
 	idxName := []interface{}{model.NewCIStr("idx")}

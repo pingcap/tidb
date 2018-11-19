@@ -20,12 +20,12 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -69,7 +69,7 @@ func (*testSuite) TestT(c *C) {
 	id, err = alloc.Alloc(1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(2))
-	id, err = alloc.Alloc(0)
+	_, err = alloc.Alloc(0)
 	c.Assert(err, NotNil)
 	globalAutoId, err = alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)

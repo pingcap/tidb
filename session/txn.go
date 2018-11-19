@@ -14,6 +14,7 @@
 package session
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -30,7 +30,7 @@ import (
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
 // 1. It holds all statement related modification in the buffer before flush to the txn,
 // so if execute statement meets error, the txn won't be made dirty.
-// 2. It's a lazy transaction, that means it's a txnFuture befort StartTS() is really need.
+// 2. It's a lazy transaction, that means it's a txnFuture before StartTS() is really need.
 type TxnState struct {
 	// States of a TxnState should be one of the followings:
 	// Invalid: kv.Transaction == nil && txnFuture == nil
@@ -53,9 +53,13 @@ func (st *TxnState) init() {
 	st.mutations = make(map[int64]*binlog.TableMutation)
 }
 
-// Valid overrides Transaction interface.
+// Valid implements the kv.Transaction interface.
 func (st *TxnState) Valid() bool {
 	return st.Transaction != nil && st.Transaction.Valid()
+}
+
+func (st *TxnState) pending() bool {
+	return st.Transaction == nil && st.txnFuture != nil
 }
 
 func (st *TxnState) validOrPending() bool {
@@ -159,26 +163,26 @@ func (st *TxnState) Delete(k kv.Key) error {
 	return st.buf.Delete(k)
 }
 
-// Seek overrides the Transaction interface.
-func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.Seek(k)
+// Iter overrides the Transaction interface.
+func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.Seek(k)
+	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekReverse overrides the Transaction interface.
-func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.SeekReverse(k)
+// IterReverse overrides the Transaction interface.
+func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.SeekReverse(k)
+	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

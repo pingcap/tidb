@@ -17,16 +17,17 @@ import (
 	"math"
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
-	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/types/parser_driver"
 )
 
 // Preprocess resolves table names of the node, and checks some statements validation.
@@ -95,7 +96,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.checkContainDotColumn(x)
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.inCreateOrDropTable = false
-	case *ast.ParamMarkerExpr:
+	case *driver.ParamMarkerExpr:
 		if !p.inPrepare {
 			p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
 			return
@@ -134,14 +135,20 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, num int) (bool, error) {
 			return hasAutoIncrement, nil
 		}
 		for _, op := range colDef.Options[num+1:] {
-			if op.Tp == ast.ColumnOptionDefaultValue && !op.Expr.GetDatum().IsNull() {
-				return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
+			if op.Tp == ast.ColumnOptionDefaultValue {
+				if tmp, ok := op.Expr.(*driver.ValueExpr); ok {
+					if !tmp.Datum.IsNull() {
+						return hasAutoIncrement, errors.Errorf("Invalid default value for '%s'", colDef.Name.Name.O)
+					}
+				}
 			}
 		}
 	}
 	if colDef.Options[num].Tp == ast.ColumnOptionDefaultValue && len(colDef.Options) != num+1 {
-		if colDef.Options[num].Expr.GetDatum().IsNull() {
-			return hasAutoIncrement, nil
+		if tmp, ok := colDef.Options[num].Expr.(*driver.ValueExpr); ok {
+			if tmp.Datum.IsNull() {
+				return hasAutoIncrement, nil
+			}
 		}
 		for _, op := range colDef.Options[num+1:] {
 			if op.Tp == ast.ColumnOptionAutoIncrement {
@@ -607,6 +614,8 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 		if currentUser != nil {
 			node.User.Username = currentUser.Username
 			node.User.Hostname = currentUser.Hostname
+			node.User.AuthUsername = currentUser.AuthUsername
+			node.User.AuthHostname = currentUser.AuthHostname
 		}
 	}
 }
