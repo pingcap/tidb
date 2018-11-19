@@ -53,7 +53,7 @@ func (s testBufferStoreSuite) TestSaveTo(c *C) {
 	err := bs.SaveTo(mutator)
 	c.Check(err, IsNil)
 
-	iter, err := mutator.Seek(nil)
+	iter, err := mutator.Iter(nil, nil)
 	c.Check(err, IsNil)
 	for iter.Valid() {
 		cmp := bytes.Compare(iter.Key(), iter.Value())
