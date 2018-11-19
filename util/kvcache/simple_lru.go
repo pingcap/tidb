@@ -90,7 +90,7 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	}
 }
 
-// Delete deletes the key and its from the LRU Cache.
+// Delete deletes the key-value pair from the LRU Cache.
 func (l *SimpleLRUCache) Delete(key Key) {
 	k := string(key.Hash())
 	element := l.elements[k]
