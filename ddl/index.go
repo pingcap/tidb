@@ -1071,8 +1071,17 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, indexInfo *model.
 	}()
 
 	for {
+		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		// For dynamic adjust add index worker number.
 		workerCnt = variable.GetDDLReorgWorkerCounter()
+		// If only have 1 range, we can only start 1 worker.
+		if len(kvRanges) < int(workerCnt) {
+			workerCnt = int32(len(kvRanges))
+		}
 		for i := len(idxWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
 			idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
@@ -1084,11 +1093,6 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, indexInfo *model.
 			workers := idxWorkers[workerCnt:]
 			idxWorkers = idxWorkers[:workerCnt]
 			closeAddIndexWorkers(workers)
-		}
-
-		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
-		if err != nil {
-			return errors.Trace(err)
 		}
 
 		log.Infof("[ddl-reorg] start to reorg index of %v region ranges, handle range:[%v, %v).", len(kvRanges), startHandle, endHandle)
