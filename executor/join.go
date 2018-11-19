@@ -54,6 +54,7 @@ type HashJoinExec struct {
 	innerFinished   chan error
 	hashJoinBuffers []*hashJoinBuffer
 	workerWaitGroup sync.WaitGroup // workerWaitGroup is for sync multiple join workers.
+	fetchInnerDone  sync.WaitGroup
 	finished        atomic.Value
 	closeCh         chan struct{} // closeCh add a lock for closing executor.
 	joinType        plannercore.JoinType
@@ -134,6 +135,7 @@ func (e *HashJoinExec) Close() error {
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
 	}
+	e.fetchInnerDone.Wait()
 	e.memTracker.Detach()
 	e.memTracker = nil
 
@@ -288,9 +290,9 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 	}
 }
 
-func (e *HashJoinExec) finishFetchInnerRows(chkCh chan<- *chunk.Chunk, fetchInnerDone *sync.WaitGroup) {
+func (e *HashJoinExec) finishFetchInnerRows(chkCh chan<- *chunk.Chunk) {
 	close(chkCh)
-	fetchInnerDone.Done()
+	e.fetchInnerDone.Done()
 }
 
 // evalRadixBitNum evaluates the radix bit numbers.
@@ -554,20 +556,17 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	// innerResultCh transfer inner result chunk from inner fetch to build hash table.
 	innerResultCh := make(chan *chunk.Chunk, e.concurrency)
 	doneCh := make(chan struct{})
-	var fetchInnerDone sync.WaitGroup
-	fetchInnerDone.Add(1)
+	e.fetchInnerDone.Add(1)
 	go util.WithRecovery(
 		func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) },
-		func(r interface{}) { e.finishFetchInnerRows(innerResultCh, &fetchInnerDone) },
+		func(r interface{}) { e.finishFetchInnerRows(innerResultCh) },
 	)
 
 	if e.finished.Load().(bool) {
-		// wait fetchInnerRows goroutine exit.
-		fetchInnerDone.Wait()
 		return
 	}
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
-	err := e.buildHashTableForList(innerResultCh, &fetchInnerDone)
+	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
@@ -582,7 +581,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 // buildHashTableForList builds hash table from `list`.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk, fetchInnerDone *sync.WaitGroup) error {
+func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) error {
 	e.hashTable = mvmap.NewMVMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
@@ -598,8 +597,6 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk, fe
 	chkIdx := uint32(0)
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
-			// wait fetchInnerRows goroutine exit.
-			fetchInnerDone.Wait()
 			return nil
 		}
 		numRows := chk.NumRows()
