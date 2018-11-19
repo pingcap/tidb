@@ -259,11 +259,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
-func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}, fetchInnerDone *sync.WaitGroup) {
-	defer func() {
-		close(chkCh)
-		fetchInnerDone.Done()
-	}()
+func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
@@ -290,6 +286,11 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 			e.innerResult.Add(chk)
 		}
 	}
+}
+
+func (e *HashJoinExec) finishFetchInnerRows(chkCh chan<- *chunk.Chunk, fetchInnerDone *sync.WaitGroup) {
+	close(chkCh)
+	fetchInnerDone.Done()
 }
 
 // evalRadixBitNum evaluates the radix bit numbers.
@@ -555,7 +556,10 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	doneCh := make(chan struct{})
 	var fetchInnerDone sync.WaitGroup
 	fetchInnerDone.Add(1)
-	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh, &fetchInnerDone) }, nil)
+	go util.WithRecovery(
+		func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) },
+		func(r interface{}) { e.finishFetchInnerRows(innerResultCh, &fetchInnerDone) },
+	)
 
 	if e.finished.Load().(bool) {
 		// wait fetchInnerRows goroutine exit.
