@@ -15,11 +15,11 @@ package tikv
 
 import (
 	"bytes"
+	"github.com/pingcap/pd/client"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -299,6 +299,43 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 			values = append(values, pair.Value)
 		}
 		startKey = loc.EndKey
+		if len(startKey) == 0 {
+			break
+		}
+	}
+	return
+}
+
+// Reverse scan queries continuous kv pairs, starts from startKey, up to limit pairs.
+func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
+	start := time.Now()
+	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_scan").Observe(time.Since(start).Seconds()) }()
+
+	if limit > MaxRawKVScanLimit {
+		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
+	}
+
+	for len(keys) < limit {
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdRawScan,
+			RawScan: &kvrpcpb.RawScanRequest{
+				StartKey: startKey,
+				Limit:    uint32(limit - len(keys)),
+			},
+		}
+		resp, loc, err := c.sendReq(startKey, req)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		cmdResp := resp.RawScan
+		if cmdResp == nil {
+			return nil, nil, errors.Trace(ErrBodyMissing)
+		}
+		for _, pair := range cmdResp.Kvs {
+			keys = append(keys, pair.Key)
+			values = append(values, pair.Value)
+		}
+		startKey = loc.StartKey // fix me
 		if len(startKey) == 0 {
 			break
 		}

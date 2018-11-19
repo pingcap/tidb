@@ -979,6 +979,13 @@ func (mvcc *MVCCLevelDB) RawScan(startKey, endKey []byte, limit int) []Pair {
 	return pairs
 }
 
+// RawReverseScan implements the RawKV interface.
+func (mvcc *MVCCLevelDB) RawReverseScan(startKey, endKey []byte, limit int) []Pair {
+	var pairs []Pair
+	// fix me
+	return pairs
+}
+
 // RawDeleteRange implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawDeleteRange(startKey, endKey []byte) {
 	terror.Log(mvcc.doRawDeleteRange(startKey, endKey))

@@ -112,6 +112,16 @@ func (s *testRawKVSuite) mustScan(c *C, startKey string, limit int, expect ...st
 	}
 }
 
+func (s *testRawKVSuite) mustReverseScan(c *C, startKey string, limit int, expect ...string) {
+	keys, values, err := s.client.ReverseScan([]byte(startKey), limit)
+	c.Assert(err, IsNil)
+	c.Assert(len(keys)*2, Equals, len(expect))
+	for i := range keys {
+		c.Assert(string(keys[i]), Equals, expect[i*2])
+		c.Assert(string(values[i]), Equals, expect[i*2+1])
+	}
+}
+
 func (s *testRawKVSuite) mustDeleteRange(c *C, startKey, endKey []byte, expected map[string]string) {
 	err := s.client.DeleteRange(startKey, endKey)
 	c.Assert(err, IsNil)
@@ -203,6 +213,31 @@ func (s *testRawKVSuite) TestScan(c *C) {
 		s.mustScan(c, "", 10, "k1", "v1", "k3", "v3", "k5", "v5", "k7", "v7")
 		s.mustScan(c, "k2", 2, "k3", "v3", "k5", "v5")
 		s.mustScan(c, "k2", 3, "k3", "v3", "k5", "v5", "k7", "v7")
+	}
+
+	check()
+
+	err := s.split(c, "k", "k2")
+	c.Assert(err, IsNil)
+	check()
+
+	err = s.split(c, "k2", "k5")
+	c.Assert(err, IsNil)
+	check()
+}
+
+func (s *testRawKVSuite) TestReverseScan(c *C) {
+	s.mustPut(c, []byte("k1"), []byte("v1"))
+	s.mustPut(c, []byte("k3"), []byte("v3"))
+	s.mustPut(c, []byte("k5"), []byte("v5"))
+	s.mustPut(c, []byte("k7"), []byte("v7"))
+
+	check := func() {
+		s.mustReverseScan(c, "z", 1, "k7", "v7")
+		s.mustReverseScan(c, "z", 2, "k7", "v7", "k5", "v5")
+		s.mustReverseScan(c, "z", 10, "k7", "v7", "k5", "v5", "k3", "v3", "k1", "v1")
+		s.mustReverseScan(c, "k6", 2, "k5", "v5", "k3", "v3")
+		s.mustReverseScan(c, "k6", 3, "k5", "v5", "k3", "v3", "k1", "v1")
 	}
 
 	check()
