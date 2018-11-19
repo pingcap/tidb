@@ -16,7 +16,7 @@ package kv
 import (
 	"bytes"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
@@ -127,18 +127,18 @@ func (lmb *lazyMemBuffer) Delete(k Key) error {
 	return lmb.mb.Delete(k)
 }
 
-func (lmb *lazyMemBuffer) Seek(k Key) (Iterator, error) {
+func (lmb *lazyMemBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
 	if lmb.mb == nil {
 		return invalidIterator{}, nil
 	}
-	return lmb.mb.Seek(k)
+	return lmb.mb.Iter(k, upperBound)
 }
 
-func (lmb *lazyMemBuffer) SeekReverse(k Key) (Iterator, error) {
+func (lmb *lazyMemBuffer) IterReverse(k Key) (Iterator, error) {
 	if lmb.mb == nil {
 		return invalidIterator{}, nil
 	}
-	return lmb.mb.SeekReverse(k)
+	return lmb.mb.IterReverse(k)
 }
 
 func (lmb *lazyMemBuffer) Size() int {

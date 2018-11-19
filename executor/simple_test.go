@@ -15,14 +15,14 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
 )
@@ -181,7 +181,6 @@ func (s *testSuite) TestUser(c *C) {
 		"localhost test testDB Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
 		"localhost test testDB1 Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
 		"% dddb_% dduser Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
-		"% test test Y N N N N N N N N N N N N N N N N N N",
 		"localhost test testDBRevoke N N N N N N N N N N N N N N N N N N N",
 	))
 

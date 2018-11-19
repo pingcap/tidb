@@ -24,18 +24,18 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
-	"github.com/pkg/errors"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -65,7 +65,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 		dbInfo.Charset = charsetInfo.Chs
 		dbInfo.Collate = charsetInfo.Col
 	} else {
-		dbInfo.Charset, dbInfo.Collate = getDefaultCharsetAndCollate()
+		dbInfo.Charset, dbInfo.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 
 	job := &model.Job{
@@ -116,13 +116,6 @@ func checkTooLongIndex(index model.CIStr) error {
 		return ErrTooLongIdent.GenWithStackByArgs(index)
 	}
 	return nil
-}
-
-func getDefaultCharsetAndCollate() (string, string) {
-	// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
-	// TODO: Change TableOption parser to parse collate.
-	// This is a tmp solution.
-	return "utf8", "utf8_bin"
 }
 
 func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constraint) {
@@ -204,7 +197,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
-			tp.Charset, tp.Collate = getDefaultCharsetAndCollate()
+			tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
 		default:
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
@@ -406,6 +399,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	err = checkColumnValueConstraint(col)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	err = checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -547,6 +544,25 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	// Primary key should not be null.
 	if mysql.HasPriKeyFlag(col.Flag) && hasNullFlag {
 		return ErrPrimaryCantHaveNull
+	}
+	return nil
+}
+
+func checkColumnValueConstraint(col *table.Column) error {
+	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
+		return nil
+	}
+	valueMap := make(map[string]string, len(col.Elems))
+	for i := range col.Elems {
+		val := strings.ToLower(col.Elems[i])
+		if _, ok := valueMap[val]; ok {
+			tpStr := "ENUM"
+			if col.Tp == mysql.TypeSet {
+				tpStr = "SET"
+			}
+			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, valueMap[val], tpStr)
+		}
+		valueMap[val] = col.Elems[i]
 	}
 	return nil
 }
@@ -1193,11 +1209,15 @@ func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Id
 	return schema, t, nil
 }
 
-func checkColumnConstraint(constraints []*ast.ColumnOption) error {
-	for _, constraint := range constraints {
+func checkColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
+	for _, constraint := range col.Options {
 		switch constraint.Tp {
-		case ast.ColumnOptionAutoIncrement, ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return errUnsupportedAddColumn.GenWithStack("unsupported add column constraint - %v", constraint.Tp)
+		case ast.ColumnOptionAutoIncrement:
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint AUTO_INCREMENT when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionPrimaryKey:
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint PRIMARY KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionUniqKey:
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint UNIQUE KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
 		}
 	}
 
@@ -1208,7 +1228,7 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	// Check whether the added column constraints are supported.
-	err := checkColumnConstraint(specNewColumn.Options)
+	err := checkColumnConstraint(specNewColumn, ti)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1987,13 +2007,16 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
+func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	var fkInfo model.FKInfo
 	fkInfo.Name = fkName
 	fkInfo.RefTable = refer.Table.Name
 
 	fkInfo.Cols = make([]model.CIStr, len(keys))
 	for i, key := range keys {
+		if table.FindCol(cols, key.Column.Name.O) == nil {
+			return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
+		}
 		fkInfo.Cols[i] = key.Column.Name
 	}
 
@@ -2021,7 +2044,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	fkInfo, err := buildFKInfo(fkName, keys, refer)
+	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}
