@@ -259,10 +259,10 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 func (w *GCWorker) prepare() (bool, uint64, error) {
 	// Add a transaction here is to prevent following situations:
 	// 1. GC check gcEnable is true, continue to do GC
-	// 2. User set gcEnable to false
-	// 3. User get `tikv_gc_safe_point` value is t1, then user think data after time t1 won't be clean by GC.
-	// 4. GC update `tikv_gc_safe_point` value to t2, continue do gc in this round.
-	// Then the data record that has been dropped between time t1 and t2, will be cleaned by GC, but user think data after t1 won't be clean by GC.
+	// 2. The user sets gcEnable to false
+	// 3. The user gets `tikv_gc_safe_point` value is t1, then the user thinks the data after time t1 won't be clean by GC.
+	// 4. GC update `tikv_gc_safe_point` value to t2, continue do GC in this round.
+	// Then the data record that has been dropped between time t1 and t2, will be cleaned by GC, but the user thinks the data after t1 won't be clean by GC.
 	ctx := context.Background()
 	_, err := w.session.Execute(ctx, "BEGIN")
 	if err != nil {
@@ -328,7 +328,19 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 }
 
 func (w *GCWorker) checkGCEnable() (bool, error) {
-	return w.loadGCEnableStatus()
+	str, err := w.loadValueFromSysTable(gcEnableKey)
+	if err != nil {
+		return gcDefaultEnableValue, errors.Trace(err)
+	}
+	if str == "" {
+		// Save default value for gc enable key. The default value is always true.
+		err = w.saveValueToSysTable(gcEnableKey, gcEnableValue)
+		if err != nil {
+			return gcDefaultEnableValue, errors.Trace(err)
+		}
+		return gcDefaultEnableValue, nil
+	}
+	return strings.EqualFold(str, gcEnableValue), nil
 }
 
 func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
@@ -541,22 +553,6 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	}
 
 	return jobConcurrency, nil
-}
-
-func (w *GCWorker) loadGCEnableStatus() (bool, error) {
-	str, err := w.loadValueFromSysTable(gcEnableKey)
-	if err != nil {
-		return gcDefaultEnableValue, errors.Trace(err)
-	}
-	if str == "" {
-		// Save default value for gc enable key. The default value is always true.
-		err = w.saveValueToSysTable(gcEnableKey, gcEnableValue)
-		if err != nil {
-			return gcDefaultEnableValue, errors.Trace(err)
-		}
-		return gcDefaultEnableValue, nil
-	}
-	return strings.EqualFold(str, gcEnableValue), nil
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
