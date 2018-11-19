@@ -58,6 +58,10 @@ func (ts *testDMLSuite) TestDMLVisitorCover(c *C) {
 		{&SelectStmt{}, 0, 0},
 		{&FieldList{}, 0, 0},
 		{&UnionSelectList{}, 0, 0},
+		{&WindowSpec{}, 0, 0},
+		{&PartitionByClause{}, 0, 0},
+		{&FrameClause{}, 0, 0},
+		{&FrameBound{}, 0, 0},
 	}
 
 	for _, v := range stmts {
