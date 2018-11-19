@@ -40,7 +40,7 @@ func (mr MutRow) Len() int {
 
 // MutRowFromValues creates a MutRow from a interface slice.
 func MutRowFromValues(vals ...interface{}) MutRow {
-	c := &Chunk{}
+	c := &Chunk{columns: make([]*column, 0, len(vals))}
 	for _, val := range vals {
 		col := makeMutRowColumn(val)
 		c.columns = append(c.columns, col)
@@ -50,7 +50,7 @@ func MutRowFromValues(vals ...interface{}) MutRow {
 
 // MutRowFromDatums creates a MutRow from a datum slice.
 func MutRowFromDatums(datums []types.Datum) MutRow {
-	c := &Chunk{}
+	c := &Chunk{columns: make([]*column, 0, len(datums))}
 	for _, d := range datums {
 		col := makeMutRowColumn(d.GetValue())
 		c.columns = append(c.columns, col)
@@ -60,7 +60,7 @@ func MutRowFromDatums(datums []types.Datum) MutRow {
 
 // MutRowFromTypes creates a MutRow from a FieldType slice, each column is initialized to zero value.
 func MutRowFromTypes(types []*types.FieldType) MutRow {
-	c := &Chunk{}
+	c := &Chunk{columns: make([]*column, 0, len(types))}
 	for _, tp := range types {
 		col := makeMutRowColumn(zeroValForType(tp))
 		c.columns = append(c.columns, col)
