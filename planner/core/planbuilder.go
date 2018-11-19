@@ -1473,19 +1473,28 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok {
-		return nil, errors.New("trace only supports select query")
+	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok && trace.Format == "row" {
+		return nil, errors.New("trace only supports select query when format is row")
 	}
 
-	p := &Trace{StmtNode: trace.Stmt}
+	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
 
-	retFields := []string{"operation", "duration", "spanID"}
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-	schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
-
-	schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
-	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
-	p.SetSchema(schema)
+	switch trace.Format {
+	case "row":
+		retFields := []string{"operation", "duration", "spanID"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+	case "json":
+		retFields := []string{"json"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+	default:
+		return nil, errors.New("trace format should be one of 'row' or 'json'")
+	}
 	return p, nil
 }
 
