@@ -521,7 +521,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
-		batchCnt:    DefaultTaskHandleCnt,
+		batchCnt:    int(variable.GetDDLReorgBatchSize()),
 		sessCtx:     sessCtx,
 		taskCh:      make(chan *reorgIndexTask, 1),
 		resultCh:    make(chan *addIndexResult, 1),
@@ -864,6 +864,8 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		//	continue
 		//}
 
+		// Dynamic change batch size.
+		w.batchCnt = int(variable.GetDDLReorgBatchSize())
 		result := w.handleBackfillTask(d, task)
 		w.resultCh <- result
 	}
