@@ -17,14 +17,14 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
@@ -55,7 +55,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	err := r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
-	datums := ast.RowToDatums(chk.GetRow(0), r.Fields())
+	datums := statistics.RowToDatums(chk.GetRow(0), r.Fields())
 	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
@@ -91,7 +91,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	chk = r.NewChunk()
 	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
-	datums = ast.RowToDatums(chk.GetRow(0), r.Fields())
+	datums = statistics.RowToDatums(chk.GetRow(0), r.Fields())
 	match(c, datums, 3)
 	mustExecSQL(c, se, "drop table if exists t")
 	se.Close()
@@ -159,7 +159,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
-	datums := ast.RowToDatums(row, r.Fields())
+	datums := statistics.RowToDatums(row, r.Fields())
 	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	c.Assert(r.Close(), IsNil)
 
@@ -257,6 +257,33 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
+}
+
+func (s *testBootstrapSuite) TestANSISQLMode(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "USE mysql;")
+	mustExecSQL(c, se, `set @@global.sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,ANSI"`)
+	mustExecSQL(c, se, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
+	delete(storeBootstrapped, store.UUID())
+	se.Close()
+
+	// Do some clean up, BootstrapSession will not create a new domain otherwise.
+	dom.Close()
+	domap.Delete(store)
+
+	// Set ANSI sql_mode and bootstrap again, to cover a bugfix.
+	// Once we have a SQL like that:
+	// select variable_value from mysql.tidb where variable_name = "system_tz"
+	// it fails to execute in the ANSI sql_mode, and makes TiDB cluster fail to bootstrap.
+	dom1, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom1.Close()
+	se = newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "select @@global.sql_mode")
+	se.Close()
 }
 
 func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {

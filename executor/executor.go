@@ -21,27 +21,27 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -55,6 +55,7 @@ var (
 	_ Executor = &ProjectionExec{}
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
+	_ Executor = &ShowNextRowIDExec{}
 	_ Executor = &ShowDDLExec{}
 	_ Executor = &ShowDDLJobsExec{}
 	_ Executor = &ShowDDLJobQueriesExec{}
@@ -200,6 +201,43 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
+// ShowNextRowIDExec represents a show the next row ID executor.
+type ShowNextRowIDExec struct {
+	baseExecutor
+	tblName *ast.TableName
+	done    bool
+}
+
+// Next implements the Executor Next interface.
+func (e *ShowNextRowIDExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+	is := domain.GetDomain(e.ctx).InfoSchema()
+	tbl, err := is.TableByName(e.tblName.Schema, e.tblName.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	colName := model.ExtraHandleName
+	for _, col := range tbl.Meta().Columns {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			colName = col.Name
+			break
+		}
+	}
+	nextGlobalID, err := tbl.Allocator(e.ctx).NextGlobalAutoID(tbl.Meta().ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	chk.AppendString(0, e.tblName.Schema.O)
+	chk.AppendString(1, e.tblName.Name.O)
+	chk.AppendString(2, colName.O)
+	chk.AppendInt64(3, nextGlobalID)
+	e.done = true
+	return nil
+}
+
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
 	baseExecutor
@@ -259,11 +297,11 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(), admin.DefNumHistoryJobs)
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true), admin.DefNumHistoryJobs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -300,14 +338,14 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(), int(e.jobNumber))
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true), int(e.jobNumber))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -372,7 +410,7 @@ type CheckTableExec struct {
 	done   bool
 	is     infoschema.InfoSchema
 
-	genExprs map[string]expression.Expression
+	genExprs map[model.TableColumnID]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -427,7 +465,7 @@ func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) err
 
 func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
 	for _, idx := range tbl.Indices() {
-		txn := e.ctx.Txn()
+		txn := e.ctx.Txn(true)
 		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.genExprs)
 		if err != nil {
 			return errors.Trace(err)
@@ -590,7 +628,7 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
-	txn := e.ctx.Txn()
+	txn := e.ctx.Txn(true)
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
@@ -697,10 +735,6 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plannercore.EvalSubquery = func(p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
-		err = sctx.ActivePendingTxn()
-		if err != nil {
-			return rows, errors.Trace(err)
-		}
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
@@ -1173,6 +1207,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = vars.Location()
 	sc.MemTracker = memory.NewTracker(s.Text(), vars.MemQuotaQuery)
+	sc.NowTs = time.Time{}
+	sc.SysTs = time.Time{}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})

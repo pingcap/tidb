@@ -13,9 +13,9 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -50,7 +50,7 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 		if len(expression.ExtractColumns(f.Args[0])) > 0 {
 			// If it can be NULL, we need to filter NULL out first.
 			if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
-				sel := LogicalSelection{}.init(ctx)
+				sel := LogicalSelection{}.Init(ctx)
 				isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 				notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 				sel.Conditions = []expression.Expression{notNullFunc}
@@ -62,14 +62,14 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 			// For max function, the sort order should be desc.
 			desc := f.Name == ast.AggFuncMax
 			// Compose Sort operator.
-			sort := LogicalSort{}.init(ctx)
+			sort := LogicalSort{}.Init(ctx)
 			sort.ByItems = append(sort.ByItems, &ByItems{f.Args[0], desc})
 			sort.SetChildren(child)
 			child = sort
 		}
 
 		// Compose Limit operator.
-		li := LogicalLimit{Count: 1}.init(ctx)
+		li := LogicalLimit{Count: 1}.Init(ctx)
 		li.SetChildren(child)
 
 		// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.

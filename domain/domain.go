@@ -25,22 +25,22 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -533,6 +533,11 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 }
 
+// ResetHandle resets the domain's infoschema handle. It is used for testing.
+func (do *Domain) ResetHandle(store kv.Storage) {
+	do.infoHandle = infoschema.NewHandle(store)
+}
+
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	if ebd, ok := do.store.(EtcdBackend); ok {
@@ -873,3 +878,8 @@ var (
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
 	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged, "Information schema is changed.")
 )
+
+func init() {
+	// Map error codes to mysql error codes.
+	terror.ErrClassToMySQLCodes[terror.ClassDomain] = make(map[terror.ErrCode]uint16)
+}
