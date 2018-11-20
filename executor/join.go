@@ -54,7 +54,6 @@ type HashJoinExec struct {
 	innerFinished   chan error
 	hashJoinBuffers []*hashJoinBuffer
 	workerWaitGroup sync.WaitGroup // workerWaitGroup is for sync multiple join workers.
-	fetchInnerDone  sync.WaitGroup
 	finished        atomic.Value
 	closeCh         chan struct{} // closeCh add a lock for closing executor.
 	joinType        plannercore.JoinType
@@ -135,7 +134,6 @@ func (e *HashJoinExec) Close() error {
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
 	}
-	e.fetchInnerDone.Wait()
 	e.memTracker.Detach()
 	e.memTracker = nil
 
@@ -262,10 +260,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
-	defer func() {
-		close(chkCh)
-		e.fetchInnerDone.Done()
-	}()
+	defer close(chkCh)
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
@@ -555,7 +550,6 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	// innerResultCh transfer inner result chunk from inner fetch to build hash table.
 	innerResultCh := make(chan *chunk.Chunk, e.concurrency)
 	doneCh := make(chan struct{})
-	e.fetchInnerDone.Add(1)
 	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
 	if e.finished.Load().(bool) {
