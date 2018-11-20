@@ -2,7 +2,6 @@
 FROM golang:1.11.2-alpine as builder
 
 RUN apk add --no-cache \
-    ca-certificates \
     wget \
     make \
     git
@@ -20,7 +19,6 @@ RUN make
 FROM scratch
 
 COPY --from=builder /go/src/github.com/pingcap/tidb/bin/tidb-server /tidb-server
-COPY --from=builder /etc/ssl/certs /etc/ssl/certs
 COPY --from=builder /usr/local/bin/dumb-init /usr/local/bin/dumb-init
 
 
