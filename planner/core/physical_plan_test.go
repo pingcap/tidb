@@ -1329,7 +1329,7 @@ func (s *testPlanSuite) TestDoSubquery(c *C) {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := planner.Optimize(se, stmt, s.is)
+		p, err := core.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
