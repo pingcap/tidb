@@ -486,7 +486,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
+			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -497,7 +497,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 				return
 			}
 
-			checkErr = hookCtx.Txn().Commit(context.Background())
+			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
