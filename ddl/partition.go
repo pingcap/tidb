@@ -58,6 +58,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	pi := &model.PartitionInfo{
 		Type:   s.Partition.Tp,
 		Enable: enable,
+		Num:    s.Partition.Num,
 	}
 	if s.Partition.Expr != nil {
 		buf := new(bytes.Buffer)
@@ -69,11 +70,38 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 			pi.Columns = append(pi.Columns, cn.Name)
 		}
 	}
-	for _, def := range s.Partition.Definitions {
-		// TODO: generate multiple global ID for paritions, reduce the times of obtaining the global ID from the storage.
+
+	// TODO: generate multiple global ID for paritions, reduce the times of obtaining the global ID from the storage.
+	if s.Partition.Tp == model.PartitionTypeRange {
+		if err := buildRangePartitionDefinitions(ctx, d, s, pi); err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else if s.Partition.Tp == model.PartitionTypeHash {
+		if err := buildHashPartitionDefinitions(ctx, d, s, pi); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return pi, nil
+}
+
+func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	defs := make([]model.PartitionDefinition, pi.Num)
+	for i := 0; i < len(defs); i++ {
 		pid, err := d.genGlobalID()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
+		}
+		defs[i].ID = pid
+	}
+	pi.Definitions = defs
+	return nil
+}
+
+func buildRangePartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+	for _, def := range s.Partition.Definitions {
+		pid, err := d.genGlobalID()
+		if err != nil {
+			return errors.Trace(err)
 		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
@@ -81,21 +109,19 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 			Comment: def.Comment,
 		}
 
-		if s.Partition.Tp == model.PartitionTypeRange {
-			if s.Partition.ColumnNames == nil && len(def.LessThan) != 1 {
-				return nil, ErrTooManyValues.GenWithStackByArgs(s.Partition.Tp.String())
-			}
-			buf := new(bytes.Buffer)
-			// Range columns partitions support multi-column partitions.
-			for _, expr := range def.LessThan {
-				expr.Format(buf)
-				piDef.LessThan = append(piDef.LessThan, buf.String())
-				buf.Reset()
-			}
-			pi.Definitions = append(pi.Definitions, piDef)
+		if s.Partition.ColumnNames == nil && len(def.LessThan) != 1 {
+			return ErrTooManyValues.GenWithStackByArgs(s.Partition.Tp.String())
 		}
+		buf := new(bytes.Buffer)
+		// Range columns partitions support multi-column partitions.
+		for _, expr := range def.LessThan {
+			expr.Format(buf)
+			piDef.LessThan = append(piDef.LessThan, buf.String())
+			buf.Reset()
+		}
+		pi.Definitions = append(pi.Definitions, piDef)
 	}
-	return pi, nil
+	return nil
 }
 
 func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) error {
@@ -339,8 +365,8 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-func checkAddPartitionTooManyPartitions(piDefs int) error {
-	if piDefs > PartitionCountLimit {
+func checkAddPartitionTooManyPartitions(piDefs uint64) error {
+	if piDefs > uint64(PartitionCountLimit) {
 		return ErrTooManyPartitions
 	}
 	return nil
