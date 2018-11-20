@@ -650,6 +650,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	if resp.Cop != nil {
 		detail = resp.Cop.ExecDetails
 	} else if resp.CopStream != nil && resp.CopStream.Response != nil {
+		// streaming request returns io.EOF, so the first resp.CopStream.Response maybe nil.
 		detail = resp.CopStream.ExecDetails
 	}
 
