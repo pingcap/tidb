@@ -1082,6 +1082,7 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, indexInfo *model.
 		if len(kvRanges) < int(workerCnt) {
 			workerCnt = int32(len(kvRanges))
 		}
+		// Enlarge the worker size.
 		for i := len(idxWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
 			idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
@@ -1089,6 +1090,7 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, indexInfo *model.
 			idxWorkers = append(idxWorkers, idxWorker)
 			go idxWorkers[i].run(reorgInfo.d)
 		}
+		// Shrink the worker size.
 		if len(idxWorkers) > int(workerCnt) {
 			workers := idxWorkers[workerCnt:]
 			idxWorkers = idxWorkers[:workerCnt]
