@@ -559,7 +559,7 @@ func (s *testSuite) TestAdminShowNextID(c *C) {
 	r.Check(testkit.Rows("test1 tt id 41"))
 }
 
-func (s *testSuite) TestAdminCheckTableSnapshot(c *C) {
+func (s *testSuite) TestAdminCheckWithSnapshot(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_t_s")

@@ -35,7 +35,9 @@ import (
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
 	ExecRestrictedSQL(ctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
-	// ExecRestrictedSQLWithSnapshot run sql statement in ctx with some restriction and set snapshot if ctx has snapshot.
+	// ExecRestrictedSQLWithSnapshot run sql statement in ctx with some restriction and with snapshot.
+	// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
+	// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
 	ExecRestrictedSQLWithSnapshot(ctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
 }
 

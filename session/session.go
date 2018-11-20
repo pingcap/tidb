@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -568,6 +569,10 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 	return execRestrictedSQL(ctx, se, sql)
 }
 
+// ExecRestrictedSQLWithSnapshot implements RestrictedSQLExecutor interface.
+// This is used for executing some restricted sql statements with snapshot.
+// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
+// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
 func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx := context.TODO()
 
@@ -579,22 +584,19 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 	se := tmp.(*session)
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
+	var snapshot uint64
+	if s.Txn(false).Valid() {
+		snapshot = s.txn.StartTS()
+	}
 	if s.sessionVars.SnapshotTS != 0 {
-		if snapshot, ok := s.sessionVars.GetSystemVar(variable.TiDBSnapshot); ok {
-			sqlStr := fmt.Sprintf("set @@tidb_snapshot='%s'", snapshot)
-			_, err := se.Execute(ctx, sqlStr)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			defer func() {
-				_, err := se.Execute(ctx, "set @@tidb_snapshot=''")
-				// Normally err should be nil.
-				if err != nil {
-					// just in case.
-					se.sessionVars.SetSystemVar(variable.TiDBSnapshot, "")
-				}
-			}()
-		}
+		snapshot = s.sessionVars.SnapshotTS
+	}
+	// Set snapshot.
+	if snapshot != 0 {
+		se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10))
+		defer func() {
+			se.sessionVars.SetSystemVar(variable.TiDBSnapshot, "")
+		}()
 	}
 	return execRestrictedSQL(ctx, se, sql)
 }
