@@ -90,6 +90,8 @@ var (
 	errUnsupportedPKHandle     = terror.ClassDDL.New(codeUnsupportedDropPKHandle,
 		"unsupported drop integer primary key")
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
+	errUnsupportedAddPartition    =  terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
+	errUnsupportedCoalescePartition   = terror.ClassDDL.New(codeUnsupportedCoalescePartition, "unsupported coalesce partitions")
 
 	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
 
@@ -573,6 +575,8 @@ const (
 	codeUnsupportedCharset          = 205
 	codeUnsupportedModifyPrimaryKey = 206
 	codeUnsupportedShardRowIDBits   = 207
+	codeUnsupportedAddPartition		= 208
+	codeUnsupportedCoalescePartition = 209
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025

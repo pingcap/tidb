@@ -16,6 +16,8 @@ github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24
 github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470 h1:AAFU1eDJHimRQvJGBBnhO0Cm4oe7V2GG3CLtiQk/6wg=
 github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470/go.mod h1:VKt7CNAQxpFpSDz3sXyj9hY/GbVsQCr0sB3w59nE7lU=
 github.com/chzyer/readline v0.0.0-20171208011716-f6d7a1f6fbf3/go.mod h1:nSuG5e5PlCu98SY8svDHJxuZscDgtXS6KTTbou5AhLI=
+github.com/ciscoxll/parser v0.0.0-20181120113012-ce0923282643 h1:0sALKhUyrcPH/TRaETQUE4osnM76gvKU6T5U1mui7Cg=
+github.com/ciscoxll/parser v0.0.0-20181120113012-ce0923282643/go.mod h1:58KgGQ/2GVoLI5Ge8u/UKDKscnwIYsmS3c1BHHcQJ70=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
 github.com/cockroachdb/cmux v0.0.0-20160228191917-112f0506e774/go.mod h1:qRiX68mZX1lGBkTWyp3CLcenw9I94W2dLeRvMzcn9N4=
 github.com/cockroachdb/cmux v0.0.0-20170110192607-30d10be49292/go.mod h1:qRiX68mZX1lGBkTWyp3CLcenw9I94W2dLeRvMzcn9N4=

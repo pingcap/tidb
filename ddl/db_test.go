@@ -3692,3 +3692,33 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 	}
 	return num
 }
+
+func (s *testDBSuite) TestPartitionErrorCode(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	// add partition
+	s.tk.MustExec(c, `create table employees (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date not null default '9999-12-31',
+		job_code int,
+		store_id int
+	)
+	partition by hash(store_id)
+	partitions 4;`)
+	_, err := s.tk.Exec("alter table employees add partition partitions 8;")
+	c.Assert(errUnsupportedAddPartition.Equal(err), IsTrue)
+
+	// coalesce partition
+	s.tk.MustExec(c, `create table clients (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by hash( month(signed) )
+	partitions 12;`)
+	_, err = s.tk.Exec("alter table clients coalesce partition 4;")
+	c.Assert(errUnsupportedCoalescePartition.Equal(err), IsTrue)
+}
