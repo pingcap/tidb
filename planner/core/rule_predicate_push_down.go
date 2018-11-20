@@ -96,13 +96,15 @@ func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	simplifyOuterJoin(p, predicates)
-	joinGroup := getCartesianJoinGroup(p)
-	if joinGroup != nil {
-		e := joinReOrderSolver{ctx: p.ctx}
-		e.reorderJoin(joinGroup, predicates)
-		newJoin := e.resultJoin
-		return newJoin.PredicatePushDown(predicates)
-	}
+	/*
+		joinGroup := getCartesianJoinGroup(p)
+		if joinGroup != nil {
+			e := joinReOrderSolver{ctx: p.ctx}
+			e.reorderJoin(joinGroup, predicates)
+			newJoin := e.resultJoin
+			return newJoin.PredicatePushDown(predicates)
+		}
+	*/
 	leftPlan := p.children[0]
 	rightPlan := p.children[1]
 	var equalCond []*expression.ScalarFunction

@@ -280,7 +280,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
-			best: "LeftHashJoin{IndexJoin{TableReader(Table(t)->Sel([eq(t1.b, 1)]))->TableReader(Table(t))}(t1.a,t2.a)->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(t1.a,t3.a)",
+			best: "IndexJoin{IndexJoin{TableReader(Table(t)->Sel([eq(t1.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(t3.a,t1.a)->TableReader(Table(t))}(t1.a,t2.a)->Projection",
 		},
 		{
 			sql:  "select * from t where t.c in (select b from t s where s.a = t.a)",
