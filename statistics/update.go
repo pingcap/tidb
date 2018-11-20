@@ -327,9 +327,9 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	}()
 	var sql string
 	if delta.Delta < 0 {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", h.mu.ctx.Txn().StartTS(), -delta.Delta, delta.Count, id, -delta.Delta)
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", h.mu.ctx.Txn(true).StartTS(), -delta.Delta, delta.Count, id, -delta.Delta)
 	} else {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.mu.ctx.Txn().StartTS(), delta.Delta, delta.Count, id)
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.mu.ctx.Txn(true).StartTS(), delta.Delta, delta.Count, id)
 	}
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
