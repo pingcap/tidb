@@ -629,6 +629,32 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 	}
 
+	// Only show foreign keys if foreign_key_checks=1
+	// Currently TiDB does not enforce foreign keys.
+	// It is a little dangerous to show them here.
+	// This is because SHOW CREATE TABLES may be used for backup/restore.
+	// The restore may fail when enforcing the FK constraint.
+	//
+	// TODO: check that foreign_key_checks=1
+	for _, fk := range tb.Meta().ForeignKeys {
+		// TODO: how do we get the constraint name?
+		// buf.WriteString(fmt.Sprintf(",\n  CONSTRAINT %s FOREIGN KEY %s ", CONSTRAINT_NAME, escape(fk.ID fk.Name, sqlMode)))
+		buf.WriteString(fmt.Sprintf(",\n  FOREIGN KEY %s ", escape(fk.Name, sqlMode)))
+		colNames := make([]string, 0, len(fk.Cols))
+		for _, col := range fk.Cols {
+			colNames = append(colNames, escape(col, sqlMode))
+		}
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
+
+		buf.WriteString(fmt.Sprintf("\nREFERENCES %s ", escape(fk.RefTable, sqlMode)))
+		refColNames := make([]string, 0, len(fk.Cols))
+		for _, refCol := range fk.RefCols {
+			refColNames = append(refColNames, escape(refCol, sqlMode))
+		}
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
+		buf.WriteString(fmt.Sprintf("\nON DELETE %s ON UPDATE %s", ast.ReferOptionType(fk.OnDelete).String(), ast.ReferOptionType(fk.OnUpdate).String()))
+	}
+
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
