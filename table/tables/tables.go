@@ -94,6 +94,10 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 			}
 			expr, err = simpleResolveName(expr, tblInfo)
 			if err != nil {
+				if strings.Contains(err.Error(), "can't find column NOVERB in t_wx_customer") {
+					log.Errorf("[tables] col %#v in %#v resolve name failed", colInfo, tblInfo.Name)
+					continue
+				}
 				return nil, errors.Trace(err)
 			}
 			col.GeneratedExpr = expr
