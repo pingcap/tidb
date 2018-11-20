@@ -292,7 +292,6 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 			case <-e.closeCh:
 				return
 			}
-
 			e.innerResult.Add(chk)
 		}
 	}
