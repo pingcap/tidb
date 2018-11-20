@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -60,10 +61,12 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	validator.Restart()
 
 	// Sleep for a long time, check schema is invalid.
+	ts := <-oracleCh // Make sure that ts has timed out a lease.
 	time.Sleep(lease)
-	ts := <-oracleCh
+	ts = <-oracleCh
 	valid = validator.Check(ts, item.schemaVer, []int64{10})
-	c.Assert(valid, Equals, ResultUnknown)
+	c.Assert(valid, Equals, ResultUnknown, Commentf("validator latest schema ver %v, time %v, item schema ver %v, ts %v",
+		validator.latestSchemaVer, validator.latestSchemaExpire, item.schemaVer, oracle.GetTimeFromTS(ts)))
 
 	currVer := reload(validator, leaseGrantCh, 0)
 	valid = validator.Check(ts, item.schemaVer, []int64{0})
