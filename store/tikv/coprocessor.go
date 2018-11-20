@@ -417,33 +417,22 @@ const minLogCopTaskTime = 300 * time.Millisecond
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer worker.wg.Done()
 	for task := range worker.taskCh {
-		func() {
-			defer func(t *copTask) {
-				r := recover()
-				if r != nil {
-					buf := util.GetStack()
-					log.Errorf("copIteratorWork meet panic: %v, stack trace:\n%s", r, buf)
-					resp := &copResponse{err: errors.Errorf("%v", r)}
-					worker.sendToRespCh(resp, t.respChan)
-				}
-				close(t.respChan)
-			}(task)
-			respCh := worker.respChan
-			if respCh == nil {
-				respCh = task.respChan
-			}
+		respCh := worker.respChan
+		if respCh == nil {
+			respCh = task.respChan
+		}
 
-			bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
-			worker.handleTask(bo, task, respCh)
-			if bo.totalSleep > 0 {
-				metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
-			}
-			select {
-			case <-worker.finishCh:
-				return
-			default:
-			}
-		}()
+		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
+		worker.handleTask(bo, task, respCh)
+		if bo.totalSleep > 0 {
+			metrics.TiKVBackoffHistogram.Observe(float64(bo.totalSleep) / 1000)
+		}
+		close(task.respChan)
+		select {
+		case <-worker.finishCh:
+			return
+		default:
+		}
 	}
 }
 
@@ -574,6 +563,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
 func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh chan<- *copResponse) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			buf := util.GetStack()
+			log.Errorf("copIteratorWork meet panic: %v, stack trace:\n%s", r, buf)
+			resp := &copResponse{err: errors.Errorf("%v", r)}
+			worker.sendToRespCh(resp, task.respChan)
+		}
+	}()
 	remainTasks := []*copTask{task}
 	for len(remainTasks) > 0 {
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
