@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/x-server"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+	"github.com/shirou/gopsutil/mem"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -403,6 +404,13 @@ func setGlobalVars() {
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
 	if plannercore.PreparedPlanCacheEnabled() {
 		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = cfg.PreparedPlanCache.MemoryGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = cfg.Performance.MaxMemory
+		if plannercore.PreparedPlanCacheMaxMemory == 0 {
+			v, err := mem.VirtualMemory()
+			terror.MustNil(err)
+			plannercore.PreparedPlanCacheMaxMemory = v.Total
+		}
 	}
 
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {

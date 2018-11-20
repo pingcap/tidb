@@ -31,15 +31,21 @@ import (
 func (s *testSuite) TestPrepared(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheMaxMemory = 32 << 30
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -215,15 +221,21 @@ func (s *testSuite) TestPrepared(c *C) {
 func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheMaxMemory = 32 << 30
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -251,14 +263,20 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 func (s *testSuite) TestPreparedNullParam(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheMaxMemory = 32 << 30
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -315,14 +333,20 @@ func (s *testSuite) TestPrepareMaxParamCountCheck(c *C) {
 func (s *testSuite) TestPrepareWithAggregation(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheMaxMemory = 32 << 30
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -352,14 +376,20 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 func (s *testSuite) TestPreparedIssue7579(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheMaxMemory = 32 << 30
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -395,9 +425,13 @@ func (s *testSuite) TestPreparedIssue7579(c *C) {
 func (s *testSuite) TestPreparedInsert(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -406,6 +440,8 @@ func (s *testSuite) TestPreparedInsert(c *C) {
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheMaxMemory = 32 << 30
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -469,9 +505,13 @@ func (s *testSuite) TestPreparedInsert(c *C) {
 func (s *testSuite) TestPreparedUpdate(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -480,6 +520,8 @@ func (s *testSuite) TestPreparedUpdate(c *C) {
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheMaxMemory = 32 << 30
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -520,9 +562,13 @@ func (s *testSuite) TestPreparedUpdate(c *C) {
 func (s *testSuite) TestPreparedDelete(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	metrics.PlanCacheCounter.Reset()
 	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
@@ -531,6 +577,8 @@ func (s *testSuite) TestPreparedDelete(c *C) {
 	for _, flag := range flags {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheMaxMemory = 32 << 30
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -571,12 +619,18 @@ func (s *testSuite) TestPreparedDelete(c *C) {
 func (s *testSuite) TestPrepareDealloc(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	plannercore.SetPreparedPlanCache(true)
 	plannercore.PreparedPlanCacheCapacity = 3
+	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+	plannercore.PreparedPlanCacheMaxMemory = 32 << 30
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

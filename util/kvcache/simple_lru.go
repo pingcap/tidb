@@ -15,6 +15,7 @@ package kvcache
 
 import (
 	"container/list"
+	"runtime"
 )
 
 // Key is the interface that every key in LRU Cache should implement.
@@ -36,19 +37,23 @@ type cacheEntry struct {
 type SimpleLRUCache struct {
 	capacity uint
 	size     uint
+	quota    uint64
+	guard    float64
 	elements map[string]*list.Element
 	cache    *list.List
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewSimpleLRUCache(capacity uint) *SimpleLRUCache {
+func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCache {
 	if capacity <= 0 {
 		panic("capacity of LRU Cache should be positive.")
 	}
 	return &SimpleLRUCache{
 		capacity: capacity,
 		size:     0,
+		quota:    quota,
+		guard:    guard,
 		elements: make(map[string]*list.Element),
 		cache:    list.New(),
 	}
@@ -82,11 +87,20 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	l.elements[hash] = element
 	l.size++
 
-	for l.size > l.capacity {
+	var rtm runtime.MemStats
+	runtime.ReadMemStats(&rtm)
+
+	for rtm.Alloc > uint64(float64(l.quota)*(1.0-l.guard)) || l.size > l.capacity {
 		lru := l.cache.Back()
+		if lru == nil {
+			break
+		}
 		l.cache.Remove(lru)
 		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
 		l.size--
+		if rtm.Alloc > uint64(float64(l.quota)*(1.0-l.guard)) {
+			runtime.ReadMemStats(&rtm)
+		}
 	}
 }
 
