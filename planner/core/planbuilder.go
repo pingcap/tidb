@@ -214,29 +214,29 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
+	var p LogicalPlan
 	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx)
-
-	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
+	dual.SetSchema(expression.NewSchema())
+	p = dual
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
-		expr, _, err := b.rewrite(astExpr, dual, nil, true)
+		expr, np, err := b.rewrite(astExpr, p, nil, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p.Exprs = append(p.Exprs, expr)
+		p = np
+		proj.Exprs = append(proj.Exprs, expr)
 		schema.Append(&expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  expr.GetType(),
 		})
 	}
-	if dual.schema == nil {
-		dual.schema = expression.NewSchema()
-	}
-	p.SetChildren(dual)
-	p.self = p
-	p.SetSchema(schema)
-	p.calculateNoDelay = true
-	return p, nil
+	proj.SetChildren(p)
+	proj.self = proj
+	proj.SetSchema(schema)
+	proj.calculateNoDelay = true
+	return proj, nil
 }
 
 func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
