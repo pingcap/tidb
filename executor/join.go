@@ -566,9 +566,9 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
-		// wait fetchInnerRows be finished.
-		for range innerResultCh {
-		}
+	}
+	// wait fetchInnerRows be finished.
+	for range innerResultCh {
 	}
 }
 
@@ -591,8 +591,6 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) er
 	chkIdx := uint32(0)
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
-			for range innerResultCh {
-			}
 			return nil
 		}
 		numRows := chk.NumRows()
