@@ -274,6 +274,8 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 		select {
 		case <-doneCh:
 			return
+		case <-e.closeCh:
+			return
 		default:
 			if e.finished.Load().(bool) {
 				return
@@ -288,7 +290,12 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 				e.evalRadixBitNum()
 				return
 			}
-			chkCh <- chk
+			select {
+			case <-e.closeCh:
+				return
+			case chkCh <- chk:
+			}
+
 			e.innerResult.Add(chk)
 		}
 	}
@@ -559,6 +566,8 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
 	if e.finished.Load().(bool) {
+		for range innerResultCh {
+		}
 		return
 	}
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
@@ -567,9 +576,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
 		// fetchInnerRows may be blocked by this channel, so read from the channel to unblock it.
-		select {
-		case <-innerResultCh:
-		default:
+		for range innerResultCh {
 		}
 	}
 }
@@ -593,6 +600,8 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) er
 	chkIdx := uint32(0)
 	for chk := range innerResultCh {
 		if e.finished.Load().(bool) {
+			for range innerResultCh {
+			}
 			return nil
 		}
 		numRows := chk.NumRows()
