@@ -10,7 +10,7 @@ This proposal proposes to support the table partition feature.
 
 ## Background
 
-MySQL has the [table partition](https://dev.mysql.com/doc/refman/8.0/en/partitioning.html) feature. If this feature is supported in TiDB, many issues could be addressed. For example, drop ranged partitions could be used to remove old data; partition by hash could address the hot data issue thus improve the write performance; query on partitioned table could be faster than on manual sharding tables because of the partition pruning.
+MySQL has the [table partition](https://dev.mysql.com/doc/refman/8.0/en/partitioning.html) feature. If this feature is supported in TiDB, many issues could be addressed. For example, drop ranged partitions could be used to remove old data; partition by hash could address the hot data issue thus improve the write performance; query on partitioned table could be faster than on unpartitioned tables because of the partition pruning.
 
 ## Proposal
 
@@ -50,7 +50,7 @@ In a word, only when the persisted `PartitionInfo.Enable` is true, and the code 
 There are two levels of mapping in TiDB: SQL data to a logical key range, logical key range to the physical storage.
 When TiDB maps table data to key-value storage, it first encodes `table id + row id` as key, row data as value. Then the logical key range is split into regions and stored into TiKV.
 
-Table partition works on the first level of mapping, partition ID will be made equivalent of the table ID. A partitioned table row uses `partition id + row id` as encoded key.
+Table partition works on the first level of mapping, partition ID will be made equivalent of the table ID. A partitioned table row uses `partition id + row id` as encoded key. Partition ID is unique in cluster scope.
 
 The relationship of Table ID and partition ID should be maintained in the `TableInfo`.
 
@@ -82,12 +82,12 @@ select * from p2 where id < 20
 select * from p3 where id < 30)
 ```
 
-During logical optimize phase, the `DataSource` plan is translated into `UnionAll`, and then each partition generates its own `TableReader` in the physical optimize phase.
+During logical optimize phase, the `DataSource` operator is translated into `UnionAll` operator, and then each partition generates its own `TableReader` in the physical optimize phase.
 
 The drawbacks of this implementation are:
 
 * If the table has many partitions, there will be many readers, then `explain` result is not friendly to user
-* The `UnionAll` executor can't keep order, so if some executor need ordered result such as `IndexReader`, an extra `Sort` executor is needed
+* The `UnionAll` operator can't keep order, so if some operator need ordered result such as `IndexReader`, an extra `Sort` operator is needed
 
 If [partition selection](https://dev.mysql.com/doc/refman/5.7/en/partitioning-selection.html) is used, planner should translate table ID to partition ID, and turn off partition pruning.
 
@@ -99,7 +99,7 @@ For range partition, partition pruning is based on the range filter conditions o
 
 ### How to write to the partitioned table
 
-All the write operation calls functions like `table.AddRecord` eventually, so implement write operation on a partitioned table simply implements this interface method on the `PartitionedTable` struct.
+All the write operations call functions like `table.AddRecord` eventually, so implement write operation on a partitioned table simply implements this interface method on the `PartitionedTable` struct.
 
 `PartitionedTable` implements the `table.Table` interface, and overloads the `AddRecord` method. It also comes with a `locatePartition` method, to decide which partition a row should be insert into.
 
