@@ -259,6 +259,33 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(ver, Equals, int64(currentBootstrapVersion))
 }
 
+func (s *testBootstrapSuite) TestANSISQLMode(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom := newStoreWithBootstrap(c, s.dbName)
+	defer store.Close()
+	se := newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "USE mysql;")
+	mustExecSQL(c, se, `set @@global.sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,ANSI"`)
+	mustExecSQL(c, se, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
+	delete(storeBootstrapped, store.UUID())
+	se.Close()
+
+	// Do some clean up, BootstrapSession will not create a new domain otherwise.
+	dom.Close()
+	domap.Delete(store)
+
+	// Set ANSI sql_mode and bootstrap again, to cover a bugfix.
+	// Once we have a SQL like that:
+	// select variable_value from mysql.tidb where variable_name = "system_tz"
+	// it fails to execute in the ANSI sql_mode, and makes TiDB cluster fail to bootstrap.
+	dom1, err := BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom1.Close()
+	se = newSession(c, store, s.dbName)
+	mustExecSQL(c, se, "select @@global.sql_mode")
+	se.Close()
+}
+
 func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
 	pwd := "abc"
 	oldpwd := fmt.Sprintf("%X", auth.Sha1Hash([]byte(pwd)))

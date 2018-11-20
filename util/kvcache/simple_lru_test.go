@@ -143,3 +143,29 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 		c.Assert(value, Equals, vals[i])
 	}
 }
+
+func (s *testLRUCacheSuite) TestDelete(c *C) {
+	lru := NewSimpleLRUCache(3)
+
+	keys := make([]*mockCacheKey, 3)
+	vals := make([]int64, 3)
+
+	for i := 0; i < 3; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = int64(i)
+		lru.Put(keys[i], vals[i])
+	}
+	c.Assert(int(lru.size), Equals, 3)
+
+	lru.Delete(keys[1])
+	value, exists := lru.Get(keys[1])
+	c.Assert(exists, IsFalse)
+	c.Assert(value, IsNil)
+	c.Assert(int(lru.size), Equals, 2)
+
+	_, exists = lru.Get(keys[0])
+	c.Assert(exists, IsTrue)
+
+	_, exists = lru.Get(keys[2])
+	c.Assert(exists, IsTrue)
+}
