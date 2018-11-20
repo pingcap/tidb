@@ -3692,3 +3692,12 @@ func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
 	res := tk.MustQuery(`select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;`)
 	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
 }
+
+func (s *testIntegrationSuite) TestForeignKeyVar(c *C) {
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("SET FOREIGN_KEY_CHECKS=1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1105 variable 'foreign_key_checks' does not yet support value: 1"))
+
+}
