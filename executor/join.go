@@ -135,7 +135,6 @@ func (e *HashJoinExec) Close() error {
 		e.outerChkResourceCh = nil
 		e.joinChkResourceCh = nil
 	}
-	e.fetchInnerDone.Wait()
 	e.memTracker.Detach()
 	e.memTracker = nil
 
@@ -262,10 +261,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
-	defer func() {
-		close(chkCh)
-		e.fetchInnerDone.Done()
-	}()
+	defer close(chkCh)
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
@@ -291,9 +287,10 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 				return
 			}
 			select {
+			case chkCh <- chk:
+				break
 			case <-e.closeCh:
 				return
-			case chkCh <- chk:
 			}
 
 			e.innerResult.Add(chk)
@@ -562,20 +559,14 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	// innerResultCh transfer inner result chunk from inner fetch to build hash table.
 	innerResultCh := make(chan *chunk.Chunk, e.concurrency)
 	doneCh := make(chan struct{})
-	e.fetchInnerDone.Add(1)
 	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
-	if e.finished.Load().(bool) {
-		for range innerResultCh {
-		}
-		return
-	}
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
 	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
-		// fetchInnerRows may be blocked by this channel, so read from the channel to unblock it.
+		// wait fetchInnerRows be finished.
 		for range innerResultCh {
 		}
 	}
