@@ -50,4 +50,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 )
 
-replace github.com/pingcap/parser => github.com/tiancaiamao/parser v0.0.0-20181119121440-cb1b3dd4f1d7
+replace github.com/pingcap/parser => github.com/tiancaiamao/parser v0.0.0-20181120071735-73ac7f3ebadd
