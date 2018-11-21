@@ -18,17 +18,18 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pkg/errors"
 )
@@ -554,7 +555,7 @@ func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, erro
 				return nil, errors.Trace(err)
 			}
 			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
-			genColumnName := model.GetTableColumnID(tableInfo, column.ColumnInfo)
+			genColumnName := admin.GetTableColumnID(tableInfo, column.ColumnInfo)
 			p.GenExprs[genColumnName] = expr
 		}
 	}

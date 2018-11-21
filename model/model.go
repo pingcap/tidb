@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 )
