@@ -2391,13 +2391,14 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestTso(c *C) {
+	s.ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {
 		param  interface{}
 		expect string
 	}{
-		{404411537129996288, "2018-11-20 17:53:04.877000"},
-		{"404411537129996288", "2018-11-20 17:53:04.877000"},
-		{1, "1970-01-01 08:00:00.000000"},
+		{404411537129996288, "2018-11-20 09:53:04.877000"},
+		{"404411537129996288", "2018-11-20 09:53:04.877000"},
+		{1, "1970-01-01 00:00:00.000000"},
 	}
 
 	fc := funcs[ast.Tso]

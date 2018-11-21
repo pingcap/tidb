@@ -5658,18 +5658,22 @@ func (b *builtinTsoSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalTime evals a builtinLastDaySig.
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_last-day
+// evalTime evals a builtinTsoSig.
 func (b *builtinTsoSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil || arg <= 0 {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
+
 	t := oracle.GetTimeFromTS(uint64(arg))
-	ret := types.Time{
+	result := types.Time{
 		Time: types.FromGoTime(t),
 		Type: mysql.TypeDatetime,
 		Fsp:  types.MaxFsp,
 	}
-	return ret, false, nil
+	err = result.ConvertTimeZone(time.Local, b.ctx.GetSessionVars().Location())
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	return result, false, nil
 }
