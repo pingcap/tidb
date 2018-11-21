@@ -214,29 +214,29 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
+	var p LogicalPlan
 	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx)
-
-	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
+	dual.SetSchema(expression.NewSchema())
+	p = dual
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
-		expr, _, err := b.rewrite(astExpr, dual, nil, true)
+		expr, np, err := b.rewrite(astExpr, p, nil, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p.Exprs = append(p.Exprs, expr)
+		p = np
+		proj.Exprs = append(proj.Exprs, expr)
 		schema.Append(&expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  expr.GetType(),
 		})
 	}
-	if dual.schema == nil {
-		dual.schema = expression.NewSchema()
-	}
-	p.SetChildren(dual)
-	p.self = p
-	p.SetSchema(schema)
-	p.calculateNoDelay = true
-	return p, nil
+	proj.SetChildren(p)
+	proj.self = proj
+	proj.SetSchema(schema)
+	proj.calculateNoDelay = true
+	return proj, nil
 }
 
 func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
@@ -1473,19 +1473,28 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok {
-		return nil, errors.New("trace only supports select query")
+	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok && trace.Format == "row" {
+		return nil, errors.New("trace only supports select query when format is row")
 	}
 
-	p := &Trace{StmtNode: trace.Stmt}
+	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
 
-	retFields := []string{"operation", "duration", "spanID"}
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-	schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
-
-	schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
-	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
-	p.SetSchema(schema)
+	switch trace.Format {
+	case "row":
+		retFields := []string{"operation", "duration", "spanID"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+	case "json":
+		retFields := []string{"json"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+	default:
+		return nil, errors.New("trace format should be one of 'row' or 'json'")
+	}
 	return p, nil
 }
 

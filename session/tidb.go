@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -141,6 +142,12 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
+		span1.LogKV("sql", s.OriginText())
+		defer span1.Finish()
+	}
+
 	var err error
 	var rs sqlexec.RecordSet
 	se := sctx.(*session)
