@@ -1,0 +1,34 @@
+language: go
+
+sudo: false
+
+go_import_path: github.com/myesui/uuid
+
+go:
+    - 1.8
+    - 1.7
+    - 1.6
+
+os:
+    - linux
+    - osx
+
+env:
+  global:
+    - PATH=$HOME/gopath/bin:$PATH
+
+before_script:
+    - gofmt -s -l -e .
+    - go vet ./...
+
+before_install:
+    - go get -t -v ./...
+    - go get github.com/mattn/goveralls
+
+script:
+    - go test -v -race github.com/myesui/uuid
+    - go test -v -covermode=count -coverprofile=cover.out
+    - goveralls -coverprofile=cover.out -service=travis-ci
+
+notifications:
+    email: true
