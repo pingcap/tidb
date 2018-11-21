@@ -1049,6 +1049,20 @@ AlterTableSpec:
 			PartDefinitions: defs,
 		}
 	}
+|	"ADD" "PARTITION" "PARTITIONS" NUM
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableAddPartitions,
+			Num: getUint64FromNUM($4),
+		}
+	}
+|	"COALESCE" "PARTITION" NUM
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableCoalescePartitions,
+			Num: getUint64FromNUM($3),
+		}
+	}
 |	"DROP" ColumnKeywordOpt ColumnName RestrictOrCascadeOpt
 	{
 		$$ = &ast.AlterTableSpec{

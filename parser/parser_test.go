@@ -1660,6 +1660,10 @@ func (s *testParserSuite) TestDDL(c *C) {
 		// For drop table partition statement.
 		{"alter table t drop partition p1;", true},
 		{"alter table t drop partition p2;", true},
+		{"alter table employees add partition partitions 1;", true},
+		{"alter table employees add partition partitions 2;", true},
+		{"alter table clients coalesce partition 3;", true},
+		{"alter table clients coalesce partition 4;", true},
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
