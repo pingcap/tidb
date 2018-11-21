@@ -162,12 +162,32 @@ func (s *session) getMembufCap() int {
 }
 
 func (s *session) cleanRetryInfo() {
-	if !s.sessionVars.RetryInfo.Retrying {
-		retryInfo := s.sessionVars.RetryInfo
-		for _, stmtID := range retryInfo.DroppedPreparedStmtIDs {
-			delete(s.sessionVars.PreparedStmts, stmtID)
+	if s.sessionVars.RetryInfo.Retrying {
+		return
+	}
+
+	retryInfo := s.sessionVars.RetryInfo
+	defer retryInfo.Clean()
+	if len(retryInfo.DroppedPreparedStmtIDs) == 0 {
+		return
+	}
+
+	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
+	var cacheKey kvcache.Key
+	if planCacheEnabled {
+		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
+		cacheKey = plannercore.NewPSTMTPlanCacheKey(
+			s.sessionVars, firstStmtID, s.sessionVars.PreparedStmts[firstStmtID].SchemaVersion,
+		)
+	}
+	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
+		if planCacheEnabled {
+			if i > 0 {
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, s.sessionVars.PreparedStmts[stmtID].SchemaVersion)
+			}
+			s.PreparedPlanCache().Delete(cacheKey)
 		}
-		retryInfo.Clean()
+		delete(s.sessionVars.PreparedStmts, stmtID)
 	}
 }
 
@@ -341,7 +361,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
-			log.Warnf("con:%d retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
+			log.Warnf("[%s] con:%d retryable error: %v, txn: %v", s.getSQLLabel(), s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -477,6 +497,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 	var err error
 	var schemaVersion int64
 	orgStartTS := s.GetSessionVars().TxnCtx.StartTS
+	label := s.getSQLLabel()
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
@@ -519,17 +540,17 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("con:%d session:%v, err:%v in retry", connID, s, err)
-			metrics.SessionRetryErrorCounter.WithLabelValues(s.getSQLLabel(), metrics.LblUnretryable)
+			log.Warnf("[%s] con:%d session:%v, err:%v in retry", label, connID, s, err)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblUnretryable)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
-			log.Warnf("con:%d Retry reached max count %d", connID, retryCnt)
-			metrics.SessionRetryErrorCounter.WithLabelValues(s.getSQLLabel(), metrics.LblReachMax)
+			log.Warnf("[%s] con:%d Retry reached max count %d", label, connID, retryCnt)
+			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
 			return errors.Trace(err)
 		}
-		log.Warnf("con:%d retryable error: %v, txn: %v", connID, err, s.txn)
+		log.Warnf("[%s] con:%d retryable error: %v, txn: %v", label, connID, err, s.txn)
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -938,9 +959,20 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn() kv.Transaction {
-	if !s.txn.Valid() {
-		return nil
+func (s *session) Txn(active bool) kv.Transaction {
+	if s.txn.pending() && active {
+		// Transaction is lazy intialized.
+		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
+		// If Txn() is called later, wait for the future to get a valid txn.
+		txnCap := s.getMembufCap()
+		if err := s.txn.changePendingToValid(txnCap); err != nil {
+			s.txn.fail = errors.Trace(err)
+		} else {
+			s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
+		}
+		if !s.sessionVars.IsAutocommit() {
+			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+		}
 	}
 	return &s.txn
 }
@@ -1092,7 +1124,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 // loadSystemTZ loads systemTZ from mysql.tidb
 func loadSystemTZ(se *session) (string, error) {
-	sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
+	sql := `select variable_value from mysql.tidb where variable_name = 'system_tz'`
 	rss, errLoad := se.Execute(context.Background(), sql)
 	if errLoad != nil {
 		return "", errLoad
@@ -1358,9 +1390,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 	}
-	if !s.sessionVars.IsAutocommit() {
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-	}
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
@@ -1370,20 +1399,6 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	}
 
 	return errors.Trace(s.NewTxn())
-}
-
-// ActivePendingTxn implements Context.ActivePendingTxn interface.
-func (s *session) ActivePendingTxn() error {
-	if s.txn.Valid() {
-		return nil
-	}
-	txnCap := s.getMembufCap()
-	// The transaction status should be pending.
-	if err := s.txn.changePendingToValid(txnCap); err != nil {
-		return errors.Trace(err)
-	}
-	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	return nil
 }
 
 // InitTxnWithStartTS create a transaction with startTS.
