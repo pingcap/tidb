@@ -2389,3 +2389,39 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 		c.Assert(result.Sub(now), LessEqual, 2*time.Second)
 	}
 }
+
+func (s *testEvaluatorSuite) TestTso(c *C) {
+	tests := []struct {
+		param  interface{}
+		expect string
+	}{
+		{404411537129996288, "2018-11-20 17:53:04.877000"},
+		{"404411537129996288", "2018-11-20 17:53:04.877000"},
+		{1, "1970-01-01 08:00:00.000000"},
+	}
+
+	fc := funcs[ast.Tso]
+	for _, test := range tests {
+		t := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+
+	testsNull := []interface{}{
+		0,
+		-1,
+		"-1"}
+
+	for _, i := range testsNull {
+		t := []types.Datum{types.NewDatum(i)}
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.IsNull(), IsTrue)
+	}
+}

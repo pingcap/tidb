@@ -14,6 +14,7 @@ require (
 	github.com/golang/protobuf v1.2.0
 	github.com/golang/snappy v0.0.0-20180518054509-2e65f85255db // indirect
 	github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c
+	github.com/gorilla/context v1.1.1 // indirect
 	github.com/gorilla/mux v1.6.2
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
@@ -28,7 +29,7 @@ require (
 	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26
-	github.com/pingcap/parser v0.0.0-20181113072426-4a9a1b13b591
+	github.com/pingcap/parser v0.0.0-20181121053005-5aeadeef5d11
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v0.0.0-20181112132202-4860a0d5de03
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
@@ -48,3 +49,5 @@ require (
 	google.golang.org/grpc v1.16.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )
+
+replace github.com/pingcap/parser => github.com/yu34po/parser v0.0.0-20181121072203-a2eb5f44549d

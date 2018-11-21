@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -5628,4 +5629,47 @@ func getExpressionFsp(ctx sessionctx.Context, expression Expression) (int, error
 		return types.GetFsp(str), nil
 	}
 	return mathutil.Min(expression.GetType().Decimal, types.MaxFsp), nil
+}
+
+type tsoFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tsoFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	//bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDatetime, types.ETDatetime)
+	argTp := args[0].GetType().EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, types.ETInt)
+
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, types.DefaultFsp
+	sig := &builtinTsoSig{bf}
+	return sig, nil
+}
+
+type builtinTsoSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTsoSig) Clone() builtinFunc {
+	newSig := &builtinTsoSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals a builtinLastDaySig.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_last-day
+func (b *builtinTsoSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil || arg <= 0 {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+	t := oracle.GetTimeFromTS(uint64(arg))
+	ret := types.Time{
+		Time: types.FromGoTime(t),
+		Type: mysql.TypeDatetime,
+		Fsp:  types.MaxFsp,
+	}
+	return ret, false, nil
 }
