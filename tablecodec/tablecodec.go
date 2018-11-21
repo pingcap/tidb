@@ -216,7 +216,6 @@ func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	b, err := codec.EncodeValue(sc, nil, v)
 	return b, errors.Trace(err)
 }
