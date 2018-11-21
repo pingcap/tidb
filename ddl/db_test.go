@@ -3696,6 +3696,10 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 func (s *testDBSuite) TestPartitionErrorCode(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	// add partition
+	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	s.tk.MustExec("drop database if exists test_db_with_partition")
+	s.tk.MustExec("create database test_db_with_partition")
+	s.tk.MustExec("use test_db_with_partition")
 	s.tk.MustExec(c, `create table employees (
 		id int not null,
 		fname varchar(30),
