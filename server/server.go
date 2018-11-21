@@ -129,7 +129,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	return cc
 }
 
-func (s *Server) skipAuth() bool {
+func (s *Server) isLocal() bool {
 	return s.cfg.Socket != ""
 }
 
