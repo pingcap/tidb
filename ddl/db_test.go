@@ -2703,9 +2703,6 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	);`
 	s.testErrorCode(c, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
 
-	sql2 := "alter table table1 add partition"
-	s.testErrorCode(c, sql2, tmysql.ErrPartitionsMustBeDefined)
-
 	s.tk.MustExec("drop table if exists table2;")
 	s.tk.MustExec(`create table table2 (
 
