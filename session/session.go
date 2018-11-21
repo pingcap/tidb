@@ -1098,7 +1098,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 
 // loadSystemTZ loads systemTZ from mysql.tidb
 func loadSystemTZ(se *session) (string, error) {
-	sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
+	sql := `select variable_value from mysql.tidb where variable_name = 'system_tz'`
 	rss, errLoad := se.Execute(context.Background(), sql)
 	if errLoad != nil {
 		return "", errLoad
