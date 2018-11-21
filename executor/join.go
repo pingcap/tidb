@@ -54,7 +54,6 @@ type HashJoinExec struct {
 	innerFinished   chan error
 	hashJoinBuffers []*hashJoinBuffer
 	workerWaitGroup sync.WaitGroup // workerWaitGroup is for sync multiple join workers.
-	fetchInnerDone  sync.WaitGroup
 	finished        atomic.Value
 	closeCh         chan struct{} // closeCh add a lock for closing executor.
 	joinType        plannercore.JoinType
@@ -292,7 +291,6 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 			case <-e.closeCh:
 				return
 			}
-
 			e.innerResult.Add(chk)
 		}
 	}
