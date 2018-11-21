@@ -3700,7 +3700,7 @@ func (s *testDBSuite) TestPartitionErrorCode(c *C) {
 	s.tk.MustExec("drop database if exists test_db_with_partition")
 	s.tk.MustExec("create database test_db_with_partition")
 	s.tk.MustExec("use test_db_with_partition")
-	s.tk.MustExec(c, `create table employees (
+	s.tk.MustExec( `create table employees (
 		id int not null,
 		fname varchar(30),
 		lname varchar(30),
@@ -3715,7 +3715,7 @@ func (s *testDBSuite) TestPartitionErrorCode(c *C) {
 	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
 
 	// coalesce partition
-	s.tk.MustExec(c, `create table clients (
+	s.tk.MustExec( `create table clients (
 		id int,
 		fname varchar(30),
 		lname varchar(30),
