@@ -294,7 +294,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		if len(digits) > dotIdx+1 {
 			intStr = roundIntStr(digits[dotIdx+1], intStr)
 		}
-		if len(intStr) == 1 && intStr[0] != '0' && validFloat[0] == '-' {
+		if (len(intStr) > 1 || intStr[0] != '0') && validFloat[0] == '-' {
 			intStr = "-" + intStr
 		}
 		return intStr, nil
