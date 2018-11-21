@@ -212,6 +212,7 @@ func (t *Table) GetPhysicalID() int64 {
 // Cols implements table.Table Cols interface.
 func (t *tableCommon) Cols() []*table.Column {
 	if len(t.publicColumns) > 0 {
+		return t.publicColumns
 	}
 	publicColumns := make([]*table.Column, len(t.Columns))
 	maxOffset := -1

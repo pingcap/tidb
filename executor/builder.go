@@ -16,7 +16,6 @@ package executor
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/util/dagpb"
 	"math"
 	"sort"
 	"strings"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dagpb"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
