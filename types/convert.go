@@ -239,6 +239,27 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 	return floatStrToIntStr(sc, floatPrefix, str)
 }
 
+// roundIntStr is to round int string base on the number following dot.
+func roundIntStr(numNextDot byte, intStr string) string {
+	if numNextDot < '5' {
+		return intStr
+	}
+	retStr := []byte(intStr)
+	for i := len(intStr) - 1; i >= 0; i-- {
+		if retStr[i] != '9' {
+			retStr[i]++
+			break
+		}
+		if i == 0 {
+			retStr[i] = '1'
+			retStr = append(retStr, '0')
+			break
+		}
+		retStr[i] = '0'
+	}
+	return string(retStr)
+}
+
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
 // be lost. For example, the string value "18446744073709551615" which is the max number of unsigned
@@ -246,27 +267,6 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
-	// round function is to round returning int string base on float string
-	round := func(numNextDot byte) string {
-		if numNextDot < '5' {
-			return intStr
-		}
-		retStr := []byte(intStr)
-		l := len(intStr)
-		for l--; l >= 0; l-- {
-			if retStr[l] == '9' {
-				retStr[l] = '0'
-			} else {
-				retStr[l]++
-				break
-			}
-		}
-		if l < 0 {
-			retStr[0] = '1'
-			retStr = append(retStr, '0')
-		}
-		return string(retStr)
-	}
 	for i := 0; i < len(validFloat); i++ {
 		switch validFloat[i] {
 		case '.':
@@ -292,7 +292,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 			intStr = string(digits)[:dotIdx]
 		}
 		if len(digits) > dotIdx+1 {
-			intStr = round(digits[dotIdx+1])
+			intStr = roundIntStr(digits[dotIdx+1], intStr)
 		}
 		if len(intStr) == 1 && intStr[0] != '0' && validFloat[0] == '-' {
 			intStr = "-" + intStr
@@ -323,7 +323,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		intStr = "0"
 		if intCnt == 0 && len(digits) > 0 {
 			dotIdx = -1
-			intStr = round(digits[0])
+			intStr = roundIntStr(digits[0], intStr)
 		}
 		return intStr, nil
 	}
@@ -331,7 +331,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		intStr = "0"
 		dotIdx = 0
 		if len(digits) > 1 {
-			intStr = round(digits[1])
+			intStr = roundIntStr(digits[1], intStr)
 		}
 		if intStr[0] == '1' {
 			intStr = string(digits[:1]) + intStr
@@ -341,7 +341,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	if intCnt <= len(digits) {
 		intStr = string(digits[:intCnt])
 		if intCnt < len(digits) {
-			intStr = round(digits[intCnt])
+			intStr = roundIntStr(digits[intCnt], intStr)
 		}
 	} else {
 		// convert scientific notation decimal number

@@ -4569,31 +4569,26 @@ func (b *builtinMakeTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
+// calculate for hour and minute
+func (b *builtinMakeTimeSig) getIntParam(arg Expression, row chunk.Row) (int64, bool, error) {
+	if arg.GetType().EvalType() == types.ETReal {
+		fRes, isNull, err := arg.EvalReal(b.ctx, row)
+		return int64(fRes), isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+	iRes, isNull, err := arg.EvalInt(b.ctx, row)
+	return iRes, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+}
+
 // evalDuration evals a builtinMakeTimeIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
 func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	dur := types.ZeroDuration
 	dur.Fsp = types.MaxFsp
-	// evalInt is the function for args[0] and args[1] to evaluate int64 result
-	evalInt := func(arg Expression) (int64, bool, error) {
-		if arg.GetType().EvalType() == types.ETReal {
-			fRes, isNull, err := arg.EvalReal(b.ctx, row)
-			if isNull || err != nil {
-				return int64(fRes), isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
-			}
-			return int64(fRes), false, nil
-		}
-		iRes, isNull, err := arg.EvalInt(b.ctx, row)
-		if isNull || err != nil {
-			return iRes, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
-		}
-		return iRes, false, nil
-	}
-	hour, isNull, err := evalInt(b.args[0])
+	hour, isNull, err := b.getIntParam(b.args[0], row)
 	if isNull || err != nil {
 		return dur, isNull, err
 	}
-	minute, isNull, err := evalInt(b.args[1])
+	minute, isNull, err := b.getIntParam(b.args[1], row)
 	if isNull || err != nil {
 		return dur, isNull, err
 	}
