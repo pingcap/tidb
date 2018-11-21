@@ -34,8 +34,10 @@ type Context interface {
 	NewTxn() error
 
 	// Txn returns the current transaction which is created before executing a statement.
-	// The returned kv.Transaction is not nil, but maybe pending or invalid.
-	Txn(...bool) kv.Transaction
+	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
+	// If the active parameter is true, call this function will wait for the pending txn
+	// to become valid.
+	Txn(active bool) kv.Transaction
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
@@ -57,10 +59,6 @@ type Context interface {
 	// and creates a new transaction.
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
-
-	// ActivePendingTxn receives the pending transaction from the transaction channel.
-	// It should be called right before we builds an executor.
-	ActivePendingTxn() error
 
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
