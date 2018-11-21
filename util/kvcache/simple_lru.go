@@ -89,3 +89,20 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		l.size--
 	}
 }
+
+// Delete deletes the key-value pair from the LRU Cache.
+func (l *SimpleLRUCache) Delete(key Key) {
+	k := string(key.Hash())
+	element := l.elements[k]
+	if element == nil {
+		return
+	}
+	l.cache.Remove(element)
+	delete(l.elements, k)
+	l.size--
+}
+
+// Size gets the current cache size.
+func (l *SimpleLRUCache) Size() int {
+	return int(l.size)
+}
