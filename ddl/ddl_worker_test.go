@@ -418,19 +418,19 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 		hookCtx := mock.NewContext()
 		hookCtx.Store = store
-		var err error
-		err = hookCtx.NewTxn()
-		if err != nil {
-			checkErr = errors.Trace(err)
+		var err1 error
+		err1 = hookCtx.NewTxn()
+		if err1 != nil {
+			checkErr = errors.Trace(err1)
 			return
 		}
 		checkErr = checkCancelState(hookCtx.Txn(true), job, test)
 		if checkErr != nil {
 			return
 		}
-		err = hookCtx.Txn(true).Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
+		err1 = hookCtx.Txn(true).Commit(context.Background())
+		if err1 != nil {
+			checkErr = errors.Trace(err1)
 			return
 		}
 	}
