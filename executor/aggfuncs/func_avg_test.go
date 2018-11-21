@@ -37,10 +37,10 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	finalDesc := desc.Split([]int{0, 1})
+	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build avg func for partial phase.
-	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialAvgFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialAvgFunc.AllocPartialResult()
 	partialPr2 := partialAvgFunc.AllocPartialResult()
 
@@ -93,10 +93,10 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeDouble),
 	}
-	finalDesc := desc.Split([]int{0, 1})
+	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build avg func for partial phase.
-	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialAvgFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialAvgFunc.AllocPartialResult()
 	partialPr2 := partialAvgFunc.AllocPartialResult()
 
