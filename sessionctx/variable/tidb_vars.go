@@ -271,7 +271,7 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	// Export for testing.
-	MaxDDLReorgBatchSize int32  = 8192
+	MaxDDLReorgBatchSize int32  = 10240
 	MinDDLReorgBatchSize int32  = 32
 	DDLSlowOprThreshold  uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	ForcePriority               = int32(DefTiDBForcePriority)
