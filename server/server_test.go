@@ -161,7 +161,7 @@ func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 
 func runTestRegression(c *C, overrider configOverrider, dbName string) {
 	runTestsOnNewDB(c, overrider, dbName, func(dbt *DBTest) {
-		// Create Table
+		// Show the user
 		dbt.mustExec("select user()")
 
 		// Create Table
