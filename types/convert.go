@@ -263,7 +263,7 @@ func roundIntStr(numNextDot byte, intStr string) string {
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
 // be lost. For example, the string value "18446744073709551615" which is the max number of unsigned
-// int will cause some precision to lose.
+// int will cause some precision to lose. intStr[0] may be a positive and negative sign like '+' or '-'.
 func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
