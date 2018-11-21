@@ -393,7 +393,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		return errors.Trace(err)
 	}
 	host := variable.ServerHostname
-	if !cc.server.isLocal() {
+	if !cc.server.isUnixSocket() {
 		addr := cc.bufReadConn.RemoteAddr().String()
 		// Do Auth.
 		host, _, err = net.SplitHostPort(addr)
