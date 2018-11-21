@@ -3493,6 +3493,7 @@ func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
 	s.tk.MustExec("drop database if exists test_db_with_partition")
 	s.tk.MustExec("create database test_db_with_partition")
 	s.tk.MustExec("use test_db_with_partition")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t_part (a int key)
 		partition by range(a) (
 		partition p0 values less than (10),
