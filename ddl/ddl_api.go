@@ -1335,14 +1335,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	// We don't support add hash type partition now.
-	if spec.Num > 0 {
-		return errors.Trace(ErrUnsupportedAddPartition)
-	}
-	if len(spec.PartDefinitions) == 0 {
-		return errors.Trace(ErrPartitionsMustBeDefined)
-	}
-
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1356,6 +1348,10 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	meta := t.Meta()
 	if meta.GetPartitionInfo() == nil {
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+	// We don't support add hash type partition now.
+	if t.Meta().Partition.Type == model.PartitionTypeHash {
+		return errors.Trace(ErrUnsupportedAddPartition)
 	}
 	partInfo, err := buildPartitionInfo(meta, d, spec)
 	if err != nil {
