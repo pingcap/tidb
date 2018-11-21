@@ -90,8 +90,6 @@ var (
 	errUnsupportedPKHandle     = terror.ClassDDL.New(codeUnsupportedDropPKHandle,
 		"unsupported drop integer primary key")
 	errUnsupportedCharset           = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
-	errUnsupportedAddPartition      = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
-	errUnsupportedCoalescePartition = terror.ClassDDL.New(codeUnsupportedCoalescePartition, "unsupported coalesce partitions")
 
 	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
 
@@ -124,6 +122,8 @@ var (
 	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
 	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
 	errTooLongIndexComment = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
+	ErrUnsupportedAddPartition      = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
+	ErrUnsupportedCoalescePartition = terror.ClassDDL.New(codeUnsupportedCoalescePartition, "unsupported coalesce partitions")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")

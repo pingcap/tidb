@@ -1337,7 +1337,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	// We don't support add hash type partition now.
 	if spec.Num > 0 {
-		return errors.Trace(errUnsupportedAddPartition)
+		return errors.Trace(ErrUnsupportedAddPartition)
 	}
 	if len(spec.PartDefinitions) == 0 {
 		return errors.Trace(ErrPartitionsMustBeDefined)
@@ -1409,7 +1409,7 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	// We don't support coalesce partitions hash type partition now.
 	if t.Meta().Partition.Type == model.PartitionTypeHash {
-		return errors.Trace(errUnsupportedCoalescePartition)
+		return errors.Trace(ErrUnsupportedCoalescePartition)
 	}
 
 	return errors.Trace(err)

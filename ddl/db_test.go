@@ -3712,7 +3712,7 @@ func (s *testDBSuite) TestPartitionErrorCode(c *C) {
 	partition by hash(store_id)
 	partitions 4;`)
 	_, err := s.tk.Exec("alter table employees add partition partitions 8;")
-	c.Assert(errUnsupportedAddPartition.Equal(err), IsTrue)
+	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
 
 	// coalesce partition
 	s.tk.MustExec(c, `create table clients (
@@ -3724,5 +3724,5 @@ func (s *testDBSuite) TestPartitionErrorCode(c *C) {
 	partition by hash( month(signed) )
 	partitions 12;`)
 	_, err = s.tk.Exec("alter table clients coalesce partition 4;")
-	c.Assert(errUnsupportedCoalescePartition.Equal(err), IsTrue)
+	c.Assert(ddl.ErrUnsupportedCoalescePartition.Equal(err), IsTrue)
 }
