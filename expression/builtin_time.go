@@ -5639,7 +5639,6 @@ func (c *tsoFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	//bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDatetime, types.ETDatetime)
 	argTp := args[0].GetType().EvalType()
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, types.ETInt)
 
