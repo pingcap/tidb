@@ -15,7 +15,6 @@ package kvcache
 
 import (
 	"container/list"
-	"math"
 
 	"github.com/pingcap/tidb/util/memory"
 )
@@ -91,7 +90,8 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 
 	memUsed, err := memory.MemUsed()
 	if err != nil {
-		memUsed = math.MaxUint64
+		l.DeleteAll()
+		return
 	}
 
 	for memUsed > uint64(float64(l.quota)*(1.0-l.guard)) || l.size > l.capacity {
@@ -105,7 +105,8 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 		if memUsed > uint64(float64(l.quota)*(1.0-l.guard)) {
 			memUsed, err = memory.MemUsed()
 			if err != nil {
-				memUsed = math.MaxUint64
+				l.DeleteAll()
+				return
 			}
 		}
 	}
@@ -121,6 +122,15 @@ func (l *SimpleLRUCache) Delete(key Key) {
 	l.cache.Remove(element)
 	delete(l.elements, k)
 	l.size--
+}
+
+// DeleteAll deletes all elements from the LRU Cache.
+func (l *SimpleLRUCache) DeleteAll() {
+	for lru := l.cache.Back(); lru != nil; lru = l.cache.Back() {
+		l.cache.Remove(lru)
+		delete(l.elements, string(lru.Value.(*cacheEntry).key.Hash()))
+		l.size--
+	}
 }
 
 // Size gets the current cache size.

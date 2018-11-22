@@ -405,10 +405,13 @@ func setGlobalVars() {
 	if plannercore.PreparedPlanCacheEnabled() {
 		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 		plannercore.PreparedPlanCacheMemoryGuardRatio = cfg.PreparedPlanCache.MemoryGuardRatio
+		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
+			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		}
 		plannercore.PreparedPlanCacheMaxMemory = cfg.Performance.MaxMemory
-		if plannercore.PreparedPlanCacheMaxMemory == 0 {
-			total, err := memory.MemTotal()
-			terror.MustNil(err)
+		total, err := memory.MemTotal()
+		terror.MustNil(err)
+		if plannercore.PreparedPlanCacheMaxMemory > total || plannercore.PreparedPlanCacheMaxMemory <= 0 {
 			plannercore.PreparedPlanCacheMaxMemory = total
 		}
 	}
