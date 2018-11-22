@@ -141,11 +141,15 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 
 			// Extracts the column of the partition expression, it will be used by partition prunning.
 			if tmps, err1 := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema); err1 == nil {
+				fmt.Printf("col is %v\n", tmps[0])
 				if col, ok := tmps[0].(*expression.Column); ok {
+					fmt.Printf("not ok\n")
 					column = col
 				}
 			}
+			fmt.Printf("%s\n", pi.Expr)
 			if column == nil {
+				fmt.Printf("pruning cannot be applied\n", pi.Expr)
 				log.Warnf("partition pruning won't work on this expr:%s", pi.Expr)
 			}
 		}

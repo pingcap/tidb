@@ -174,7 +174,6 @@ func IsNoopContext(spanCtx opentracing.SpanContext) bool {
 	return noop
 }
 
-
 // Finish is part of the opentracing.Span interface.
 func (s *span) Finish() {
 	s.FinishWithOptions(opentracing.FinishOptions{})
