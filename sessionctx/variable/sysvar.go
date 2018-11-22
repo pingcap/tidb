@@ -774,9 +774,9 @@ const (
 	SyncBinlog = "sync_binlog"
 	// BlockEncryptionMode is the name for 'block_encryption_mode' system variable.
 	BlockEncryptionMode = "block_encryption_mode"
-	// ValidatePassswordNumberCount is the name of 'validate_password_number_count' system variable.
+	// ValidatePasswordNumberCount is the name of 'validate_password_number_count' system variable.
 	ValidatePasswordNumberCount = "validate_password_number_count"
-	// ValidatePassswordLength is the name of 'validate_password_length' system variable.
+	// ValidatePasswordLength is the name of 'validate_password_length' system variable.
 	ValidatePasswordLength = "validate_password_length"
 )
 
