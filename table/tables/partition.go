@@ -178,12 +178,10 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 	pi := tblInfo.GetPartitionInfo()
 	ctx := mock.NewContext()
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
-	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
-
 	for i := 0; i < int(pi.Num); i++ {
 		fmt.Fprintf(&buf, "MOD((%s),(%d))=%d", pi.Expr, pi.Num, i)
 		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
@@ -204,7 +202,6 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 	if col, ok := exprs[0].(*expression.Column); ok {
 		column = col
 	}
-	locateExprs = append(locateExprs, exprs[0])
 	return &PartitionExpr{
 		Column: column,
 		Expr:   exprs[0],
