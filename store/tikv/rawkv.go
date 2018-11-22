@@ -306,7 +306,7 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 	return
 }
 
-// Reverse scan queries continuous kv pairs, starts from startKey, up to limit pairs.
+// ReverseScan queries continuous kv pairs, starts from startKey, up to limit pairs.
 func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_scan").Observe(time.Since(start).Seconds()) }()
