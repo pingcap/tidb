@@ -927,7 +927,9 @@ func (n *ValuesExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Column = node.(*ColumnNameExpr)
+	// `node` may be *ast.ValueExpr, to avoid panic, we write `ok` but do not use
+	// it.
+	n.Column, ok = node.(*ColumnNameExpr)
 	return v.Leave(n)
 }
 
