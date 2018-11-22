@@ -57,7 +57,7 @@ var (
 	_ builtinFunc = &builtinBenchmarkStringSig{}
 	_ builtinFunc = &builtinBenchmarkIntSig{}
 	_ builtinFunc = &builtinBenchmarkDecimalSig{}
-	_ builtinFunc = &builtinBenchmarkJsonSig{}
+	_ builtinFunc = &builtinBenchmarkJSONSig{}
 	_ builtinFunc = &builtinBenchmarkRealSig{}
 	_ builtinFunc = &builtinBenchmarkDurationSig{}
 	_ builtinFunc = &builtinBenchmarkTimeSig{}
@@ -396,6 +396,7 @@ func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	argFieldTp := args[1].GetType()
 	argTp := argFieldTp.EvalType()
+
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, argTp)
 	var sig builtinFunc
 	switch argTp {
@@ -404,13 +405,13 @@ func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	case types.ETInt:
 		sig = &builtinBenchmarkIntSig{bf}
 	case types.ETJson:
-		sig = &builtinBenchmarkJsonSig{bf}
+		sig = &builtinBenchmarkJSONSig{bf}
 	case types.ETReal:
 		sig = &builtinBenchmarkRealSig{bf}
 	case types.ETDecimal:
 		sig = &builtinBenchmarkDecimalSig{bf}
 	case types.ETDuration:
-		sig = &builtinBenchmarkTimeSig{bf}
+		sig = &builtinBenchmarkIntSig{bf}
 	case types.ETDatetime:
 		sig = &builtinBenchmarkTimeSig{bf}
 	case types.ETTimestamp:
@@ -448,11 +449,11 @@ func (b *builtinBenchmarkStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-type builtinBenchmarkJsonSig struct {
+type builtinBenchmarkJSONSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinBenchmarkJsonSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinBenchmarkJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -467,8 +468,8 @@ func (b *builtinBenchmarkJsonSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return 0, false, nil
 }
 
-func (b *builtinBenchmarkJsonSig) Clone() builtinFunc {
-	newSig := &builtinBenchmarkJsonSig{}
+func (b *builtinBenchmarkJSONSig) Clone() builtinFunc {
+	newSig := &builtinBenchmarkJSONSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }

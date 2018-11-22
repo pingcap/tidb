@@ -14,18 +14,19 @@
 package expression
 
 import (
-	"math"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testleak"
+	"math"
+	"time"
 )
 
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
@@ -121,9 +122,35 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Benchmark]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, nil)))
-	c.Assert(f, IsNil)
-	c.Assert(err, ErrorMatches, "*FUNCTION BENCHMARK does not exist")
+
+	mapping := make(map[string]interface{}, 1)
+	mapping["test"] = "test"
+	jsonObj := json.CreateBinary(mapping)
+
+	cases := []struct {
+		args     []interface{}
+		expected int64
+		isNil    bool
+		getErr   bool
+	}{
+		{[]interface{}{1000, 2}, 0, false, false},
+		{[]interface{}{1000, 2.0}, 0, false, false},
+		{[]interface{}{1000, "test"}, 0, false, false},
+		{[]interface{}{1000, types.TimeFromDays(20171010123456)}, 0, false, false},
+		{[]interface{}{1000, types.NewDecFromFloatForTest(1.1)}, 0, false, false},
+		{[]interface{}{1000, types.Duration{Duration: time.Duration(0)}}, 0, false, false},
+		{[]interface{}{1000, jsonObj}, 0, false, false},
+	}
+	for _, test := range cases {
+
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.args...)))
+
+		c.Assert(err, IsNil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v.GetInt64(), Equals, test.expected)
+	}
+
 }
 
 func (s *testEvaluatorSuite) TestCharset(c *C) {
