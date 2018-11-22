@@ -79,9 +79,10 @@ func (s *joinReOrderGreedySolver) enlargeJoinTree() (LogicalPlan, error) {
 	for {
 		bestCost := math.MaxFloat64
 		bestIdx := -1
+		var finalRemainOthers []expression.Expression
 		var bestJoin LogicalPlan
 		for i, node := range s.curJoinGroup {
-			newJoin := s.connectedAndNewNode(curJoinTree, node)
+			newJoin, remainOthers := s.connectedAndNewNode(curJoinTree, node)
 			if newJoin == nil {
 				continue
 			}
@@ -94,6 +95,7 @@ func (s *joinReOrderGreedySolver) enlargeJoinTree() (LogicalPlan, error) {
 				bestCost = curCost
 				bestJoin = newJoin
 				bestIdx = i
+				finalRemainOthers = remainOthers
 			}
 		}
 		if bestJoin == nil {
@@ -101,12 +103,15 @@ func (s *joinReOrderGreedySolver) enlargeJoinTree() (LogicalPlan, error) {
 		}
 		curJoinTree = bestJoin
 		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
+		s.otherConds = finalRemainOthers
 	}
 	return curJoinTree, nil
 }
 
-func (s *joinReOrderGreedySolver) connectedAndNewNode(leftNode, rightNode LogicalPlan) LogicalPlan {
+func (s *joinReOrderGreedySolver) connectedAndNewNode(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
 	var usedEdges []*expression.ScalarFunction
+	remainOtherConds := make([]expression.Expression, len(s.otherConds))
+	copy(remainOtherConds, s.otherConds)
 	for _, edge := range s.eqEdges {
 		lCol := edge.GetArgs()[0].(*expression.Column)
 		rCol := edge.GetArgs()[1].(*expression.Column)
@@ -118,7 +123,7 @@ func (s *joinReOrderGreedySolver) connectedAndNewNode(leftNode, rightNode Logica
 		}
 	}
 	if len(usedEdges) == 0 {
-		return nil
+		return nil, nil
 	}
 	newJoin := s.newJoin(leftNode, rightNode)
 	newJoin.EqualConditions = usedEdges
@@ -126,14 +131,14 @@ func (s *joinReOrderGreedySolver) connectedAndNewNode(leftNode, rightNode Logica
 		newJoin.LeftJoinKeys = append(newJoin.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
 		newJoin.RightJoinKeys = append(newJoin.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
-	for i := len(s.otherConds) - 1; i >= 0; i-- {
-		cols := expression.ExtractColumns(s.otherConds[i])
+	for i := len(remainOtherConds) - 1; i >= 0; i-- {
+		cols := expression.ExtractColumns(remainOtherConds[i])
 		if newJoin.schema.ColumnsIndices(cols) != nil {
-			newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
-			s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
+			newJoin.OtherConditions = append(newJoin.OtherConditions, remainOtherConds[i])
+			remainOtherConds = append(remainOtherConds[:i], remainOtherConds[i+1:]...)
 		}
 	}
-	return newJoin
+	return newJoin, remainOtherConds
 }
 
 func (s *joinReOrderGreedySolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) LogicalPlan {
@@ -144,7 +149,15 @@ func (s *joinReOrderGreedySolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan
 				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
 				break
 			}
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1]))
+			newJoin := s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
+			for i := len(s.otherConds) - 1; i >= 0; i-- {
+				cols := expression.ExtractColumns(s.otherConds[i])
+				if newJoin.schema.ColumnsIndices(cols) != nil {
+					newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
+					s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
+				}
+			}
+			resultJoinGroup = append(resultJoinGroup, newJoin)
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}
