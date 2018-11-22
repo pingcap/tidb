@@ -1,0 +1,26 @@
+sudo: false
+language: go
+go:
+  - 1.8.x
+
+install:
+  - go get google.golang.org/grpc
+  - go get golang.org/x/net/context
+  - go get github.com/stretchr/testify
+  # for auth
+  - go get golang.org/x/oauth2
+  - go get cloud.google.com/go/compute/metadata
+  # for logs/zap
+  - go get go.uber.org/zap
+  # for logs/logrus
+  - go get github.com/sirupsen/logrus
+  # for field testing
+  - go get github.com/gogo/protobuf/proto
+  # for tracing/opentracing
+  - go get github.com/opentracing/opentracing-go
+
+script:
+ - ./test_all.sh
+ 
+after_success:
+  - bash <(curl -s https://codecov.io/bash)
