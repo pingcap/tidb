@@ -257,7 +257,7 @@ const (
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
 	DefTiDBDDLReorgWorkerCount       = 16
-	DefTiDBDDLReorgBatchSize         = 128
+	DefTiDBDDLReorgBatchSize         = 1024
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
 	DefTiDBForcePriority             = mysql.NoPriority
