@@ -18,8 +18,8 @@ import (
 	"encoding/binary"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pkg/errors"
 )
 
 // HashPair is the pair for (field, value) in a hash.
@@ -238,7 +238,7 @@ func (t *TxStructure) HClear(key []byte) error {
 
 func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error) error {
 	dataPrefix := t.hashDataKeyPrefix(key)
-	it, err := t.reader.Seek(dataPrefix)
+	it, err := t.reader.Iter(dataPrefix, dataPrefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}

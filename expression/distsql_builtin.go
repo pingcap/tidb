@@ -17,15 +17,15 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 )
 
 func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
@@ -355,6 +355,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CoalesceInt:
 		f = &builtinCoalesceIntSig{base}
 
+	case tipb.ScalarFuncSig_CaseWhenJson:
+		f = &builtinCaseWhenJSONSig{base}
 	case tipb.ScalarFuncSig_CaseWhenDecimal:
 		f = &builtinCaseWhenDecimalSig{base}
 	case tipb.ScalarFuncSig_CaseWhenDuration:

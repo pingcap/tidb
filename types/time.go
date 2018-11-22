@@ -23,10 +23,10 @@ import (
 	gotime "time"
 	"unicode"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -682,6 +682,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	case 3:
 		// YYYY-MM-DD
 		err = scanTimeArgs(seps, &year, &month, &day)
+	case 4:
+		// YYYY-MM-DD HH
+		err = scanTimeArgs(seps, &year, &month, &day, &hour)
 	case 5:
 		// YYYY-MM-DD HH-MM
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute)
@@ -786,7 +789,10 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64) (int64, error) {
+func AdjustYear(y int64, fromStr bool) (int64, error) {
+	if y == 0 && !fromStr {
+		return y, nil
+	}
 	y = int64(adjustYear(int(y)))
 	if y < int64(MinYear) || y > int64(MaxYear) {
 		return 0, errors.Trace(ErrInvalidYear)

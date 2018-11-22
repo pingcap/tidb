@@ -14,14 +14,14 @@
 package executor
 
 import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -40,7 +40,7 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
 	if !sessVars.LightningMode {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
 	}
 
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
@@ -129,15 +129,10 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 // Next implements Exec Next interface.
 func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	cols, err := e.getColumns(e.Table.Cols())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	if len(e.children) > 0 && e.children[0] != nil {
-		return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
+		return e.insertRowsFromSelect(ctx, e.exec)
 	}
-	return errors.Trace(e.insertRows(cols, e.exec))
+	return e.insertRows(e.exec)
 }
 
 // Close implements the Executor Close interface.
@@ -154,6 +149,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
 	}
+	e.initEvalBuffer()
 	return nil
 }
 

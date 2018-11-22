@@ -18,11 +18,13 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pkg/errors"
+	dto "github.com/prometheus/client_model/go"
 	"golang.org/x/net/context"
 )
 
@@ -82,7 +84,30 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
 		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
 		tk1 := testkit.NewTestKitWithInit(c, s.store)
+		tk1.MustExec("insert prepare_test (c1) values (3)")
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+
+		tk.MustExec("delete from prepare_test")
+		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk1.MustExec("insert prepare_test (c1) values (3)")
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+
+		tk.MustExec("delete from prepare_test")
+		query = "select c1 from prepare_test where c1 in (select c1 from prepare_test where c1 = ?)"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
 		tk1.MustExec("insert prepare_test (c1) values (3)")
 		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
 		c.Assert(err, IsNil)
@@ -125,6 +150,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		// Drop a column so the prepared statement become invalid.
 		query = "select c1, c2 from prepare_test where c1 = ?"
 		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		c.Assert(err, IsNil)
 		tk.MustExec("alter table prepare_test drop column c2")
 
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 1)
@@ -364,4 +390,214 @@ func (s *testSuite) TestPreparedIssue7579(c *C) {
 		r = tk.MustQuery(`execute stmt using @param;`)
 		r.Check(nil)
 	}
+}
+
+func (s *testSuite) TestPreparedInsert(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	metrics.PlanCacheCounter.Reset()
+	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
+	pb := &dto.Metric{}
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists prepare_test")
+		tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
+		tk.MustExec(`prepare stmt_insert from 'insert into prepare_test values (?, ?)'`)
+		tk.MustExec(`set @a=1,@b=1; execute stmt_insert using @a, @b;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(0))
+		}
+		tk.MustExec(`set @a=2,@b=2; execute stmt_insert using @a, @b;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(1))
+		}
+		tk.MustExec(`set @a=3,@b=3; execute stmt_insert using @a, @b;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(2))
+		}
+
+		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
+		result.Check(testkit.Rows("1 1"))
+		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 2)
+		result.Check(testkit.Rows("2 2"))
+		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 3)
+		result.Check(testkit.Rows("3 3"))
+
+		tk.MustExec(`prepare stmt_insert_select from 'insert into prepare_test (id, c1) select id + 100, c1 + 100 from prepare_test where id = ?'`)
+		tk.MustExec(`set @a=1; execute stmt_insert_select using @a;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(2))
+		}
+		tk.MustExec(`set @a=2; execute stmt_insert_select using @a;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(3))
+		}
+		tk.MustExec(`set @a=3; execute stmt_insert_select using @a;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(4))
+		}
+
+		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 101)
+		result.Check(testkit.Rows("101 101"))
+		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 102)
+		result.Check(testkit.Rows("102 102"))
+		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 103)
+		result.Check(testkit.Rows("103 103"))
+	}
+}
+
+func (s *testSuite) TestPreparedUpdate(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	metrics.PlanCacheCounter.Reset()
+	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
+	pb := &dto.Metric{}
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists prepare_test")
+		tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
+		tk.MustExec(`insert into prepare_test values (1, 1)`)
+		tk.MustExec(`insert into prepare_test values (2, 2)`)
+		tk.MustExec(`insert into prepare_test values (3, 3)`)
+
+		tk.MustExec(`prepare stmt_update from 'update prepare_test set c1 = c1 + ? where id = ?'`)
+		tk.MustExec(`set @a=1,@b=100; execute stmt_update using @b,@a;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(0))
+		}
+		tk.MustExec(`set @a=2,@b=200; execute stmt_update using @b,@a;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(1))
+		}
+		tk.MustExec(`set @a=3,@b=300; execute stmt_update using @b,@a;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(2))
+		}
+
+		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
+		result.Check(testkit.Rows("1 101"))
+		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 2)
+		result.Check(testkit.Rows("2 202"))
+		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 3)
+		result.Check(testkit.Rows("3 303"))
+	}
+}
+
+func (s *testSuite) TestPreparedDelete(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	metrics.PlanCacheCounter.Reset()
+	counter := metrics.PlanCacheCounter.WithLabelValues("prepare")
+	pb := &dto.Metric{}
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists prepare_test")
+		tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
+		tk.MustExec(`insert into prepare_test values (1, 1)`)
+		tk.MustExec(`insert into prepare_test values (2, 2)`)
+		tk.MustExec(`insert into prepare_test values (3, 3)`)
+
+		tk.MustExec(`prepare stmt_delete from 'delete from prepare_test where id = ?'`)
+		tk.MustExec(`set @a=1; execute stmt_delete using @a;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(0))
+		}
+		tk.MustExec(`set @a=2; execute stmt_delete using @a;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(1))
+		}
+		tk.MustExec(`set @a=3; execute stmt_delete using @a;`)
+		if flag {
+			counter.Write(pb)
+			hit := pb.GetCounter().GetValue()
+			c.Check(hit, Equals, float64(2))
+		}
+
+		result := tk.MustQuery("select id, c1 from prepare_test where id = ?", 1)
+		result.Check(nil)
+		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 2)
+		result.Check(nil)
+		result = tk.MustQuery("select id, c1 from prepare_test where id = ?", 3)
+		result.Check(nil)
+	}
+}
+
+func (s *testSuite) TestPrepareDealloc(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	plannercore.PreparedPlanCacheCapacity = 3
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists prepare_test")
+	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
+
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
+	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt1")
+	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt2")
+	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt3")
+	tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
+	tk.MustExec("execute stmt4")
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 3)
+
+	tk.MustExec("deallocate prepare stmt1")
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 3)
+	tk.MustExec("deallocate prepare stmt2")
+	tk.MustExec("deallocate prepare stmt3")
+	tk.MustExec("deallocate prepare stmt4")
+	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
 }

@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"encoding/binary"
+	"reflect"
 	"unsafe"
 
 	"github.com/cznic/mathutil"
@@ -274,6 +275,74 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 			chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 		}
 		chkCol.length++
+	}
+}
+
+// PreAlloc pre-allocates the memory space in a Chunk to store the Row.
+// NOTE:
+// 1. The Chunk must be empty or holds no useful data.
+// 2. The schema of the Row must be the same with the Chunk.
+// 3. This API is paired with the `Insert()` function, which inserts all the
+//    rows data into the Chunk after the pre-allocation.
+// 4. We set the null bitmap here instead of in the Insert() function because
+//    when the Insert() function is called parallelly, the data race on a byte
+//    can not be avoided although the manipulated bits are different inside a
+//    byte.
+func (c *Chunk) PreAlloc(row Row) {
+	for i, srcCol := range row.c.columns {
+		dstCol := c.columns[i]
+		dstCol.appendNullBitmap(!srcCol.isNull(row.idx))
+		elemLen := len(srcCol.elemBuf)
+		if !srcCol.isFixed() {
+			elemLen = int(srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx])
+			dstCol.offsets = append(dstCol.offsets, int32(len(dstCol.data)+elemLen))
+		}
+		dstCol.length++
+		needCap := len(dstCol.data) + elemLen
+		if needCap <= cap(dstCol.data) {
+			(*reflect.SliceHeader)(unsafe.Pointer(&dstCol.data)).Len = len(dstCol.data) + elemLen
+			continue
+		}
+		// Grow the capacity according to golang.growslice.
+		newCap := cap(dstCol.data)
+		doubleCap := newCap << 1
+		if needCap > doubleCap {
+			newCap = needCap
+		} else {
+			if len(dstCol.data) < 1024 {
+				newCap = doubleCap
+			} else {
+				for 0 < newCap && newCap < needCap {
+					newCap += newCap / 4
+				}
+				if newCap <= 0 {
+					newCap = needCap
+				}
+			}
+		}
+		dstCol.data = make([]byte, len(dstCol.data)+elemLen, newCap)
+	}
+}
+
+// Insert inserts `row` on the position specified by `rowIdx`.
+// Note: Insert will cover the origin data, it should be called after
+// PreAlloc.
+func (c *Chunk) Insert(rowIdx int, row Row) {
+	for i, srcCol := range row.c.columns {
+		if row.IsNull(i) {
+			continue
+		}
+		dstCol := c.columns[i]
+		var srcStart, srcEnd, destStart, destEnd int
+		if srcCol.isFixed() {
+			srcElemLen, destElemLen := len(srcCol.elemBuf), len(dstCol.elemBuf)
+			srcStart, destStart = row.idx*srcElemLen, rowIdx*destElemLen
+			srcEnd, destEnd = srcStart+srcElemLen, destStart+destElemLen
+		} else {
+			srcStart, srcEnd = int(srcCol.offsets[row.idx]), int(srcCol.offsets[row.idx+1])
+			destStart, destEnd = int(dstCol.offsets[rowIdx]), int(dstCol.offsets[rowIdx+1])
+		}
+		copy(dstCol.data[destStart:destEnd], srcCol.data[srcStart:srcEnd])
 	}
 }
 
