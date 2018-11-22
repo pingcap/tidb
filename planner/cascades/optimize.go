@@ -14,9 +14,9 @@
 package cascades
 
 import (
+	"github.com/pingcap/errors"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pkg/errors"
 )
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
