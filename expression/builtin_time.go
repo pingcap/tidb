@@ -5631,6 +5631,7 @@ func getExpressionFsp(ctx sessionctx.Context, expression Expression) (int, error
 	return mathutil.Min(expression.GetType().Decimal, types.MaxFsp), nil
 }
 
+//tsoFunction extracts physical time from a tso
 type tsoFunctionClass struct {
 	baseFunctionClass
 }
