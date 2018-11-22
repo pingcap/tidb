@@ -1327,3 +1327,34 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
 }
+
+func (s *testPlanSuite) TestDoSubquery(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "do 1 in (select a from t)",
+			best: "LeftHashJoin{Dual->TableReader(Table(t))}->Projection",
+		},
+	}
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := planner.Optimize(se, stmt, s.is)
+		c.Assert(err, IsNil)
+		c.Assert(core.ToString(p), Equals, tt.best, comment)
+	}
+}
