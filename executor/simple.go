@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
@@ -83,8 +84,25 @@ func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	return errors.Trace(err)
 }
 
+func (e *SimpleExec) dbAccessDenied(dbname string) error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.GenWithStackByArgs(u, h, dbname)
+}
+
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	dbname := model.NewCIStr(s.DBName)
+
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(dbname)) {
+		return e.dbAccessDenied(dbname.O)
+	}
+
 	dbinfo, exists := e.is.SchemaByName(dbname)
 	if !exists {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbname)
