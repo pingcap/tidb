@@ -52,7 +52,7 @@ func newMockHashKey(key int64) *mockCacheKey {
 }
 
 func (s *testLRUCacheSuite) TestPut(c *C) {
-	lru := NewSimpleLRUCache(3)
+	lru := NewSimpleLRUCache(3, 0.1, 32<<30)
 	c.Assert(lru.capacity, Equals, uint(3))
 
 	keys := make([]*mockCacheKey, 5)
@@ -104,8 +104,31 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	c.Assert(root, IsNil)
 }
 
+func (s *testLRUCacheSuite) TestiOOMGuard(c *C) {
+	lru := NewSimpleLRUCache(3, 1.0, 32<<30)
+	c.Assert(lru.capacity, Equals, uint(3))
+
+	keys := make([]*mockCacheKey, 5)
+	vals := make([]int64, 5)
+
+	for i := 0; i < 5; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = int64(i)
+		lru.Put(keys[i], vals[i])
+	}
+	c.Assert(lru.size, Equals, uint(0))
+
+	// test for non-existent elements
+	for i := 0; i < 5; i++ {
+		hash := string(keys[i].Hash())
+		element, exists := lru.elements[hash]
+		c.Assert(exists, IsFalse)
+		c.Assert(element, IsNil)
+	}
+}
+
 func (s *testLRUCacheSuite) TestGet(c *C) {
-	lru := NewSimpleLRUCache(3)
+	lru := NewSimpleLRUCache(3, 0.1, 32<<30)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
@@ -145,7 +168,7 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 }
 
 func (s *testLRUCacheSuite) TestDelete(c *C) {
-	lru := NewSimpleLRUCache(3)
+	lru := NewSimpleLRUCache(3, 0.1, 32<<30)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]int64, 3)
