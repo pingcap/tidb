@@ -65,13 +65,11 @@ type partitionedTable struct {
 func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
 	ret := &partitionedTable{Table: *tbl}
 	pi := tblInfo.GetPartitionInfo()
-	if pi.Type == model.PartitionTypeRange {
-		partitionExpr, err := generatePartitionExpr(tblInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ret.partitionExpr = partitionExpr
+	partitionExpr, err := generatePartitionExpr(tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	ret.partitionExpr = partitionExpr
 
 	if err := initTableIndices(&ret.tableCommon); err != nil {
 		return nil, errors.Trace(err)
@@ -102,6 +100,7 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 // UpperBounds: (x < y1); (x < y2); (x < y3)
 type PartitionExpr struct {
 	// Column is the column appeared in the by range expression, partition pruning need this to work.
+	Expr        expression.Expression
 	Column      *expression.Column
 	Ranges      []expression.Expression
 	UpperBounds []expression.Expression
@@ -118,52 +117,83 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
-	for i := 0; i < len(pi.Definitions); i++ {
-		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
-			// Expr less than maxvalue is always true.
-			fmt.Fprintf(&buf, "true")
-		} else {
-			fmt.Fprintf(&buf, "((%s) < (%s))", pi.Expr, pi.Definitions[i].LessThan[0])
-		}
-		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
-		if err != nil {
-			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
-			return nil, errors.Trace(err)
-		}
-		locateExprs = append(locateExprs, exprs[0])
+	switch pi.Type {
+	case model.PartitionTypeRange:
+		for i := 0; i < len(pi.Definitions); i++ {
+			if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
+				// Expr less than maxvalue is always true.
+				fmt.Fprintf(&buf, "true")
+			} else {
+				fmt.Fprintf(&buf, "((%s) < (%s))", pi.Expr, pi.Definitions[i].LessThan[0])
+			}
+			exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
+			if err != nil {
+				// If it got an error here, ddl may hang forever, so this error log is important.
+				log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+				return nil, errors.Trace(err)
+			}
+			locateExprs = append(locateExprs, exprs[0])
 
-		if i > 0 {
-			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
-		} else {
-			// NULL will locate in the first partition, so its expression is (expr < value or expr is null).
-			fmt.Fprintf(&buf, " or ((%s) is null)", pi.Expr)
+			if i > 0 {
+				fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
+			} else {
+				// NULL will locate in the first partition, so its expression is (expr < value or expr is null).
+				fmt.Fprintf(&buf, " or ((%s) is null)", pi.Expr)
 
-			// Extracts the column of the partition expression, it will be used by partition prunning.
-			if tmps, err1 := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema); err1 == nil {
-				if col, ok := tmps[0].(*expression.Column); ok {
-					column = col
+				// Extracts the column of the partition expression, it will be used by partition prunning.
+				if tmps, err1 := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema); err1 == nil {
+					if col, ok := tmps[0].(*expression.Column); ok {
+						column = col
+					}
+				}
+				if column == nil {
+					log.Warnf("partition pruning won't work on this expr:%s", pi.Expr)
 				}
 			}
-			if column == nil {
-				log.Warnf("partition pruning won't work on this expr:%s", pi.Expr)
-			}
-		}
 
-		exprs, err = expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
+			exprs, err = expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
+			if err != nil {
+				// If it got an error here, ddl may hang forever, so this error log is important.
+				log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+				return nil, errors.Trace(err)
+			}
+			partitionPruneExprs = append(partitionPruneExprs, exprs[0])
+			buf.Reset()
+		}
+		return &PartitionExpr{
+			Column:      column,
+			Ranges:      partitionPruneExprs,
+			UpperBounds: locateExprs,
+		}, nil
+	case model.PartitionTypeHash:
+		for i := 0; i < int(pi.Num); i++ {
+			fmt.Fprintf(&buf, "MOD((%s),(%d))=%d", pi.Expr, pi.Num, i)
+			exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
+			if err != nil {
+				// If it got an error here, ddl may hang forever, so this error log is important.
+				log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+				return nil, errors.Trace(err)
+			}
+			partitionPruneExprs = append(partitionPruneExprs, exprs[0])
+			buf.Reset()
+		}
+		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			log.Error("wrong table partition expression:", errors.ErrorStack(err), pi.Expr)
 			return nil, errors.Trace(err)
 		}
-		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
-		buf.Reset()
+		if col, ok := exprs[0].(*expression.Column); ok {
+			column = col
+		}
+		locateExprs = append(locateExprs, exprs[0])
+		return &PartitionExpr{
+			Column: column,
+			Expr:   exprs[0],
+			Ranges: partitionPruneExprs,
+		}, nil
 	}
-	return &PartitionExpr{
-		Column:      column,
-		Ranges:      partitionPruneExprs,
-		UpperBounds: locateExprs,
-	}, nil
+	return nil, nil
 }
 
 // PartitionExpr returns the partition expression.
@@ -180,29 +210,45 @@ func partitionRecordKey(pid int64, handle int64) kv.Key {
 func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	var err error
 	var isNull bool
-	partitionExprs := t.partitionExpr.UpperBounds
-	idx := sort.Search(len(partitionExprs), func(i int) bool {
-		var ret int64
-		ret, isNull, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+	idx := 0
+	switch t.meta.Partition.Type {
+	case model.PartitionTypeRange:
+		partitionExprs := t.partitionExpr.UpperBounds
+		idx = sort.Search(len(partitionExprs), func(i int) bool {
+			var ret int64
+			ret, isNull, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+			if err != nil {
+				return true // Break the search.
+			}
+			if isNull {
+				// If the column value used to determine the partition is NULL, the row is inserted into the lowest partition.
+				// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-handling-nulls.html
+				return true // Break the search.
+			}
+			return ret > 0
+		})
 		if err != nil {
-			return true // Break the search.
+			return 0, errors.Trace(err)
 		}
 		if isNull {
-			// If the column value used to determine the partition is NULL, the row is inserted into the lowest partition.
-			// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-handling-nulls.html
-			return true // Break the search.
+			idx = 0
 		}
-		return ret > 0
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if isNull {
-		idx = 0
-	}
-	if idx < 0 || idx >= len(partitionExprs) {
-		// The data does not belong to any of the partition?
-		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
+		if idx < 0 || idx >= len(partitionExprs) {
+			// The data does not belong to any of the partition?
+			return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
+		}
+
+	case model.PartitionTypeHash:
+		var ret int64
+		ret, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if isNull {
+			idx = 0
+		} else {
+			idx = int(ret % int64(t.meta.Partition.Num))
+		}
 	}
 	return pi.Definitions[idx].ID, nil
 }
