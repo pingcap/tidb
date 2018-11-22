@@ -804,7 +804,7 @@ func (s *testSuite) TestHashPartitionedTableReplace(c *C) {
 	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test;`)
 
 	tk.MustExec(`drop table if exists replace_test_2`)
-	tk.MustExec(`create table replace_test_2 (id int, c1 int) partition by hash(a) partitions 6;`)
+	tk.MustExec(`create table replace_test_2 (id int, c1 int) partition by hash(id) partitions 6;`)
 
 	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;`)
 
@@ -815,9 +815,35 @@ func (s *testSuite) TestHashPartitionedTableReplace(c *C) {
 	tk.MustExec("rollback")
 
 	tk.MustExec(`drop table if exists replace_test_3`)
-	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2))`
+	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by hash(c2) partitions 7;`
 	tk.MustExec(replaceUniqueIndexSQL)
-	testPartitionTableReplace3(tk,c)
+	testPartitionTableReplace3(tk, c)
+
+	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by hash(c1) partitions 8;`
+	tk.MustExec(`drop table if exists replace_test_4`)
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by hash (c2) partitions 9;`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by hash (b) partitions 10;`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
+	tk.MustExec(issue989SQL)
+	r := tk.MustQuery("select * from tIssue989;")
+	r.Check(testkit.Rows("111 2"))
 }
 
 func (s *testSuite) TestPartitionedTableReplace(c *C) {
@@ -863,7 +889,41 @@ func (s *testSuite) TestPartitionedTableReplace(c *C) {
 				    PARTITION p1 VALUES LESS THAN (7),
 				    PARTITION p2 VALUES LESS THAN (11))`
 	tk.MustExec(replaceUniqueIndexSQL)
-	testPartitionTableReplace3(tk,c)
+	testPartitionTableReplace3(tk, c)
+
+	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11));`
+	tk.MustExec(`drop table if exists replace_test_4`)
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by range (c2) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11));`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by range (b) (
+			    PARTITION p1 VALUES LESS THAN (100),
+			    PARTITION p2 VALUES LESS THAN (200))`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
+	tk.MustExec(issue989SQL)
+	r := tk.MustQuery("select * from tIssue989;")
+	r.Check(testkit.Rows("111 2"))
 }
 
 func testPartitionTableReplace1(tk *testkit.TestKit, c *C) {
@@ -910,7 +970,7 @@ func testPartitionTableReplace1(tk *testkit.TestKit, c *C) {
 	tk.MustExec("rollback")
 }
 
-func testPartitionTableReplace3(tk *testkit.TestKit, c *C)  {
+func testPartitionTableReplace3(tk *testkit.TestKit, c *C) {
 	replaceUniqueIndexSQL := `replace into replace_test_3 set c2=8;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=8;`
@@ -925,40 +985,6 @@ func testPartitionTableReplace3(tk *testkit.TestKit, c *C)  {
 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
 	tk.MustExec(replaceUniqueIndexSQL)
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
-
-	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
-				    PARTITION p0 VALUES LESS THAN (4),
-				    PARTITION p1 VALUES LESS THAN (7),
-				    PARTITION p2 VALUES LESS THAN (11));`
-	tk.MustExec(`drop table if exists replace_test_4`)
-	tk.MustExec(replaceUniqueIndexSQL)
-	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
-	tk.MustExec(replaceUniqueIndexSQL)
-	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
-
-	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by range (c2) (
-				    PARTITION p0 VALUES LESS THAN (4),
-				    PARTITION p1 VALUES LESS THAN (7),
-				    PARTITION p2 VALUES LESS THAN (11));`
-	tk.MustExec(replacePrimaryKeySQL)
-	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
-	tk.MustExec(replacePrimaryKeySQL)
-	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
-	tk.MustExec(replacePrimaryKeySQL)
-	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
-
-	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by range (b) (
-			    PARTITION p1 VALUES LESS THAN (100),
-			    PARTITION p2 VALUES LESS THAN (200))`
-	tk.MustExec(issue989SQL)
-	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
-	tk.MustExec(issue989SQL)
-	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
-	tk.MustExec(issue989SQL)
-	r := tk.MustQuery("select * from tIssue989;")
-	r.Check(testkit.Rows("111 2"))
 }
 func (s *testSuite) TestUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
