@@ -1119,7 +1119,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	_, err = tk.Exec("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 't1.b' in 'order clause'")
+	c.Assert(err.Error(), Equals, "[planner:1250]Table 't1' from one of the SELECTs cannot be used in global ORDER clause")
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {

@@ -819,7 +819,11 @@ func (by *ByItems) Clone() *ByItems {
 }
 
 func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) (*LogicalSort, error) {
-	b.curClause = orderByClause
+	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+		b.curClause = globalOrderByClause
+	} else {
+		b.curClause = orderByClause
+	}
 	sort := LogicalSort{}.Init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
