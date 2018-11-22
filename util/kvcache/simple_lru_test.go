@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 func TestT(t *testing.T) {
@@ -52,7 +53,10 @@ func newMockHashKey(key int64) *mockCacheKey {
 }
 
 func (s *testLRUCacheSuite) TestPut(c *C) {
-	lru := NewSimpleLRUCache(3, 0.1, 32<<30)
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 	c.Assert(lru.capacity, Equals, uint(3))
 
 	keys := make([]*mockCacheKey, 5)
@@ -104,8 +108,11 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	c.Assert(root, IsNil)
 }
 
-func (s *testLRUCacheSuite) TestiOOMGuard(c *C) {
-	lru := NewSimpleLRUCache(3, 1.0, 32<<30)
+func (s *testLRUCacheSuite) TestOOMGuard(c *C) {
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 1.0, maxMem)
 	c.Assert(lru.capacity, Equals, uint(3))
 
 	keys := make([]*mockCacheKey, 5)
@@ -128,7 +135,10 @@ func (s *testLRUCacheSuite) TestiOOMGuard(c *C) {
 }
 
 func (s *testLRUCacheSuite) TestGet(c *C) {
-	lru := NewSimpleLRUCache(3, 0.1, 32<<30)
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
@@ -168,7 +178,10 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 }
 
 func (s *testLRUCacheSuite) TestDelete(c *C) {
-	lru := NewSimpleLRUCache(3, 0.1, 32<<30)
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]int64, 3)
@@ -194,7 +207,10 @@ func (s *testLRUCacheSuite) TestDelete(c *C) {
 }
 
 func (s *testLRUCacheSuite) TestDeleteAll(c *C) {
-	lru := NewSimpleLRUCache(3, 0.1, 32<<30)
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]int64, 3)
