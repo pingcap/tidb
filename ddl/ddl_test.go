@@ -20,14 +20,14 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -39,6 +39,8 @@ import (
 type DDLForTest interface {
 	// SetHook sets the hook.
 	SetHook(h Callback)
+	// GetHook gets the hook.
+	GetHook() Callback
 	// SetInterceptoror sets the interceptor.
 	SetInterceptoror(h Interceptor)
 }
@@ -49,6 +51,14 @@ func (d *ddl) SetHook(h Callback) {
 	defer d.mu.Unlock()
 
 	d.mu.hook = h
+}
+
+// GetHook implements DDL.GetHook interface.
+func (d *ddl) GetHook() Callback {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.mu.hook
 }
 
 // SetInterceptoror implements DDL.SetInterceptoror interface.
@@ -118,7 +128,7 @@ func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	m := meta.NewMeta(ctx.Txn())
+	m := meta.NewMeta(ctx.Txn(true))
 	ver, err := m.GetSchemaVersion()
 	c.Assert(err, IsNil)
 	return ver
@@ -146,7 +156,7 @@ func checkHistoryJob(c *C, job *model.Job) {
 }
 
 func checkHistoryJobArgs(c *C, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	t := meta.NewMeta(ctx.Txn())
+	t := meta.NewMeta(ctx.Txn(true))
 	historyJob, err := t.GetHistoryDDLJob(id)
 	c.Assert(err, IsNil)
 	c.Assert(historyJob.BinlogInfo.FinishedTS, Greater, uint64(0))

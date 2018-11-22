@@ -16,14 +16,14 @@ package executor
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -141,35 +141,26 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if err = t.RemoveRecord(ctx, h, oldData); err != nil {
 			return false, false, 0, errors.Trace(err)
 		}
+		// the `affectedRows` is increased when adding new record.
 		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
 		if err != nil {
 			return false, false, 0, errors.Trace(err)
+		}
+		if onDup {
+			sc.AddAffectedRows(1)
 		}
 	} else {
 		// Update record to new value and update index.
 		if err = t.UpdateRecord(ctx, h, oldData, newData, modified); err != nil {
 			return false, false, 0, errors.Trace(err)
 		}
-	}
-
-	if onDup {
-		sc.AddAffectedRows(2)
-	} else {
-		// if handleChanged == true, the `affectedRows` is calculated when add new record.
-		if !handleChanged {
+		if onDup {
+			sc.AddAffectedRows(2)
+		} else {
 			sc.AddAffectedRows(1)
 		}
 	}
 
-	// 6. Update delta for the statistics.
-	colSize := make(map[int64]int64)
-	for id, col := range t.Cols() {
-		val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
-		if val != 0 {
-			colSize[col.ID] = val
-		}
-	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1, colSize)
 	return true, handleChanged, newHandle, nil
 }
 

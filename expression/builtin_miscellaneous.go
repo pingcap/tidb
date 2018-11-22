@@ -21,13 +21,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 	"github.com/twinj/uuid"
 )
 
@@ -227,7 +226,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinStringAnyValueSig{bf}
 	case types.ETDatetime, types.ETTimestamp:
-		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
 		sig = &builtinTimeAnyValueSig{bf}
 	default:
 		panic("unexpected types.EvalType of builtin function ANY_VALUE")

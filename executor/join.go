@@ -20,16 +20,16 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -218,8 +218,11 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			}
 			return
 		}
-
 		if !hasWaitedForInner {
+			if outerResult.NumRows() == 0 {
+				e.finished.Store(true)
+				return
+			}
 			jobFinished, innerErr := e.wait4Inner()
 			if innerErr != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{
@@ -248,7 +251,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 			return false, errors.Trace(err)
 		}
 	}
-	if e.hashTable.Len() == 0 && e.joinType == plannercore.InnerJoin {
+	if e.hashTable.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
 		return true, nil
 	}
 	return false, nil
@@ -266,6 +269,8 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 		select {
 		case <-doneCh:
 			return
+		case <-e.closeCh:
+			return
 		default:
 			if e.finished.Load().(bool) {
 				return
@@ -280,7 +285,12 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 				e.evalRadixBitNum()
 				return
 			}
-			chkCh <- chk
+			select {
+			case chkCh <- chk:
+				break
+			case <-e.closeCh:
+				return
+			}
 			e.innerResult.Add(chk)
 		}
 	}
@@ -509,9 +519,9 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
@@ -549,19 +559,14 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	doneCh := make(chan struct{})
 	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
-	if e.finished.Load().(bool) {
-		return
-	}
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
 	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
-		// fetchInnerRows may be blocked by this channel, so read from the channel to unblock it.
-		select {
-		case <-innerResultCh:
-		default:
-		}
+	}
+	// wait fetchInnerRows be finished.
+	for range innerResultCh {
 	}
 }
 
@@ -726,9 +731,9 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 
 // Next implements the Executor interface.
 func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	for {

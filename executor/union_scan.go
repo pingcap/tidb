@@ -17,12 +17,12 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -126,9 +126,9 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if us.runtimeStat != nil {
+	if us.runtimeStats != nil {
 		start := time.Now()
-		defer func() { us.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { us.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())

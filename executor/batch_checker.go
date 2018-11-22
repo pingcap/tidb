@@ -14,14 +14,14 @@
 package executor
 
 import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pkg/errors"
 )
 
 type keyValue struct {
@@ -52,7 +52,7 @@ type batchChecker struct {
 
 // batchGetOldValues gets the values of storage in batch.
 func (b *batchChecker) batchGetOldValues(ctx sessionctx.Context, batchKeys []kv.Key) error {
-	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
+	values, err := kv.BatchGetValues(ctx.Txn(true), batchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -205,7 +205,7 @@ func (b *batchChecker) batchGetInsertKeys(ctx sessionctx.Context, t table.Table,
 			batchKeys = append(batchKeys, k.newKV.key)
 		}
 	}
-	b.dupKVs, err = kv.BatchGetValues(ctx.Txn(), batchKeys)
+	b.dupKVs, err = kv.BatchGetValues(ctx.Txn(true), batchKeys)
 	return errors.Trace(err)
 }
 

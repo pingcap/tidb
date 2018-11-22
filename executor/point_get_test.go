@@ -38,7 +38,7 @@ func (s *testSuite) TestPointGet(c *C) {
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint primary key, b bigint, c bigint);`)
-	tk.MustExec(`insert into t values(1, NULL, NULL), (2, NULL, 2), (3, 3, NULL), (4, 4, 4);`)
+	tk.MustExec(`insert into t values(1, NULL, NULL), (2, NULL, 2), (3, 3, NULL), (4, 4, 4), (5, 6, 7);`)
 	tk.MustQuery(`select * from t where a = 1;`).Check(testkit.Rows(
 		`1 <nil> <nil>`,
 	))
@@ -50,5 +50,8 @@ func (s *testSuite) TestPointGet(c *C) {
 	))
 	tk.MustQuery(`select * from t where a = 4;`).Check(testkit.Rows(
 		`4 4 4`,
+	))
+	tk.MustQuery(`select a, a, b, a, b, c, b, c, c from t where a = 5;`).Check(testkit.Rows(
+		`5 5 6 5 6 7 6 7 7`,
 	))
 }

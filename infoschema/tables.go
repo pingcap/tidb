@@ -19,18 +19,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -82,8 +82,8 @@ func buildColumnInfo(tableName string, col columnInfo) *model.ColumnInfo {
 	mCollation := charset.CharsetBin
 	mFlag := mysql.UnsignedFlag
 	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
-		mCharset = mysql.DefaultCharset
-		mCollation = mysql.DefaultCollationName
+		mCharset = charset.CharsetUTF8MB4
+		mCollation = charset.CollationUTF8MB4
 		mFlag = col.flag
 	}
 	fieldType := types.FieldType{
@@ -660,9 +660,9 @@ func dataForEngines() (records [][]types.Datum) {
 
 var filesCols = []columnInfo{
 	{"FILE_ID", mysql.TypeLonglong, 4, 0, nil, nil},
-	{"FILE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"FILE_NAME", mysql.TypeVarchar, 4000, 0, nil, nil},
 	{"FILE_TYPE", mysql.TypeVarchar, 20, 0, nil, nil},
-	{"TABLESPACE_NAME", mysql.TypeVarchar, 20, 0, nil, nil},
+	{"TABLESPACE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_CATALOG", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -684,9 +684,12 @@ var filesCols = []columnInfo{
 	{"RECOVER_TIME", mysql.TypeLonglong, 4, 0, nil, nil},
 	{"TRANSACTION_COUNTER", mysql.TypeLonglong, 4, 0, nil, nil},
 	{"VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"ROW_FORMAT", mysql.TypeVarchar, 21, 0, nil, nil},
+	{"ROW_FORMAT", mysql.TypeVarchar, 10, 0, nil, nil},
 	{"TABLE_ROWS", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"AVG_ROW_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"MAX_DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"DATA_FREE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
 	{"UPDATE_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
@@ -881,7 +884,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			if collation == "" {
-				collation = charset.CollationUTF8
+				collation = mysql.DefaultCollationName
 			}
 			createTime := types.Time{
 				Time: types.FromGoTime(table.GetUpdateTime()),
@@ -1183,8 +1186,8 @@ func dataForPseudoProfiling() [][]types.Datum {
 		0,                      // PAGE_FAULTS_MAJOR
 		0,                      // PAGE_FAULTS_MINOR
 		0,                      // SWAPS
-		0,                      // SOURCE_FUNCTION
-		0,                      // SOURCE_FILE
+		"",                     // SOURCE_FUNCTION
+		"",                     // SOURCE_FILE
 		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)

@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -70,12 +70,14 @@ type pstmtPlanCacheKey struct {
 
 // Hash implements Key interface.
 func (key *pstmtPlanCacheKey) Hash() []byte {
-	if key.hash == nil {
+	if len(key.hash) == 0 {
 		var (
 			dbBytes    = hack.Slice(key.database)
 			bufferSize = len(dbBytes) + 8*6
 		)
-		key.hash = make([]byte, 0, bufferSize)
+		if key.hash == nil {
+			key.hash = make([]byte, 0, bufferSize)
+		}
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
@@ -85,6 +87,18 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
 	}
 	return key.hash
+}
+
+// SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
+// so we can reuse Key instead of new every time.
+func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64) {
+	psStmtKey, isPsStmtKey := key.(*pstmtPlanCacheKey)
+	if !isPsStmtKey {
+		return
+	}
+	psStmtKey.pstmtID = pstmtID
+	psStmtKey.schemaVersion = schemaVersion
+	psStmtKey.hash = psStmtKey.hash[:0]
 }
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.

@@ -13,11 +13,11 @@
 package core
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 )
 
 // partitionProcessor rewrites the ast for table partition.
@@ -112,7 +112,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.init(ds.context())
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())
 		tableDual.schema = ds.Schema()
 		return tableDual, nil
 	}
@@ -120,7 +120,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// No need for the union all.
 		return children[0], nil
 	}
-	unionAll := LogicalUnionAll{}.init(ds.context())
+	unionAll := LogicalUnionAll{}.Init(ds.context())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema)
 	return unionAll, nil
@@ -135,7 +135,7 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 	conds = expression.PropagateConstant(ctx, conds)
 
 	// Calculate the column range to prune.
-	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.ColName)
+	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
 	r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
 	if err != nil {
 		return false, errors.Trace(err)

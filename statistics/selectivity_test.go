@@ -22,10 +22,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -158,7 +158,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01817558299,
+			selectivity: 0.01783264746,
 		},
 		{
 			exprs:       "a >= 1 and c > 1 and a < 2",
@@ -174,7 +174,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "b > 1",
-			selectivity: 0.98148148148,
+			selectivity: 0.96296296296,
 		},
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
@@ -292,6 +292,53 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 2.2)
+
+	testKit.MustExec("truncate table t")
+	testKit.MustExec("insert into t values (null, null)")
+	testKit.MustExec("analyze table t")
+	table, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(1, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int, b int, index idx(b))")
+	testKit.MustExec("insert into t values (1,1)")
+	testKit.MustExec("analyze table t")
+	table, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(2, 2))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	idxID = table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(2, 2))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+}
+
+func (s *testSelectivitySuite) TestPrimaryKeySelectivity(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a char(10) primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > "t"`).Check(testkit.Rows(
+		"IndexLookUp_10 3333.33 root ",
+		"├─IndexScan_8 3333.33 cop table:t, index:a, range:(\"t\",+inf], keep order:false, stats:pseudo",
+		"└─TableScan_9 3333.33 cop table:t, keep order:false, stats:pseudo"))
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > 1`).Check(testkit.Rows(
+		"TableReader_6 3333.33 root data:TableScan_5",
+		"└─TableScan_5 3333.33 cop table:t, range:(1,+inf], keep order:false, stats:pseudo"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {

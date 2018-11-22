@@ -18,12 +18,13 @@ import (
 	"sort"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -74,9 +75,13 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("sort.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if !e.fetched {
@@ -227,7 +232,7 @@ func (e *SortExec) keyChunksLess(i, j int) bool {
 type TopNExec struct {
 	SortExec
 	limit      *plannercore.PhysicalLimit
-	totalLimit int
+	totalLimit uint64
 
 	chkHeap *topNChunkHeap
 }
@@ -301,13 +306,17 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("topN.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if !e.fetched {
-		e.totalLimit = int(e.limit.Offset + e.limit.Count)
+		e.totalLimit = e.limit.Offset + e.limit.Count
 		e.Idx = int(e.limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
@@ -335,7 +344,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.rowChunks = chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
-	for e.rowChunks.Len() < e.totalLimit {
+	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := e.children[0].newFirstChunk()
 		err := e.children[0].Next(ctx, srcChk)
 		if err != nil {
@@ -363,7 +372,7 @@ const topNCompactionFactor = 4
 
 func (e *TopNExec) executeTopN(ctx context.Context) error {
 	heap.Init(e.chkHeap)
-	for len(e.rowPtrs) > e.totalLimit {
+	for uint64(len(e.rowPtrs)) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
 		heap.Pop(e.chkHeap)
 	}

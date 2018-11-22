@@ -14,9 +14,9 @@
 package execdetails
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -55,11 +55,14 @@ func (d ExecDetails) String() string {
 	return strings.Join(parts, " ")
 }
 
-// RuntimeStats collects executors's execution info.
-type RuntimeStats map[string]*RuntimeStat
+// RuntimeStatsColl collects executors's execution info.
+type RuntimeStatsColl struct {
+	mu    sync.Mutex
+	stats map[string]*RuntimeStats
+}
 
-// RuntimeStat collects one executor's execution info.
-type RuntimeStat struct {
+// RuntimeStats collects one executor's execution info.
+type RuntimeStats struct {
 	// executor's Next() called times.
 	loop int32
 	// executor consume time.
@@ -68,44 +71,33 @@ type RuntimeStat struct {
 	rows int64
 }
 
-// NewRuntimeStats creates new executor collector.
-func NewRuntimeStats() RuntimeStats {
-	return RuntimeStats(make(map[string]*RuntimeStat))
+// NewRuntimeStatsColl creates new executor collector.
+func NewRuntimeStatsColl() *RuntimeStatsColl {
+	return &RuntimeStatsColl{stats: make(map[string]*RuntimeStats)}
 }
 
-// GetRuntimeStat gets execStat for a executor.
-func (e RuntimeStats) GetRuntimeStat(planID string) *RuntimeStat {
-	if e == nil {
-		return nil
-	}
-	runtimecStat, exists := e[planID]
+// Get gets execStat for a executor.
+func (e *RuntimeStatsColl) Get(planID string) *RuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runtimeStats, exists := e.stats[planID]
 	if !exists {
-		runtimecStat = &RuntimeStat{}
-		e[planID] = runtimecStat
+		runtimeStats = &RuntimeStats{}
+		e.stats[planID] = runtimeStats
 	}
-	return runtimecStat
-}
-
-func (e RuntimeStats) String() string {
-	var buff bytes.Buffer
-	buff.WriteString("(")
-	for planID, stat := range e {
-		buff.WriteString(planID + ":" + stat.String() + ",")
-	}
-	buff.WriteString(")")
-	return buff.String()
+	return runtimeStats
 }
 
 // Record records executor's execution.
-func (e *RuntimeStat) Record(d time.Duration, rowNum int) {
+func (e *RuntimeStats) Record(d time.Duration, rowNum int) {
 	atomic.AddInt32(&e.loop, 1)
 	atomic.AddInt64(&e.consume, int64(d))
 	atomic.AddInt64(&e.rows, int64(rowNum))
 }
 
-func (e *RuntimeStat) String() string {
+func (e *RuntimeStats) String() string {
 	if e == nil {
 		return ""
 	}
-	return fmt.Sprintf("time:%f, loops:%d, rows:%d", time.Duration(e.consume).Seconds()*1e3, e.loop, e.rows)
+	return fmt.Sprintf("time:%v, loops:%d, rows:%d", time.Duration(e.consume), e.loop, e.rows)
 }
