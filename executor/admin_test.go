@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -556,4 +557,63 @@ func (s *testSuite) TestAdminShowNextID(c *C) {
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery("admin show tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 41"))
+}
+
+func (s *testSuite) TestAdminCheckWithSnapshot(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_t_s")
+	tk.MustExec("create table admin_t_s (a int, b int, key(a));")
+	tk.MustExec("insert into admin_t_s values (0,0),(1,1);")
+	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("admin check index admin_t_s a;")
+
+	snapshotTime := time.Now()
+
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_t_s")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+
+	tblInfo := tbl.Meta()
+	idxInfo := findIndexByName("a", tblInfo.Indices)
+	idxOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = idxOpr.Create(s.ctx, txn, types.MakeDatums(2), 100)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("admin check table admin_t_s")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_t_s a")
+	c.Assert(err, NotNil)
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700 MST"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	// For admin check table when use snapshot.
+	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
+	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("admin check index admin_t_s a;")
+
+	tk.MustExec("set @@tidb_snapshot = ''")
+	_, err = tk.Exec("admin check table admin_t_s")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_t_s a")
+	c.Assert(err, NotNil)
+
+	r := tk.MustQuery("admin cleanup index admin_t_s a")
+	r.Check(testkit.Rows("1"))
+	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("admin check index admin_t_s a;")
+	tk.MustExec("drop table if exists admin_t_s")
 }
