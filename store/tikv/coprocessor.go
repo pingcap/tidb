@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
@@ -562,6 +563,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
 func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh chan<- *copResponse) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			buf := util.GetStack()
+			log.Errorf("copIteratorWork meet panic: %v, stack trace:\n%s", r, buf)
+			resp := &copResponse{err: errors.Errorf("%v", r)}
+			worker.sendToRespCh(resp, task.respChan)
+		}
+	}()
 	remainTasks := []*copTask{task}
 	for len(remainTasks) > 0 {
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
@@ -639,7 +649,8 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	var detail *kvrpcpb.ExecDetails
 	if resp.Cop != nil {
 		detail = resp.Cop.ExecDetails
-	} else if resp.CopStream != nil {
+	} else if resp.CopStream != nil && resp.CopStream.Response != nil {
+		// streaming request returns io.EOF, so the first resp.CopStream.Response maybe nil.
 		detail = resp.CopStream.ExecDetails
 	}
 
