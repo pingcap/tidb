@@ -27,15 +27,15 @@ import (
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
 func Vectorizable(exprs []Expression) bool {
 	for _, expr := range exprs {
-		if hasUnVectorizableFunc(expr) {
+		if HasUnVectorizableFunc(expr) {
 			return false
 		}
 	}
 	return true
 }
 
-// hasUnVectorizableFunc checks whether an expression contains functions that can not utilize the vectorized execution.
-func hasUnVectorizableFunc(expr Expression) bool {
+// HasUnVectorizableFunc checks whether an expression contains functions that can not utilize the vectorized execution.
+func HasUnVectorizableFunc(expr Expression) bool {
 	scalaFunc, ok := expr.(*ScalarFunction)
 	if !ok {
 		return false
@@ -47,7 +47,7 @@ func hasUnVectorizableFunc(expr Expression) bool {
 		return true
 	}
 	for _, arg := range scalaFunc.GetArgs() {
-		if hasUnVectorizableFunc(arg) {
+		if HasUnVectorizableFunc(arg) {
 			return true
 		}
 	}
