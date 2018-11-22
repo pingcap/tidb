@@ -1118,8 +1118,8 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t2 values(3,'c'),(4,'d'),(5,'f'),(6,'e')")
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
-	_, err = tk.Exec("(select a,b from t1 limit 2)  union all (select a,b from t2 order by a limit 1) order by t1.b")
-	c.Assert(err, NotNil)
+	_, err = tk.Exec("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 't1.b' in 'order clause'")
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
