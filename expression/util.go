@@ -19,15 +19,16 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pkg/errors"
 )
 
 // Filter the input expressions, append the results to result.
@@ -502,4 +503,26 @@ func ColumnSliceIsIntersect(s1, s2 []*Column) bool {
 		}
 	}
 	return false
+}
+
+// DatumToConstant generates a Constant expression from a Datum.
+func DatumToConstant(d types.Datum, tp byte) *Constant {
+	return &Constant{Value: d, RetType: types.NewFieldType(tp)}
+}
+
+// GetParamExpression generate a getparam function expression.
+func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, useCache bool) (Expression, error) {
+	tp := types.NewFieldType(mysql.TypeUnspecified)
+	types.DefaultParamTypeForValue(v.GetValue(), tp)
+	value := &Constant{Value: v.Datum, RetType: tp}
+	if useCache {
+		f, err := NewFunctionBase(ctx, ast.GetParam, &v.Type,
+			DatumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		f.GetType().Tp = v.Type.Tp
+		value.DeferredExpr = f
+	}
+	return value, nil
 }

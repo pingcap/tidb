@@ -38,9 +38,9 @@ import (
 	"bufio"
 	"io"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pkg/errors"
 )
 
 const defaultWriterSize = 16 * 1024

@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -27,17 +26,6 @@ import (
 
 // SkipWithGrant causes the server to start without using the privilege system at all.
 var SkipWithGrant = false
-
-// privilege error codes.
-const (
-	codeInvalidPrivilegeType  terror.ErrCode = 1
-	codeInvalidUserNameFormat                = 2
-)
-
-var (
-	errInvalidPrivilegeType  = terror.ClassPrivilege.New(codeInvalidPrivilegeType, "unknown privilege type")
-	errInvalidUserNameFormat = terror.ClassPrivilege.New(codeInvalidUserNameFormat, "wrong username format")
-)
 
 var _ privilege.Manager = (*UserPrivileges)(nil)
 
@@ -139,7 +127,18 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error) {
+func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) (grants []string, err error) {
 	mysqlPrivilege := p.Handle.Get()
-	return mysqlPrivilege.showGrants(user.Username, user.Hostname), nil
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	grants = mysqlPrivilege.showGrants(u, h)
+	if len(grants) == 0 {
+		err = errNonexistingGrant.GenWithStackByArgs(u, h)
+	}
+
+	return
 }

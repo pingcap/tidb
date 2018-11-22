@@ -16,12 +16,12 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
-	"github.com/pkg/errors"
 )
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.

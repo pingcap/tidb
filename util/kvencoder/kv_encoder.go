@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -142,7 +142,7 @@ func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affecte
 }
 
 func (e *kvEncoder) getKvPairsInMemBuffer(tableID int64) (kvPairs []KvPair, affectedRows uint64, err error) {
-	txnMemBuffer := e.se.Txn().GetMemBuffer()
+	txnMemBuffer := e.se.Txn(true).GetMemBuffer()
 	kvPairs = make([]KvPair, 0, txnMemBuffer.Len())
 	err = kv.WalkMemBuffer(txnMemBuffer, func(k kv.Key, v []byte) error {
 		if bytes.HasPrefix(k, tablecodec.TablePrefix()) {

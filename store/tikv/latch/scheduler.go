@@ -44,9 +44,8 @@ func NewScheduler(size uint) *LatchesScheduler {
 	return scheduler
 }
 
-// A transaction can last for at most 10 minutes, see also gcworker.
-const expireDuration = 10 * time.Minute
-const checkInterval = 5 * time.Minute
+const expireDuration = 2 * time.Minute
+const checkInterval = 1 * time.Minute
 const checkCounter = 50000
 const latchListCount = 5
 
@@ -62,7 +61,7 @@ func (scheduler *LatchesScheduler) run() {
 		if lock.commitTS > lock.startTS {
 			currentTS := lock.commitTS
 			elapsed := tsoSub(currentTS, scheduler.lastRecycleTime)
-			if elapsed > checkInterval && counter > checkCounter {
+			if elapsed > checkInterval || counter > checkCounter {
 				go scheduler.latches.recycle(lock.commitTS)
 				scheduler.lastRecycleTime = currentTS
 				counter = 0

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testStatsCacheSuite{})
@@ -238,6 +238,14 @@ func (s *testStatsCacheSuite) TestAvgColLen(c *C) {
 	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count), Equals, 16.0)
 }
 
+func (s *testStatsCacheSuite) TestDurationToTS(c *C) {
+	tests := []time.Duration{time.Millisecond, time.Second, time.Minute, time.Hour}
+	for _, t := range tests {
+		ts := statistics.DurationToTS(t)
+		c.Assert(oracle.ExtractPhysical(ts)*int64(time.Millisecond), Equals, int64(t))
+	}
+}
+
 func (s *testStatsCacheSuite) TestVersion(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -249,11 +257,12 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := statistics.NewHandle(testKit.Se, 1)
-	testKit.MustExec("update mysql.stats_meta set version = 2 where table_id = ?", tableInfo1.ID)
+	h := statistics.NewHandle(testKit.Se, time.Millisecond)
+	unit := oracle.ComposeTS(1, 0)
+	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
 
 	h.Update(is)
-	c.Assert(h.LastUpdateVersion(), Equals, uint64(2))
+	c.Assert(h.LastUpdateVersion(), Equals, 2*unit)
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Pseudo, IsFalse)
 
@@ -264,15 +273,15 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo2 := tbl2.Meta()
 	// A smaller version write, and we can still read it.
-	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
+	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", unit, tableInfo2.ID)
 	h.Update(is)
-	c.Assert(h.LastUpdateVersion(), Equals, uint64(2))
+	c.Assert(h.LastUpdateVersion(), Equals, 2*unit)
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 
 	testKit.MustExec("insert t1 values(1,2)")
 	testKit.MustExec("analyze table t1")
-	offset := oracle.ComposeTS(3*int64(h.Lease), 0)
+	offset := 3 * unit
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
 	h.Update(is)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
