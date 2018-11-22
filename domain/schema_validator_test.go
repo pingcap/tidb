@@ -65,8 +65,9 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	time.Sleep(lease)
 	ts = <-oracleCh
 	valid = validator.Check(ts, item.schemaVer, []int64{10})
+	ms := oracle.ExtractPhysical(ts)
 	c.Assert(valid, Equals, ResultUnknown, Commentf("validator latest schema ver %v, time %v, item schema ver %v, ts %v",
-		validator.latestSchemaVer, validator.latestSchemaExpire, item.schemaVer, oracle.GetTimeFromTS(ts)))
+		validator.latestSchemaVer, validator.latestSchemaExpire, item.schemaVer, time.Unix(ms/1e3, (ms%1e3)*1e6)))
 
 	currVer := reload(validator, leaseGrantCh, 0)
 	valid = validator.Check(ts, item.schemaVer, []int64{0})
