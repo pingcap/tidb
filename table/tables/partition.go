@@ -168,6 +168,10 @@ func (t *partitionedTable) PartitionExpr() *PartitionExpr {
 	return t.partitionExpr
 }
 
+func (t *partitionedTable) LocatePartition(ctx sessionctx.Context, r []types.Datum) (int, error)  {
+	return t.searchPartitionDef(ctx, t.Meta().Partition, r)
+}
+
 func partitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
 	return tablecodec.EncodeRecordKey(recordPrefix, handle)
@@ -175,6 +179,14 @@ func partitionRecordKey(pid int64, handle int64) kv.Key {
 
 // locatePartition returns the partition ID of the input record.
 func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
+	idx, err := t.searchPartitionDef(ctx, pi, r)
+	if nil != err {
+		return 0, errors.Trace(err)
+	}
+	return pi.Definitions[idx].ID, nil
+}
+
+func (t *partitionedTable) searchPartitionDef(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error)  {
 	var err error
 	var isNull bool
 	partitionExprs := t.partitionExpr.UpperBounds
@@ -201,7 +213,7 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 		// The data does not belong to any of the partition?
 		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
 	}
-	return pi.Definitions[idx].ID, nil
+	return idx, nil
 }
 
 // GetPartition returns a Table, which is actually a partition.

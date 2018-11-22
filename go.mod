@@ -48,3 +48,5 @@ require (
 	google.golang.org/grpc v1.16.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 )
+
+replace github.com/pingcap/parser => github.com/dreamquster/parser v0.0.0-20181111081059-1ebba1b17d72

@@ -362,6 +362,8 @@ type Insert struct {
 	GenCols InsertGeneratedColumns
 
 	SelectPlan PhysicalPlan
+
+	PartitionNames []model.CIStr
 }
 
 // Update represents Update plan.

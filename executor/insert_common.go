@@ -57,6 +57,8 @@ type InsertValues struct {
 	colDefaultVals  []defaultVal
 	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
+
+	PartitionNames []model.CIStr
 }
 
 type defaultVal struct {

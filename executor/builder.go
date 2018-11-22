@@ -556,6 +556,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		GenColumns:   v.GenCols.Columns,
 		GenExprs:     v.GenCols.Exprs,
 		hasRefCols:   v.NeedFillDefaultValue,
+		PartitionNames: v.PartitionNames,
 		SelectExec:   selectExec,
 	}
 	err := ivs.initInsertColumns()

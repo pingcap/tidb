@@ -154,6 +154,8 @@ type Table interface {
 
 	// Type returns the type of table
 	Type() Type
+
+	LocationPartition(ctx sessionctx.Context, r []types.Datum) (int, error)
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
