@@ -888,6 +888,11 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				Type: createTimeTp,
 			}
 
+			createOptions := ""
+			if table.GetPartitionInfo() != nil {
+				createOptions = "partitioned"
+			}
+
 			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
@@ -922,7 +927,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				nil,           // CHECK_TIME
 				collation,     // TABLE_COLLATION
 				nil,           // CHECKSUM
-				"",            // CREATE_OPTIONS
+				createOptions, //(table.Meta()),            // CREATE_OPTIONS
 				table.Comment, // TABLE_COMMENT
 			)
 			rows = append(rows, record)
