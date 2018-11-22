@@ -244,10 +244,13 @@ func (e *ShowExec) fetchShowProcessList() error {
 }
 
 func (e *ShowExec) fetchShowTables() error {
-	if !e.is.SchemaExists(e.DBName) {
-		return errors.Errorf("Can not find DB: %s", e.DBName)
-	}
 	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(e.DBName)) {
+		return e.dbAccessDenied()
+	}
+	if !e.is.SchemaExists(e.DBName) {
+		return ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
 	// sort for tables
 	var tableNames []string
 	for _, v := range e.is.SchemaTables(e.DBName) {
@@ -273,11 +276,11 @@ func (e *ShowExec) fetchShowTables() error {
 
 func (e *ShowExec) fetchShowTableStatus() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && !checker.DBIsVisible(fmt.Sprint(e.DBName)) {
-		return errors.Errorf("Access denied to database '%s'", e.DBName)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(e.DBName)) {
+		return e.dbAccessDenied()
 	}
 	if !e.is.SchemaExists(e.DBName) {
-		return errors.Errorf("Can not find DB: %s", e.DBName)
+		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
 	sql := fmt.Sprintf(`SELECT
@@ -313,9 +316,15 @@ func createOptions(tb *model.TableInfo) string {
 
 func (e *ShowExec) fetchShowColumns() error {
 	tb, err := e.getTable()
+
 	if err != nil {
 		return errors.Trace(err)
 	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
+
 	cols := tb.Cols()
 	for _, col := range cols {
 		if e.Column != nil && e.Column.Name.L != col.Name.L {
@@ -370,6 +379,12 @@ func (e *ShowExec) fetchShowIndex() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
+
 	if tb.Meta().PKIsHandle {
 		var pkCol *table.Column
 		for _, col := range tb.Cols() {
@@ -733,6 +748,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(e.DBName)) {
+		return e.dbAccessDenied()
+	}
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
@@ -860,6 +879,28 @@ func (e *ShowExec) getTable() (table.Table, error) {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
 	return tb, nil
+}
+
+func (e *ShowExec) dbAccessDenied() error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.GenWithStackByArgs(u, h, e.DBName)
+}
+
+func (e *ShowExec) tableAccessDenied(access string, table string) error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {
