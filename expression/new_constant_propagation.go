@@ -29,18 +29,18 @@ import (
 type exprSet struct {
 	data       []Expression
 	tombstone  []bool
-	index      map[string]struct{}
+	exists     map[string]struct{}
 	constfalse bool
 }
 
 func (s *exprSet) Append(e Expression) bool {
-	if _, ok := s.index[string(e.HashCode(nil))]; ok {
+	if _, ok := s.exists[string(e.HashCode(nil))]; ok {
 		return false
 	}
 
 	s.data = append(s.data, e)
 	s.tombstone = append(s.tombstone, false)
-	s.index[string(e.HashCode(nil))] = struct{}{}
+	s.exists[string(e.HashCode(nil))] = struct{}{}
 	return true
 }
 
@@ -71,7 +71,7 @@ func newExprSet(conditions []Expression) *exprSet {
 	var exprs exprSet
 	exprs.data = make([]Expression, 0, len(conditions))
 	exprs.tombstone = make([]bool, 0, len(conditions))
-	exprs.index = make(map[string]struct{}, len(conditions))
+	exprs.exists = make(map[string]struct{}, len(conditions))
 	for _, v := range conditions {
 		exprs.Append(v)
 	}
@@ -81,9 +81,9 @@ func newExprSet(conditions []Expression) *exprSet {
 type pgSolver2 struct{}
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+func (s pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
 	exprs := newExprSet(conditions)
-	fixPoint(ctx, exprs)
+	s.fixPoint(ctx, exprs)
 	return exprs.Slice()
 }
 
@@ -92,7 +92,7 @@ func (pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expressi
 // apply one to another.
 // If new conditions can be infered, they will be append into the expression set.
 // Until no more conditions can be infered from the set, the algorithm finish.
-func fixPoint(ctx sessionctx.Context, exprs *exprSet) {
+func (s pgSolver2) fixPoint(ctx sessionctx.Context, exprs *exprSet) {
 	for {
 		saveLen := len(exprs.data)
 		iterOnce(ctx, exprs)
