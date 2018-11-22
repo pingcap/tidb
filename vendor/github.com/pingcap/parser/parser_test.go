@@ -2468,23 +2468,6 @@ func (s *testParserSuite) TestTablePartition(c *C) {
 	c.Assert(createTable.Partition.Definitions[0].Comment, Equals, "check")
 }
 
-func (s *testParserSuite) TestNotExistsSubquery(c *C) {
-	table := []testCase{
-		{`select * from t1 where not exists (select * from t2 where t1.a = t2.a)`, true},
-	}
-
-	parser := New()
-	for _, tt := range table {
-		stmt, err := parser.Parse(tt.src, "", "")
-		c.Assert(err, IsNil)
-
-		sel := stmt[0].(*ast.SelectStmt)
-		exists, ok := sel.Where.(*ast.ExistsSubqueryExpr)
-		c.Assert(ok, IsTrue)
-		c.Assert(exists.Not, Equals, tt.ok)
-	}
-}
-
 func (s *testParserSuite) TestWindowFunctionIdentifier(c *C) {
 	var table []testCase
 	s.enableWindowFunc = true
