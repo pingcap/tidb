@@ -22,21 +22,22 @@ import (
 	"unicode"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pkg/errors"
 )
@@ -518,7 +519,7 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 	}
 
 	innerExpr := getInnerFromParentheses(field.Expr)
-	valueExpr, isValueExpr := innerExpr.(*ast.ValueExpr)
+	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
 	if !isValueExpr {
@@ -835,13 +836,13 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 func extractLimitCountOffset(sc *stmtctx.StatementContext, limit *ast.Limit) (count uint64,
 	offset uint64, err error) {
 	if limit.Count != nil {
-		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
+		count, err = getUintForLimitOffset(sc, limit.Count.(ast.ValueExpr).GetValue())
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
 	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
+		offset, err = getUintForLimitOffset(sc, limit.Offset.(ast.ValueExpr).GetValue())
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
@@ -954,7 +955,7 @@ func (a *havingAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChi
 	switch n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggFunc = true
-	case *ast.ParamMarkerExpr, *ast.ColumnNameExpr, *ast.ColumnName:
+	case *driver.ParamMarkerExpr, *ast.ColumnNameExpr, *ast.ColumnName:
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		// Enter a new context, skip it.
 		// For example: select sum(c) + c + exists(select c from t) from t;
@@ -1136,7 +1137,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch inNode.(type) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
-	case *ast.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
+	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
 	default:
 		g.inExpr = true
 	}

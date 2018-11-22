@@ -18,12 +18,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pkg/errors"
 )
 
@@ -74,7 +75,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 				return d, errors.Trace(err)
 			}
 		}
-	case *ast.ValueExpr:
+	case *driver.ValueExpr:
 		switch x.Kind() {
 		case types.KindString:
 			value, err = types.ParseTime(sc, x.GetString(), tp, fsp)
