@@ -40,7 +40,7 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
 	if !sessVars.LightningMode {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
 	}
 
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.

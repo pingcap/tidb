@@ -101,6 +101,7 @@ vet:
 clean:
 	$(GO) clean -i ./...
 	rm -rf *.out
+	rm -rf parser
 
 test: checklist gotest explaintest
 
@@ -144,13 +145,13 @@ tikv_integration_test:
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
-RACE_FLAG = 
+RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-CHECK_FLAG = 
+CHECK_FLAG =
 ifeq ("$(WITH_CHECK)", "1")
 	CHECK_FLAG = $(TEST_LDFLAGS)
 endif

@@ -14,17 +14,22 @@
 package executor
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
+	"sourcegraph.com/sourcegraph/appdash"
+	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )
 
 // TraceExec represents a root executor of trace query.
@@ -41,6 +46,7 @@ type TraceExec struct {
 	rootTrace opentracing.Span
 
 	builder *executorBuilder
+	format  string
 }
 
 // Next executes real query and collects span later.
@@ -50,6 +56,43 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
+	if e.format == "json" {
+		if se, ok := e.ctx.(sqlexec.SQLExecutor); ok {
+			store := appdash.NewMemoryStore()
+			tracer := traceImpl.NewTracer(store)
+			span := tracer.StartSpan("trace")
+			defer span.Finish()
+			ctx = opentracing.ContextWithSpan(ctx, span)
+			recordSets, err := se.Execute(ctx, e.stmtNode.Text())
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			for _, rs := range recordSets {
+				_, err = drainRecordSet(ctx, e.ctx, rs)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if err = rs.Close(); err != nil {
+					return errors.Trace(err)
+				}
+			}
+
+			traces, err := store.Traces(appdash.TracesOpts{})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			data, err := json.Marshal(traces)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			chk.AppendString(0, string(data))
+		}
+		e.exhausted = true
+		return nil
+	}
+
+	// TODO: If the following code is never used, remove it later.
 	// record how much time was spent for optimizeing plan
 	optimizeSp := e.rootTrace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.rootTrace.Context()))
 	stmtPlan, err := planner.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
@@ -104,6 +147,28 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	dfsTree(rootSpan, treeSpans, "", false, chk)
 	e.exhausted = true
 	return nil
+}
+
+func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
+	var rows []chunk.Row
+	chk := rs.NewChunk()
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
+	for {
+		err := rs.Next(ctx, chk)
+		if err != nil || chk.NumRows() == 0 {
+			return rows, errors.Trace(err)
+		}
+		iter := chunk.NewIterator4Chunk(chk)
+		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
+			rows = append(rows, r)
+		}
+		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+	}
 }
 
 func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, prefix string, isLast bool, chk *chunk.Chunk) {

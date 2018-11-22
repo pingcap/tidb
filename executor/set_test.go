@@ -521,4 +521,35 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 
 	tk.MustExec("set @@global.validate_password_length=-1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_length value: '-1'"))
+
+	_, err = tk.Exec("set @@tx_isolation=''")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set global tx_isolation=''")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set @@transaction_isolation=''")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set global transaction_isolation=''")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set global tx_isolation='REPEATABLE-READ1'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@tx_isolation='READ-COMMITTED'")
+	result = tk.MustQuery("select @@tx_isolation;")
+	result.Check(testkit.Rows("READ-COMMITTED"))
+
+	tk.MustExec("set @@tx_isolation='read-COMMITTED'")
+	result = tk.MustQuery("select @@tx_isolation;")
+	result.Check(testkit.Rows("READ-COMMITTED"))
+
+	tk.MustExec("set @@tx_isolation='REPEATABLE-READ'")
+	result = tk.MustQuery("select @@tx_isolation;")
+	result.Check(testkit.Rows("REPEATABLE-READ"))
+
+	tk.MustExec("set @@tx_isolation='SERIALIZABLE'")
+	result = tk.MustQuery("select @@tx_isolation;")
+	result.Check(testkit.Rows("SERIALIZABLE"))
 }
