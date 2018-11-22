@@ -777,7 +777,7 @@ const (
 	// ValidatePassswordNumberCount is the name of 'validate_password_number_count' system variable.
 	ValidatePasswordNumberCount = "validate_password_number_count"
 	// ValidatePassswordLength is the name of 'validate_password_length' system variable.
-	ValidatePasswordLength = "validate_password_length";
+	ValidatePasswordLength = "validate_password_length"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

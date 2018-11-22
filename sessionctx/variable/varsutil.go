@@ -286,7 +286,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, nil
 	case ValidatePasswordLength, ValidatePasswordNumberCount:
-		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars);
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
