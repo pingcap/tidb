@@ -2563,6 +2563,11 @@ func (s *testParserSuite) TestWindowFunctions(c *C) {
 		{`SELECT FIRST_VALUE(year) OVER (w ORDER BY year ASC) AS first FROM sales WINDOW w AS (PARTITION BY country);`, true},
 		{`SELECT RANK() OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (), w3 AS (w1);`, true},
 		{`SELECT RANK() OVER w1 FROM t WINDOW w1 AS (w2), w2 AS (w3), w3 AS (w1);`, true},
+
+		// For tidb_parse_tso
+		{`select tidb_parse_tso(1)`, true},
+		{`select from_unixtime(404411537129996288)`, true},
+		{`select from_unixtime(404411537129996288.22)`, true},
 	}
 	s.enableWindowFunc = true
 	s.RunTest(c, table)
