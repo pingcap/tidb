@@ -521,7 +521,4 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 
 	tk.MustExec("set @@global.validate_password_length=-1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_length value: '-1'"))
-
-	tk.MustExec("set @@global.validate_password_mixed_case_count=-1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_mixed_case_count value: '-1'"))
 }

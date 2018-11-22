@@ -597,7 +597,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_ft_max_token_size", "84"},
 	{ScopeGlobal, "validate_password_length", "8"},
 	{ScopeGlobal, "ndb_log_binlog_index", ""},
-	{ScopeGlobal, "validate_password_mixed_case_count", "1"},
 	{ScopeGlobal, "innodb_api_bk_commit_interval", "5"},
 	{ScopeNone, "innodb_undo_directory", "."},
 	{ScopeNone, "bind_address", "*"},
@@ -779,8 +778,6 @@ const (
 	ValidatePasswordNumberCount = "validate_password_number_count"
 	// ValidatePassswordLength is the name of 'validate_password_length' system variable.
 	ValidatePasswordLength = "validate_password_length";
-	// ValidatePassswordMixedCaseCount is the name of 'validate_password_mixed_case_count' system variable.
-	ValidatePasswordMixedCaseCount = "validate_password_mixed_case_count";
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
