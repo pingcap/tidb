@@ -14,17 +14,17 @@
 package memory
 
 import (
-	"github.com/shirou/gopsutil/mem"
+	"testing"
 )
 
-// MemTotal returns the total amount of RAM on this system
-func MemTotal() (uint64, error) {
-	v, err := mem.VirtualMemory()
-	return v.Total, err
+func BenchmarkMemTotal(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = MemTotal()
+	}
 }
 
-// MemUsed returns the total used amount of RAM on this system
-func MemUsed() (uint64, error) {
-	v, err := mem.VirtualMemory()
-	return v.Total - (v.Free + v.Buffers + v.Cached), err
+func BenchmarkMemUsed(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = MemUsed()
+	}
 }
