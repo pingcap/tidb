@@ -211,14 +211,6 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 	return cc.pkt.readPacket()
 }
 
-func (cc *clientConn) readPacketWithTimeout() ([]byte, error) {
-	waitTimeout := cc.getSessionVarsWaitTimeout()
-	if err := cc.bufReadConn.SetReadDeadline(time.Now().Add(time.Duration(waitTimeout) * time.Second)); err != nil {
-		return nil, err
-	}
-	return cc.readPacket()
-}
-
 func (cc *clientConn) writePacket(data []byte) error {
 	return cc.pkt.writePacket(data)
 }
@@ -469,15 +461,22 @@ func (cc *clientConn) Run() {
 		}
 
 		cc.alloc.Reset()
-		data, err := cc.readPacketWithTimeout()
+		// close connection when idle time is more than wait_timout
+		waitTimeout := cc.getSessionVarsWaitTimeout()
+		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
+		start := time.Now()
+		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				errStack := errors.ErrorStack(err)
-				if strings.Contains(errStack, "i/o timeout") {
-					log.Infof("con:%d read packet timeout, close this connection.", cc.connectionID)
-				} else if !strings.Contains(errStack, "use of closed network connection") {
-					log.Errorf("con:%d read packet error, close this connection %s",
-						cc.connectionID, errStack)
+				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
+					idleTime := time.Now().Sub(start)
+					log.Infof("con:%d read packet timeout, close this connection, idle: %v, wait_timeout: %v", cc.connectionID, idleTime, waitTimeout)
+				} else {
+					errStack := errors.ErrorStack(err)
+					if !strings.Contains(errStack, "use of closed network connection") {
+						log.Errorf("con:%d read packet error, close this connection %s",
+							cc.connectionID, errStack)
+					}
 				}
 			}
 			return
