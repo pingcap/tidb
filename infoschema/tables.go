@@ -927,7 +927,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				nil,           // CHECK_TIME
 				collation,     // TABLE_COLLATION
 				nil,           // CHECKSUM
-				createOptions, //(table.Meta()),            // CREATE_OPTIONS
+				createOptions, // CREATE_OPTIONS
 				table.Comment, // TABLE_COMMENT
 			)
 			rows = append(rows, record)
