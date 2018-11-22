@@ -160,3 +160,17 @@ func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
 		`1 1970-01-01 09:20:34`,
 	))
 }
+
+func (s *testSuite) TestInsertZeroYear(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a year(4));`)
+	tk.MustExec(`insert into t1 values(0000),(00),("0000"),("00");`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(
+		`0`,
+		`0`,
+		`2000`,
+		`2000`,
+	))
+}
