@@ -3092,15 +3092,17 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	is = domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
 	c.Assert(err, IsNil)
-	oldPID = oldTblInfo.Meta().Partition.Definitions[0].ID
+	oldDefs := oldTblInfo.Meta().Partition.Definitions
 
 	// Test truncate `hash partitioned table` reassigns new partitionIDs.
 	s.tk.MustExec("truncate table clients;")
 	is = domain.GetDomain(ctx).InfoSchema()
 	newTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
 	c.Assert(err, IsNil)
-	newPID = newTblInfo.Meta().Partition.Definitions[0].ID
-	c.Assert(oldPID != newPID, IsTrue)
+	newDefs := newTblInfo.Meta().Partition.Definitions
+	for i := 0; i < len(oldDefs); i++ {
+		c.Assert(oldDefs[i].ID != newDefs[i].ID, IsTrue)
+	}
 }
 
 func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
