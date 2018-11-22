@@ -540,12 +540,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 }
 
-// ResetHandle resets the domain's infoschema handle. It is used for testing.
-func (do *Domain) ResetHandle(store kv.Storage) {
-	// `do.infoHandle` may refer to being accessed concurrently, so atomic operations are performed here.
-	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&do.infoHandle)), unsafe.Pointer(infoschema.NewHandle(store)))
-}
-
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	if ebd, ok := do.store.(EtcdBackend); ok {
