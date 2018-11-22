@@ -555,11 +555,16 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 			      partition p2 values less than (122880),
 			      partition p3 values less than (204800),
 			      partition p4 values less than maxvalue)`)
+	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by hash (c1) partitions 4;`)
 }
 
 func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL string) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
+	if testPartition {
+		s.tk.MustExec("set @@session.tidb_enable_table_partition = 'on';")
+	}
 	s.tk.MustExec("drop table if exists test_add_index")
 	s.tk.MustExec(createTableSQL)
 
@@ -3604,6 +3609,19 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	partition p6 values less than (2012),
 	partition p7 values less than (2018)
 	);`)
+	testPartitionAddIndex(tk, c)
+
+	// test hash partition table.
+	tk.MustExec("set @@session.tidb_enable_table_partition = 'on';")
+	tk.MustExec("drop table if exists partition_add_idx")
+	tk.MustExec(`create table partition_add_idx (
+	id int not null,
+	hired date not null
+	) partition by hash( year(hired) ) partitions 4;`)
+	testPartitionAddIndex(tk, c)
+}
+
+func testPartitionAddIndex(tk *testkit.TestKit, c *C) {
 	for i := 0; i < 500; i++ {
 		tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
 	}

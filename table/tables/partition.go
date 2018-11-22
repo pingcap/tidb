@@ -247,6 +247,9 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 		if isNull {
 			idx = 0
 		} else {
+			if ret < 0 {
+				ret = 0 - ret
+			}
 			idx = int(ret % int64(t.meta.Partition.Num))
 		}
 	}

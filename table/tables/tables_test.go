@@ -424,7 +424,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(1), false)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(-1), false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(3), false)
 	c.Assert(err, IsNil)
