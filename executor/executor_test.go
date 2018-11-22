@@ -1108,6 +1108,18 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t1 (uid int(1))")
 	tk.MustExec("INSERT INTO t1 SELECT 150")
 	tk.MustQuery("SELECT 'a' UNION SELECT uid FROM t1 order by 1 desc;").Check(testkit.Rows("a", "150"))
+
+	// #issue 8196
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("CREATE TABLE t1 (a int not null, b char (10) not null)")
+	tk.MustExec("insert into t1 values(1,'a'),(2,'b'),(3,'c'),(3,'c')")
+	tk.MustExec("CREATE TABLE t2 (a int not null, b char (10) not null)")
+	tk.MustExec("insert into t2 values(3,'c'),(4,'d'),(5,'f'),(6,'e')")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	_, err = tk.Exec("(select a,b from t1 limit 2)  union all (select a,b from t2 order by a limit 1) order by t1.b")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
