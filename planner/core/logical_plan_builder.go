@@ -677,7 +677,6 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		}
 		unionCols = append(unionCols, &expression.Column{
 			ColName:  col.ColName,
-			TblName:  col.TblName,
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
