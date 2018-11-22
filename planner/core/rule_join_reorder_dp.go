@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	log "github.com/sirupsen/logrus"
 )
 
 type joinReorderDPSolver struct {
@@ -178,4 +179,14 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) Lo
 		cartesianJoinGroup = resultJoinGroup
 	}
 	return cartesianJoinGroup[0]
+}
+
+func findNodeIndexInGroup(groups []LogicalPlan, col *expression.Column) int {
+	for i, plan := range groups {
+		if plan.Schema().Contains(col) {
+			return i
+		}
+	}
+	log.Errorf("Unknown columns %s, position %d", col, col.UniqueID)
+	return -1
 }
