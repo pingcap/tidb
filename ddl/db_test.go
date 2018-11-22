@@ -3052,7 +3052,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	c.Assert(hasOldPartitionData, IsFalse)
 	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
 
-	// Test truncate table partition reassign a new partitionIDs.
+	// Test truncate table partition reassigns new partitionIDs.
 	s.tk.MustExec("drop table if exists t5;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t5(
@@ -3077,6 +3077,29 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
 	c.Assert(err, IsNil)
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
+	c.Assert(oldPID != newPID, IsTrue)
+
+	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1;")
+	s.tk.MustExec("drop table if exists clients;")
+	s.tk.MustExec(`create table clients (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by hash( month(signed) )
+	partitions 12;`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
+	c.Assert(err, IsNil)
+	oldPID = oldTblInfo.Meta().Partition.Definitions[0].ID
+
+	// Test truncate `hash partitioned table` reassigns new partitionIDs.
+	s.tk.MustExec("truncate table clients;")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
+	c.Assert(err, IsNil)
+	newPID = newTblInfo.Meta().Partition.Definitions[0].ID
 	c.Assert(oldPID != newPID, IsTrue)
 }
 
