@@ -14,8 +14,8 @@
 package ast
 
 import (
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/types"
 )
 
 var (

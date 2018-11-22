@@ -15,7 +15,7 @@ package ast_test
 
 import (
 	. "github.com/pingcap/check"
-	. "github.com/pingcap/tidb/ast"
+	. "github.com/pingcap/parser/ast"
 )
 
 var _ = Suite(&testFunctionsSuite{})
@@ -24,10 +24,11 @@ type testFunctionsSuite struct {
 }
 
 func (ts *testFunctionsSuite) TestFunctionsVisitorCover(c *C) {
+	valueExpr := NewValueExpr(42)
 	stmts := []Node{
-		&AggregateFuncExpr{Args: []ExprNode{&ValueExpr{}}},
-		&FuncCallExpr{Args: []ExprNode{&ValueExpr{}}},
-		&FuncCastExpr{Expr: &ValueExpr{}},
+		&AggregateFuncExpr{Args: []ExprNode{valueExpr}},
+		&FuncCallExpr{Args: []ExprNode{valueExpr}},
+		&FuncCastExpr{Expr: valueExpr},
 	}
 
 	for _, stmt := range stmts {

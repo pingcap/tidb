@@ -18,7 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -390,7 +390,7 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 
 	for _, test := range valids {
-		_, err := types.AdjustYear(test.Year)
+		_, err := types.AdjustYear(test.Year, false)
 		if test.Expect {
 			c.Assert(err, IsNil)
 		} else {
@@ -398,6 +398,29 @@ func (s *testTimeSuite) TestYear(c *C) {
 		}
 	}
 
+	strYears := []struct {
+		Year   int64
+		Expect int64
+	}{
+		{0, 2000},
+	}
+	for _, test := range strYears {
+		res, err := types.AdjustYear(test.Year, true)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.Expect)
+	}
+
+	numYears := []struct {
+		Year   int64
+		Expect int64
+	}{
+		{0, 0},
+	}
+	for _, test := range numYears {
+		res, err := types.AdjustYear(test.Year, false)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.Expect)
+	}
 }
 
 func (s *testTimeSuite) getLocation(c *C) *time.Location {

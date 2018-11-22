@@ -21,9 +21,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"

@@ -17,9 +17,9 @@ import (
 	"crypto/tls"
 	"fmt"
 
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
 )
