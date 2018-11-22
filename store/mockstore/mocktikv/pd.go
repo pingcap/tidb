@@ -77,8 +77,9 @@ func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *
 	return region, peer, nil
 }
 
-func (c *pdClient) GetPrevRegion(context.Context, []byte) (*metapb.Region, *metapb.Peer, error) {
-	panic("unimplemented")
+func (c *pdClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+	region, peer := c.cluster.GetRegionByEndKey(key)
+	return region, peer, nil
 }
 
 func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {

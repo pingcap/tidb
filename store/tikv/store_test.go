@@ -138,8 +138,14 @@ func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Regio
 	return c.client.GetRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetPrevRegion(context.Context, []byte) (*metapb.Region, *metapb.Peer, error) {
-	panic("unimplemented")
+func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.stop {
+		return nil, nil, errors.Trace(errStopped)
+	}
+	return c.client.GetPrevRegion(ctx, key)
 }
 
 func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {

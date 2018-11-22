@@ -89,7 +89,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 			Key: key,
 		},
 	}
-	resp, _, err := c.sendReq(key, req)
+	resp, _, err := c.sendReq(key, req, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -154,7 +154,7 @@ func (c *RawKVClient) Put(key, value []byte) error {
 			Value: value,
 		},
 	}
-	resp, _, err := c.sendReq(key, req)
+	resp, _, err := c.sendReq(key, req, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -199,7 +199,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 			Key: key,
 		},
 	}
-	resp, _, err := c.sendReq(key, req)
+	resp, _, err := c.sendReq(key, req, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -286,7 +286,7 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 				Limit:    uint32(limit - len(keys)),
 			},
 		}
-		resp, loc, err := c.sendReq(startKey, req)
+		resp, loc, err := c.sendReq(startKey, req, true)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -321,9 +321,10 @@ func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, va
 			RawScan: &kvrpcpb.RawScanRequest{
 				StartKey: startKey,
 				Limit:    uint32(limit - len(keys)),
+				Reverse:  true,
 			},
 		}
-		resp, loc, err := c.sendReq(startKey, req)
+		resp, loc, err := c.sendReq(startKey, req, false)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -335,7 +336,7 @@ func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, va
 			keys = append(keys, pair.Key)
 			values = append(values, pair.Value)
 		}
-		startKey = loc.StartKey // fix me
+		startKey = loc.StartKey
 		if len(startKey) == 0 {
 			break
 		}
@@ -343,11 +344,17 @@ func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, va
 	return
 }
 
-func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Response, *KeyLocation, error) {
+func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, startKey bool) (*tikvrpc.Response, *KeyLocation, error) {
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
-		loc, err := c.regionCache.LocateKey(bo, key)
+		var loc *KeyLocation
+		var err error
+		if startKey {
+			loc, err = c.regionCache.LocateKey(bo, key)
+		} else {
+			loc, err = c.regionCache.LocateEndKey(bo, key)
+		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

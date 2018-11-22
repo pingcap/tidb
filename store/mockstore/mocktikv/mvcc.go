@@ -465,6 +465,11 @@ func regionContains(startKey []byte, endKey []byte, key []byte) bool {
 		(bytes.Compare(key, endKey) < 0 || len(endKey) == 0)
 }
 
+func regionContainsByEndKey(startKey []byte, endKey []byte, key []byte) bool {
+	return bytes.Compare(startKey, key) < 0 &&
+		(bytes.Compare(key, endKey) <= 0 || len(startKey) == 0)
+}
+
 // MvccKey is the encoded key type.
 // On TiKV, keys are encoded before they are saved into storage engine.
 type MvccKey []byte
