@@ -5644,22 +5644,22 @@ func (c *tidbParseTsoFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, types.ETInt)
 
 	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, types.DefaultFsp
-	sig := &builtintidbParseTsoSig{bf}
+	sig := &builtinTidbParseTsoSig{bf}
 	return sig, nil
 }
 
-type builtintidbParseTsoSig struct {
+type builtinTidbParseTsoSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtintidbParseTsoSig) Clone() builtinFunc {
-	newSig := &builtintidbParseTsoSig{}
+func (b *builtinTidbParseTsoSig) Clone() builtinFunc {
+	newSig := &builtinTidbParseTsoSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-// evalTime evals a builtintidbParseTsoSig.
-func (b *builtintidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+// evalTime evals a builtinTidbParseTsoSig.
+func (b *builtinTidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil || arg <= 0 {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
