@@ -37,26 +37,11 @@ Let me describe more details about the view DDL operation:
     1. Parse the create view statement and build a logical plan for select cause part. If any grammar error occurs, return errors to parser.   
     2. Examine view definer's privileges. Definer should own both `CREATE_VIEW` and base table's `SELECT` privileges.  
     3. Examine create view statement, If ViewFieldList cause part is empty, then we should generate view column names from SelectStmt cause. Otherwise check len(ViewFieldList) == len(Columns from SelectStmt). And then we save column names to `TableInfo.Columns`.
-    4. Replace outermost layer wildcard with column name and column alias name in `SELECT` cause. For example:
-       Origin SQL would like this:
-       ```mysql
-       SELECT * FROM 
-         (
-           SELECT t1.a,t2.b,sum(t1.b) FROM (SELECT * from t3 WHERE a=4) AS t1,t2
-         ) AS TT
-        ```  
-       After SQL rewriter, it would be like following:
-       ```mysql
-       SELECT TT.a AS a,TT.b AS b2 ,TT.'sum(t1.b)' AS 'sum(t1.b)' FROM 
-         (
-           SELECT t1.a,t2.b,sum(t1.b) FROM (SELECT * from t3 WHERE a=4) AS t1,t2
-         ) AS TT
-       ``` 
-    5. Test SELECT cause with following extra rules to see if this view is updatable. This part is difficult, following rules need more details.
+    4. Test SELECT cause with following extra rules to see if this view is updatable. This part is difficult, following rules need more details.
         * There must be no duplicate view column names.
         * The view must contain all columns in the base table that do not have a default value.
         * The view columns must be simple column references. They must not be expressions or const expressions.  
-    6. Store the view definition into following tables
+    5. Store the view definition into following tables
         * `INFORMATION_SCHEMA.VIEWS` lists one row for each view, this need to be done later.
         * `INFORMATION_SCHEMA.VIEW_COLUMN_USAGE` lists one row for each column in a view including the base table of the column where possible   
         * `INFORMATION_SCHEMA.VIEW_TABLE_USAGE` lists one row for each table used in a view 
@@ -64,7 +49,8 @@ Let me describe more details about the view DDL operation:
 2. Drop a view  
   Implement DROP VIEW grammar, and delete the existing view tableinfo object.  
 3. Select from a view  
-  3.1 In function `func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error)`, if `tn *ast.TableName` is a view, then we build a select logicalplan from view's view_select string.   
+  3.1 In function `func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error)`, if `tn *ast.TableName` is a view, then we build a select `LogicalPlan` from view's view_select string.
+      The most important part is we build a `Projection` with `TableInfo.Columns` and `ViewInfo.Cols` at top of select's `LogicalPlan`.  
 4. Insert/Update into a view  
   This is view's advanced feature, we will discuss this later. 
 5. Describe a view  
@@ -85,6 +71,7 @@ type ViewInfo struct {
 	SelectStmt  string           `json:"view_select"`
 	CheckOption CheckOptionType  `json:"view_checkoption"`
 	isUpdatable bool             `json:"view_isUpdatable"`
+	Cols        []string         `json:"view_cols"`
 }
 ```
 Here is the detail explaination about viewinfo parameters:
@@ -102,7 +89,11 @@ Here is the detail explaination about viewinfo parameters:
     This parameter mark if this view is updatable.
 * SelectStmt
     This string is the select sql statement after sql rewriter.
-    
+* Cols
+    This string array is the view's origin column names.
+* TableInfo.Columns
+    `TableInfo.Columns` only stores view's column alias names, if no alias name specific, it stores the same values as `ViewInfo.Cols`.
+
 We add `ViewInfo` struct point which named `View` to `TableInfo`. If `&View` is nil, then this tableinfo is a base table, else this tableinfo is a view. 
 
 Following is the main implementation details:  
