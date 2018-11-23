@@ -38,6 +38,16 @@ var _ = Suite(&testAnalyzeSuite{})
 type testAnalyzeSuite struct {
 }
 
+func shouldContainsExecutorInfo(taskType, rootID, copID string) bool {
+	if taskType == "root" {
+		return true
+	}
+	if strings.Contains(rootID, "IndexLookUp") {
+		return strings.Contains(copID, "IndexScan")
+	}
+	return strings.Contains(copID, "Scan")
+}
+
 func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -56,10 +66,14 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	tk.MustExec("analyze table t1, t2")
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
 	c.Assert(len(rs.Rows()), Equals, 10)
+	var rootID string
 	for _, row := range rs.Rows() {
 		c.Assert(len(row), Equals, 5)
 		taskType := row[2].(string)
-		if taskType != "cop" {
+		if taskType == "root" {
+			rootID = row[0].(string)
+		}
+		if shouldContainsExecutorInfo(taskType, rootID, row[0].(string)) {
 			execInfo := row[4].(string)
 			c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 			c.Assert(strings.Contains(execInfo, "loops"), Equals, true)

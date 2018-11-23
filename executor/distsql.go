@@ -237,9 +237,13 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
-	e.ctx.StoreQueryFeedback(e.feedback)
 	err := e.result.Close()
 	e.result = nil
+	if e.runtimeStats != nil {
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.plans[0].ExplainID())
+		copStats.SetRowNum(e.feedback.Actual())
+	}
+	e.ctx.StoreQueryFeedback(e.feedback)
 	return errors.Trace(err)
 }
 
@@ -521,6 +525,10 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.finished = nil
 	e.memTracker.Detach()
 	e.memTracker = nil
+	if e.runtimeStats != nil {
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.idxPlans[0].ExplainID())
+		copStats.SetRowNum(e.feedback.Actual())
+	}
 	return nil
 }
 
