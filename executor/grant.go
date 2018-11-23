@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -70,7 +70,9 @@ func (e *GrantExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !exists {
+		if !exists && e.ctx.GetSessionVars().SQLMode.HasNoAutoCreateUserMode() {
+			return ErrPasswordNoMatch
+		} else if !exists {
 			pwd, ok := user.EncodedPassword()
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)

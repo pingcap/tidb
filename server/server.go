@@ -43,13 +43,13 @@ import (
 	"time"
 
 	"github.com/blacktear23/go-proxyprotocol"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -129,7 +129,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	return cc
 }
 
-func (s *Server) skipAuth() bool {
+func (s *Server) isUnixSocket() bool {
 	return s.cfg.Socket != ""
 }
 

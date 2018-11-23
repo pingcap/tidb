@@ -161,6 +161,9 @@ func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 
 func runTestRegression(c *C, overrider configOverrider, dbName string) {
 	runTestsOnNewDB(c, overrider, dbName, func(dbt *DBTest) {
+		// Show the user
+		dbt.mustExec("select user()")
+
 		// Create Table
 		dbt.mustExec("CREATE TABLE test (val TINYINT)")
 
@@ -629,6 +632,7 @@ func runTestAuth(c *C) {
 		config.User = "authtest"
 		config.Passwd = "456"
 	}))
+	c.Assert(err, IsNil)
 	_, err = db.Query("USE mysql;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()

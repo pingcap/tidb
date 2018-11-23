@@ -18,13 +18,13 @@ import (
 	"sync"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -128,7 +128,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
-	err = ctx.Txn().Commit(context.Background())
+	err = ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// fix data race
@@ -162,7 +162,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
 	testCheckJobDone(c, d, job, true)
-	err = ctx.Txn().Commit(context.Background())
+	err = ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 	mu.Lock()
 	hErr := hookErr
@@ -220,6 +220,6 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn().Commit(context.Background())
+	err = ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 }

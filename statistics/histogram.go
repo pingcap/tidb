@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -210,7 +210,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn := h.mu.ctx.Txn()
+	txn := h.mu.ctx.Txn(true)
 	version := txn.StartTS()
 	var sql string
 	// If the count is less than 0, then we do not want to update the modify count and count.
@@ -281,7 +281,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 		err = finishTransaction(ctx, exec, err)
 	}()
 	var sql string
-	version := h.mu.ctx.Txn().StartTS()
+	version := h.mu.ctx.Txn(true).StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
 	_, err = exec.Execute(ctx, sql)
 	return
@@ -720,8 +720,9 @@ func (e *ErrorRate) merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
-	Count int64
-	Info  *model.ColumnInfo
+	Count    int64
+	Info     *model.ColumnInfo
+	isHandle bool
 	ErrorRate
 }
 

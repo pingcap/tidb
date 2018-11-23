@@ -791,7 +791,6 @@ func (s *testSuite) TestReplace(c *C) {
 func (s *testSuite) TestPartitionedTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	testSQL := `drop table if exists replace_test;
 		    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
 			partition by range (id) (
@@ -1076,11 +1075,16 @@ func (s *testSuite) TestUpdate(c *C) {
 	_, err = tk.Exec("update t, (select * from t) as b set b.k = t.k")
 	c.Assert(err.Error(), Equals, "[planner:1288]The target table b of the UPDATE is not updatable")
 	tk.MustExec("update t, (select * from t) as b set t.k = b.k")
+
+	// issue 8045
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (c1 float)`)
+	tk.MustExec("INSERT INTO t1 SET c1 = 1")
+	tk.MustExec("UPDATE t1 SET c1 = 1.2 WHERE c1=1;")
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int not null default 1, name varchar(255))
@@ -1327,7 +1331,6 @@ func (s *testSuite) TestPartitionedTableDelete(c *C) {
 			  PARTITION p3 VALUES LESS THAN (21))`
 
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(createTable)
@@ -2077,7 +2080,7 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
 
 	tk.MustExec(`update t set b = 3 where a = 30001;`)
 	tk.MustExec(`insert into t (b) values (4);`)

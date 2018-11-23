@@ -17,6 +17,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -125,6 +125,10 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if _, ok := stmt.(ast.DDLNode); ok {
 		return ErrPrepareDDL
 	}
+	err = ResetContextOfStmt(e.ctx, stmt)
+	if err != nil {
+		return err
+	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
 
@@ -203,8 +207,6 @@ func (e *ExecuteExec) Build() error {
 	var err error
 	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan) {
 		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
-	} else {
-		err = e.ctx.ActivePendingTxn()
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -235,6 +237,11 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
+	if plannercore.PreparedPlanCacheEnabled() {
+		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
+			vars, id, vars.PreparedStmts[id].SchemaVersion,
+		))
+	}
 	delete(vars.PreparedStmts, id)
 	return nil
 }

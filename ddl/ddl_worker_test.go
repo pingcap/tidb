@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -368,7 +368,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit(context.Background())
+	err = ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
@@ -389,8 +389,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			checkErr = errors.Trace(err)
 			return
 		}
-		checkCancelState(hookCtx.Txn(), job, test)
-		err = hookCtx.Txn().Commit(context.Background())
+		checkCancelState(hookCtx.Txn(true), job, test)
+		err = hookCtx.Txn(true).Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -418,7 +418,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	test = &tests[3]
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	c.Assert(ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(ctx.Txn(true).Commit(context.Background()), IsNil)
 
 	// for dropping index
 	idxName := []interface{}{model.NewCIStr("idx")}
