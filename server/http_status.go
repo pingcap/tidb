@@ -17,8 +17,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
+	"github.com/tiancaiamao/appdash/traceapp"
 )
 
 const defaultStatusAddr = ":10080"
@@ -79,6 +82,22 @@ func (s *Server) startHTTPServer() {
 	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
 		addr = defaultStatusAddr
+	}
+
+	// HTTP path for web UI.
+	if host, port, err := net.SplitHostPort(addr); err == nil {
+		if host == "" {
+			host = "localhost"
+		}
+		baseURL := &url.URL{
+			Scheme: "http",
+			Host:   fmt.Sprintf("%s:%s", host, port),
+		}
+		router.HandleFunc("/web/trace", traceapp.HandleTiDB)
+		sr := router.PathPrefix("/web/trace/").Subrouter()
+		if _, err := traceapp.New(traceapp.NewRouter(sr), baseURL); err == nil {
+			log.Error(err)
+		}
 	}
 
 	serverMux := http.NewServeMux()
