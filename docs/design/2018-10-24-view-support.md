@@ -118,20 +118,20 @@ Every time we make a `SELECT` statement within a view, modify the `buildDataSour
 ## SubTask Schedule
 |Action  |Priority|Deadline|Notes|
 | ------ | ------ | ------ |-----|
-|`CREATE [OR REPLACE] VIEW view_name [(column_list)] AS select_statement`|P1|2019/01/15|后续的所有工作都依赖这项|
-|Parser 添加解析 ViewAlgorithm|P1|2019/01/15|--|
+|`CREATE [OR REPLACE] VIEW view_name [(column_list)] AS select_statement`|P1|2019/01/15|This task must be done before any other tasks.|
+|Add parser to parse ViewAlgorithm|P1|2019/01/15|--|
 |`SHOW TABLE STATUS`|P1|2019/01/30|--|
 |`DROP VIEW viewname`|P1|2019/01/30|--|
 |`SELECT … FROM VIEW`|P1|2019/03/10|--|
 |Add some test cases for CreateView and Select … From View(port from MySQL test)|P1|2019/03/30|--|
 |UPDATE VIEW|P2| |Difficult|
-|INSERT VIEW|P2| |Difficult, 部分依赖 UPDATE VIEW(如检查 isInsertable 依赖 isUpdatable)|
+|INSERT VIEW|P2| |Difficult, dependent on UPDATE VIEW)|
 |SHOW CREATE [VIEW &#124; TABLE]|P2| | |
 |ALTER VIEW|P2| | |
-|ALTER &#124; DROP TABLE 检查表名是否是一个 View|P2| | |
+|ALTER &#124; DROP TABLE Check if table is a View|P2| | |
 |Add test cases for Update &#124; Insert View|P2| | |
-|添加INFORMATION_SCHEMA.VIEWS视图|P3| | |
-|Parser 添加提取 ViewDefiner ViewSQLSecurity 至CreateViewStmt|P3| | |
+|Add INFORMATION_SCHEMA.VIEWS view|P3| | |
+|Parse ViewDefiner ViewSQLSecurity to CreateViewStmt|P3| | |
 |CREATE [OR REPLACE] VIEW [DEFINER = { user &#124; CURRENT_USER }] [SQL SECURITY { DEFINER &#124; INVOKER }] AS select_statement|P3| | |
 |CREATE [OR REPLACE] VIEW [ALGORITHM = {TEMPTABLE}] AS select_statement|P3| | |
 |CREATE [OR REPLACE] VIEW AS select_statement [WITH [CASCADED &#124; LOCAL] CHECK OPTION]|P3| | |
