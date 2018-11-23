@@ -335,8 +335,8 @@ func (e *HashJoinExec) doInnerPartition(startIdx int, wg *sync.WaitGroup) {
 	}
 }
 
-// preAlloc4InnerParts evaluates ptr4Partition for every inner row to help re-order
-// the inner relation.
+// preAlloc4InnerParts evaluates ptr4Partition and pre-alloc the memory space
+// for every inner row to help re-order the inner relation.
 // TODO: we need to evaluate the skewness for the partitions size, if the
 // skewness exceeds a threshold, we do not use partition phase.
 func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
