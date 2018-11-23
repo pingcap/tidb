@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 	"github.com/tiancaiamao/appdash/traceapp"
+	static "sourcegraph.com/sourcegraph/appdash-data"
 )
 
 const defaultStatusAddr = ":10080"
@@ -98,6 +99,7 @@ func (s *Server) startHTTPServer() {
 		if _, err := traceapp.New(traceapp.NewRouter(sr), baseURL); err == nil {
 			log.Error(err)
 		}
+		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
 
 	serverMux := http.NewServeMux()
