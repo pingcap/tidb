@@ -30,10 +30,6 @@ required = ["github.com/golang/protobuf/jsonpb"]
 
 [[constraint]]
   branch = "master"
-  name = "github.com/cznic/parser"
-
-[[constraint]]
-  branch = "master"
   name = "github.com/cznic/sortutil"
 
 [[constraint]]
@@ -106,3 +102,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
 [[constraint]]
   name = "github.com/pingcap/tidb-tools"
   revision = "8dd71127bcf09130ae032ab6877dd22f32b53e14"
+
+[[constraint]]
+  name = "github.com/pingcap/parser"
+  branch = "release-2.1"
