@@ -16,10 +16,10 @@ package expression
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -253,7 +253,7 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.
 		if err != nil {
 			return types.Duration{}, true, errors.Trace(err)
 		}
-		dur, err := types.ParseDuration(val, types.MaxFsp)
+		dur, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, val, types.MaxFsp)
 		if err != nil {
 			return types.Duration{}, true, errors.Trace(err)
 		}
