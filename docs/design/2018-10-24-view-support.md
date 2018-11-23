@@ -14,10 +14,16 @@ Below is a visual depiction of a view:
   ![AnatomyOfAview](imgs/view.png)
   
 A view is created from a query using the "`CREATE OR REPLACE VIEW`" command. In the example below we are creating a PopularBooks view based on a query which selects all Books that have the IsPopular field checked. Following is the query:
-`CREATE OR REPLACE VIEW PopularBooks AS SELECT ISBN, Title, Author,PublishDate FROM Books WHERE IsPopular=1`  
+```mysql
+CREATE OR REPLACE 
+  VIEW PopularBooks AS 
+    SELECT ISBN, Title, Author,PublishDate FROM Books WHERE IsPopular=1
+```  
 
 Once a view is created, you can use it as you query any table in a `SELECT` statement. For example, to list all the popular book titles ordered by an author, you could write:  
-`SELECT Author, Title FROM PopularBooks ORDER BY Author`  
+```mysql
+SELECT Author, Title FROM PopularBooks ORDER BY Author
+```
 
 In general you can use any of the SELECT clauses, such as GROUP BY, in a select statement containing a view.
 
@@ -25,7 +31,7 @@ In general you can use any of the SELECT clauses, such as GROUP BY, in a select 
 I implement the "`CREATE OR REPLACE`" command to create a view with the `SELECT` statement, implement "`DROP VIEW`" to drop a view, and "`SHOW FULL TABLES`" can also display the view list with different table types. The "`SHOW CREATE TABlE`" command can also regenerate a view create command.
 
 ## Rationale
-`VIEW` is just a tableinfo object store with a `SELECT` statement, and only supports two types of DDL operations, which are "`CREATE OR REPLACE VIEW`" and "`DROP`". Currently, view can only be used within the `SELECT` statement.  
+`VIEW` is just a `TableInfo` object store with a `ViewInfo` struct, and only supports limited DDL operations.  
 Let me describe more details about the view DDL operation:
 1. Create a VIEW  
     1. Parse the create view statement and build a logical plan for select cause part. If any grammar error occurs, return errors to parser.   
@@ -34,11 +40,17 @@ Let me describe more details about the view DDL operation:
     4. Replace outermost layer wildcard with column name and column alias name in `SELECT` cause. For example:
        Origin SQL would like this:
        ```mysql
-       SELECT * FROM (SELECT t1.a,t2.b,sum(t1.b) FROM (SELECT * from t3 WHERE a=4) AS t1,t2) AS TT
+       SELECT * FROM 
+         (
+           SELECT t1.a,t2.b,sum(t1.b) FROM (SELECT * from t3 WHERE a=4) AS t1,t2
+         ) AS TT
         ```  
        After SQL rewriter, it would be like following:
        ```mysql
-       SELECT TT.a AS a,TT.b AS b2 ,TT.'sum(t1.b)' AS 'sum(t1.b)' FROM (SELECT t1.a,t2.b,sum(t1.b) FROM (SELECT * from t3 WHERE a=4) AS t1,t2) AS TT
+       SELECT TT.a AS a,TT.b AS b2 ,TT.'sum(t1.b)' AS 'sum(t1.b)' FROM 
+         (
+           SELECT t1.a,t2.b,sum(t1.b) FROM (SELECT * from t3 WHERE a=4) AS t1,t2
+         ) AS TT
        ``` 
     5. Test SELECT cause with following extra rules to see if this view is updatable. This part is difficult, following rules need more details.
         * There must be no duplicate view column names.
