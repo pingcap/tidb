@@ -200,7 +200,9 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 			}
 			rows = rows[:0]
 			if batchInsert {
-				err = e.doBatchInsert()
+				if err = e.doBatchInsert(); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -326,7 +328,9 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 				}
 				rows = rows[:0]
 				if batchInsert {
-					err = e.doBatchInsert()
+					if err = e.doBatchInsert(); err != nil {
+						return err
+					}
 				}
 			}
 		}
