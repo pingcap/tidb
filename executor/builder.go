@@ -24,7 +24,9 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -33,8 +35,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1057,8 +1057,16 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 				partialOrdinal++
 			}
 			finalDesc := aggDesc.Split(ordinal)
-			e.PartialAggFuncs = append(e.PartialAggFuncs, aggfuncs.Build(b.ctx, aggDesc, i))
-			e.FinalAggFuncs = append(e.FinalAggFuncs, aggfuncs.Build(b.ctx, finalDesc, i))
+			partialAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
+			finalAggFunc := aggfuncs.Build(b.ctx, finalDesc, i)
+			e.PartialAggFuncs = append(e.PartialAggFuncs, partialAggFunc)
+			e.FinalAggFuncs = append(e.FinalAggFuncs, finalAggFunc)
+			if aggDesc.Name == ast.AggFuncGroupConcat {
+				// For group_concat, finalAggFunc and partialAggFunc need shared `truncate` flag to do duplicate.
+				finalAggFunc.(interface{ SetTruncated(t *int32) }).SetTruncated(
+					partialAggFunc.(interface{ GetTruncated() *int32 }).GetTruncated(),
+				)
+			}
 		}
 		if e.defaultVal != nil {
 			value := aggDesc.GetDefaultValue()

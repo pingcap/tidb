@@ -21,19 +21,19 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -2955,6 +2955,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(100))")
+	tk.MustExec("create table d(a varchar(100))")
 	tk.MustExec("insert into t values('hello'), ('hello')")
 	result := tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,hello"))
@@ -2962,6 +2963,15 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustExec("set @@group_concat_max_len=7")
 	result = tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,h"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+
+	_, err := tk.Exec("insert into d select group_concat(a) from t")
+	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, terror.ErrCode(mysql.ErrCutValueGroupConcat))
+
+	tk.Exec("set sql_mode=''")
+	tk.MustExec("insert into d select group_concat(a) from t")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
 func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {

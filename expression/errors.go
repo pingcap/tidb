@@ -14,9 +14,9 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -53,6 +53,7 @@ func init() {
 		mysql.ErrInvalidDefault:                    mysql.ErrInvalidDefault,
 		mysql.ErrWarnDeprecatedSyntaxNoReplacement: mysql.ErrWarnDeprecatedSyntaxNoReplacement,
 		mysql.ErrOperandColumns:                    mysql.ErrOperandColumns,
+		mysql.ErrCutValueGroupConcat:               mysql.ErrCutValueGroupConcat,
 		mysql.ErrRegexp:                            mysql.ErrRegexp,
 		mysql.ErrWarnAllowedPacketOverflowed:       mysql.ErrWarnAllowedPacketOverflowed,
 		mysql.WarnOptionIgnored:                    mysql.WarnOptionIgnored,

@@ -1,0 +1,9 @@
+[package]
+name = "tipb"
+version = "0.0.1"
+
+[lib]
+name = "tipb"
+
+[dependencies]
+protobuf = "~2.0"

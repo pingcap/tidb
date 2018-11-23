@@ -1,0 +1,18 @@
+version: 2
+
+jobs:
+  build:
+    docker:
+      - image: golang:1.11
+    working_directory: /go/src/github.com/pingcap/parser
+    steps:
+      - checkout
+      - run:
+          name: "Verify parser.go is up-to-date"
+          command: |
+            mv parser.go parser.go.committed
+            make parser
+            diff -u parser.go.committed parser.go
+      - run:
+          name: "Build & Test"
+          command: make test
