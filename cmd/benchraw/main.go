@@ -22,9 +22,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )

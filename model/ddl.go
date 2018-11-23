@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/terror"
 	"github.com/pkg/errors"
 )
 

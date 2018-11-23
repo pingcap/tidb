@@ -13,7 +13,7 @@
 
 package ast
 
-import "github.com/pingcap/tidb/model"
+import "github.com/pingcap/parser/model"
 
 var (
 	_ StmtNode = &AnalyzeTableStmt{}

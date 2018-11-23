@@ -16,7 +16,7 @@ package variable
 import (
 	"os"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 )
 
 /*

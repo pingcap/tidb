@@ -23,17 +23,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -132,16 +133,16 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 }
 
 // Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
+func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) (sqlexec.Statement, error) {
 	compiler := executor.Compiler{Ctx: sctx}
 	stmt, err := compiler.Compile(ctx, stmtNode)
 	return stmt, errors.Trace(err)
 }
 
-// runStmt executes the ast.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast.RecordSet, error) {
+// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
+func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
 	var err error
-	var rs ast.RecordSet
+	var rs sqlexec.RecordSet
 	se := sctx.(*session)
 	rs, err = s.Exec(ctx)
 	// All the history should be added here.
@@ -203,7 +204,7 @@ func GetHistory(ctx sessionctx.Context) *StmtHistory {
 }
 
 // GetRows4Test gets all the rows from a RecordSet, only used for test.
-func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet) ([]chunk.Row, error) {
+func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	if rs == nil {
 		return nil, nil
 	}
