@@ -1531,6 +1531,15 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testDBSuite) TestTableForeignKey(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t1 (a int, b int);")
+	failSQL := "create table t2 (c int, foreign key (a) references t1(a));"
+	s.testErrorCode(c, failSQL, tmysql.ErrKeyColumnDoesNotExits)
+	s.tk.MustExec("drop table if exists t1,t2;")
+}
+
 func (s *testDBSuite) TestBitDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
