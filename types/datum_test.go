@@ -19,7 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -74,7 +74,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	c.Assert(err, IsNil)
 	testDatumToBool(c, t, 1)
 
-	td, err := ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration(nil, "11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testDatumToBool(c, td, 1)
 
@@ -153,7 +153,7 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, t, int64(20111110111112))
 
-	td, err := ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration(nil, "11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, td, int64(111112))
 
@@ -305,7 +305,7 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 }
 
 func mustParseDurationDatum(str string, fsp int) Datum {
-	dur, err := ParseDuration(str, fsp)
+	dur, err := ParseDuration(nil, str, fsp)
 	if err != nil {
 		panic(err)
 	}

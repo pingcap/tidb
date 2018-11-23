@@ -22,9 +22,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pkg/errors"
@@ -185,7 +185,7 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 		}
 	}
 
-	d, err = ParseDuration(str, fsp)
+	d, err = ParseDuration(sc, str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}

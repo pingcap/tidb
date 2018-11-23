@@ -1,0 +1,53 @@
+{
+  "Tools": [
+    {
+      "Repository": "honnef.co/go/tools/cmd/megacheck",
+      "Commit": "f1b53a58b0229ba115f39ce1da090b35b09149b5"
+    },
+    {
+      "Repository": "gopkg.in/alecthomas/gometalinter.v2",
+      "Commit": "46cc1ea3778b247666c2949669a3333c532fa9c6"
+    },
+    {
+      "Repository": "github.com/kisielk/errcheck",
+      "Commit": "55d8f507faff4d6eddd0c41a3e713e2567fca4e5"
+    },
+    {
+      "Repository": "github.com/cockroachdb/returncheck",
+      "Commit": "e91bb28baf9de4a530d3ae7f041953b23dcce9be"
+    },
+    {
+      "Repository": "github.com/mgechev/revive",
+      "Commit": "7773f47324c2bf1c8f7a5500aff2b6c01d3ed73b"
+    },
+    {
+      "Repository": "github.com/gordonklaus/ineffassign",
+      "Commit": "7bae11eba15a3285c75e388f77eb6357a2d73ee2"
+    },
+    {
+      "Repository": "github.com/dnephin/govet",
+      "Commit": "4a96d43e39d340b63daa8bc5576985aa599885f6"
+    },
+    {
+      "Repository": "github.com/client9/misspell/cmd/misspell",
+      "Commit": "7888c6b6ce89353cd98e196bce3c3f9e4cdf31f6"
+    },
+    {
+      "Repository": "github.com/securego/gosec",
+      "Commit": "5fb530cda357c16175f2c049577d2030de735b28"
+    },
+    {
+      "Repository": "github.com/securego/gosec/cmd/gosec",
+      "Commit": "5fb530cda357c16175f2c049577d2030de735b28"
+    },
+    {
+      "Repository": "github.com/etcd-io/gofail/runtime",
+      "Commit": "51ce9a71510a58bad5ae66ddd278ef28762a1550"
+    },
+    {
+      "Repository": "github.com/etcd-io/gofail",
+      "Commit": "51ce9a71510a58bad5ae66ddd278ef28762a1550"
+    }
+  ],
+  "RetoolVersion": "1.3.7"
+}
