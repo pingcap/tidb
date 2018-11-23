@@ -84,6 +84,20 @@
     *Hint: For the index column which column type is timezone dependent, e.g. `timestamp`, convert its value to UTC
 timezone.*
 
+1. Scatter regions of the specified table, add a `scatter-range` scheduler for the PD and the range is same as the table range.
+
+    ```shell
+    curl -X POST http://{TiDBIP}:10080/tables/{db}/{table}/scatter
+    ```
+    
+    **Note**: The `scatter-range` scheduler may conflict with the global scheduler, do not use it for long periods on the larger table.
+
+1. Stop scatter the regions, disable the `scatter-range` scheduler for the specified table.
+
+    ```shell
+    curl -X POST http://{TiDBIP}:10080/tables/{db}/{table}/stop-scatter
+    ```
+
 1. Get TiDB server settings
 
     ```shell
