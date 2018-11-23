@@ -15,9 +15,9 @@ package server
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
@@ -76,7 +76,7 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
 
-	myDuration, err := types.ParseDuration("0000-00-00 00:00:00.0000000", 6)
+	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.0000000", 6)
 	c.Assert(err, IsNil)
 	d = dumpBinaryTime(myDuration.Duration)
 	c.Assert(d, DeepEquals, []byte{0})
@@ -139,7 +139,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2017-01-06 00:00:00")
 
-	duration, err := types.ParseDuration("11:30:45", 0)
+	duration, err := types.ParseDuration(nil, "11:30:45", 0)
 	c.Assert(err, IsNil)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
@@ -153,6 +153,12 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "1.23")
+
+	year := types.NewIntDatum(0)
+	columns[0].Type = mysql.TypeYear
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
+	c.Assert(err, IsNil)
+	c.Assert(mustDecodeStr(c, bs), Equals, "0000")
 }
 
 func mustDecodeStr(c *C, b []byte) string {

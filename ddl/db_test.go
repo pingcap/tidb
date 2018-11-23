@@ -24,16 +24,17 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
@@ -301,15 +301,19 @@ func (s *testDBSuite) TestRenameIndex(c *C) {
 	s.testErrorCode(c, "alter table t rename key k3 to K2", mysql.ErrDupKeyName)
 }
 
-func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
+func (s *testDBSuite) testGetTableByName(c *C, db, table string) table.Table {
 	ctx := s.s.(sessionctx.Context)
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	c.Assert(err, IsNil)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(s.schemaName), model.NewCIStr(name))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	c.Assert(err, IsNil)
 	return tbl
+}
+
+func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
+	return s.testGetTableByName(c, s.schemaName, name)
 }
 
 func backgroundExec(s kv.Storage, sql string, done chan error) {
@@ -3491,4 +3495,68 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("admin check table partition_add_idx")
 	tk.MustExec("drop table partition_add_idx")
+}
+
+func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("drop database if exists test_db_with_partition")
+	s.tk.MustExec("create database test_db_with_partition")
+	s.tk.MustExec("use test_db_with_partition")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
+	s.tk.MustExec(`create table t_part (a int key)
+		partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+		);`)
+	s.tk.MustExec("insert into t_part values (1),(2),(11),(12);")
+	ctx := s.s.(sessionctx.Context)
+	tbl := s.testGetTableByName(c, "test_db_with_partition", "t_part")
+
+	// check records num before drop database.
+	recordsNum := getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+	c.Assert(recordsNum, Equals, 4)
+
+	s.tk.MustExec("drop database if exists test_db_with_partition")
+
+	// check job args.
+	rs, err := s.tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	rows, err := session.GetRows4Test(context.Background(), s.tk.Se, rs)
+	c.Assert(err, IsNil)
+	row := rows[0]
+	c.Assert(row.GetString(3), Equals, "drop schema")
+	jobID := row.GetInt64(0)
+	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err := t.GetHistoryDDLJob(jobID)
+		c.Assert(err, IsNil)
+		var tableIDs []int64
+		err = historyJob.DecodeArgs(&tableIDs)
+		c.Assert(err, IsNil)
+		// There is 2 partitions.
+		c.Assert(len(tableIDs), Equals, 3)
+		return nil
+	})
+
+	// check records num after drop database.
+	recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+	c.Assert(recordsNum, Equals, 0)
+}
+
+func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.PartitionedTable) int {
+	num := 0
+	info := tbl.Meta().GetPartitionInfo()
+	for _, def := range info.Definitions {
+		pid := def.ID
+		partition := tbl.(table.PartitionedTable).GetPartition(pid)
+		startKey := partition.RecordKey(math.MinInt64)
+		c.Assert(ctx.NewTxn(), IsNil)
+		err := partition.IterRecords(ctx, startKey, partition.Cols(),
+			func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+				num++
+				return true, nil
+			})
+		c.Assert(err, IsNil)
+	}
+	return num
 }

@@ -103,7 +103,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		}
 		evalCtx.Buffer.Truncate(i)
 		if !cf.truncated {
-			sc.AppendWarning(expression.ErrCutValueGroupConcat)
+			sc.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(cf.Args[0].String()))
 		}
 		cf.truncated = true
 	}
