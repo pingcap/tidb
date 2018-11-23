@@ -2390,7 +2390,7 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestTso(c *C) {
+func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
 	s.ctx.GetSessionVars().TimeZone = time.UTC
 	tests := []struct {
 		param  interface{}
@@ -2401,7 +2401,7 @@ func (s *testEvaluatorSuite) TestTso(c *C) {
 		{1, "1970-01-01 00:00:00.000000"},
 	}
 
-	fc := funcs[ast.Tso]
+	fc := funcs[ast.TiDBParseTso]
 	for _, test := range tests {
 		t := []types.Datum{types.NewDatum(test.param)}
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t))

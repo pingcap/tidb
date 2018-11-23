@@ -5631,12 +5631,12 @@ func getExpressionFsp(ctx sessionctx.Context, expression Expression) (int, error
 	return mathutil.Min(expression.GetType().Decimal, types.MaxFsp), nil
 }
 
-//tsoFunction extracts physical time from a tso
-type tsoFunctionClass struct {
+//tidbParseTsoFunction extracts physical time from a tso
+type tidbParseTsoFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tsoFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbParseTsoFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -5644,22 +5644,22 @@ func (c *tsoFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, types.ETInt)
 
 	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, types.DefaultFsp
-	sig := &builtinTsoSig{bf}
+	sig := &builtintidbParseTsoSig{bf}
 	return sig, nil
 }
 
-type builtinTsoSig struct {
+type builtintidbParseTsoSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinTsoSig) Clone() builtinFunc {
-	newSig := &builtinTsoSig{}
+func (b *builtintidbParseTsoSig) Clone() builtinFunc {
+	newSig := &builtintidbParseTsoSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-// evalTime evals a builtinTsoSig.
-func (b *builtinTsoSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+// evalTime evals a builtintidbParseTsoSig.
+func (b *builtintidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil || arg <= 0 {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))

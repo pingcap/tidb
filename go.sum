@@ -323,6 +323,8 @@ github.com/yu34po/parser v0.0.0-20181121072203-a2eb5f44549d h1:85oqW4aU1uT1tKQYy
 github.com/yu34po/parser v0.0.0-20181121072203-a2eb5f44549d/go.mod h1:3Yf+Zbn2tUewomG/5eNIcdmIalpZ+h1iY1O7uiuPMMw=
 github.com/yu34po/parser v0.0.0-20181122040948-022872656e14 h1:cxbs6NG+x2O3rJxc+EzMu8KgjGM1CP2KhUKaeTIJUT8=
 github.com/yu34po/parser v0.0.0-20181122040948-022872656e14/go.mod h1:3Yf+Zbn2tUewomG/5eNIcdmIalpZ+h1iY1O7uiuPMMw=
+github.com/yu34po/parser v0.0.0-20181123030610-1d6c3c585f2d h1:D8F+8n5vC8lu6EfjDgMRXV3oasNigYtJMr7+svTm9SQ=
+github.com/yu34po/parser v0.0.0-20181123030610-1d6c3c585f2d/go.mod h1:3Yf+Zbn2tUewomG/5eNIcdmIalpZ+h1iY1O7uiuPMMw=
 github.com/zimulala/parser v0.0.0-20181108115726-650caa67be64 h1:QYGszvB1bmVsjvH6Id0AAnYXK9KUzSlbD8sbfaSf+Rw=
 github.com/zimulala/parser v0.0.0-20181108115726-650caa67be64/go.mod h1:G69sWhUqZ6QkeOjLFa/d9eJsBxH7Y/JhkqOyvz1gZ3M=
 go.uber.org/atomic v1.3.2 h1:2Oa65PReHzfn29GpvgsYwloV9AVFHPDk8tYxt2c2tr4=
