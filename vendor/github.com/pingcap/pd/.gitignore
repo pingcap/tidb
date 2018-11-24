@@ -1,9 +1,0 @@
-bin
-*.iml
-.idea
-default.etcd
-default.pd
-*.swp
-.DS_Store
-tags
-/.retools/

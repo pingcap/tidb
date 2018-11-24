@@ -16,8 +16,8 @@ package charset
 import (
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pkg/errors"
 )
 
 // Charset is a charset.

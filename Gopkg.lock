@@ -256,7 +256,7 @@
   revision = "371b48b15d93924a3a5375019e42b4420bc13d17"
 
 [[projects]]
-  name = "github.com/pkg/errors"
+  name = "github.com/pingcap/errors"
   packages = ["."]
   revision = "1176802fff62540cc87d289bd40c52a2d6b2ea16"
   source = "https://github.com/pingcap/errors.git"
