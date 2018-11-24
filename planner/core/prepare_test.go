@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -38,14 +39,21 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx1(b, a), index idx2(b))")
@@ -80,14 +88,21 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, primary key (a, b))")
@@ -106,14 +121,21 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	c.Assert(err, IsNil)
 
 	defer testleak.AfterTest(c)()
 
@@ -159,14 +181,21 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec(`prepare stmt1 from "select now(), sleep(1), now()"`)
 	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
