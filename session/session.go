@@ -1024,10 +1024,13 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
 
-	// Check IP.
+	// Check IP or localhost.
 	if pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt) {
 		s.sessionVars.User = user
 		return true
+	} else if user.Hostname == variable.DefHostname {
+		log.Errorf("User connection verification failed %s", user)
+		return false
 	}
 
 	// Check Hostname.
@@ -1047,7 +1050,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 
 func getHostByIP(ip string) []string {
 	if ip == "127.0.0.1" {
-		return []string{"localhost"}
+		return []string{variable.DefHostname}
 	}
 	addrs, err := net.LookupAddr(ip)
 	terror.Log(errors.Trace(err))
