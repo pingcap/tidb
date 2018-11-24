@@ -60,7 +60,7 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 	canBePushDown := make([]expression.Expression, 0, len(filters))
 	canNotBePushDown := make([]expression.Expression, 0, len(filters))
 	for _, expr := range filters {
-		if expression.HasUnVectorizableFunc(expr) {
+		if expression.HasGetSetVarFunc(expr) {
 			canNotBePushDown = append(canNotBePushDown, expr)
 		} else {
 			canBePushDown = append(canBePushDown, expr)
@@ -325,7 +325,7 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	for _, cond := range predicates {
 		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
-		if !expression.HasUnVectorizableFunc(newFilter) {
+		if !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
 		} else {
 			canNotBePushed = append(canNotBePushed, cond)
