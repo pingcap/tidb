@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -391,16 +392,17 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !cc.server.skipAuth() {
-		// Do Auth.
+	host := variable.DefHostname
+	if !cc.server.isUnixSocket() {
 		addr := cc.bufReadConn.RemoteAddr().String()
-		host, _, err1 := net.SplitHostPort(addr)
-		if err1 != nil {
+		// Do Auth.
+		host, _, err = net.SplitHostPort(addr)
+		if err != nil {
 			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
 		}
-		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
-			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
-		}
+	}
+	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
+		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
 	}
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
