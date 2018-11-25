@@ -104,8 +104,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(err, IsNil)
 
 	// test for renaming table
-	gofail.Enable("github.com/pingcap/tidb/ddl/errRenameTable", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errRenameTable")
+	gofail.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/renameTableErr")
 	_, err = s.se.Execute(context.Background(), "create table tx(a int)")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tx values(1)")
