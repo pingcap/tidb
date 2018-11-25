@@ -415,11 +415,19 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
+			// The etcd is responsible for schema synchronization, we should ensure there is at most two diffrent schema version
+			// in the TiDB cluster, to make the data/schema be consistent. If we lost connection/session to etcd, the cluster
+			// will treats this TiDB as a down instance, and etcd will remove the key of `/tidb/ddl/all_schema_versions/tidb-id`.
+			// Say the schema version now is 1, the owner is changing the schema version to 2, it will not wait for this down TiDB syncing the schema,
+			// then continue to change the TiDB schema to version 3. Unfortunately, this down TiDB schema version will still be version 1.
+			// And version 1 is not consistent to version 3. So we need to stop the schema validator to prohibit the DML executing.
+			do.SchemaValidator.Stop()
 			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
 			}
+			do.SchemaValidator.Restart()
 			log.Info("[ddl] schema syncer restarted.")
 		case <-do.info.Done():
 			log.Info("[ddl] reload schema in loop, server info syncer need restart")
