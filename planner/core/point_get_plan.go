@@ -88,8 +88,8 @@ func (p *PointGetPlan) ExplainInfo() string {
 	return buffer.String()
 }
 
-// getChildReqProps gets the required property by child index.
-func (p *PointGetPlan) getChildReqProps(idx int) *property.PhysicalProperty {
+// GetChildReqProps gets the required property by child index.
+func (p *PointGetPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
 }
 
