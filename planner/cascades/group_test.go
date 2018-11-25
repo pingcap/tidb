@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -108,4 +109,20 @@ func (s *testCascadesSuite) TestGroupGetFirstElem(c *C) {
 	c.Assert(g.GetFirstElem(OperandProjection).Value.(*GroupExpr), Equals, expr0)
 	c.Assert(g.GetFirstElem(OperandLimit).Value.(*GroupExpr), Equals, expr1)
 	c.Assert(g.GetFirstElem(OperandAny).Value.(*GroupExpr), Equals, expr0)
+}
+
+func (s *testCascadesSuite) TestGetInsertGroupImpl(c *C) {
+	p := &plannercore.LogicalLimit{}
+	expr := NewGroupExpr(p)
+	g := NewGroup(expr)
+	rootProp := &property.PhysicalProperty{TaskTp: property.RootTaskType}
+	copProp := &property.PhysicalProperty{TaskTp: property.CopSingleReadTaskType}
+	impl := g.getImpl(rootProp)
+	c.Assert(impl, IsNil)
+	impl = &baseImplementation{plan: &plannercore.PhysicalLimit{}}
+	g.insertImpl(rootProp, impl)
+	newImpl := g.getImpl(rootProp)
+	c.Assert(newImpl, Equals, impl)
+	newImpl = g.getImpl(copProp)
+	c.Assert(newImpl, Not(Equals), impl)
 }
