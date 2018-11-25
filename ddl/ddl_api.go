@@ -1982,13 +1982,16 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
+func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	var fkInfo model.FKInfo
 	fkInfo.Name = fkName
 	fkInfo.RefTable = refer.Table.Name
 
 	fkInfo.Cols = make([]model.CIStr, len(keys))
 	for i, key := range keys {
+		if table.FindCol(cols, key.Column.Name.O) == nil {
+			return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
+		}
 		fkInfo.Cols[i] = key.Column.Name
 	}
 
@@ -2016,7 +2019,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	fkInfo, err := buildFKInfo(fkName, keys, refer)
+	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}
