@@ -45,7 +45,6 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
-	"pkg/mod/github.com/grpc-ecosystem/go-grpc-prometheus@v1.2.0"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
