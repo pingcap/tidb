@@ -423,6 +423,15 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			args = append(args, partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
+		if aggregation.NeedVariance(finalAggFunc.Name) {
+			partialSchema.Append(&expression.Column{
+				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
+				RetType:  finalSchema.Columns[i].GetType(),
+			})
+			args = append(args, partialSchema.Columns[partialCursor])
+			partialCursor++
+		}
 		finalAggFunc.Args = args
 		finalAggFunc.Mode = aggregation.FinalMode
 		finalAggFunc.RetTp = aggFun.RetTp

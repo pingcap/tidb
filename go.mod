@@ -50,3 +50,5 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 )
+
+replace github.com/pingcap/parser => github.com/mccxj/parser v0.0.0-20181117141729-5290889cded5

@@ -68,7 +68,7 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 		return true
 	// aggregate functions.
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg,
-		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr:
+		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr, tipb.ExprType_VarPop:
 		return true
 	case kv.ReqSubTypeDesc:
 		return true

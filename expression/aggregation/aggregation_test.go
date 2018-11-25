@@ -564,3 +564,72 @@ func (s *testAggFuncSuit) TestMaxMin(c *C) {
 	partialResult := minFunc.GetPartialResult(minEvalCtx)
 	c.Assert(partialResult[0].GetInt64(), Equals, int64(1))
 }
+
+func (s *testAggFuncSuit) TestVarPop(c *C) {
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	varPopFunc := NewAggFuncDesc(s.ctx, ast.AggFuncVarPop, []expression.Expression{col}, false).GetAggFunc(ctx)
+	evalCtx := varPopFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	result := varPopFunc.GetResult(evalCtx)
+	c.Assert(result.IsNull(), IsTrue)
+
+	for _, row := range s.rows {
+		err := varPopFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		c.Assert(err, IsNil)
+	}
+	result = varPopFunc.GetResult(evalCtx)
+	c.Assert(math.Abs(result.GetFloat64()-561.0) < 1e-5, IsTrue)
+	err := varPopFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
+	c.Assert(err, IsNil)
+	result = varPopFunc.GetResult(evalCtx)
+	c.Assert(math.Abs(result.GetFloat64()-561.0) < 1e-5, IsTrue)
+
+	distinctVarPopFunc := NewAggFuncDesc(s.ctx, ast.AggFuncVarPop, []expression.Expression{col}, true).GetAggFunc(ctx)
+	evalCtx = distinctVarPopFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	result = distinctVarPopFunc.GetResult(evalCtx)
+	c.Assert(result.IsNull(), IsTrue)
+	for _, row := range s.rows {
+		err := distinctVarPopFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		c.Assert(err, IsNil)
+	}
+	result = distinctVarPopFunc.GetResult(evalCtx)
+	c.Assert(math.Abs(result.GetFloat64()-833.25) < 1e-5, IsTrue)
+	err = distinctVarPopFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
+	c.Assert(err, IsNil)
+	result = distinctVarPopFunc.GetResult(evalCtx)
+	c.Assert(math.Abs(result.GetFloat64()-833.25) < 1e-5, IsTrue)
+}
+
+func (s *testAggFuncSuit) TestVarPopFinalMode(c *C) {
+	rows := make([][]types.Datum, 0, 100)
+	for i := 1; i <= 100; i++ {
+		rows = append(rows, types.MakeDatums(i, float64(i*i), float64(0)))
+	}
+	ctx := mock.NewContext()
+	cntCol := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	sumCol := &expression.Column{
+		Index:   1,
+		RetType: types.NewFieldType(mysql.TypeDouble),
+	}
+	varianceCol := &expression.Column{
+		Index:   2,
+		RetType: types.NewFieldType(mysql.TypeDouble),
+	}
+	varPopFunc := NewAggFuncDesc(s.ctx, ast.AggFuncVarPop, []expression.Expression{cntCol, sumCol, varianceCol}, false)
+	varPopFunc.Mode = FinalMode
+	avgFunc := varPopFunc.GetAggFunc(ctx)
+	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+
+	for _, row := range rows {
+		err := avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, chunk.MutRowFromDatums(row).ToRow())
+		c.Assert(err, IsNil)
+	}
+	result := avgFunc.GetResult(evalCtx)
+	c.Assert(math.Abs(result.GetFloat64()-561.0) < 1e-5, IsTrue)
+}

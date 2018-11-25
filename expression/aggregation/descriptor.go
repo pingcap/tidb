@@ -113,6 +113,24 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			RetType: a.RetTp,
 		})
 		finalAggDesc.Args = args
+	case ast.AggFuncVarPop:
+		args := make([]expression.Expression, 0, 3)
+		args = append(args, &expression.Column{
+			ColName: model.NewCIStr(fmt.Sprintf("var_pop_final_col_%d", ordinal[0])),
+			Index:   ordinal[0],
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		})
+		args = append(args, &expression.Column{
+			ColName: model.NewCIStr(fmt.Sprintf("var_pop_final_col_%d", ordinal[1])),
+			Index:   ordinal[1],
+			RetType: a.RetTp,
+		})
+		args = append(args, &expression.Column{
+			ColName: model.NewCIStr(fmt.Sprintf("var_pop_final_col_%d", ordinal[2])),
+			Index:   ordinal[2],
+			RetType: a.RetTp,
+		})
+		finalAggDesc.Args = args
 	default:
 		args := make([]expression.Expression, 0, 1)
 		args = append(args, &expression.Column{
@@ -157,6 +175,8 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
+	case ast.AggFuncVarPop:
+		a.typeInfer4VarPop(ctx)
 	default:
 		panic("unsupported agg function: " + a.Name)
 	}
@@ -189,12 +209,12 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 // | s     | a       | int(11) |
 // +-------+---------+---------+
 //
-// Query: `select t.a as `t.a`,  count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), s.a as `s.a`, avg(95) from t left join s on t.a = s.a;`
-// +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
-// | t.a  | count(95) | sum(95) | avg(95) | bit_or(95) | bit_and(95) | bit_or(95) | max(95) | min(95) | s.a  | avg(s.a) |
-// +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
-// |    1 |         1 |      95 | 95.0000 |         95 |          95 |         95 |      95 |      95 | NULL |     NULL |
-// +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
+// Query: `select t.a as `t.a`,  count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), var_pop(95), s.a as `s.a`, avg(s.a), var_pop(s.a) from t left join s on t.a = s.a;`
+// +------+-----------+---------+---------+------------+-------------+------------+---------+---------+-------------+------+----------+--------------+
+// | t.a  | count(95) | sum(95) | avg(95) | bit_or(95) | bit_and(95) | bit_or(95) | max(95) | min(95) | var_pop(95) | s.a  | avg(s.a) | var_pop(s.a) |
+// +------+-----------+---------+---------+------------+-------------+------------+---------+---------+-------------+------+----------+--------------+
+// |    1 |         1 |      95 | 95.0000 |         95 |          95 |         95 |      95 |      95 |           0 | NULL |     NULL |         NULL |
+// +------+-----------+---------+---------+------------+-------------+------------+---------+---------+-------------+------+----------+--------------+
 func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
 	switch a.Name {
 	case ast.AggFuncCount:
@@ -202,7 +222,7 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx sessionctx.Context, schema *e
 	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
 		ast.AggFuncFirstRow:
 		return a.evalNullValueInOuterJoin4Sum(ctx, schema)
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
+	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop:
 		return types.Datum{}, false
 	case ast.AggFuncBitAnd:
 		return a.evalNullValueInOuterJoin4BitAnd(ctx, schema)
@@ -223,18 +243,18 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx sessionctx.Context, schema *e
 // | t     | a       | int(11) |
 // +-------+---------+---------+
 //
-// Query: `select a, avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a) from t;`
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// Query: `select a, avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a), var_pop(a) from t;`
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+------------+
+// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) | var_pop(a) |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+------------+
+// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |       NULL |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+------------+
 func (a *AggFuncDesc) GetDefaultValue() (v types.Datum) {
 	switch a.Name {
 	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		v = types.NewIntDatum(0)
 	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
-		ast.AggFuncMin, ast.AggFuncGroupConcat:
+		ast.AggFuncMin, ast.AggFuncGroupConcat, ast.AggFuncVarPop:
 		v = types.Datum{}
 	case ast.AggFuncBitAnd:
 		v = types.NewUintDatum(uint64(math.MaxUint64))
@@ -277,6 +297,8 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		return &bitXorFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitAnd:
 		return &bitAndFunction{aggFunction: aggFunc}
+	case ast.AggFuncVarPop:
+		return &varPopFunction{baseVarianceFunction{aggFunction: aggFunc}}
 	default:
 		panic("unsupported agg function")
 	}
@@ -364,6 +386,13 @@ func (a *AggFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+}
+
+func (a *AggFuncDesc) typeInfer4VarPop(ctx sessionctx.Context) {
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
+	//TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
+	types.SetBinChsClnFlag(a.RetTp)
 }
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {

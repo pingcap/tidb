@@ -193,3 +193,28 @@ func strToInt(str string) (int64, error) {
 	}
 	return int64(r), err
 }
+
+// CalculateMerge merge variance and partialCount > 0 and mergeCount > 0.
+// NOTE: mergeCount and mergeSum do not include partialCount and partialSum yet.
+//
+// Evaluate the variance using the algorithm described by Chan, Golub, and LeVeque in
+// "Algorithms for computing the sample variance: analysis and recommendations"
+// The American Statistician, 37 (1983) pp. 242--247.
+//
+// variance = variance1 + variance2 + n/(m*(m+n)) * pow(((m/n)*t1 - t2),2)
+//
+// where:
+// - variance is $$\sum_{k=i}^{j}{(a_k-avg_{ij})^2}$$ (this is actually n times the variance) and is updated at every step.
+// - n is the count of elements in chunk1
+// - m is the count of elements in chunk2
+// - t1 = sum of elements in chunk1,
+// - t2 = sum of elements in chunk2.
+//
+// This algorithm was proven to be numerically stable by J.L. Barlow in
+// "Error analysis of a pairwise summation algorithm to compute sample variance"
+// Numer. Math, 58 (1991) pp. 583--590
+func CalculateMerge(partialCount int64, mergeCount int64, partialSum float64, mergeSum float64, partialVariance float64, mergeVariance float64) float64 {
+	doublePartialCount, doubleMergeCount := float64(partialCount), float64(mergeCount)
+	t := (doublePartialCount/doubleMergeCount)*mergeSum - partialSum
+	return mergeVariance + partialVariance + ((doubleMergeCount/doublePartialCount)/(doubleMergeCount+doublePartialCount))*t*t
+}
