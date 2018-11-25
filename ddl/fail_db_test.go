@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 
 	gofail "github.com/etcd-io/gofail/runtime"
@@ -196,4 +197,48 @@ func (s *testDBSuite) TestAddIndexFailed(c *C) {
 	tk.MustExec("alter table t add index idx_b(b)")
 	tk.MustExec("admin check index t idx_b")
 	tk.MustExec("admin check table t")
+}
+
+func (s *testDBSuite) TestGenGlobalIDFail(c *C) {
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists gen_global_id_fail")
+	tk.MustExec("use gen_global_id_fail")
+
+	sql1 := "create table t1(a bigint PRIMARY KEY, b int)"
+	sql2 := `create table t2(a bigint PRIMARY KEY, b int) partition by range (a) (
+			      partition p0 values less than (3440),
+			      partition p1 values less than (61440),
+			      partition p2 values less than (122880),
+			      partition p3 values less than maxvalue)`
+	sql3 := `truncate table t1`
+	sql4 := `truncate table t2`
+
+	testcases := []struct {
+		sql     string
+		table   string
+		mockErr bool
+	}{
+		{sql1, "t1", true},
+		{sql2, "t2", true},
+		{sql1, "t1", false},
+		{sql2, "t2", false},
+		{sql3, "t1", true},
+		{sql4, "t2", true},
+		{sql3, "t1", false},
+		{sql4, "t2", false},
+	}
+
+	for idx, test := range testcases {
+		if test.mockErr {
+			gofail.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(true)`)
+			_, err := tk.Exec(test.sql)
+			c.Assert(err, NotNil, Commentf("the %dth test case '%s' fail", idx, test.sql))
+		} else {
+			gofail.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(false)`)
+			tk.MustExec(test.sql)
+			tk.MustExec(fmt.Sprintf("insert into %s values (%d, 42)", test.table, rand.Intn(65536)))
+			tk.MustExec(fmt.Sprintf("admin check table %s", test.table))
+		}
+	}
 }
