@@ -218,7 +218,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.MustExec("drop table if exists prepare1;")
 		tk.MustExec("create table prepare1 (a decimal(1))")
 		_, err = tk.Exec("prepare stmt FROM @sql1")
-		c.Assert(err, NotNil)
+		c.Assert(plannercore.ErrUnknown.Equal(err), IsTrue)
 		tk.MustExec("SET @sql = 'update prepare1 set a=5 where a=?';")
 		_, err = tk.Exec("prepare stmt FROM @sql")
 		c.Assert(err, IsNil)
