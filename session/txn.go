@@ -80,6 +80,7 @@ func (st *TxnState) String() string {
 	return "invalid transaction"
 }
 
+// GoString implements the "%#v" format for fmt.Printf.
 func (st *TxnState) GoString() string {
 	var s strings.Builder
 	s.WriteString("Txn{")
