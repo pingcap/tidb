@@ -241,4 +241,6 @@ func (s *testDBSuite) TestGenGlobalIDFail(c *C) {
 			tk.MustExec(fmt.Sprintf("admin check table %s", test.table))
 		}
 	}
+	tk.MustExec("admin check table t1")
+	tk.MustExec("admin check table t2")
 }
