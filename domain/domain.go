@@ -386,6 +386,21 @@ func (do *Domain) topNSlowQueryLoop() {
 	}
 }
 
+func (do *Domain) infoSyncerKeeper() {
+	defer do.wg.Done()
+	defer recoverInDomain("infoSyncerKeeper", false)
+	for {
+		select {
+		case <-do.info.Done():
+			log.Info("[ddl] server info syncer need to restart")
+			do.info.Restart(context.Background())
+			log.Info("[ddl] server info syncer restarted.")
+		case <-do.exit:
+			return
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
@@ -436,10 +451,6 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 			do.SchemaValidator.Restart()
 			log.Info("[ddl] schema syncer restarted.")
-		case <-do.info.Done():
-			log.Info("[ddl] reload schema in loop, server info syncer need restart")
-			do.info.Restart(context.Background())
-			log.Info("[ddl] server info syncer restarted.")
 		case <-do.exit:
 			return
 		}
@@ -641,6 +652,8 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	do.wg.Add(1)
 	go do.topNSlowQueryLoop()
 
+	do.wg.Add(1)
+	go do.infoSyncerKeeper()
 	return nil
 }
 
