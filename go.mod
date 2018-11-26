@@ -41,7 +41,7 @@ require (
 	github.com/shirou/gopsutil v2.18.10+incompatible
 	github.com/sirupsen/logrus v1.2.0
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
-	github.com/tiancaiamao/appdash v0.0.0-20181123161744-e4cb055678c5
+	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/twinj/uuid v1.0.0
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
 	github.com/uber/jaeger-lib v1.5.0 // indirect
