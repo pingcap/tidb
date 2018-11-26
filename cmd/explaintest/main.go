@@ -26,8 +26,8 @@ import (
 
 	"flag"
 	"github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
@@ -665,6 +665,10 @@ func main() {
 	}
 	if _, err = mdb.Exec("set @@tidb_hash_join_concurrency=1"); err != nil {
 		log.Fatalf("set @@tidb_hash_join_concurrency=1 err[%v]", err)
+	}
+
+	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {
+		log.Fatalf("set sql_mode='STRICT_TRANS_TABLES' err[%v]", err)
 	}
 
 	tests := flag.Args()

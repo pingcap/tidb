@@ -14,15 +14,14 @@
 package ranger
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 )
 
-// conditionChecker checks if this condition can be pushed to index plan.
+// conditionChecker checks if this condition can be pushed to index planner.
 type conditionChecker struct {
-	colName       model.CIStr
+	colUniqueID   int64
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 	length        int
 }
@@ -135,8 +134,5 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	if !ok {
 		return false
 	}
-	if c.colName.L != "" {
-		return c.colName.L == col.ColName.L
-	}
-	return true
+	return c.colUniqueID == col.UniqueID
 }

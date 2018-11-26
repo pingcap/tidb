@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 
 	"golang.org/x/net/context"

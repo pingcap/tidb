@@ -15,15 +15,19 @@ package latch
 
 import (
 	"sync"
+	"time"
+
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 const lockChanSize = 100
 
 // LatchesScheduler is used to schedule latches for transactions.
 type LatchesScheduler struct {
-	latches  *Latches
-	unlockCh chan *Lock
-	closed   bool
+	latches         *Latches
+	unlockCh        chan *Lock
+	closed          bool
+	lastRecycleTime uint64
 	sync.RWMutex
 }
 
@@ -40,13 +44,30 @@ func NewScheduler(size uint) *LatchesScheduler {
 	return scheduler
 }
 
+const expireDuration = 2 * time.Minute
+const checkInterval = 1 * time.Minute
+const checkCounter = 50000
+const latchListCount = 5
+
 func (scheduler *LatchesScheduler) run() {
+	var counter int
 	wakeupList := make([]*Lock, 0)
 	for lock := range scheduler.unlockCh {
-		wakeupList = scheduler.latches.release(lock, lock.commitTS, wakeupList)
+		wakeupList = scheduler.latches.release(lock, wakeupList)
 		if len(wakeupList) > 0 {
 			scheduler.wakeup(wakeupList)
 		}
+
+		if lock.commitTS > lock.startTS {
+			currentTS := lock.commitTS
+			elapsed := tsoSub(currentTS, scheduler.lastRecycleTime)
+			if elapsed > checkInterval || counter > checkCounter {
+				go scheduler.latches.recycle(lock.commitTS)
+				scheduler.lastRecycleTime = currentTS
+				counter = 0
+			}
+		}
+		counter++
 	}
 }
 
@@ -92,8 +113,8 @@ func (scheduler *LatchesScheduler) UnLock(lock *Lock) {
 	}
 }
 
-// RefreshCommitTS refreshes commitTS for keys. It could be used for the transaction not retryable,
-// which would do 2PC directly and wouldn't get a lock.
-func (scheduler *LatchesScheduler) RefreshCommitTS(keys [][]byte, commitTS uint64) {
-	scheduler.latches.refreshCommitTS(keys, commitTS)
+func tsoSub(ts1, ts2 uint64) time.Duration {
+	t1 := oracle.GetTimeFromTS(ts1)
+	t2 := oracle.GetTimeFromTS(ts2)
+	return t1.Sub(t2)
 }

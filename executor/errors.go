@@ -14,8 +14,8 @@
 package executor
 
 import (
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 )
 
 // Error codes that are not mapping to mysql error codes.
@@ -26,10 +26,12 @@ const (
 	codeResultIsEmpty
 	codeErrBuildExec
 	codeBatchInsertFail
+	codeGetStartTS
 )
 
 // Error instances.
 var (
+	ErrGetStartTS      = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
 	ErrUnknownPlan     = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti    = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
 	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")

@@ -17,9 +17,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -355,6 +355,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CoalesceInt:
 		f = &builtinCoalesceIntSig{base}
 
+	case tipb.ScalarFuncSig_CaseWhenJson:
+		f = &builtinCaseWhenJSONSig{base}
 	case tipb.ScalarFuncSig_CaseWhenDecimal:
 		f = &builtinCaseWhenDecimalSig{base}
 	case tipb.ScalarFuncSig_CaseWhenDuration:
@@ -430,8 +432,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONRemoveSig{base}
 	case tipb.ScalarFuncSig_JsonMergeSig:
 		f = &builtinJSONMergeSig{base}
+	case tipb.ScalarFuncSig_JsonContainsSig:
+		f = &builtinJSONContainsSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{base}
+	case tipb.ScalarFuncSig_JsonLengthSig:
+		f = &builtinJSONLengthSig{base}
 
 	case tipb.ScalarFuncSig_InInt:
 		f = &builtinInIntSig{base}
@@ -452,7 +458,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinDateFormatSig{base}
 
 	default:
-		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)
+		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, errors.Trace(e)
 	}
 	return f, nil

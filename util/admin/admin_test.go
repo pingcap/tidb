@@ -19,10 +19,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -294,7 +294,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(s.ctx.NewTxn(), IsNil)
 	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
 
 	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(1), int64(10), int64(11))}
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
@@ -307,7 +307,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(s.ctx.NewTxn(), IsNil)
 	_, err = tb.AddRecord(s.ctx, record2.Values, false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
@@ -351,7 +351,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {

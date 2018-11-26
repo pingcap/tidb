@@ -14,10 +14,10 @@
 package privilege
 
 import (
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 )
 
 type keyType int
@@ -38,7 +38,7 @@ type Manager interface {
 	// this means any privilege would be OK.
 	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
 	// ConnectionVerification verifies user privilege for connection.
-	ConnectionVerification(user, host string, auth, salt []byte) bool
+	ConnectionVerification(user, host string, auth, salt []byte) (string, string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(db string) bool

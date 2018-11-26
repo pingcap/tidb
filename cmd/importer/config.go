@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"github.com/BurntSushi/toml"
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 // NewConfig creates a new config.

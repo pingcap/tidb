@@ -22,11 +22,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -158,7 +158,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01817558299,
+			selectivity: 0.01783264746,
 		},
 		{
 			exprs:       "a >= 1 and c > 1 and a < 2",
@@ -174,7 +174,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "b > 1",
-			selectivity: 0.98148148148,
+			selectivity: 0.96296296296,
 		},
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
@@ -189,13 +189,13 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plan.Preprocess(ctx, stmts[0], is, false)
+		err = plannercore.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, comment)
-		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 
-		sel := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection)
-		ds := sel.Children()[0].(*plan.DataSource)
+		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		ds := sel.Children()[0].(*plannercore.DataSource)
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
 
@@ -227,6 +227,18 @@ func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
 	testKit.MustQuery("explain select * from t where a = 'tw' and b < 0").Check(testkit.Rows(
 		"IndexReader_9 0.00 root index:IndexScan_8",
 		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
+}
+
+func (s *testSelectivitySuite) TestSelectCombinedLowBound(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid))")
+	testKit.MustExec("insert into t (kid, pid) values (1,2), (1,3), (1,4),(1, 11), (1, 12), (1, 13), (1, 14), (2, 2), (2, 3), (2, 4)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain select * from t where kid = 1").Check(testkit.Rows(
+		"IndexReader_9 7.00 root index:IndexScan_8",
+		"└─IndexScan_8 7.00 cop table:t, index:kid, pid, range:[1,1], keep order:false"))
 }
 
 func getRange(start, end int64) []*ranger.Range {
@@ -280,6 +292,53 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 2.2)
+
+	testKit.MustExec("truncate table t")
+	testKit.MustExec("insert into t values (null, null)")
+	testKit.MustExec("analyze table t")
+	table, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(1, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int, b int, index idx(b))")
+	testKit.MustExec("insert into t values (1,1)")
+	testKit.MustExec("analyze table t")
+	table, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(2, 2))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	idxID = table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(2, 2))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+}
+
+func (s *testSelectivitySuite) TestPrimaryKeySelectivity(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a char(10) primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > "t"`).Check(testkit.Rows(
+		"IndexLookUp_10 3333.33 root ",
+		"├─IndexScan_8 3333.33 cop table:t, index:a, range:(\"t\",+inf], keep order:false, stats:pseudo",
+		"└─TableScan_9 3333.33 cop table:t, keep order:false, stats:pseudo"))
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > 1`).Check(testkit.Rows(
+		"TableReader_6 3333.33 root data:TableScan_5",
+		"└─TableScan_5 3333.33 cop table:t, range:(1,+inf], keep order:false, stats:pseudo"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {
@@ -298,9 +357,9 @@ func BenchmarkSelectivity(b *testing.B) {
 	stmts, err := session.Parse(ctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plan.Preprocess(ctx, stmts[0], is, false)
+	err = plannercore.Preprocess(ctx, stmts[0], is, false)
 	c.Assert(err, IsNil, comment)
-	p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+	p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
 	file, _ := os.Create("cpu.profile")
@@ -310,7 +369,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	b.Run("selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+			_, err := statsTbl.Selectivity(ctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()

@@ -46,9 +46,3 @@ var (
 			Help:      "Counter of load privilege",
 		}, []string{LblType})
 )
-
-func init() {
-	prometheus.MustRegister(LoadSchemaDuration)
-	prometheus.MustRegister(LoadSchemaCounter)
-	prometheus.MustRegister(LoadPrivilegeCounter)
-}

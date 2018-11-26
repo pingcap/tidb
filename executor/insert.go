@@ -14,10 +14,10 @@
 package executor
 
 import (
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -31,7 +31,6 @@ type InsertExec struct {
 	*InsertValues
 	OnDuplicate []*expression.Assignment
 	Priority    mysql.PriorityEnum
-	finished    bool
 }
 
 func (e *InsertExec) exec(rows [][]types.Datum) error {
@@ -41,7 +40,7 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
 	if !sessVars.LightningMode {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
 	}
 
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
@@ -68,7 +67,6 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 			}
 		}
 	}
-	e.finished = true
 	return nil
 }
 
@@ -131,18 +129,10 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 // Next implements Exec Next interface.
 func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.finished {
-		return nil
-	}
-	cols, err := e.getColumns(e.Table.Cols())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	if len(e.children) > 0 && e.children[0] != nil {
-		return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
+		return e.insertRowsFromSelect(ctx, e.exec)
 	}
-	return errors.Trace(e.insertRows(cols, e.exec))
+	return e.insertRows(e.exec)
 }
 
 // Close implements the Executor Close interface.
@@ -159,6 +149,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
 	}
+	e.initEvalBuffer()
 	return nil
 }
 
@@ -178,7 +169,7 @@ func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.updateDupKeyValues(row, handle, newHandle, handleChanged, updatedRow)
+	return e.updateDupKeyValues(handle, newHandle, handleChanged, oldRow, updatedRow)
 }
 
 // doDupRowUpdate updates the duplicate row.
@@ -215,15 +206,19 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 }
 
 // updateDupKeyValues updates the dupKeyValues for further duplicate key check.
-func (e *InsertExec) updateDupKeyValues(row toBeCheckedRow, oldHandle int64,
-	newHandle int64, handleChanged bool, updatedRow []types.Datum) error {
+func (e *InsertExec) updateDupKeyValues(oldHandle int64, newHandle int64,
+	handleChanged bool, oldRow []types.Datum, updatedRow []types.Datum) error {
 	// There is only one row per update.
 	fillBackKeysInRows, err := e.getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{updatedRow})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Delete old keys and fill back new key-values of the updated row.
-	e.deleteDupKeys(row)
+	err = e.deleteDupKeys(e.ctx, e.Table, [][]types.Datum{oldRow})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if handleChanged {
 		delete(e.dupOldRowValues, string(e.Table.RecordKey(oldHandle)))
 		e.fillBackKeys(e.Table, fillBackKeysInRows[0], newHandle)

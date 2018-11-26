@@ -17,13 +17,13 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -70,8 +70,8 @@ func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("\"%s\"", sf)), nil
 }
 
-// NewFunction creates a new scalar function or constant.
-func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+// newFunctionImpl creates a new scalar function or constant.
+func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
@@ -80,7 +80,7 @@ func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTy
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
@@ -96,7 +96,20 @@ func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTy
 		RetType:  retType,
 		Function: f,
 	}
-	return FoldConstant(sf), nil
+	if fold {
+		return FoldConstant(sf), nil
+	}
+	return sf, nil
+}
+
+// NewFunction creates a new scalar function or constant via a constant folding.
+func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, true, funcName, retType, args...)
+}
+
+// NewFunctionBase creates a new scalar function with no constant folding.
+func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, false, funcName, retType, args...)
 }
 
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.

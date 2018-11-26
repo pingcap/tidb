@@ -14,9 +14,9 @@
 package executor
 
 import (
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -39,12 +39,12 @@ type toBeCheckedRow struct {
 	rowValue   []byte
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
-	// The table or partition this row belongs to.
+	// t is the table or partition this row belongs to.
 	t table.Table
 }
 
 type batchChecker struct {
-	// For duplicate key update
+	// toBeCheckedRows is used for duplicate key update
 	toBeCheckedRows []toBeCheckedRow
 	dupKVs          map[string][]byte
 	dupOldRowValues map[string][]byte
@@ -52,7 +52,7 @@ type batchChecker struct {
 
 // batchGetOldValues gets the values of storage in batch.
 func (b *batchChecker) batchGetOldValues(ctx sessionctx.Context, batchKeys []kv.Key) error {
-	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
+	values, err := kv.BatchGetValues(ctx.Txn(true), batchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -205,7 +205,7 @@ func (b *batchChecker) batchGetInsertKeys(ctx sessionctx.Context, t table.Table,
 			batchKeys = append(batchKeys, k.newKV.key)
 		}
 	}
-	b.dupKVs, err = kv.BatchGetValues(ctx.Txn(), batchKeys)
+	b.dupKVs, err = kv.BatchGetValues(ctx.Txn(true), batchKeys)
 	return errors.Trace(err)
 }
 
@@ -257,13 +257,21 @@ func (b *batchChecker) fillBackKeys(t table.Table, row toBeCheckedRow, handle in
 	}
 }
 
-func (b *batchChecker) deleteDupKeys(row toBeCheckedRow) {
-	if row.handleKey != nil {
-		delete(b.dupKVs, string(row.handleKey.newKV.key))
+// deleteDupKeys picks primary/unique key-value pairs from rows and remove them from the dupKVs
+func (b *batchChecker) deleteDupKeys(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) error {
+	cleanupRows, err := b.getKeysNeedCheck(ctx, t, rows)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	for _, uk := range row.uniqueKeys {
-		delete(b.dupKVs, string(uk.newKV.key))
+	for _, row := range cleanupRows {
+		if row.handleKey != nil {
+			delete(b.dupKVs, string(row.handleKey.newKV.key))
+		}
+		for _, uk := range row.uniqueKeys {
+			delete(b.dupKVs, string(uk.newKV.key))
+		}
 	}
+	return nil
 }
 
 // getOldRow gets the table record row from storage for batch check.

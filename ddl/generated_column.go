@@ -14,8 +14,8 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -35,11 +35,11 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 				if attr.generated && attribute.position <= attr.position {
 					// A generated column definition can refer to other
 					// generated columns occurring earilier in the table.
-					err := errGeneratedColumnNonPrior.GenByArgs()
+					err := errGeneratedColumnNonPrior.GenWithStackByArgs()
 					return errors.Trace(err)
 				}
 			} else {
-				err := errBadField.GenByArgs(depCol, "generated column function")
+				err := errBadField.GenWithStackByArgs(depCol, "generated column function")
 				return errors.Trace(err)
 			}
 		}
@@ -53,7 +53,7 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 func columnNamesCover(normalColNames map[string]struct{}, dependColNames map[string]struct{}) error {
 	for name := range dependColNames {
 		if _, ok := normalColNames[name]; !ok {
-			return errBadField.GenByArgs(name, "generated column function")
+			return errBadField.GenWithStackByArgs(name, "generated column function")
 		}
 	}
 	return nil
@@ -113,7 +113,7 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 		}
 	}
 	if stored[0] != stored[1] {
-		return errUnsupportedOnGeneratedColumn.GenByArgs("Changing the STORED status")
+		return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
 	}
 	// rule 2.
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(originCols))

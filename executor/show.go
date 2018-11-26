@@ -22,20 +22,20 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
 	"golang.org/x/net/context"
@@ -64,9 +64,9 @@ type ShowExec struct {
 
 // Next implements the Executor Next interface.
 func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
-		e.result = e.newChunk()
+		e.result = e.newFirstChunk()
 		err := e.fetchAll()
 		if err != nil {
 			return errors.Trace(err)
@@ -87,7 +87,7 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= e.result.NumRows() {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, e.result.NumRows()-e.cursor)
+	numCurBatch := mathutil.Min(chk.Capacity(), e.result.NumRows()-e.cursor)
 	chk.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil
@@ -166,11 +166,25 @@ func (e *ShowExec) fetchShowEngines() error {
 	return nil
 }
 
+// moveInfoSchemaToFront moves information_schema to the first, and the others are sorted in the origin ascending order.
+func moveInfoSchemaToFront(dbs []string) {
+	if len(dbs) > 0 && strings.EqualFold(dbs[0], "INFORMATION_SCHEMA") {
+		return
+	}
+
+	i := sort.SearchStrings(dbs, "INFORMATION_SCHEMA")
+	if i < len(dbs) && strings.EqualFold(dbs[i], "INFORMATION_SCHEMA") {
+		copy(dbs[1:i+1], dbs[0:i])
+		dbs[0] = "INFORMATION_SCHEMA"
+	}
+}
+
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
+	// let information_schema be the first database
+	moveInfoSchemaToFront(dbs)
 	for _, d := range dbs {
 		if checker != nil && !checker.DBIsVisible(d) {
 			continue
@@ -188,18 +202,27 @@ func (e *ShowExec) fetchShowProcessList() error {
 		return nil
 	}
 
+	loginUser := e.ctx.GetSessionVars().User
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
+		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
-		var t uint64
-		if len(pi.Info) != 0 {
-			t = uint64(time.Since(pi.Time) / time.Second)
-		}
-
 		var info string
 		if e.Full {
 			info = pi.Info
 		} else {
 			info = fmt.Sprintf("%.100v", pi.Info)
+		}
+
+		// If you have the PROCESS privilege, you can see all threads.
+		// Otherwise, you can see only your own threads.
+		if !hasProcessPriv && pi.User != loginUser.Username {
+			continue
 		}
 
 		e.appendRow([]interface{}{
@@ -208,7 +231,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 			pi.Host,
 			pi.DB,
 			pi.Command,
-			t,
+			uint64(time.Since(pi.Time) / time.Second),
 			fmt.Sprintf("%d", pi.State),
 			info,
 			pi.Mem,
@@ -281,6 +304,17 @@ func (e *ShowExec) fetchShowColumns() error {
 		}
 
 		desc := table.NewColDesc(col)
+		var columnDefault interface{}
+		if desc.DefaultValue != nil {
+			// SHOW COLUMNS result expects string value
+			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
+			if col.Tp == mysql.TypeBit {
+				defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+			} else {
+				columnDefault = defaultValStr
+			}
+		}
 
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
@@ -291,7 +325,7 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Collation,
 				desc.Null,
 				desc.Key,
-				desc.DefaultValue,
+				columnDefault,
 				desc.Extra,
 				desc.Privileges,
 				desc.Comment,
@@ -302,7 +336,7 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Type,
 				desc.Null,
 				desc.Key,
-				desc.DefaultValue,
+				columnDefault,
 				desc.Extra,
 			})
 		}
@@ -473,19 +507,35 @@ func getDefaultCollate(charsetName string) string {
 	return ""
 }
 
+// escape the identifier for pretty-printing.
+// For instance, the identifier "foo `bar`" will become "`foo ``bar```".
+// The sqlMode controls whether to escape with backquotes (`) or double quotes
+// (`"`) depending on whether mysql.ModeANSIQuotes is enabled.
+func escape(cis model.CIStr, sqlMode mysql.SQLMode) string {
+	var quote string
+	if sqlMode&mysql.ModeANSIQuotes != 0 {
+		quote = `"`
+	} else {
+		quote = "`"
+	}
+	return quote + strings.Replace(cis.O, quote, quote+quote, -1) + quote
+}
+
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	sqlMode := e.ctx.GetSessionVars().SQLMode
+
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
+	buf.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode)))
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
-		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
+		buf.WriteString(fmt.Sprintf("  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc()))
 		if col.IsGenerated() {
 			// It's a generated column.
 			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
@@ -542,7 +592,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
+		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode)))
 	}
 
 	if len(tb.Indices()) > 0 {
@@ -560,14 +610,14 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
-			buf.WriteString(fmt.Sprintf("  UNIQUE KEY `%s` ", idxInfo.Name.O))
+			buf.WriteString(fmt.Sprintf("  UNIQUE KEY %s ", escape(idxInfo.Name, sqlMode)))
 		} else {
-			buf.WriteString(fmt.Sprintf("  KEY `%s` ", idxInfo.Name.O))
+			buf.WriteString(fmt.Sprintf("  KEY %s ", escape(idxInfo.Name, sqlMode)))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
 		for _, c := range idxInfo.Columns {
-			colInfo := fmt.Sprintf("`%s`", c.Name.String())
+			colInfo := escape(c.Name, sqlMode)
 			if c.Length != types.UnspecifiedLength {
 				colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
 			}
@@ -584,7 +634,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString(") ENGINE=InnoDB")
 	charsetName := tb.Meta().Charset
 	if len(charsetName) == 0 {
-		charsetName = charset.CharsetUTF8
+		charsetName = mysql.DefaultCharset
 	}
 	collate := tb.Meta().Collate
 	// Set default collate if collate is not specified.
@@ -599,6 +649,11 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", charsetName))
 	} else {
 		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
+	}
+
+	// Displayed if the compression typed is set.
+	if len(tb.Meta().Compression) != 0 {
+		buf.WriteString(fmt.Sprintf(" COMPRESSION='%s'", tb.Meta().Compression))
 	}
 
 	// add partition info here.
@@ -661,11 +716,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(e.DBName.O)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
 	}
 
+	sqlMode := e.ctx.GetSessionVars().SQLMode
+
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "CREATE DATABASE `%s`", db.Name.O)
+	fmt.Fprintf(&buf, "CREATE DATABASE %s", escape(db.Name, sqlMode))
 	if s := db.Charset; len(s) > 0 {
 		fmt.Fprintf(&buf, " /* !40100 DEFAULT CHARACTER SET %s */", s)
 	}

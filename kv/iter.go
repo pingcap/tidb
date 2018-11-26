@@ -13,7 +13,7 @@
 
 package kv
 
-import "github.com/juju/errors"
+import "github.com/pingcap/errors"
 
 // NextUntil applies FnKeyCmp to each entry of the iterator until meets some condition.
 // It will stop when fn returns true, or iterator is invalid or an error occurs.

@@ -18,14 +18,14 @@ import (
 	"math"
 	"sync"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/iterator"
 	"github.com/pingcap/goleveldb/leveldb/opt"
 	"github.com/pingcap/goleveldb/leveldb/storage"
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
 )

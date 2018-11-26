@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,23 +27,38 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/sqlexec"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
+var _ sqlexec.SQLExecutor = (*Context)(nil)
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
 	values      map[fmt.Stringer]interface{}
-	txn         kv.Transaction // mock global variable
-	Store       kv.Storage     // mock global variable
+	txn         wrapTxn    // mock global variable
+	Store       kv.Storage // mock global variable
 	sessionVars *variable.SessionVars
 	mux         sync.Mutex // fix data race in ddl test.
 	ctx         context.Context
 	cancel      context.CancelFunc
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
+}
+
+type wrapTxn struct {
+	kv.Transaction
+}
+
+func (txn *wrapTxn) Valid() bool {
+	return txn.Transaction != nil && txn.Transaction.Valid()
+}
+
+// Execute implements sqlexec.SQLExecutor Execute interface.
+func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
+	return nil, errors.Errorf("Not Support.")
 }
 
 // DDLOwnerChecker returns owner.DDLOwnerChecker.
@@ -73,8 +88,8 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn() kv.Transaction {
-	return c.txn
+func (c *Context) Txn(bool) kv.Transaction {
+	return &c.txn
 }
 
 // GetClient implements sessionctx.Context GetClient interface.
@@ -89,7 +104,7 @@ func (c *Context) GetClient() kv.Client {
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return "", variable.UnknownSystemVar.GenByArgs(name)
+		return "", variable.UnknownSystemVar.GenWithStackByArgs(name)
 	}
 	return v.Value, nil
 }
@@ -98,7 +113,7 @@ func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, 
 func (c *Context) SetGlobalSysVar(ctx sessionctx.Context, name string, value string) error {
 	v := variable.GetSysVar(name)
 	if v == nil {
-		return variable.UnknownSystemVar.GenByArgs(name)
+		return variable.UnknownSystemVar.GenWithStackByArgs(name)
 	}
 	v.Value = value
 	return nil
@@ -114,7 +129,7 @@ func (c *Context) NewTxn() error {
 	if c.Store == nil {
 		return errors.New("store is not set")
 	}
-	if c.txn != nil && c.txn.Valid() {
+	if c.txn.Valid() {
 		err := c.txn.Commit(c.ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -125,7 +140,7 @@ func (c *Context) NewTxn() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	c.txn = txn
+	c.txn.Transaction = txn
 	return nil
 }
 
@@ -134,24 +149,9 @@ func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn())
 }
 
-// ActivePendingTxn implements the sessionctx.Context interface.
-func (c *Context) ActivePendingTxn() error {
-	if c.txn != nil {
-		return nil
-	}
-	if c.Store != nil {
-		txn, err := c.Store.Begin()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		c.txn = txn
-	}
-	return nil
-}
-
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
 func (c *Context) InitTxnWithStartTS(startTS uint64) error {
-	if c.txn != nil {
+	if c.txn.Valid() {
 		return nil
 	}
 	if c.Store != nil {
@@ -164,7 +164,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 			return errors.Trace(err)
 		}
 		txn.SetCap(membufCap)
-		c.txn = txn
+		c.txn.Transaction = txn
 	}
 	return nil
 }

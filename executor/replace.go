@@ -14,7 +14,7 @@
 package executor
 
 import (
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -27,7 +27,6 @@ import (
 type ReplaceExec struct {
 	*InsertValues
 	Priority int
-	finished bool
 }
 
 // Close implements the Executor Close interface.
@@ -43,6 +42,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
 	}
+	e.initEvalBuffer()
 	return nil
 }
 
@@ -71,13 +71,9 @@ func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 
 	// Cleanup keys map, because the record was removed.
-	cleanupRows, err := e.getKeysNeedCheck(e.ctx, r.t, [][]types.Datum{oldRow})
+	err = e.deleteDupKeys(e.ctx, r.t, [][]types.Datum{oldRow})
 	if err != nil {
 		return false, errors.Trace(err)
-	}
-	if len(cleanupRows) > 0 {
-		// The length of need-to-cleanup rows should be at most 1, due to we only input 1 row.
-		e.deleteDupKeys(cleanupRows[0])
 	}
 	return false, nil
 }
@@ -177,23 +173,14 @@ func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
 			return errors.Trace(err)
 		}
 	}
-	e.finished = true
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.finished {
-		return nil
-	}
-	cols, err := e.getColumns(e.Table.Cols())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	if len(e.children) > 0 && e.children[0] != nil {
-		return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
+		return e.insertRowsFromSelect(ctx, e.exec)
 	}
-	return errors.Trace(e.insertRows(cols, e.exec))
+	return e.insertRows(e.exec)
 }

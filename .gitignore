@@ -1,7 +1,4 @@
 bin
-/interpreter/interpreter
-/interpreter/test
-/parser/parser.go
 /tidb-server/tidb-server
 /tidb-server/debug
 coverage.out
@@ -15,4 +12,6 @@ y.output
 profile.coverprofile
 explain_test
 cmd/explaintest/explain-test.out
+cmd/explaintest/explaintest_tidb-server
 _tools/
+*.fail.go

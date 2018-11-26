@@ -52,6 +52,12 @@
     curl http://{TiDBIP}:10080/schema?table_id={tableID}
     ```
 
+1. Get database information, table information and tidb info schema version by tableID.
+
+    ```shell
+    curl http://{TiDBIP}:10080/db-table/{tableID}
+    ```
+
 1. Get disk-usage info about db.table
 
     ```shell
@@ -132,3 +138,11 @@ timezone.*
     curl http://{TiDBIP}:10080/tables/{colID}/{colFlag}/{colLen}?rowBin={val}
     ```
     *Hint: For the column which field type is timezone dependent, e.g. `timestamp`, convert its value to UTC timezone.*
+    
+1. Resign the ddl owner, let tidb start a new ddl owner election.
+
+    ```shell
+    curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
+    ```
+    
+    **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`

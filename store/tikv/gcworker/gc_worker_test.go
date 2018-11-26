@@ -52,7 +52,7 @@ func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	s.store.SetOracle(s.oracle)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	gcWorker, err := NewGCWorker(s.store)
+	gcWorker, err := NewGCWorker(s.store, nil)
 	c.Assert(err, IsNil)
 	gcWorker.Start()
 	gcWorker.Close()

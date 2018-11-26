@@ -21,12 +21,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/twinj/uuid"
 )
@@ -110,20 +109,20 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 	sessVars := b.ctx.GetSessionVars()
 	if isNull {
 		if sessVars.StrictSQLMode {
-			return 0, true, errIncorrectArgs.GenByArgs("sleep")
+			return 0, true, errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 		return 0, true, nil
 	}
 	// processing argument is negative
 	if val < 0 {
 		if sessVars.StrictSQLMode {
-			return 0, false, errIncorrectArgs.GenByArgs("sleep")
+			return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 		return 0, false, nil
 	}
 
 	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
-		return 0, false, errIncorrectArgs.GenByArgs("sleep")
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 	}
 	dur := time.Duration(val * float64(time.Second.Nanoseconds()))
 	select {
@@ -227,7 +226,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		bf.tp.Decimal = types.UnspecifiedLength
 		sig = &builtinStringAnyValueSig{bf}
 	case types.ETDatetime, types.ETTimestamp:
-		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = charset.CharsetUTF8, charset.CollationUTF8, 0
+		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
 		sig = &builtinTimeAnyValueSig{bf}
 	default:
 		panic("unexpected types.EvalType of builtin function ANY_VALUE")
@@ -352,7 +351,7 @@ type defaultFunctionClass struct {
 }
 
 func (c *defaultFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DEFAULT")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "DEFAULT")
 }
 
 type inetAtonFunctionClass struct {
@@ -594,7 +593,7 @@ type isFreeLockFunctionClass struct {
 }
 
 func (c *isFreeLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "IS_FREE_LOCK")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "IS_FREE_LOCK")
 }
 
 type isIPv4FunctionClass struct {
@@ -794,7 +793,7 @@ type isUsedLockFunctionClass struct {
 }
 
 func (c *isUsedLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "IS_USED_LOCK")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "IS_USED_LOCK")
 }
 
 type masterPosWaitFunctionClass struct {
@@ -802,7 +801,7 @@ type masterPosWaitFunctionClass struct {
 }
 
 func (c *masterPosWaitFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "MASTER_POS_WAIT")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "MASTER_POS_WAIT")
 }
 
 type nameConstFunctionClass struct {
@@ -810,7 +809,7 @@ type nameConstFunctionClass struct {
 }
 
 func (c *nameConstFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "NAME_CONST")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "NAME_CONST")
 }
 
 type releaseAllLocksFunctionClass struct {
@@ -818,7 +817,7 @@ type releaseAllLocksFunctionClass struct {
 }
 
 func (c *releaseAllLocksFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "RELEASE_ALL_LOCKS")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "RELEASE_ALL_LOCKS")
 }
 
 type uuidFunctionClass struct {
@@ -856,5 +855,5 @@ type uuidShortFunctionClass struct {
 }
 
 func (c *uuidShortFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "UUID_SHORT")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
 }

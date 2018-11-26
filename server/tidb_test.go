@@ -27,12 +27,13 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"golang.org/x/net/context"
@@ -49,6 +50,7 @@ var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
+	metrics.RegisterMetrics()
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore()
 	session.SetStatsLease(0)
@@ -412,6 +414,7 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	_, err = qctx.Execute(ctx, testSQL)
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show create table t1")
+	c.Assert(err, IsNil)
 	chk := rs[0].NewChunk()
 	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
@@ -441,6 +444,7 @@ func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
 	_, err = qctx.Execute(ctx, testSQL)
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show tables")
+	c.Assert(err, IsNil)
 	chk := rs[0].NewChunk()
 	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
@@ -509,7 +513,7 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 		case 10, 11, 12, 15, 16:
 			// c_char char(20), c_varchar varchar(20), c_text_d text,
 			// c_set set('a', 'b', 'c'), c_enum enum('a', 'b', 'c')
-			c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs["utf8"]), Commentf("index %d", i))
+			c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs[tmysql.DefaultCharset]), Commentf("index %d", i))
 			continue
 		}
 

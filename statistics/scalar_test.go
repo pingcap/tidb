@@ -17,7 +17,7 @@ import (
 	"math"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -30,7 +30,7 @@ func getDecimal(value float64) *types.MyDecimal {
 }
 
 func getDuration(value string) types.Duration {
-	dur, _ := types.ParseDuration(value, 0)
+	dur, _ := types.ParseDuration(nil, value, 0)
 	return dur
 }
 

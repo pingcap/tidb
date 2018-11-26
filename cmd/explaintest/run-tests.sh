@@ -1,5 +1,4 @@
 #!/bin/bash
-source ./_helper.sh
 
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
@@ -16,6 +15,7 @@ create=0
 create_case=""
 
 set -eu
+trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
 
 function help_message()
 {
@@ -37,8 +37,6 @@ function help_message()
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
 
-    -v <vendor-path>: Add <vendor-path> to \$GOPATH.
-
     -c <test-name>|all: Create data according to creating statements in file \"t/<test-name>.test\" and save stats in \"s/<test-name>_tableName.json\".
                     <test-name> must has a suffix of '_stats'.
                     \"all\" for creating stats of all tests.
@@ -53,7 +51,7 @@ function build_importer()
     importer="./importer"
     echo "building importer binary: $importer"
     rm -rf $importer
-    go build -o $importer github.com/pingcap/tidb/cmd/importer
+    GO111MODULE=on go build -o $importer github.com/pingcap/tidb/cmd/importer
 }
 
 function build_tidb_server()
@@ -61,17 +59,17 @@ function build_tidb_server()
     tidb_server="./explaintest_tidb-server"
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
-    go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
+    GO111MODULE=on go build -race -o $tidb_server github.com/pingcap/tidb/tidb-server
 }
 
 function build_explain_test()
 {
     echo "building explain-test binary: $explain_test"
     rm -rf $explain_test
-    go build -o $explain_test
+    GO111MODULE=on go build -o $explain_test
 }
 
-while getopts "t:s:r:b:v:c:i:h" opt; do
+while getopts "t:s:r:b:c:i:h" opt; do
     case $opt in
         t)
             tests="$OPTARG"
@@ -96,10 +94,6 @@ while getopts "t:s:r:b:v:c:i:h" opt; do
                     exit 1
                     ;;
             esac
-            ;;
-        v)
-            GOPATH="$OPTARG:$GOPATH"
-            echo "GOPATH: $GOPATH"
             ;;
         h)
             help_message
@@ -130,10 +124,7 @@ if [ $build -eq 1 ]; then
     else
         echo "skip building importer, using existing binary: $importer"
     fi
-    prepare_env
-    echo $GOPATH
     build_explain_test
-    recover_env
 else
     if [ -z "$tidb_server" ]; then
         tidb_server="./explaintest_tidb-server"

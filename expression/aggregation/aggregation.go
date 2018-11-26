@@ -16,15 +16,15 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -41,10 +41,10 @@ type Aggregation interface {
 	// GetResult will be called when all data have been processed.
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
-	// Create a new AggEvaluateContext for the aggregation function.
+	// CreateContext creates a new AggEvaluateContext for the aggregation function.
 	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
 
-	// Reset the content of the evaluate context.
+	// ResetContext resets the content of the evaluate context.
 	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
 
 	// GetFinalAggFunc constructs the final agg functions, only used in parallel execution.

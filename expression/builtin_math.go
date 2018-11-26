@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -110,6 +110,7 @@ var (
 	_ builtinFunc = &builtinTruncateIntSig{}
 	_ builtinFunc = &builtinTruncateRealSig{}
 	_ builtinFunc = &builtinTruncateDecimalSig{}
+	_ builtinFunc = &builtinTruncateUintSig{}
 )
 
 type absFunctionClass struct {
@@ -199,7 +200,7 @@ func (b *builtinAbsIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return val, false, nil
 	}
 	if val == math.MinInt64 {
-		return 0, false, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("abs(%d)", val))
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("abs(%d)", val))
 	}
 	return -val, false, nil
 }
@@ -536,7 +537,7 @@ func (b *builtinCeilIntToDecSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDec evals a builtinCeilIntToDecSig.
+// evalDecimal evals a builtinCeilIntToDecSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_Ceil
 func (b *builtinCeilIntToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
@@ -588,7 +589,7 @@ func (b *builtinCeilDecToDecSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDec evals a builtinCeilDecToDecSig.
+// evalDecimal evals a builtinCeilDecToDecSig.
 func (b *builtinCeilDecToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
@@ -721,7 +722,7 @@ func (b *builtinFloorIntToDecSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDec evals a builtinFloorIntToDecSig.
+// evalDecimal evals a builtinFloorIntToDecSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
 func (b *builtinFloorIntToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
@@ -773,7 +774,7 @@ func (b *builtinFloorDecToDecSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDec evals a builtinFloorDecToDecSig.
+// evalDecimal evals a builtinFloorDecToDecSig.
 func (b *builtinFloorDecToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
@@ -1057,7 +1058,7 @@ func (b *builtinPowSig) evalReal(row chunk.Row) (float64, bool, error) {
 	}
 	power := math.Pow(x, y)
 	if math.IsInf(power, -1) || math.IsInf(power, 1) || math.IsNaN(power) {
-		return 0, false, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64)))
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64)))
 	}
 	return power, false, nil
 }
@@ -1140,7 +1141,7 @@ func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err
 
 	val, err := strconv.ParseUint(n, int(fromBase), 64)
 	if err != nil {
-		return res, false, types.ErrOverflow.GenByArgs("BIGINT UNSINGED", n)
+		return res, false, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSINGED", n)
 	}
 	if signed {
 		if negative && val > -math.MinInt64 {
@@ -1504,7 +1505,7 @@ func (b *builtinCotSig) evalReal(row chunk.Row) (float64, bool, error) {
 			return cot, false, nil
 		}
 	}
-	return 0, false, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("cot(%s)", strconv.FormatFloat(val, 'f', -1, 64)))
+	return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("cot(%s)", strconv.FormatFloat(val, 'f', -1, 64)))
 }
 
 type degreesFunctionClass struct {
@@ -1574,7 +1575,7 @@ func (b *builtinExpSig) evalReal(row chunk.Row) (float64, bool, error) {
 	exp := math.Exp(val)
 	if math.IsInf(exp, 0) || math.IsNaN(exp) {
 		s := fmt.Sprintf("exp(%s)", strconv.FormatFloat(val, 'f', -1, 64))
-		return 0, false, types.ErrOverflow.GenByArgs("DOUBLE", s)
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", s)
 	}
 	return exp, false, nil
 }
@@ -1671,7 +1672,7 @@ func (b *builtinSinSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalreal evals a builtinSinSig.
+// evalReal evals a builtinSinSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sin
 func (b *builtinSinSig) evalReal(row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
@@ -1704,7 +1705,7 @@ func (b *builtinTanSig) Clone() builtinFunc {
 	return newSig
 }
 
-// eval evals a builtinTanSig.
+// evalReal evals a builtinTanSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_tan
 func (b *builtinTanSig) evalReal(row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
@@ -1737,7 +1738,11 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	var sig builtinFunc
 	switch argTp {
 	case types.ETInt:
-		sig = &builtinTruncateIntSig{bf}
+		if mysql.HasUnsignedFlag(args[0].GetType().Flag) {
+			sig = &builtinTruncateUintSig{bf}
+		} else {
+			sig = &builtinTruncateIntSig{bf}
+		}
 	case types.ETReal:
 		sig = &builtinTruncateRealSig{bf}
 	case types.ETDecimal:
@@ -1826,6 +1831,39 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, errors.Trace(err)
 	}
 
-	floatX := float64(x)
-	return int64(types.Truncate(floatX, int(d))), false, nil
+	if d >= 0 {
+		return x, false, nil
+	}
+	shift := int64(math.Pow10(int(-d)))
+	return x / shift * shift, false, nil
+}
+
+func (b *builtinTruncateUintSig) Clone() builtinFunc {
+	newSig := &builtinTruncateUintSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+type builtinTruncateUintSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals a TRUNCATE(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
+func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	uintx := uint64(x)
+
+	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if d >= 0 {
+		return x, false, nil
+	}
+	shift := uint64(math.Pow10(int(-d)))
+	return int64(uintx / shift * shift), false, nil
 }

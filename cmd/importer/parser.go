@@ -18,12 +18,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/parser"
-	_ "github.com/pingcap/tidb/plan"
+	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
@@ -117,7 +117,7 @@ func (col *column) parseColumnOptions(ops []*ast.ColumnOption) {
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey, ast.ColumnOptionAutoIncrement:
 			col.table.uniqIndices[col.name] = col
 		case ast.ColumnOptionComment:
-			col.comment = op.Expr.GetDatum().GetString()
+			col.comment = op.Expr.(ast.ValueExpr).GetDatumString()
 		}
 	}
 }

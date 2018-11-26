@@ -16,7 +16,7 @@ package executor
 import (
 	"encoding/json"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -51,7 +51,7 @@ const LoadStatsVarKey loadStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
 func (e *LoadStatsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")
 	}

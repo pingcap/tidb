@@ -18,16 +18,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -159,7 +159,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 func (w *worker) isReorgRunnable(d *ddlCtx) error {
 	if isChanClosed(w.quitCh) {
 		// Worker is closed. So it can't do the reorganizational job.
-		return errInvalidWorker.Gen("worker is closed")
+		return errInvalidWorker.GenWithStack("worker is closed")
 	}
 
 	if w.reorgCtx.isReorgCanceled() {
@@ -282,7 +282,7 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (maxR
 	}
 	defer terror.Call(result.Close)
 
-	chk := chunk.NewChunkWithCapacity(getColumnsTypes(columns), 1)
+	chk := chunk.New(getColumnsTypes(columns), 1, 1)
 	err = result.Next(ctx, chk)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)
@@ -304,7 +304,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 	startHandle = math.MinInt64
 	endHandle = math.MaxInt64
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, math.MinInt64,
+	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, math.MinInt64, math.MaxInt64, true,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandle = h
 			return false, nil
@@ -342,7 +342,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		if err != nil {
 			return nil, errors.Trace(err)
 		} else if ver.Ver <= 0 {
-			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
+			return nil, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
 		}
 		tblInfo := tbl.Meta()
 		pid = tblInfo.ID

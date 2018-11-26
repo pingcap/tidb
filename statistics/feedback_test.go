@@ -15,7 +15,7 @@ package statistics
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -70,7 +70,7 @@ func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
 	defaultBucketCount = 7
 	defer func() { defaultBucketCount = originBucketCount }()
 	c.Assert(UpdateHistogram(q.Hist(), q).ToString(0), Equals,
-		"column:0 ndv:0 totColSize:0\n"+
+		"column:0 ndv:10057 totColSize:0\n"+
 			"num: 10000 lower_bound: 0 upper_bound: 1 repeats: 0\n"+
 			"num: 8 lower_bound: 2 upper_bound: 7 repeats: 0\n"+
 			"num: 11 lower_bound: 8 upper_bound: 19 repeats: 0\n"+
@@ -215,7 +215,7 @@ func encodeInt(v int64) *types.Datum {
 
 func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
 	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 0, 0)
-	q := &QueryFeedback{hist: hist}
+	q := &QueryFeedback{hist: hist, tp: pkType}
 	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(3), 1, 0})
 	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(5), 1, 0})
 	val, err := encodeFeedback(q)

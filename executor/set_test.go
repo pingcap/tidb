@@ -15,9 +15,9 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
@@ -221,6 +221,38 @@ func (s *testSuite) TestSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
+
+	tk.MustExec(`set tidb_force_priority = "no_priority"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustExec(`set tidb_force_priority = "low_priority"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("LOW_PRIORITY"))
+	tk.MustExec(`set tidb_force_priority = "high_priority"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("HIGH_PRIORITY"))
+	tk.MustExec(`set tidb_force_priority = "delayed"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
+	tk.MustExec(`set tidb_force_priority = "abc"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
+	_, err = tk.Exec(`set global tidb_force_priority = ""`)
+	c.Assert(err, NotNil)
+
+	tk.MustExec("set tidb_constraint_check_in_place = 1")
+	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_constraint_check_in_place = 0")
+	tk.MustQuery(`select @@global.tidb_constraint_check_in_place;`).Check(testkit.Rows("0"))
+
+	tk.MustExec("set tidb_slow_log_threshold = 0")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_slow_log_threshold = 1")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("1"))
+	_, err = tk.Exec("set global tidb_slow_log_threshold = 0")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("set tidb_query_log_max_len = 0")
+	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_query_log_max_len = 20")
+	tk.MustQuery("select @@session.tidb_query_log_max_len;").Check(testkit.Rows("20"))
+	_, err = tk.Exec("set global tidb_query_log_max_len = 20")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
@@ -322,6 +354,14 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("1"))
 
 	_, err = tk.Exec("set @@global.max_connections='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.max_allowed_packet=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '-1'"))
+	result = tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("1024"))
+
+	_, err = tk.Exec("set @@global.max_allowed_packet='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 
 	tk.MustExec("set @@global.max_connect_errors=18446744073709551615")
@@ -440,9 +480,70 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@sql_select_limit;")
 	result.Check(testkit.Rows("18446744073709551615"))
 
+	tk.MustExec("set @@global.sync_binlog=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '-1'"))
+
+	tk.MustExec("set @@global.sync_binlog=4294967299")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '4294967299'"))
+
 	tk.MustExec("set @@global.flush_time=31536001")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect flush_time value: '31536001'"))
 
 	tk.MustExec("set @@global.interactive_timeout=31536001")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect interactive_timeout value: '31536001'"))
+
+	tk.MustExec("set @@global.innodb_commit_concurrency = -1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_commit_concurrency value: '-1'"))
+
+	tk.MustExec("set @@global.innodb_commit_concurrency = 1001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_commit_concurrency value: '1001'"))
+
+	tk.MustExec("set @@global.innodb_fast_shutdown = -1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_fast_shutdown value: '-1'"))
+
+	tk.MustExec("set @@global.innodb_fast_shutdown = 3")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_fast_shutdown value: '3'"))
+
+	tk.MustExec("set @@global.innodb_lock_wait_timeout = 0")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
+
+	tk.MustExec("set @@global.innodb_lock_wait_timeout = 1073741825")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
+
+	tk.MustExec("set @@innodb_lock_wait_timeout = 0")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
+
+	tk.MustExec("set @@innodb_lock_wait_timeout = 1073741825")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
+
+	_, err = tk.Exec("set @@tx_isolation=''")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set global tx_isolation=''")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set @@transaction_isolation=''")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set global transaction_isolation=''")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set global tx_isolation='REPEATABLE-READ1'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@tx_isolation='READ-COMMITTED'")
+	result = tk.MustQuery("select @@tx_isolation;")
+	result.Check(testkit.Rows("READ-COMMITTED"))
+
+	tk.MustExec("set @@tx_isolation='read-COMMITTED'")
+	result = tk.MustQuery("select @@tx_isolation;")
+	result.Check(testkit.Rows("READ-COMMITTED"))
+
+	tk.MustExec("set @@tx_isolation='REPEATABLE-READ'")
+	result = tk.MustQuery("select @@tx_isolation;")
+	result.Check(testkit.Rows("REPEATABLE-READ"))
+
+	tk.MustExec("set @@tx_isolation='SERIALIZABLE'")
+	result = tk.MustQuery("select @@tx_isolation;")
+	result.Check(testkit.Rows("SERIALIZABLE"))
 }

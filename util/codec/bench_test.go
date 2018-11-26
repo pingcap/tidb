@@ -16,7 +16,7 @@ package codec
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -82,7 +82,7 @@ func BenchmarkDecodeOneToChunk(b *testing.B) {
 	raw = EncodeBytes(raw, str.GetBytes())
 	intType := types.NewFieldType(mysql.TypeLonglong)
 	b.ResetTimer()
-	decoder := NewDecoder(chunk.NewChunkWithCapacity([]*types.FieldType{intType}, 32), nil)
+	decoder := NewDecoder(chunk.New([]*types.FieldType{intType}, 32, 32), nil)
 	for i := 0; i < b.N; i++ {
 		decoder.DecodeOne(raw, 0, intType)
 	}

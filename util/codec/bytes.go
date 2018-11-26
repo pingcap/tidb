@@ -18,7 +18,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 const (

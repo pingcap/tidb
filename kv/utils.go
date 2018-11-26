@@ -16,7 +16,7 @@ package kv
 import (
 	"strconv"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 )
 
 // IncInt64 increases the value for key k in kv store by step.

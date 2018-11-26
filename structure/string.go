@@ -16,7 +16,7 @@ package structure
 import (
 	"strconv"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 )
 

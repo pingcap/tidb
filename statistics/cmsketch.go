@@ -18,7 +18,7 @@ import (
 	"sort"
 
 	"github.com/cznic/sortutil"
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"

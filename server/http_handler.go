@@ -28,15 +28,16 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -46,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
@@ -61,6 +61,7 @@ const (
 	pRegionID   = "regionID"
 	pStartTS    = "startTS"
 	pTableName  = "table"
+	pTableID    = "tableID"
 	pColumnID   = "colID"
 	pColumnTp   = "colTp"
 	pColumnFlag = "colFlag"
@@ -317,6 +318,10 @@ type schemaHandler struct {
 	*tikvHandlerTool
 }
 
+type dbTableHandler struct {
+	*tikvHandlerTool
+}
+
 // regionHandler is the common field for http handler. It contains
 // some common functions for all handlers.
 type regionHandler struct {
@@ -334,6 +339,11 @@ type ddlHistoryJobHandler struct {
 	*tikvHandlerTool
 }
 
+// ddlResignOwnerHandler is the handler for resigning ddl owner.
+type ddlResignOwnerHandler struct {
+	store kv.Storage
+}
+
 type serverInfoHandler struct {
 	*tikvHandlerTool
 }
@@ -342,7 +352,7 @@ type allServerInfoHandler struct {
 	*tikvHandlerTool
 }
 
-// valueHandle is the handler for get value.
+// valueHandler is the handler for get value.
 type valueHandler struct {
 }
 
@@ -353,7 +363,7 @@ const (
 	opStopTableScatter = "stop-scatter-table"
 )
 
-// mvccTxnHandler is the handler for txn debugger
+// mvccTxnHandler is the handler for txn debugger.
 type mvccTxnHandler struct {
 	*tikvHandlerTool
 	op string
@@ -614,7 +624,7 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, tbsInfo)
 			return
 		}
-		writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
+		writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName))
 		return
 	}
 
@@ -626,14 +636,14 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if tid < 0 {
-			writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 			return
 		}
 		if data, ok := schema.TableByID(int64(tid)); ok {
 			writeData(w, data.Meta())
 			return
 		}
-		writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
 	}
 
@@ -711,6 +721,37 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 	writeData(w, jobs)
 	return
+}
+
+func (h ddlResignOwnerHandler) resignDDLOwner() error {
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ownerMgr := dom.DDL().OwnerManager()
+	err = ownerMgr.ResignOwner(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// ServeHTTP handles request of resigning ddl owner.
+func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method."))
+		return
+	}
+
+	err := h.resignDDLOwner()
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+		return
+	}
+
+	writeData(w, "success!")
 }
 
 func (h tableHandler) getPDAddr() ([]string, error) {
@@ -1325,4 +1366,46 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		clusterInfo.AllServersDiffVersions = allVersions
 	}
 	writeData(w, clusterInfo)
+}
+
+// dbTableInfo is used to report the database, table information and the current schema version.
+type dbTableInfo struct {
+	DBInfo        *model.DBInfo    `json:"db_info"`
+	TableInfo     *model.TableInfo `json:"table_info"`
+	SchemaVersion int64            `json:"schema_version"`
+}
+
+//ServeHTTP handles request of database information and table information by tableID.
+func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	tableID := params[pTableID]
+	tblID, err := strconv.Atoi(tableID)
+	if err != nil {
+		writeError(w, errors.Errorf("Wrong tableID: %v", tableID))
+		return
+	}
+
+	schema, err := h.schema()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	dbTblInfo := dbTableInfo{
+		SchemaVersion: schema.SchemaMetaVersion(),
+	}
+	tbl, ok := schema.TableByID(int64(tblID))
+	if !ok {
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		return
+	}
+	dbTblInfo.TableInfo = tbl.Meta()
+	dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
+	if !ok {
+		log.Warnf("can not find the database of table id: %v, table name: %v", dbTblInfo.TableInfo.ID, dbTblInfo.TableInfo.Name)
+		writeData(w, dbTblInfo)
+		return
+	}
+	dbTblInfo.DBInfo = dbInfo
+	writeData(w, dbTblInfo)
 }

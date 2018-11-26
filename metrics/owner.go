@@ -50,9 +50,3 @@ var (
 			Help:      "Counter of campaign owner.",
 		}, []string{LblType, LblResult})
 )
-
-func init() {
-	prometheus.MustRegister(NewSessionHistogram)
-	prometheus.MustRegister(WatchOwnerCounter)
-	prometheus.MustRegister(CampaignOwnerCounter)
-}

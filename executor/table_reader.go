@@ -14,10 +14,13 @@
 package executor
 
 import (
-	"github.com/juju/errors"
+	"time"
+
+	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
@@ -52,7 +55,7 @@ type TableReaderExecutor struct {
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
-	plans          []plan.PhysicalPlan
+	plans          []plannercore.PhysicalPlan
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -65,7 +68,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 	if e.corColInAccess {
-		ts := e.plans[0].(*plan.PhysicalTableScan)
+		ts := e.plans[0].(*plannercore.PhysicalTableScan)
 		access := ts.AccessCondition
 		pkTP := ts.Table.GetPkColInfo().FieldType
 		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
@@ -98,6 +101,14 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tableReader.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
 		e.feedback.Invalidate()
 		return err

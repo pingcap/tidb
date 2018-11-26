@@ -26,7 +26,7 @@ var (
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 13),
-		}, []string{LblType})
+		}, []string{LblType, LblSQLType})
 
 	DistSQLScanKeysPartialHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
@@ -53,10 +53,3 @@ var (
 		},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(DistSQLQueryHistgram)
-	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
-	prometheus.MustRegister(DistSQLScanKeysHistogram)
-	prometheus.MustRegister(DistSQLPartialCountHistogram)
-}

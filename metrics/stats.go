@@ -77,13 +77,3 @@ var (
 			Help:      "Counter of storing query feedback.",
 		}, []string{LblType})
 )
-
-func init() {
-	prometheus.MustRegister(AutoAnalyzeHistogram)
-	prometheus.MustRegister(AutoAnalyzeCounter)
-	prometheus.MustRegister(StatsInaccuracyRate)
-	prometheus.MustRegister(PseudoEstimation)
-	prometheus.MustRegister(DumpFeedbackCounter)
-	prometheus.MustRegister(UpdateStatsCounter)
-	prometheus.MustRegister(StoreQueryFeedbackCounter)
-}

@@ -16,13 +16,14 @@ package executor
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/planner"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -35,17 +36,17 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
 	infoSchema := GetInfoSchema(c.Ctx)
-	if err := plan.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
+	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	finalPlan, err := plan.Optimize(c.Ctx, stmtNode, infoSchema)
+	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -57,14 +58,14 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		InfoSchema: infoSchema,
 		Plan:       finalPlan,
 		Expensive:  isExpensive,
-		Cacheable:  plan.Cacheable(stmtNode),
+		Cacheable:  plannercore.Cacheable(stmtNode),
 		Text:       stmtNode.Text(),
 		StmtNode:   stmtNode,
 		Ctx:        c.Ctx,
 	}, nil
 }
 
-func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plan.Plan) (expensive bool) {
+func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expensive bool) {
 	expensive = isExpensiveQuery(finalPlan)
 	if !expensive {
 		return
@@ -79,21 +80,21 @@ func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plan.Plan) (expensive bo
 	return
 }
 
-func isExpensiveQuery(p plan.Plan) bool {
+func isExpensiveQuery(p plannercore.Plan) bool {
 	switch x := p.(type) {
-	case plan.PhysicalPlan:
+	case plannercore.PhysicalPlan:
 		return isPhysicalPlanExpensive(x)
-	case *plan.Execute:
+	case *plannercore.Execute:
 		return isExpensiveQuery(x.Plan)
-	case *plan.Insert:
+	case *plannercore.Insert:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanExpensive(x.SelectPlan)
 		}
-	case *plan.Delete:
+	case *plannercore.Delete:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanExpensive(x.SelectPlan)
 		}
-	case *plan.Update:
+	case *plannercore.Update:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanExpensive(x.SelectPlan)
 		}
@@ -101,7 +102,7 @@ func isExpensiveQuery(p plan.Plan) bool {
 	return false
 }
 
-func isPhysicalPlanExpensive(p plan.PhysicalPlan) bool {
+func isPhysicalPlanExpensive(p plannercore.PhysicalPlan) bool {
 	expensiveRowThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
 	if int64(p.StatsCount()) > expensiveRowThreshold {
 		return true

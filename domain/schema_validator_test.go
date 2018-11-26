@@ -15,9 +15,11 @@ package domain
 
 import (
 	"math/rand"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -34,7 +36,9 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	leaseGrantCh := make(chan leaseGrantItem)
 	oracleCh := make(chan uint64)
 	exit := make(chan struct{})
-	go serverFunc(lease, leaseGrantCh, oracleCh, exit)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go serverFunc(lease, leaseGrantCh, oracleCh, exit, &wg)
 
 	validator := NewSchemaValidator(lease).(*schemaValidator)
 
@@ -60,10 +64,12 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	validator.Restart()
 
 	// Sleep for a long time, check schema is invalid.
+	ts := <-oracleCh // Make sure that ts has timed out a lease.
 	time.Sleep(lease)
-	ts := <-oracleCh
+	ts = <-oracleCh
 	valid = validator.Check(ts, item.schemaVer, []int64{10})
-	c.Assert(valid, Equals, ResultUnknown)
+	c.Assert(valid, Equals, ResultUnknown, Commentf("validator latest schema ver %v, time %v, item schema ver %v, ts %v",
+		validator.latestSchemaVer, validator.latestSchemaExpire, item.schemaVer, oracle.GetTimeFromTS(ts)))
 
 	currVer := reload(validator, leaseGrantCh, 0)
 	valid = validator.Check(ts, item.schemaVer, nil)
@@ -95,6 +101,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	c.Assert(valid, Equals, ResultUnknown)
 
 	close(exit)
+	wg.Wait()
 }
 
 func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem, ids ...int64) int64 {
@@ -106,7 +113,8 @@ func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem, ids ...
 // serverFunc plays the role as a remote server, runs in a separate goroutine.
 // It can grant lease and provide timestamp oracle.
 // Caller should communicate with it through channel to mock network.
-func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh chan uint64, exit chan struct{}) {
+func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh chan uint64, exit chan struct{}, wg *sync.WaitGroup) {
+	defer wg.Done()
 	var version int64
 	leaseTS := uint64(time.Now().UnixNano())
 	ticker := time.NewTicker(lease)

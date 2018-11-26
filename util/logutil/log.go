@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -33,6 +33,10 @@ const (
 	DefaultLogMaxSize = 300 // MB
 	defaultLogFormat  = "text"
 	defaultLogLevel   = log.InfoLevel
+	// DefaultSlowThreshold is the default slow log threshold in millisecond.
+	DefaultSlowThreshold = 300
+	// DefaultQueryLogMaxLen is the default max length of the query in the log.
+	DefaultQueryLogMaxLen = 2048
 )
 
 // FileLogConfig serializes file log related config in toml/json.
@@ -75,7 +79,7 @@ type contextHook struct{}
 // Fire implements logrus.Hook interface
 // https://github.com/sirupsen/logrus/issues/63
 func (hook *contextHook) Fire(entry *log.Entry) error {
-	pc := make([]uintptr, 3)
+	pc := make([]uintptr, 4)
 	cnt := runtime.Callers(6, pc)
 
 	for i := 0; i < cnt; i++ {

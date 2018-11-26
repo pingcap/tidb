@@ -4,7 +4,7 @@ This is a template for TiDB's change proposal process, documented [here](./READM
 
 # Proposal: <!-- Title -->
 
-- Author(s):     <!-- Author Name, Co-Author Name -->
+- Author(s):     <!-- Author Name, Co-Author Name, with the link(s) of the GitHub profile page -->
 - Last updated:  <!-- Date -->
 - Discussion at: <!-- https://github.com/pingcap/tidb/issues/XXX -->
 
@@ -51,7 +51,7 @@ A discussion of alternate approaches and the trade-offs, advantages, and disadva
 ## Compatibility
 
 <!--
-A discussion of the change with regard to the compatiability issues:
+A discussion of the change with regard to the compatibility issues:
 - Does this proposal make TiDB not compatible with the old versions?
 - Does this proposal make TiDB more compatible with MySQL?
 -->

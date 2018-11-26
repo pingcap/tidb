@@ -17,9 +17,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -142,19 +142,21 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
+	OrigColName model.CIStr
 	ColName     model.CIStr
 	DBName      model.CIStr
 	OrigTblName model.CIStr
 	TblName     model.CIStr
 	RetType     *types.FieldType
-	// This id is used to specify whether this column is ExtraHandleColumn or to access histogram.
+	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64
 	// UniqueID is the unique id of this column.
 	UniqueID int64
-	// IsAggOrSubq means if this column is referenced to a Aggregation column or a Subquery column.
+	// IsReferenced means if this column is referenced to an Aggregation column, or a Subquery column,
+	// or an argument column of function IfNull.
 	// If so, this column's name will be the plain sql text.
-	IsAggOrSubq bool
+	IsReferenced bool
 
 	// Index is used for execution, to tell the column's position in the given row.
 	Index int

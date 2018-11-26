@@ -13,6 +13,12 @@
 
 package variable
 
+import (
+	"os"
+
+	"github.com/pingcap/parser/mysql"
+)
+
 /*
 	Steps to add a new TiDB specific system variable:
 
@@ -35,8 +41,15 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.
+	TiDBOptWriteRowID = "tidb_opt_write_row_id"
+
 	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
+
+	// Auto analyze will run if current time is within start time and end time.
+	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
+	TiDBAutoAnalyzeEndTime   = "tidb_auto_analyze_end_time"
 
 	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
 	// statement, when a table has multiple indices, those indices can be
@@ -85,7 +98,13 @@ const (
 	// tidb_general_log is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
-	// tidb_retry_limit is the maximun number of retries when committing a transaction.
+	// tidb_slow_log_threshold is used to set the slow log threshold in the server.
+	TiDBSlowLogThreshold = "tidb_slow_log_threshold"
+
+	// tidb_query_log_max_len is used to set the max length of the query in the log.
+	TiDBQueryLogMaxLen = "tidb_query_log_max_len"
+
+	// tidb_retry_limit is the maximum number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
 
 	// tidb_disable_txn_auto_retry disables transaction auto retry.
@@ -97,7 +116,11 @@ const (
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
-	// tidb_enable_table_partition is used to enable table partition feature.
+	// tidb_enable_table_partition is used to control table partition feature.
+	// The valid value include auto/on/off:
+	// auto: enable table partition when that feature is implemented.
+	// on: always enable table partition.
+	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
 )
 
@@ -113,8 +136,8 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
-	// tidb_opt_insubquery_unfold is used to enable/disable the optimizer rule of in subquery unfold.
-	TiDBOptInSubqUnFolding = "tidb_opt_insubquery_unfold"
+	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
+	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
@@ -148,6 +171,9 @@ const (
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
+	// tidb_enable_cascades_planner is used to control whether to enable the cascades planner.
+	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
+
 	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
@@ -177,10 +203,23 @@ const (
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
+
+	// tidb_force_priority defines the operations priority of all statements.
+	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
+	TiDBForcePriority = "tidb_force_priority"
+
+	// tidb_enable_radix_join indicates to use radix hash join algorithm to execute
+	// HashJoin.
+	TiDBEnableRadixJoin = "tidb_enable_radix_join"
+
+	// tidb_constraint_check_in_place indicates to check the constraint when the SQL executing.
+	// It could hurt the performance of bulking insert when it is ON.
+	TiDBConstraintCheckInPlace = "tidb_constraint_check_in_place"
 )
 
 // Default TiDB system variable values.
 const (
+	DefHostname                      = "localhost"
 	DefIndexLookupConcurrency        = 4
 	DefIndexLookupJoinConcurrency    = 4
 	DefIndexSerialScanConcurrency    = 1
@@ -189,10 +228,13 @@ const (
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
 	DefAutoAnalyzeRatio              = 0.5
+	DefAutoAnalyzeStartTime          = "00:00 +0000"
+	DefAutoAnalyzeEndTime            = "23:59 +0000"
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
-	DefOptInSubqUnfolding            = false
+	DefOptWriteRowID                 = false
+	DefOptInSubqToJoinAndAgg         = true
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
 	DefCurretTS                      = 0
@@ -208,19 +250,23 @@ const (
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
 	DefTiDBDisableTxnAutoRetry       = false
+	DefTiDBConstraintCheckInPlace    = false
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
 	DefTiDBDDLReorgWorkerCount       = 16
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
+	DefTiDBForcePriority             = mysql.NoPriority
+	DefTiDBUseRadixJoin              = false
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog      uint32
-	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
-	maxDDLReorgWorkerCount int32 = 128
-	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold uint32 = 300
+	ddlReorgWorkerCounter  int32  = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32  = 128
+	DDLSlowOprThreshold    uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	ForcePriority                 = int32(DefTiDBForcePriority)
+	ServerHostname, _             = os.Hostname()
 )

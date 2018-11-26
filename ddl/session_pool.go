@@ -1,0 +1,69 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ddl
+
+import (
+	"sync"
+
+	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/mock"
+)
+
+// sessionPool is used to new session.
+type sessionPool struct {
+	mu      sync.Mutex
+	resPool *pools.ResourcePool
+}
+
+// get gets sessionctx from context resource pool.
+// Please remember to call put after you finished using sessionctx.
+func (sg *sessionPool) get() (sessionctx.Context, error) {
+	if sg.resPool == nil {
+		return mock.NewContext(), nil
+	}
+
+	resource, err := sg.resPool.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ctx := resource.(sessionctx.Context)
+	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
+	ctx.GetSessionVars().InRestrictedSQL = true
+	return ctx, nil
+}
+
+// put returns sessionctx to context resource pool.
+func (sg *sessionPool) put(ctx sessionctx.Context) {
+	if sg.resPool == nil {
+		return
+	}
+
+	sg.resPool.Put(ctx.(pools.Resource))
+}
+
+// close clean up the sessionPool.
+func (sg *sessionPool) close() {
+	sg.mu.Lock()
+	defer sg.mu.Unlock()
+	if sg.resPool == nil {
+		return
+	}
+
+	sg.resPool.Close()
+	sg.resPool = nil
+}

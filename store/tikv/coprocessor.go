@@ -24,12 +24,13 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
@@ -80,6 +81,7 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
 	if err != nil {
@@ -561,6 +563,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
 func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh chan<- *copResponse) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			buf := util.GetStack()
+			log.Errorf("copIteratorWork meet panic: %v, stack trace:\n%s", r, buf)
+			resp := &copResponse{err: errors.Errorf("%v", r)}
+			worker.sendToRespCh(resp, task.respChan)
+		}
+	}()
 	remainTasks := []*copTask{task}
 	for len(remainTasks) > 0 {
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
@@ -638,7 +649,8 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 	var detail *kvrpcpb.ExecDetails
 	if resp.Cop != nil {
 		detail = resp.Cop.ExecDetails
-	} else if resp.CopStream != nil {
+	} else if resp.CopStream != nil && resp.CopStream.Response != nil {
+		// streaming request returns io.EOF, so the first resp.CopStream.Response maybe nil.
 		detail = resp.CopStream.ExecDetails
 	}
 
@@ -730,7 +742,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, resp *copRespo
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
-		log.Warnf("coprocessor err: %v", err)
+		log.Warnf("txn_start_ts:%d region_id:%d store_addr:%s, coprocessor err: %v", worker.req.StartTs, task.region.id, task.storeAddr, err)
 		return nil, errors.Trace(err)
 	}
 	// When the request is using streaming API, the `Range` is not nil.

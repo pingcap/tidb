@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -44,13 +44,12 @@ func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table,
 		InsertValues: insertVal,
 		Table:        tbl,
 		Ctx:          ctx,
-		columns:      cols,
 	}
 }
 
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	// TODO: support load data without local field.
 	if !e.IsLocal {
 		return errors.New("Load Data: don't support load data without local field")
@@ -81,6 +80,9 @@ func (e *LoadDataExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *LoadDataExec) Open(ctx context.Context) error {
+	if e.loadDataInfo.insertColumns != nil {
+		e.loadDataInfo.initEvalBuffer()
+	}
 	return nil
 }
 
@@ -88,13 +90,13 @@ func (e *LoadDataExec) Open(ctx context.Context) error {
 type LoadDataInfo struct {
 	*InsertValues
 
-	row        []types.Datum
-	Path       string
-	Table      table.Table
-	FieldsInfo *ast.FieldsClause
-	LinesInfo  *ast.LinesClause
-	Ctx        sessionctx.Context
-	columns    []*table.Column
+	row         []types.Datum
+	Path        string
+	Table       table.Table
+	FieldsInfo  *ast.FieldsClause
+	LinesInfo   *ast.LinesClause
+	IgnoreLines uint64
+	Ctx         sessionctx.Context
 }
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
@@ -235,6 +237,10 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			curData = nil
 		}
 
+		if e.IgnoreLines > 0 {
+			e.IgnoreLines--
+			continue
+		}
 		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
 			return nil, false, errors.Trace(err)
@@ -269,7 +275,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 			e.row[i].SetString(string(cols[i].str))
 		}
 	}
-	row, err := e.fillRowData(e.columns, e.row)
+	row, err := e.getRow(e.row)
 	if err != nil {
 		e.handleWarning(err,
 			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))

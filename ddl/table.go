@@ -18,13 +18,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	log "github.com/sirupsen/logrus"
@@ -43,14 +43,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-
-	if tbInfo.Partition != nil {
-		err = checkAddPartitionTooManyPartitions(len(tbInfo.Partition.Definitions))
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -76,7 +68,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidTableState.Gen("invalid table state %v", tbInfo.State)
+		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
 	}
 }
 
@@ -89,7 +81,7 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
+			return ver, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
 			))
 		}
@@ -99,7 +91,7 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Check the table.
 	if tblInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
+		return ver, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		))
@@ -131,7 +123,7 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
-		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
+		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -165,14 +157,14 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
-			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
+			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
 			))
 		}
 		return nil, errors.Trace(err)
 	} else if tblInfo == nil {
 		job.State = model.JobStateCancelled
-		return nil, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
+		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		))
@@ -180,7 +172,7 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 
 	if tblInfo.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, ErrInvalidTableState.Gen("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
+		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
 	}
 
 	return tblInfo, nil
@@ -208,19 +200,19 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	// gofail: var truncateTableErr bool
+	// if truncateTableErr {
+	//  job.State = model.JobStateCancelled
+	//  return ver, errors.New("occur an error after dropping table.")
+	// }
 
-	// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
-		for _, def := range tblInfo.Partition.Definitions {
-			var pid int64
-			pid, err = t.GenGlobalID()
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			def.ID = pid
+		// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
+		err = truncateTableByReassignPartitionIDs(job, t, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 	}
 
@@ -338,6 +330,11 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	// gofail: var renameTableErr bool
+	// if renameTableErr {
+	//	job.State = model.JobStateCancelled
+	//	return ver, errors.New("occur an error after renaming table.")
+	// }
 	tblInfo.Name = tableName
 	err = t.CreateTable(newSchemaID, tblInfo)
 	if err != nil {
@@ -388,7 +385,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
-			return infoschema.ErrDatabaseNotExists.GenByArgs("")
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 		}
 		return errors.Trace(err)
 	}
@@ -398,7 +395,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 		if tbl.Name.L == tableName {
 			// This table already exists and can't be created, we should cancel this job now.
 			job.State = model.JobStateCancelled
-			return infoschema.ErrTableExists.GenByArgs(tbl.Name)
+			return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
 		}
 	}
 
@@ -435,7 +432,7 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = checkAddPartitionTooManyPartitions(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions))
+	err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
