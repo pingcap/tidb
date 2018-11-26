@@ -351,6 +351,10 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
+	killConn(conn, query)
+}
+
+func killConn(conn *clientConn, query bool) {
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
@@ -362,6 +366,16 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		// Mark the client connection status as WaitShutdown, when the goroutine detect
 		// this, it will end the dispatch loop and exit.
 		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+	}
+}
+
+func (s *Server) KillAllConnections() {
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+	log.Info("[server] kill all connections.")
+
+	for _, conn := range s.clients {
+		killConn(conn, false)
 	}
 }
 
