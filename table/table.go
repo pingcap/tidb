@@ -81,6 +81,12 @@ var (
 	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
 	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
 	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
+	// ErrPartitionClauseOnNonpartitioned happens when inserting a row into non partition table
+	ErrPartitionClauseOnNonpartitioned = terror.ClassTable.New(mysql.ErrPartitionClauseOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionClauseOnNonpartitioned])
+	// ErrRowDoesNotMatchGivenPartitionSet happens when inserting a row into a wrong partition
+	ErrRowDoesNotMatchGivenPartitionSet = terror.ClassTable.New(mysql.ErrRowDoesNotMatchGivenPartitionSet, mysql.MySQLErrName[mysql.ErrRowDoesNotMatchGivenPartitionSet])
+	// ErrUnknownPartition when partition clause has some unknown partition name
+	ErrUnknownPartition = terror.ClassTable.New(mysql.ErrUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 )
 
 // RecordIterFunc is used for low-level record iteration.

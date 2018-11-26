@@ -1530,3 +1530,7 @@ func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, e
 func (it *infoschemaTable) Type() table.Type {
 	return table.VirtualTable
 }
+
+func (vt *infoschemaTable) LocationPartition(ctx sessionctx.Context, r []types.Datum) (int, error) {
+	return 0, table.ErrUnsupportedOp
+}

@@ -15,16 +15,17 @@ package executor
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
-	"github.com/pingcap/parser/model"
 )
 
 // InsertExec represents an insert executor.
@@ -62,12 +63,52 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 			return errors.Trace(err)
 		}
 	} else {
+		if 0 < len(e.PartitionNames) {
+			err := e.checkPartitions(rows)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
 		for _, row := range rows {
 			if _, err := e.addRecord(row); err != nil {
 				return errors.Trace(err)
 			}
 		}
 	}
+	return nil
+}
+
+func (e *InsertExec) checkPartitions(rows [][]types.Datum)(error)  {
+	tablePartitionInfo := e.Table.Meta().GetPartitionInfo()
+	partitionNames := make(map[model.CIStr] struct{})
+	for _, partName := range e.PartitionNames {
+		partitionNames[partName] =struct {}{}
+	}
+	if nil == tablePartitionInfo {
+		return table.ErrPartitionClauseOnNonpartitioned;
+	}
+	tablePartitionNames := make(map[model.CIStr]bool)
+	for _, def := range tablePartitionInfo.Definitions {
+		tablePartitionNames[def.Name] = true
+	}
+
+	for _, insertPartitionName := range e.PartitionNames {
+		if _, ok := tablePartitionNames[insertPartitionName]; !ok {
+			return table.ErrUnknownPartition
+		}
+	}
+
+
+	for _, row := range rows {
+		defPos, err := e.Table.LocationPartition(e.ctx, row)
+		if nil != err {
+			return errors.Trace(err)
+		}
+		if _, ok := partitionNames[tablePartitionInfo.Definitions[defPos].Name]; !ok {
+			return table.ErrRowDoesNotMatchGivenPartitionSet
+		}
+	}
+
 	return nil
 }
 

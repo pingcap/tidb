@@ -155,3 +155,7 @@ func (vt *perfSchemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, e
 func (vt *perfSchemaTable) Type() table.Type {
 	return table.VirtualTable
 }
+
+func (vt *perfSchemaTable) LocationPartition(ctx sessionctx.Context, r []types.Datum) (int, error) {
+	return 0, table.ErrUnsupportedOp
+}
