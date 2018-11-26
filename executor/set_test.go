@@ -522,6 +522,9 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	tk.MustExec("set @@global.validate_password_length=-1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect validate_password_length value: '-1'"))
 
+	tk.MustExec("set @@global.validate_password_length=8")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
 	_, err = tk.Exec("set @@tx_isolation=''")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
