@@ -31,6 +31,10 @@ var (
 	preparedPlanCacheEnabledValue int32
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
 	PreparedPlanCacheCapacity uint
+	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
+	PreparedPlanCacheMemoryGuardRatio float64
+	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-max-memory".
+	PreparedPlanCacheMaxMemory uint64
 )
 
 const (
