@@ -71,14 +71,15 @@ const (
 
 // Variable errors
 var (
-	UnknownStatusVar       = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar       = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
-	ErrIncorrectScope      = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
-	ErrUnknownTimeZone     = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
-	ErrReadOnly            = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
-	ErrWrongValueForVar    = terror.ClassVariable.New(CodeWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
-	ErrWrongTypeForVar     = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
-	ErrTruncatedWrongValue = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	UnknownStatusVar          = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar          = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	ErrIncorrectScope         = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
+	ErrUnknownTimeZone        = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
+	ErrReadOnly               = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
+	ErrWrongValueForVar       = terror.ClassVariable.New(CodeWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
+	ErrWrongTypeForVar        = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
+	ErrTruncatedWrongValue    = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	ErrUnsupportedValueForVar = terror.ClassVariable.New(CodeUnknownStatusVar, "variable '%s' does not yet support value: %s")
 )
 
 func init() {
@@ -222,7 +223,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_autoinc_lock_mode", "1"},
 	{ScopeGlobal, "slave_net_timeout", "3600"},
 	{ScopeGlobal, "key_buffer_size", "8388608"},
-	{ScopeGlobal | ScopeSession, ForeignKeyChecks, "1"},
+	{ScopeGlobal | ScopeSession, ForeignKeyChecks, "OFF"},
 	{ScopeGlobal, "host_cache_size", "279"},
 	{ScopeGlobal, DelayKeyWrite, "ON"},
 	{ScopeNone, "metadata_locks_cache_size", "1024"},
