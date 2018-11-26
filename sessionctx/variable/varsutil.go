@@ -90,7 +90,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBQueryLogMaxLen:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
 	case MaxPreparedStmtCount:
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().MaxPreparedStmtCount), 10), true, nil
+		return strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().MaxPreparedStmtCount), 10), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
