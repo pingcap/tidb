@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -94,6 +95,11 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	err := a.executor.Next(ctx, chk)
 	if err != nil {
 		a.lastErr = err
@@ -241,14 +247,23 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		return a.handleNoDelayExecutor(ctx, sctx, e)
 	}
 
+	var txnStartTS uint64
+	if sctx.Txn(false).Valid() {
+		txnStartTS = sctx.Txn(true).StartTS()
+	}
 	return &recordSet{
 		executor:   e,
 		stmt:       a,
-		txnStartTS: sctx.Txn().StartTS(),
+		txnStartTS: txnStartTS,
 	}, nil
 }
 
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -263,8 +278,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 	defer func() {
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
-		if sctx.Txn() != nil {
-			txnTS = sctx.Txn().StartTS()
+		// Don't active pending txn here.
+		if sctx.Txn(false).Valid() {
+			txnTS = sctx.Txn(true).StartTS()
 		}
 		a.LogSlowQuery(txnTS, err == nil)
 	}()
@@ -287,9 +303,10 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		if isPointGet {
 			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
-		} else {
-			log.Debugf("con:%d ActivePendingTxn %s", ctx.GetSessionVars().ConnectionID, a.Text)
-			err = ctx.ActivePendingTxn()
+		} else if ctx.GetSessionVars().SnapshotTS != 0 {
+			if _, ok := a.Plan.(*plannercore.CheckTable); ok {
+				err = ctx.InitTxnWithStartTS(ctx.GetSessionVars().SnapshotTS)
+			}
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -339,13 +356,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	}
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(a.StartTime)
-	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level < log.DebugLevel {
 		return
 	}
 	sql := a.Text
-	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
-		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
+	if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(len(sql)) > maxQueryLen {
+		sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, len(a.Text))
 	}
 	sessVars := a.Ctx.GetSessionVars()
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
@@ -405,7 +422,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
-//  2. txn is nil
+//  2. txn is not valid
 //  2. plan is point get by pk or unique key
 func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) bool {
 	// check auto commit
@@ -414,7 +431,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	}
 
 	// check txn
-	if ctx.Txn() != nil {
+	if ctx.Txn(false).Valid() {
 		return false
 	}
 

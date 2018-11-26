@@ -602,8 +602,8 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]Phys
 		return nil, false
 	}
 	plans := make([]PhysicalPlan, 0, 2)
-	leftOuter := (p.preferJoinType & preferLeftAsIndexOuter) > 0
-	rightOuter := (p.preferJoinType & preferRightAsIndexOuter) > 0
+	rightOuter := (p.preferJoinType & preferLeftAsIndexInner) > 0
+	leftOuter := (p.preferJoinType & preferRightAsIndexInner) > 0
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(prop, 0)
@@ -703,8 +703,9 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 		return nil
 	}
 	proj := PhysicalProjection{
-		Exprs:            p.Exprs,
-		CalculateNoDelay: p.calculateNoDelay,
+		Exprs:                p.Exprs,
+		CalculateNoDelay:     p.calculateNoDelay,
+		AvoidColumnEvaluator: p.avoidColumnEvaluator,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
@@ -743,6 +744,9 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 
 // Check if this prop's columns can match by items totally.
 func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
+	if len(items) < len(p.Cols) {
+		return false
+	}
 	for i, col := range p.Cols {
 		sortItem := items[i]
 		if sortItem.Desc != p.Desc || !sortItem.Expr.Equal(nil, col) {

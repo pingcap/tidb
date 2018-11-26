@@ -135,6 +135,7 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	// for uuid
 	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
 	for _, it := range r.Rows() {
@@ -1109,8 +1110,9 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err := tk.Exec(`insert into t select year("aa")`)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue, Commentf("err %v", err))
+	tk.MustExec(`set sql_mode='STRICT_TRANS_TABLES'`) // without zero date
 	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
-	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`)
+	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`) // with zero date
 	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
@@ -2888,6 +2890,18 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a bigint unsigned)")
 	tk.MustExec("insert into t value(17666000000000000000)")
 	tk.MustQuery("select * from t where a = 17666000000000000000").Check(testkit.Rows("17666000000000000000"))
+
+	// test for compare row
+	result = tk.MustQuery(`select row(1,2,3)=row(1,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1,2,3)=row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
@@ -3669,4 +3683,95 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	tk.MustExec("insert into t select 0.5999991229316*0.918755041726043;")
 	res := tk.MustQuery("select * from t;")
 	res.Check(testkit.Rows("0.55125221922461136"))
+}
+
+func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);`)
+	tk.MustExec(`insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");`)
+	res := tk.MustQuery(`select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;`)
+	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
+}
+
+func (s *testIntegrationSuite) TestForeignKeyVar(c *C) {
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("SET FOREIGN_KEY_CHECKS=1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1105 variable 'foreign_key_checks' does not yet support value: 1"))
+}
+
+func (s *testIntegrationSuite) TestUserVarMockWindFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a int, b varchar (20), c varchar (20));`)
+	tk.MustExec(`insert into t values
+					(1,'key1-value1','insert_order1'),
+    				(1,'key1-value2','insert_order2'),
+    				(1,'key1-value3','insert_order3'),
+    				(1,'key1-value4','insert_order4'),
+    				(1,'key1-value5','insert_order5'),
+    				(1,'key1-value6','insert_order6'),
+    				(2,'key2-value1','insert_order1'),
+    				(2,'key2-value2','insert_order2'),
+    				(2,'key2-value3','insert_order3'),
+    				(2,'key2-value4','insert_order4'),
+    				(2,'key2-value5','insert_order5'),
+    				(2,'key2-value6','insert_order6'),
+    				(3,'key3-value1','insert_order1'),
+    				(3,'key3-value2','insert_order2'),
+    				(3,'key3-value3','insert_order3'),
+    				(3,'key3-value4','insert_order4'),
+    				(3,'key3-value5','insert_order5'),
+    				(3,'key3-value6','insert_order6');
+					`)
+	tk.MustExec(`SET @LAST_VAL := NULL;`)
+	tk.MustExec(`SET @ROW_NUM := 0;`)
+
+	tk.MustQuery(`select * from (
+					SELECT a,
+    				       @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+    				       @LAST_VAL := a AS LAST_VAL,
+    				       b,
+    				       c
+    				FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+				) t2
+				where t2.ROW_NUM < 2;
+				`).Check(testkit.Rows(
+		`1 1 1 key1-value1 insert_order1`,
+		`2 1 2 key2-value1 insert_order1`,
+		`3 1 3 key3-value1 insert_order1`,
+	))
+
+	tk.MustQuery(`select * from (
+					SELECT a,
+    				       @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+    				       @LAST_VAL := a AS LAST_VAL,
+    				       b,
+    				       c
+    				FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+				) t2;
+				`).Check(testkit.Rows(
+		`1 1 1 key1-value1 insert_order1`,
+		`1 2 1 key1-value2 insert_order2`,
+		`1 3 1 key1-value3 insert_order3`,
+		`1 4 1 key1-value4 insert_order4`,
+		`1 5 1 key1-value5 insert_order5`,
+		`1 6 1 key1-value6 insert_order6`,
+		`2 1 2 key2-value1 insert_order1`,
+		`2 2 2 key2-value2 insert_order2`,
+		`2 3 2 key2-value3 insert_order3`,
+		`2 4 2 key2-value4 insert_order4`,
+		`2 5 2 key2-value5 insert_order5`,
+		`2 6 2 key2-value6 insert_order6`,
+		`3 1 3 key3-value1 insert_order1`,
+		`3 2 3 key3-value2 insert_order2`,
+		`3 3 3 key3-value3 insert_order3`,
+		`3 4 3 key3-value4 insert_order4`,
+		`3 5 3 key3-value5 insert_order5`,
+		`3 6 3 key3-value6 insert_order6`,
+	))
 }

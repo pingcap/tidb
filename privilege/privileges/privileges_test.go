@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/privilege"
@@ -239,9 +240,12 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	mustExec(c, se, `DROP USER 'show'@'localhost'`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
+
+	// This should now return an error
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
-	c.Assert(err, IsNil)
-	c.Assert(gs, HasLen, 0)
+	// cant show grants for non-existent
+	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	c.Assert(terror.ErrorEqual(err, errNonexistingGrant), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
@@ -268,6 +272,26 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	se = newSession(c, s.store, s.dbName)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "drop", Hostname: "localhost"}
 	mustExec(c, se, `DROP TABLE todrop;`)
+}
+
+func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
+
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER 'superuser'")
+	mustExec(c, se, "CREATE USER 'nobodyuser'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser", Hostname: "localhost", AuthUsername: "superuser", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "SET PASSWORD for 'nobodyuser' = 'newpassword'")
+
+	// low privileged user trying to set password for other user (fails)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser", Hostname: "localhost", AuthUsername: "nobodyuser", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "SET PASSWORD for 'superuser' = 'newpassword'")
+	c.Assert(err, NotNil)
+
 }
 
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {

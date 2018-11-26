@@ -61,6 +61,12 @@ type ShowDDLJobQueries struct {
 	JobIDs []int64
 }
 
+// ShowNextRowID is for showing the next global row ID.
+type ShowNextRowID struct {
+	baseSchemaProducer
+	TableName *ast.TableName
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	baseSchemaProducer
@@ -258,6 +264,18 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+		}
+	case *Insert:
+		if x.SelectPlan != nil {
+			return e.rebuildRange(x.SelectPlan)
+		}
+	case *Update:
+		if x.SelectPlan != nil {
+			return e.rebuildRange(x.SelectPlan)
+		}
+	case *Delete:
+		if x.SelectPlan != nil {
+			return e.rebuildRange(x.SelectPlan)
 		}
 	}
 	return nil

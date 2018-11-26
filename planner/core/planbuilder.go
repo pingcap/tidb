@@ -20,6 +20,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -213,29 +214,29 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
+	var p LogicalPlan
 	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx)
-
-	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
+	dual.SetSchema(expression.NewSchema())
+	p = dual
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
-		expr, _, err := b.rewrite(astExpr, dual, nil, true)
+		expr, np, err := b.rewrite(astExpr, p, nil, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p.Exprs = append(p.Exprs, expr)
+		p = np
+		proj.Exprs = append(proj.Exprs, expr)
 		schema.Append(&expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  expr.GetType(),
 		})
 	}
-	if dual.schema == nil {
-		dual.schema = expression.NewSchema()
-	}
-	p.SetChildren(dual)
-	p.self = p
-	p.SetSchema(schema)
-	p.calculateNoDelay = true
-	return p, nil
+	proj.SetChildren(p)
+	proj.self = proj
+	proj.SetSchema(schema)
+	proj.calculateNoDelay = true
+	return proj, nil
 }
 
 func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
@@ -502,6 +503,10 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ChecksumTable{Tables: as.Tables}
 		p.SetSchema(buildChecksumTableSchema())
 		ret = p
+	case ast.AdminShowNextRowID:
+		p := &ShowNextRowID{TableName: as.Tables[0]}
+		p.SetSchema(buildShowNextRowID())
+		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
@@ -761,6 +766,15 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	return b.buildAnalyzeTable(as)
 }
 
+func buildShowNextRowID() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
+	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, mysql.MaxDatabaseNameLength))
+	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, mysql.MaxTableNameLength))
+	schema.Append(buildColumn("", "COLUMN_NAME", mysql.TypeVarchar, mysql.MaxColumnNameLength))
+	schema.Append(buildColumn("", "NEXT_GLOBAL_ROW_ID", mysql.TypeLonglong, 4))
+	return schema
+}
+
 func buildShowDDLFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
@@ -839,8 +853,8 @@ func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
 	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
-		cs = mysql.DefaultCharset
-		cl = mysql.DefaultCollationName
+		cs = charset.CharsetUTF8MB4
+		cl = charset.CollationUTF8MB4
 		flag = 0
 	}
 
@@ -947,7 +961,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) Plan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
-	case *ast.SetPwdStmt, *ast.RevokeStmt:
+	case *ast.RevokeStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
 	case *ast.KillStmt:
 		// If you have the SUPER privilege, you can kill all threads and statements.
@@ -1459,19 +1473,28 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok {
-		return nil, errors.New("trace only supports select query")
+	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok && trace.Format == "row" {
+		return nil, errors.New("trace only supports select query when format is row")
 	}
 
-	p := &Trace{StmtNode: trace.Stmt}
+	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
 
-	retFields := []string{"operation", "duration", "spanID"}
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-	schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
-
-	schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
-	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
-	p.SetSchema(schema)
+	switch trace.Format {
+	case "row":
+		retFields := []string{"operation", "duration", "spanID"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+	case "json":
+		retFields := []string{"json"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+	default:
+		return nil, errors.New("trace format should be one of 'row' or 'json'")
+	}
 	return p, nil
 }
 
@@ -1594,7 +1617,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			"Create_options", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowColumns:
 		names = table.ColDescFieldNames(s.Full)

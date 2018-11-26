@@ -85,6 +85,10 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return string(j), true, nil
 	case TiDBForcePriority:
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
+	case TiDBSlowLogThreshold:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
+	case TiDBQueryLogMaxLen:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -232,6 +236,16 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case FlushTime:
 		return checkUInt64SystemVar(name, value, 0, secondsPerYear, vars)
+	case ForeignKeyChecks:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			// TiDB does not yet support foreign keys.
+			// For now, resist the change and show a warning.
+			vars.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(name, value))
+			return "OFF", nil
+		} else if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case GroupConcatMaxLen:
 		// The reasonable range of 'group_concat_max_len' is 4~18446744073709551615(64-bit platforms)
 		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len for details
@@ -281,10 +295,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "SYSTEM", nil
 		}
 		return value, nil
+	case ValidatePasswordLength, ValidatePasswordNumberCount:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
-		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates, TiDBConstraintCheckInPlace:
+		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
@@ -292,11 +308,21 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
-		TiDBOptInSubqToJoinAndAgg, TiDBEnableTablePartition,
+		TiDBOptInSubqToJoinAndAgg,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete, TiDBEnableCascadesPlanner:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBEnableTablePartition:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		case strings.EqualFold(value, "AUTO"):
+			return "auto", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
@@ -325,7 +351,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TIDBMemQuotaIndexLookupReader,
 		TIDBMemQuotaIndexLookupJoin,
 		TIDBMemQuotaNestedLoopApply,
-		TiDBRetryLimit:
+		TiDBRetryLimit,
+		TiDBSlowLogThreshold,
+		TiDBQueryLogMaxLen:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
@@ -337,6 +365,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", errors.Trace(err)
 		}
 		return v, nil
+	case TxnIsolation, TransactionIsolation:
+		upVal := strings.ToUpper(value)
+		_, exists := TxIsolationNames[upVal]
+		if !exists {
+			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return upVal, nil
 	}
 	return value, nil
 }
