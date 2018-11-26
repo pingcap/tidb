@@ -31,11 +31,13 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"strconv"
 )
 
 const (
@@ -43,6 +45,8 @@ const (
 	codeCantSetToNull  terror.ErrCode = 2
 	codeSnapshotTooOld terror.ErrCode = 3
 )
+
+var preparedStmtCount uint64
 
 // Error instances.
 var (
@@ -522,6 +526,41 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	}
 }
 
+// AddPreparedStmt adds prepareStmt to current session and count in global.
+func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt *ast.Prepared) error {
+	if _, exists := s.PreparedStmts[stmtID]; !exists {
+		maxPreparedStmtCount := atomic.LoadUint64(&config.GetGlobalConfig().MaxPreparedStmtCount)
+		newPreparedStmtCount := atomic.AddUint64(&preparedStmtCount, 1)
+		if maxPreparedStmtCount > 0 && newPreparedStmtCount > maxPreparedStmtCount {
+			atomic.AddUint64(&preparedStmtCount, ^uint64(0))
+			return ErrMaxPreparedStmtCountReached.GenWithStackByArgs(maxPreparedStmtCount)
+		}
+		metrics.PreparedStmtGauge.Set(float64(newPreparedStmtCount))
+	}
+	s.PreparedStmts[stmtID] = stmt
+	return nil
+}
+
+// RemovePreparedStmt removes preparedStmt from current session and decrease count in global.
+func (s *SessionVars) RemovePreparedStmt(stmtID uint32) {
+	if _, exists := s.PreparedStmts[stmtID]; !exists {
+		return
+	}
+	delete(s.PreparedStmts, stmtID)
+	atomic.AddUint64(&preparedStmtCount, ^uint64(0))
+	metrics.PreparedStmtGauge.Set(float64(atomic.LoadUint64(&preparedStmtCount)))
+}
+
+// WithdrawAllPreparedStmt remove all preparedStmt in current session and decrease count in global.
+func (s *SessionVars) WithdrawAllPreparedStmt() {
+	psCount := len(s.PreparedStmts)
+	if psCount == 0 {
+		return
+	}
+	atomic.AddUint64(&preparedStmtCount, ^uint64(psCount-1))
+	metrics.PreparedStmtGauge.Set(float64(atomic.LoadUint64(&preparedStmtCount)))
+}
+
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
@@ -555,6 +594,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
+	case MaxPreparedStmtCount:
+		maxPsStmt, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			maxPsStmt = DefMaxPreparedStmtCount
+		}
+		atomic.StoreUint64(&config.GetGlobalConfig().MaxPreparedStmtCount, maxPsStmt)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:

@@ -48,6 +48,9 @@ lower-case-table-names = 2
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
 
+# The total number limit of prepared statements in one server
+max-prepared-stmt-count = 16382
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

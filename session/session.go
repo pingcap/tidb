@@ -189,7 +189,7 @@ func (s *session) cleanRetryInfo() {
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
-		delete(s.sessionVars.PreparedStmts, stmtID)
+		s.sessionVars.RemovePreparedStmt(stmtID)
 	}
 }
 
@@ -1086,6 +1086,9 @@ func (s *session) Close() {
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
+	if s.sessionVars != nil {
+		s.sessionVars.WithdrawAllPreparedStmt()
+	}
 	ctx := context.TODO()
 	if err := s.RollbackTxn(ctx); err != nil {
 		log.Error("session Close error:", errors.ErrorStack(err))
@@ -1373,6 +1376,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.MaxAllowedPacket + quoteCommaQuote +
 	variable.TimeZone + quoteCommaQuote +
 	variable.BlockEncryptionMode + quoteCommaQuote +
+	variable.MaxPreparedStmtCount + quoteCommaQuote +
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check + quoteCommaQuote +
 	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +

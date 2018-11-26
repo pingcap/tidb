@@ -17,14 +17,18 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"strconv"
 )
 
 var _ = Suite(&testPrepareSuite{})
@@ -216,4 +220,61 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
 	rs = tk.MustQuery("execute stmt4").Rows()
 	c.Assert(rs[0][0].(string), Equals, rs[0][2].(string))
+}
+
+func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+
+	// test prepare and deallocate.
+	prePrepared := readGaugeInt(metrics.PreparedStmtGauge)
+	tk.MustExec(`prepare stmt1 from "select 1"`)
+	onePrepared := readGaugeInt(metrics.PreparedStmtGauge)
+	c.Assert(prePrepared+1, Equals, onePrepared)
+	tk.MustExec(`deallocate prepare stmt1`)
+	deallocPrepared := readGaugeInt(metrics.PreparedStmtGauge)
+	c.Assert(prePrepared, Equals, deallocPrepared)
+
+	// test change global limit and make it affected in test session.
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("16382"))
+	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
+	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
+	time.Sleep(3 * time.Second) // renew a session after 2 sec
+
+	// test close session to give up all prepared stmt
+	tk.MustExec(`prepare stmt2 from "select 1"`)
+	prePrepared = readGaugeInt(metrics.PreparedStmtGauge)
+	tk.Se.Close()
+	drawPrepared := readGaugeInt(metrics.PreparedStmtGauge)
+	c.Assert(prePrepared-1, Equals, drawPrepared)
+
+	// test meet max limit.
+	tk.Se = nil
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("2"))
+	for i := 1; ; i++ {
+		prePrepared = readGaugeInt(metrics.PreparedStmtGauge)
+		if prePrepared >= 2 {
+			_, err = tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
+			c.Assert(terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached), IsTrue)
+			break
+		} else {
+			tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
+		}
+	}
+}
+
+func readGaugeInt(g prometheus.Gauge) int {
+	ch := make(chan prometheus.Metric, 1)
+	g.Collect(ch)
+	m := <-ch
+	mm := &dto.Metric{}
+	m.Write(mm)
+	return int(mm.GetGauge().GetValue())
 }
