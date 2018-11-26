@@ -552,7 +552,8 @@ func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt *ast.Prepared) error {
 
 // RemovePreparedStmt removes preparedStmt from current session and decrease count in global.
 func (s *SessionVars) RemovePreparedStmt(stmtID uint32) {
-	if _, exists := s.PreparedStmts[stmtID]; !exists {
+	_, exists := s.PreparedStmts[stmtID]
+	if !exists {
 		return
 	}
 	delete(s.PreparedStmts, stmtID)
