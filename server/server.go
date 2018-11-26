@@ -369,6 +369,7 @@ func killConn(conn *clientConn, query bool) {
 	}
 }
 
+// KillAllConnections kills all connections when server is not gracefully shutdown.
 func (s *Server) KillAllConnections() {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
