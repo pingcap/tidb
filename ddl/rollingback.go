@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -70,7 +70,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("index not exist %s", indexName)
+		return ver, errors.Trace(errCancelledDDLJob)
 	}
 	return convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, occuredErr)
 }
@@ -96,7 +96,7 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(col.Name)
+		return ver, errors.Trace(errCancelledDDLJob)
 	}
 
 	if columnInfo.State == model.StatePublic {
