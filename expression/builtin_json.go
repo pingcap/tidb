@@ -700,11 +700,11 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	case types.ETJson:
 		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
 		sig = &builtinJSONValidJSONSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_JsonValidSig)
+		sig.setPbCode(tipb.ScalarFuncSig_JsonValidJsonSig)
 	default:
 		bf = newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, args[0].GetType().EvalType())
 		sig = &builtinJSONValidStringSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_JsonValidSig)
+		sig.setPbCode(tipb.ScalarFuncSig_JsonValidStringSig)
 	}
 	return sig, nil
 }

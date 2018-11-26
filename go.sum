@@ -232,6 +232,8 @@ github.com/pingcap/tidb-tools v2.1.0-rc.5+incompatible h1:x+vS+/RXiJsX2lvED0zGSP
 github.com/pingcap/tipb v0.0.0-20171213095807-07ff5b094233/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
 github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323 h1:mRKKzRjDNaUNPnAkPAHnRqpNmwNWBX1iA+hxlmvQ93I=
 github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
+github.com/pingcap/tipb v0.0.0-20181126132056-a7fd2aaa9719 h1:MEHhwNcWuuoJJvYxMaWIXFp+BvK/WORPiiwmSOS0cA4=
+github.com/pingcap/tipb v0.0.0-20181126132056-a7fd2aaa9719/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
 github.com/pkg/errors v0.8.0 h1:WdK/asTD0HN+q6hsWO3/vpuAkAr+tw6aNJNDFFf0+qw=
 github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
