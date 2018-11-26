@@ -221,7 +221,7 @@ type RecordData struct {
 }
 
 func getCount(ctx sessionctx.Context, sql string) (int64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(ctx, sql)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

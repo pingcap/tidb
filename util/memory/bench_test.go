@@ -11,19 +11,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package memory
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testkit"
+	"testing"
 )
 
-func (s *testSuite) TestTraceExec(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	testSQL := `create table trace (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
-	tk.MustExec(testSQL)
-	tk.MustExec("trace insert into trace (c1, c2, c3) values (1, 2, 3)")
-	rows := tk.MustQuery("trace select * from trace where id = 0;").Rows()
-	c.Assert(rows, HasLen, 1)
+func BenchmarkMemTotal(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = MemTotal()
+	}
+}
+
+func BenchmarkMemUsed(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_, _ = MemUsed()
+	}
 }
