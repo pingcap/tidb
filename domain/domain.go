@@ -428,10 +428,10 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				break
 			}
 			// The schema maybe changed, must reload schema then the schema validator can restart.
-			err = do.mustReload()
-			if err != nil {
+			exitLoop := do.mustReload()
+			if exitLoop {
 				// domain is closed.
-				log.Errorf("[ddl] mustReload failed %v", err)
+				log.Errorf("[ddl] domain is closed. exit loadSchemaInLoop")
 				return
 			}
 			do.SchemaValidator.Restart()
@@ -469,25 +469,27 @@ func (do *Domain) mustRestartSyncer() error {
 }
 
 // mustReload tries to Reload the schema, it returns until it's successful or the domain is closed.
-// it returns nil when it is sucessful, returns err when the domain is closed.
-func (do *Domain) mustReload() error {
+// it returns false when it is sucessful, returns true when the domain is closed.
+func (do *Domain) mustReload() (exitLoop bool) {
 	for {
 		err := do.Reload()
 		if err == nil {
 			log.Infof("[ddl] mustReload succeed.")
-			return nil
+			return false
 		}
 
+		log.Infof("[ddl] reload the schema failed: %v", err)
 		// If the domain is closed, we returns immediately.
 		select {
 		case <-do.exit:
-			return errors.Trace(err)
+			log.Infof("[ddl] domain is closed.")
+			return true
 		default:
 		}
 
 		time.Sleep(time.Second)
-		log.Infof("[ddl] reload the schema failed: %v", err)
 	}
+	return false
 }
 
 // Close closes the Domain and release its resource.

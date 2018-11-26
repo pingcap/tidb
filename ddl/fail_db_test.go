@@ -215,10 +215,10 @@ func (s *testDBSuite) TestFailSchemaSyncer(c *C) {
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
 	for i := 0; i < 50; i++ {
-		time.Sleep(20 * time.Millisecond)
 		if s.dom.SchemaValidator.IsStarted() == false {
 			break
 		}
+		time.Sleep(20 * time.Millisecond)
 	}
 
 	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
@@ -227,11 +227,11 @@ func (s *testDBSuite) TestFailSchemaSyncer(c *C) {
 	c.Assert(err.Error(), Equals, "[domain:3]Schema validator is stopped, it means TiDB is disconnected from the pd/etcd.")
 	s.dom.MockReloadFailed.SetValue(false)
 	// wait the schemaValidator is started.
-	for i := 0; i < 10; i++ {
-		time.Sleep(500 * time.Millisecond)
+	for i := 0; i < 50; i++ {
 		if s.dom.SchemaValidator.IsStarted() == true {
 			break
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
 	_, err = tk.Exec("insert into t values(1)")
