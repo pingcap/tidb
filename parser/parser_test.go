@@ -2573,6 +2573,60 @@ func (s *testParserSuite) TestWindowFunctions(c *C) {
 	s.RunTest(c, table)
 }
 
+type windowFrameBoundChecker struct {
+	fb         *ast.FrameBound
+	exprRc     int
+	timeUnitRc int
+}
+
+// Enter implements ast.Visitor interface.
+func (wfc *windowFrameBoundChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+	if _, ok := inNode.(*ast.FrameBound); ok {
+		wfc.fb = inNode.(*ast.FrameBound)
+	}
+	return inNode, false
+}
+
+// Leave implements ast.Visitor interface.
+func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	if _, ok := inNode.(*ast.FrameBound); ok {
+		wfc.fb = nil
+	}
+	if wfc.fb != nil {
+		if inNode == wfc.fb.Expr {
+			wfc.exprRc += 1
+		} else if inNode == wfc.fb.Unit {
+			wfc.timeUnitRc += 1
+		}
+	}
+	return inNode, true
+}
+
+// For issue #51
+// See https://github.com/pingcap/parser/pull/51 for details
+func (s *testParserSuite) TestVisitFrameBound(c *C) {
+	parser := New()
+	parser.EnableWindowFunc()
+	table := []struct {
+		s          string
+		exprRc     int
+		timeUnitRc int
+	}{
+		{`SELECT AVG(val) OVER (RANGE INTERVAL '2:30' MINUTE_SECOND PRECEDING) FROM t;`, 1, 1},
+		{`SELECT AVG(val) OVER (RANGE 5 PRECEDING) FROM t;`, 1, 0},
+		{`SELECT AVG(val) OVER () FROM t;`, 0, 0},
+	}
+	for _, t := range table {
+		stmt, err := parser.ParseOneStmt(t.s, "", "")
+		c.Assert(err, IsNil)
+		checker := windowFrameBoundChecker{}
+		stmt.Accept(&checker)
+		c.Assert(checker.exprRc, Equals, t.exprRc)
+		c.Assert(checker.timeUnitRc, Equals, t.timeUnitRc)
+	}
+
+}
+
 func (s *testParserSuite) TestFieldText(c *C) {
 	parser := New()
 	stmts, err := parser.Parse("select a from t", "", "")

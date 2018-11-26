@@ -1201,7 +1201,7 @@ func (n *FrameBound) Accept(v Visitor) (Node, bool) {
 		n.Expr = node.(ExprNode)
 	}
 	if n.Unit != nil {
-		node, ok := n.Expr.Accept(v)
+		node, ok := n.Unit.Accept(v)
 		if !ok {
 			return n, false
 		}
