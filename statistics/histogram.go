@@ -411,7 +411,7 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCountWithBktIdx(value types.Datum) (float64, int) {
 	// all the values is null
-	if hg.Bounds == nil {
+	if hg.Bounds.NumRows() == 0 {
 		return 0, 0
 	}
 	index, match := hg.Bounds.LowerBound(0, &value)
@@ -735,7 +735,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return float64(c.NullCount), nil
 	}
 	// all the values is null
-	if c.Histogram.Bounds == nil {
+	if c.Histogram.Bounds.NumRows() == 0 {
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {
