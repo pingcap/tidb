@@ -156,7 +156,6 @@ func (e *ShowExec) fetchAll() error {
 }
 
 func (e *ShowExec) fetchShowEngines() error {
-
 	sql := `SELECT * FROM information_schema.engines`
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 
@@ -245,7 +244,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 
 func (e *ShowExec) fetchShowTables() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(e.DBName)) {
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(e.DBName.O) {
 		return e.dbAccessDenied()
 	}
 	if !e.is.SchemaExists(e.DBName) {
@@ -276,7 +275,7 @@ func (e *ShowExec) fetchShowTables() error {
 
 func (e *ShowExec) fetchShowTableStatus() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(e.DBName)) {
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(e.DBName.O) {
 		return e.dbAccessDenied()
 	}
 	if !e.is.SchemaExists(e.DBName) {
@@ -372,8 +371,6 @@ func (e *ShowExec) fetchShowColumns() error {
 	return nil
 }
 
-// TODO: index collation can have values A (ascending) or NULL (not sorted).
-// see: https://dev.mysql.com/doc/refman/5.7/en/show-index.html
 func (e *ShowExec) fetchShowIndex() error {
 	tb, err := e.getTable()
 	if err != nil {
