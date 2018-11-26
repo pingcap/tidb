@@ -159,18 +159,18 @@ TableReader_5	10000.00	root	data:TableScan_4
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 id	count	task	operator info
 Union_17	26000.00	root	
-├─TableReader_20	10000.00	root	data:TableScan_19
-│ └─TableScan_19	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
-└─HashAgg_24	16000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
-  └─Union_25	16000.00	root	
-    ├─StreamAgg_38	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
-    │ └─IndexReader_39	8000.00	root	index:StreamAgg_29
-    │   └─StreamAgg_29	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
-    │     └─IndexScan_37	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
-    └─StreamAgg_55	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
-      └─IndexReader_56	8000.00	root	index:StreamAgg_46
-        └─StreamAgg_46	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
-          └─IndexScan_54	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+├─HashAgg_21	16000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
+│ └─Union_22	16000.00	root	
+│   ├─StreamAgg_35	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
+│   │ └─IndexReader_36	8000.00	root	index:StreamAgg_26
+│   │   └─StreamAgg_26	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
+│   │     └─IndexScan_34	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+│   └─StreamAgg_52	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
+│     └─IndexReader_53	8000.00	root	index:StreamAgg_43
+│       └─StreamAgg_43	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
+│         └─IndexScan_51	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+└─TableReader_59	10000.00	root	data:TableScan_58
+  └─TableScan_58	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	count	task	operator info
 HashAgg_18	24000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
@@ -393,6 +393,19 @@ Projection_5	8000.00	root	test.ta.a
     └─TableReader_9	10000.00	root	data:TableScan_8
       └─TableScan_8	10000.00	cop	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
 rollback;
+drop table if exists t1, t2;
+create table t1(a int, b int, c int, primary key(a, b));
+create table t2(a int, b int, c int, primary key(a));
+explain select t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+id	count	task	operator info
+TableReader_7	10000.00	root	data:TableScan_6
+└─TableScan_6	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+id	count	task	operator info
+StreamAgg_19	8000.00	root	group by:col_2, col_3, funcs:firstrow(col_0), firstrow(col_1)
+└─IndexReader_20	8000.00	root	index:StreamAgg_10
+  └─StreamAgg_10	8000.00	cop	group by:test.t1.a, test.t1.b, funcs:firstrow(test.t1.a), firstrow(test.t1.b)
+    └─IndexScan_18	10000.00	cop	table:t1, index:a, b, range:[NULL,+inf], keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
 explain select ifnull(a, 0) from t;
@@ -534,4 +547,38 @@ Projection_4	2666.67	root	test.t.a
   └─Selection_6	2666.67	cop	gt(test.t.a, 0)
     └─TableScan_5	3333.33	cop	table:t, range:(0,+inf], keep order:false, stats:pseudo
 drop table if exists t;
+create table t(a int, b int, c int);
+explain select * from (select * from t order by (select 2)) t order by a, b;
+id	count	task	operator info
+Sort_12	10000.00	root	t.a:asc, t.b:asc
+└─TableReader_18	10000.00	root	data:TableScan_17
+  └─TableScan_17	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from (select * from t order by c) t order by a, b;
+id	count	task	operator info
+Sort_6	10000.00	root	t.a:asc, t.b:asc
+└─Sort_9	10000.00	root	test.t.c:asc
+  └─TableReader_12	10000.00	root	data:TableScan_11
+    └─TableScan_11	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
+explain SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
+id	count	task	operator info
+Sort_13	2.00	root	a:asc
+└─HashAgg_17	2.00	root	group by:a, funcs:firstrow(join_agg_0)
+  └─Union_18	2.00	root	
+    ├─HashAgg_21	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+    │ └─Projection_22	1.00	root	0
+    │   └─TableDual_23	1.00	root	rows:1
+    └─HashAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+      └─Projection_27	1.00	root	1
+        └─TableDual_28	1.00	root	rows:1
+explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)
+id	count	task	operator info
+HashAgg_15	2.00	root	group by:a, funcs:firstrow(join_agg_0)
+└─Union_16	2.00	root	
+  ├─HashAgg_19	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+  │ └─Projection_20	1.00	root	0
+  │   └─TableDual_21	1.00	root	rows:1
+  └─StreamAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+    └─Projection_31	1.00	root	1
+      └─TableDual_32	1.00	root	rows:1
