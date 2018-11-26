@@ -66,12 +66,16 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 func (s *testRegionCacheSuite) getRegion(c *C, key []byte) *Region {
 	_, err := s.cache.LocateKey(s.bo, key)
 	c.Assert(err, IsNil)
-	return s.cache.searchCachedRegion(key, true)
+	r := s.cache.searchCachedRegion(key, true)
+	c.Assert(r, NotNil)
+	return r
 }
 func (s *testRegionCacheSuite) getRegionWithEndKey(c *C, key []byte) *Region {
-	_, err := s.cache.LocateKey(s.bo, key)
+	_, err := s.cache.LocateEndKey(s.bo, key)
 	c.Assert(err, IsNil)
-	return s.cache.searchCachedRegion(key, false)
+	r := s.cache.searchCachedRegion(key, false)
+	c.Assert(r, NotNil)
+	return r
 }
 
 func (s *testRegionCacheSuite) getAddr(c *C, key []byte) string {

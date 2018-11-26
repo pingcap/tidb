@@ -333,7 +333,7 @@ func (c *RegionCache) searchCachedRegion(key []byte, startKey bool) *Region {
 		}
 		return false
 	})
-	if r != nil && r.Contains(key) {
+	if r != nil && (startKey && r.Contains(key) || !startKey && r.ContainsByEnd(key)) {
 		return c.getCachedRegion(r.VerID())
 	}
 	return nil
