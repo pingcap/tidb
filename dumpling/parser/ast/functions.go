@@ -171,7 +171,7 @@ const (
 	Year             = "year"
 	YearWeek         = "yearweek"
 	LastDay          = "last_day"
-	Tso              = "tidb_parse_tso"
+	TiDBParseTso     = "tidb_parse_tso"
 
 	// string functions
 	ASCII           = "ascii"
