@@ -478,9 +478,17 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 
 	var pairs []Pair
 	if req.Reverse {
-		pairs = rawKV.RawReverseScan(req.GetStartKey(), h.startKey, int(req.GetLimit()))
+		pairs = rawKV.RawReverseScan(
+			req.GetStartKey(), // region start position
+			h.startKey,        // upper bound of scan
+			int(req.GetLimit()),
+		)
 	} else {
-		pairs = rawKV.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
+		pairs = rawKV.RawScan(
+			req.GetStartKey(), // region start position
+			h.endKey,          // lower bound of scan
+			int(req.GetLimit()),
+		)
 	}
 
 	return &kvrpcpb.RawScanResponse{

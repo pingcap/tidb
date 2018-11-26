@@ -63,15 +63,15 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	}
 }
 
-func (s *testRegionCacheSuite) getRegion(c *C, key []byte, startKey bool) *Region {
-	if startKey {
-		_, err := s.cache.LocateKey(s.bo, key)
-		c.Assert(err, IsNil)
-	} else {
-		_, err := s.cache.LocateEndKey(s.bo, key)
-		c.Assert(err, IsNil)
-	}
-	return s.cache.searchCachedRegion(key, startKey)
+func (s *testRegionCacheSuite) getRegion(c *C, key []byte) *Region {
+	_, err := s.cache.LocateKey(s.bo, key)
+	c.Assert(err, IsNil)
+	return s.cache.searchCachedRegion(key, true)
+}
+func (s *testRegionCacheSuite) getRegionWithEndKey(c *C, key []byte) *Region {
+	_, err := s.cache.LocateKey(s.bo, key)
+	c.Assert(err, IsNil)
+	return s.cache.searchCachedRegion(key, false)
 }
 
 func (s *testRegionCacheSuite) getAddr(c *C, key []byte) string {
@@ -86,7 +86,7 @@ func (s *testRegionCacheSuite) getAddr(c *C, key []byte) string {
 }
 
 func (s *testRegionCacheSuite) TestSimple(c *C) {
-	r := s.getRegion(c, []byte("a"), true)
+	r := s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
@@ -127,12 +127,12 @@ func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
 	// tikv-server reports `NotLeader`
 	s.cache.UpdateLeader(loc.Region, s.store2)
 
-	r := s.getRegion(c, []byte("a"), true)
+	r := s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store2))
 
-	r = s.getRegion(c, []byte("z"), false)
+	r = s.getRegion(c, []byte("z"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("z")), Equals, s.storeAddr(s.store2))
@@ -150,7 +150,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	s.cache.UpdateLeader(loc.Region, store3)
 
 	// Store3 does not exist in cache, causes a reload from PD.
-	r := s.getRegion(c, []byte("a"), true)
+	r := s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
@@ -159,7 +159,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	s.cluster.ChangeLeader(s.region1, peer3)
 	// tikv-server reports `NotLeader` again.
 	s.cache.UpdateLeader(r.VerID(), store3)
-	r = s.getRegion(c, []byte("a"), true)
+	r = s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(store3))
@@ -182,19 +182,19 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	s.cache.UpdateLeader(loc.Region, s.store2)
 
 	// Store2 does not exist any more, causes a reload from PD.
-	r := s.getRegion(c, []byte("a"), true)
+	r := s.getRegion(c, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	addr := s.getAddr(c, []byte("a"))
 	c.Assert(addr, Equals, "")
-	r = s.getRegion(c, []byte("a"), true)
+	r = s.getRegion(c, []byte("a"))
 	// pd-server should return the new leader.
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(store3))
 }
 
 func (s *testRegionCacheSuite) TestSplit(c *C) {
-	r := s.getRegion(c, []byte("x"), true)
+	r := s.getRegion(c, []byte("x"))
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("x")), Equals, s.storeAddr(s.store1))
 
@@ -207,12 +207,12 @@ func (s *testRegionCacheSuite) TestSplit(c *C) {
 	s.cache.DropRegion(r.VerID())
 	s.checkCache(c, 0)
 
-	r = s.getRegion(c, []byte("x"), true)
+	r = s.getRegion(c, []byte("x"))
 	c.Assert(r.GetID(), Equals, region2)
 	c.Assert(s.getAddr(c, []byte("x")), Equals, s.storeAddr(s.store1))
 	s.checkCache(c, 1)
 
-	r = s.getRegion(c, []byte("m"), false)
+	r = s.getRegionWithEndKey(c, []byte("m"))
 	c.Assert(r.GetID(), Equals, s.region1)
 	s.checkCache(c, 2)
 }
@@ -247,7 +247,7 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 	// connect tikv-server failed, cause drop cache
 	s.cache.DropRegion(loc.Region)
 
-	r := s.getRegion(c, []byte("a"), true)
+	r := s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
@@ -255,17 +255,17 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestRequestFail(c *C) {
-	region := s.getRegion(c, []byte("a"), true)
+	region := s.getRegion(c, []byte("a"))
 
 	ctx, _ := s.cache.GetRPCContext(s.bo, region.VerID())
 	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
 	c.Assert(s.cache.mu.regions, HasLen, 0)
-	region = s.getRegion(c, []byte("a"), true)
+	region = s.getRegion(c, []byte("a"))
 	c.Assert(s.cache.mu.regions, HasLen, 1)
 	ctx, _ = s.cache.GetRPCContext(s.bo, region.VerID())
 	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
 	c.Assert(len(s.cache.mu.regions), Equals, 0)
-	region = s.getRegion(c, []byte("a"), true)
+	region = s.getRegion(c, []byte("a"))
 	c.Assert(s.cache.mu.regions, HasLen, 1)
 }
 

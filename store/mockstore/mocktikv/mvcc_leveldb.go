@@ -988,14 +988,14 @@ func (mvcc *MVCCLevelDB) RawReverseScan(startKey, endKey []byte, limit int) []Pa
 		Limit: startKey,
 	}, nil)
 
-	succ := iter.Last()
+	success := iter.Last()
 
 	var pairs []Pair
-	for succ && len(pairs) < limit {
+	for success && len(pairs) < limit {
 		key := iter.Key()
 		value := iter.Value()
 		err := iter.Error()
-		if len(endKey) > 0 && bytes.Compare(key, endKey) < 0 {
+		if bytes.Compare(key, endKey) < 0 {
 			break
 		}
 		pairs = append(pairs, Pair{
@@ -1003,7 +1003,7 @@ func (mvcc *MVCCLevelDB) RawReverseScan(startKey, endKey []byte, limit int) []Pa
 			Value: append([]byte{}, value...),
 			Err:   err,
 		})
-		succ = iter.Prev()
+		success = iter.Prev()
 	}
 	return pairs
 }

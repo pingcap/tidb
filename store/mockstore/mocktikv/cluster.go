@@ -215,13 +215,13 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	return nil, nil
 }
 
-// GetRegionByEndKey returns the Region and its leader whose range contains the key.
-func (c *Cluster) GetRegionByEndKey(key []byte) (*metapb.Region, *metapb.Peer) {
+// GetRegionByEndKey returns the Region and its leader of the first region with a start key smaller than end key.
+func (c *Cluster) GetRegionByEndKey(endKey []byte) (*metapb.Region, *metapb.Peer) {
 	c.RLock()
 	defer c.RUnlock()
 
 	for _, r := range c.regions {
-		if regionContainsByEndKey(r.Meta.StartKey, r.Meta.EndKey, key) {
+		if regionContainsByEndKey(r.Meta.StartKey, r.Meta.EndKey, endKey) {
 			return proto.Clone(r.Meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
 		}
 	}

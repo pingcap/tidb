@@ -89,7 +89,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 			Key: key,
 		},
 	}
-	resp, _, err := c.sendReq(key, req, true)
+	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -154,7 +154,7 @@ func (c *RawKVClient) Put(key, value []byte) error {
 			Value: value,
 		},
 	}
-	resp, _, err := c.sendReq(key, req, true)
+	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -199,7 +199,7 @@ func (c *RawKVClient) Delete(key []byte) error {
 			Key: key,
 		},
 	}
-	resp, _, err := c.sendReq(key, req, true)
+	resp, _, err := c.sendReq(key, req, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -286,7 +286,7 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 				Limit:    uint32(limit - len(keys)),
 			},
 		}
-		resp, loc, err := c.sendReq(startKey, req, true)
+		resp, loc, err := c.sendReq(startKey, req, false)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -309,7 +309,9 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 // ReverseScan queries continuous kv pairs, starts from startKey, up to limit pairs.
 func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
-	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_scan").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_reverse_scan").Observe(time.Since(start).Seconds())
+	}()
 
 	if limit > MaxRawKVScanLimit {
 		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
@@ -324,7 +326,7 @@ func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, va
 				Reverse:  true,
 			},
 		}
-		resp, loc, err := c.sendReq(startKey, req, false)
+		resp, loc, err := c.sendReq(startKey, req, true)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -344,16 +346,16 @@ func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, va
 	return
 }
 
-func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, startKey bool) (*tikvrpc.Response, *KeyLocation, error) {
+func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*tikvrpc.Response, *KeyLocation, error) {
 	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		var loc *KeyLocation
 		var err error
-		if startKey {
-			loc, err = c.regionCache.LocateKey(bo, key)
-		} else {
+		if reverse {
 			loc, err = c.regionCache.LocateEndKey(bo, key)
+		} else {
+			loc, err = c.regionCache.LocateKey(bo, key)
 		}
 		if err != nil {
 			return nil, nil, errors.Trace(err)

@@ -322,6 +322,7 @@ func (c *RegionCache) getCachedRegion(id RegionVerID) *Region {
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
 // it should be called with c.mu.RLock(), and the returned Region should not be
 // used after c.mu is RUnlock().
+// if the input key is end key, the second argument is False. for example, use it for reverse scan.
 func (c *RegionCache) searchCachedRegion(key []byte, startKey bool) *Region {
 	var r *Region
 	c.mu.sorted.DescendLessOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
@@ -361,6 +362,7 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
+// if the input key is end key, the second argument is False. for example, use it for reverse scan.
 func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, startKey bool) (*Region, error) {
 	var backoffErr error
 	searchPrev := false
@@ -391,7 +393,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, startKey bool) (*Reg
 		if len(meta.Peers) == 0 {
 			return nil, errors.New("receive Region with no peer")
 		}
-		if !startKey && !searchPrev && bytes.Compare(meta.StartKey, key) == 0 {
+		if !startKey && !searchPrev && bytes.Compare(meta.StartKey, key) == 0 && len(meta.StartKey) != 0 {
 			searchPrev = true
 			continue
 		}
