@@ -360,6 +360,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 			do.SchemaValidator.Restart()
 		case <-do.exit:
+			log.Info("[ddl] reload schema in loop exit.")
 			return
 		}
 	}
@@ -396,7 +397,9 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
+	log.Info("before system session pool exit.")
 	do.sysSessionPool.Close()
+	log.Info("after system session pool exit.")
 	do.wg.Wait()
 	log.Info("[domain] close")
 }
@@ -545,6 +548,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			ok := true
 			select {
 			case <-do.exit:
+				log.Info("[domain] load privilege loop exit.")
 				return
 			case _, ok = <-watchCh:
 			case <-time.After(duration):
@@ -661,6 +665,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 		case <-do.exit:
 			statsHandle.FlushStats()
+			log.Info("[stats] update stats in loop exit.")
 			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
@@ -732,6 +737,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 				}
 			}
 		case <-do.exit:
+			log.Info("[stats] auto analyze exit.")
 			do.wg.Done()
 			return
 		}

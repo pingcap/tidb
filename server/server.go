@@ -288,12 +288,16 @@ func (s *Server) Close() {
 		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
+	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
+}
+
+// CloseStatus closes status server
+func (s *Server) CloseStatus() {
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
 		terror.Log(errors.Trace(err))
 		s.statusServer = nil
 	}
-	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
 
 // onConn runs in its own goroutine, handles queries from this connection.

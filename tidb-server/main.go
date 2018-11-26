@@ -493,5 +493,6 @@ func cleanup() {
 	}
 	dom.Close()
 	err := storage.Close()
+	svr.CloseStatus()
 	terror.Log(errors.Trace(err))
 }
