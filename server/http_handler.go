@@ -774,8 +774,8 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 	}
 	input := map[string]string{
 		"name":       "scatter-range",
-		"start_key":  url.QueryEscape(string(startKey)),
-		"end_key":    url.QueryEscape(string(endKey)),
+		"start_key":  string(startKey),
+		"end_key":    string(endKey),
 		"range_name": name,
 	}
 	v, err := json.Marshal(input)
