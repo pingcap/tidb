@@ -307,7 +307,7 @@ var MySQLErrName = map[uint16]string{
 	ErrFeatureDisabled:                          "The '%s' feature is disabled; you need MySQL built with '%s' to have it working",
 	ErrOptionPreventsStatement:                  "The MySQL server is running with the %s option so it cannot execute this statement",
 	ErrDuplicatedValueInType:                    "Column '%-.100s' has duplicated value '%-.64s' in %s",
-	ErrTruncatedWrongValue:                      "Truncated incorrect %-.32s value: '%-.128s'",
+	ErrTruncatedWrongValue:                      "Truncated incorrect %-.64s value: '%-.128s'",
 	ErrTooMuchAutoTimestampCols:                 "Incorrect table definition; there can be only one TIMESTAMP column with CURRENTTIMESTAMP in DEFAULT or ON UPDATE clause",
 	ErrInvalidOnUpdate:                          "Invalid ON UPDATE clause for '%-.192s' column",
 	ErrUnsupportedPs:                            "This command is not supported in the prepared statement protocol yet",
