@@ -489,7 +489,6 @@ func (do *Domain) mustReload() (exitLoop bool) {
 
 		time.Sleep(time.Second)
 	}
-	return false
 }
 
 // Close closes the Domain and release its resource.
