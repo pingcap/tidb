@@ -46,6 +46,8 @@ var (
 	ErrPsManyParam                 = terror.ClassExecutor.New(mysql.ErrPsManyParam, mysql.MySQLErrName[mysql.ErrPsManyParam])
 	ErrAdminCheckTable             = terror.ClassExecutor.New(mysql.ErrAdminCheckTable, mysql.MySQLErrName[mysql.ErrAdminCheckTable])
 	ErrDBaccessDenied              = terror.ClassExecutor.New(mysql.ErrDBaccessDenied, mysql.MySQLErrName[mysql.ErrDBaccessDenied])
+	ErrTableaccessDenied           = terror.ClassExecutor.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
+	ErrBadDB                       = terror.ClassExecutor.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
 )
 
 func init() {
@@ -59,6 +61,8 @@ func init() {
 		mysql.ErrPsManyParam:                 mysql.ErrPsManyParam,
 		mysql.ErrAdminCheckTable:             mysql.ErrAdminCheckTable,
 		mysql.ErrDBaccessDenied:              mysql.ErrDBaccessDenied,
+		mysql.ErrTableaccessDenied:           mysql.ErrTableaccessDenied,
+		mysql.ErrBadDB:                       mysql.ErrBadDB,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
