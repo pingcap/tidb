@@ -46,7 +46,7 @@ const (
 	codeSnapshotTooOld terror.ErrCode = 3
 )
 
-var preparedStmtCount uint64
+var preparedStmtCount int64
 
 // Error instances.
 var (
@@ -538,10 +538,10 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 // AddPreparedStmt adds prepareStmt to current session and count in global.
 func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt *ast.Prepared) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
-		maxPreparedStmtCount := atomic.LoadUint64(&config.GetGlobalConfig().MaxPreparedStmtCount)
-		newPreparedStmtCount := atomic.AddUint64(&preparedStmtCount, 1)
+		maxPreparedStmtCount := atomic.LoadInt64(&config.GetGlobalConfig().MaxPreparedStmtCount)
+		newPreparedStmtCount := atomic.AddInt64(&preparedStmtCount, 1)
 		if maxPreparedStmtCount > 0 && newPreparedStmtCount > maxPreparedStmtCount {
-			atomic.AddUint64(&preparedStmtCount, ^uint64(0))
+			atomic.AddInt64(&preparedStmtCount, -1)
 			return ErrMaxPreparedStmtCountReached.GenWithStackByArgs(maxPreparedStmtCount)
 		}
 		metrics.PreparedStmtGauge.Set(float64(newPreparedStmtCount))
@@ -557,8 +557,8 @@ func (s *SessionVars) RemovePreparedStmt(stmtID uint32) {
 		return
 	}
 	delete(s.PreparedStmts, stmtID)
-	atomic.AddUint64(&preparedStmtCount, ^uint64(0))
-	metrics.PreparedStmtGauge.Set(float64(atomic.LoadUint64(&preparedStmtCount)))
+	afterMinus := atomic.AddInt64(&preparedStmtCount, -1)
+	metrics.PreparedStmtGauge.Set(float64(afterMinus))
 }
 
 // WithdrawAllPreparedStmt remove all preparedStmt in current session and decrease count in global.
@@ -567,8 +567,8 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	if psCount == 0 {
 		return
 	}
-	atomic.AddUint64(&preparedStmtCount, ^uint64(psCount-1))
-	metrics.PreparedStmtGauge.Set(float64(atomic.LoadUint64(&preparedStmtCount)))
+	afterMinus := atomic.AddInt64(&preparedStmtCount, -int64(psCount))
+	metrics.PreparedStmtGauge.Set(float64(afterMinus))
 }
 
 // SetSystemVar sets the value of a system variable.
@@ -605,11 +605,11 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
 	case MaxPreparedStmtCount:
-		maxPsStmt, err := strconv.ParseUint(val, 10, 64)
+		maxPsStmt, err := strconv.ParseInt(val, 10, 64)
 		if err != nil {
 			maxPsStmt = DefMaxPreparedStmtCount
 		}
-		atomic.StoreUint64(&config.GetGlobalConfig().MaxPreparedStmtCount, maxPsStmt)
+		atomic.StoreInt64(&config.GetGlobalConfig().MaxPreparedStmtCount, maxPsStmt)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
