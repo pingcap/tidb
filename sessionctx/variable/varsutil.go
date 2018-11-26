@@ -89,6 +89,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
 	case TiDBQueryLogMaxLen:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
+	case MaxPreparedStmtCount:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().MaxPreparedStmtCount), 10), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -292,6 +294,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 1024, math.MaxUint64, vars)
 	case WaitTimeout:
 		return checkUInt64SystemVar(name, value, 1, 31536000, vars)
+	case MaxPreparedStmtCount:
+		return checkUInt64SystemVar(name, value, 0, 1048576, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil

@@ -241,6 +241,7 @@ const (
 	DefMaxChunkSize                  = 32
 	DefDMLBatchSize                  = 20000
 	DefWaitTimeout                   = 28800
+	DefMaxPreparedStmtCount          = 16382
 	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
