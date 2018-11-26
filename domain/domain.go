@@ -657,10 +657,10 @@ func (p *sessionPool) Close() {
 	}
 	p.mu.closed = true
 
+	close(p.resources)
 	for r := range p.resources {
 		r.Close()
 	}
-	close(p.resources)
 }
 
 // SysSessionPool returns the system session pool.
