@@ -1373,6 +1373,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.MaxAllowedPacket + quoteCommaQuote +
 	variable.TimeZone + quoteCommaQuote +
 	variable.BlockEncryptionMode + quoteCommaQuote +
+	variable.WaitTimeout + quoteCommaQuote +
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check + quoteCommaQuote +
 	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +
