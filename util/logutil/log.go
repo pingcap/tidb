@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -79,7 +79,7 @@ type contextHook struct{}
 // Fire implements logrus.Hook interface
 // https://github.com/sirupsen/logrus/issues/63
 func (hook *contextHook) Fire(entry *log.Entry) error {
-	pc := make([]uintptr, 3)
+	pc := make([]uintptr, 4)
 	cnt := runtime.Callers(6, pc)
 
 	for i := 0; i < cnt; i++ {

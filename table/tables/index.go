@@ -19,6 +19,7 @@ import (
 	"io"
 	"unicode/utf8"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pkg/errors"
 )
 
 // EncodeHandle encodes handle in data.

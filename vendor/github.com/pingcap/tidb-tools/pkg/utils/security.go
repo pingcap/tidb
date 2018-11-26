@@ -18,7 +18,7 @@ import (
 	"crypto/x509"
 	"io/ioutil"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 // ToTLSConfig generates tls's config.

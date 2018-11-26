@@ -22,12 +22,12 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/mvcc/mvccpb"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/errors"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pb "github.com/pingcap/tipb/go-binlog"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
