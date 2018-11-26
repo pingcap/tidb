@@ -67,6 +67,7 @@ func (s *MockSchemaSyncer) Done() <-chan struct{} {
 	return s.mockSession
 }
 
+// CloseSession mockSession, it is exported for testing.
 func (s *MockSchemaSyncer) CloseSession() {
 	close(s.mockSession)
 }
