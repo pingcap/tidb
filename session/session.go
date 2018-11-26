@@ -487,8 +487,7 @@ func (s *session) isRetryableError(err error) bool {
 	if SchemaChangedWithoutRetry {
 		return kv.IsRetryableError(err)
 	}
-	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err) ||
-		domain.ErrSchemaValidatorStopped.Equal(err)
+	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) error {

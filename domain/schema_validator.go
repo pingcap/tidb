@@ -28,8 +28,6 @@ const (
 	ResultSucc checkResult = iota
 	// ResultFail means schemaValidator's check is fail.
 	ResultFail
-	// ResultStopped means schemaValidator is stopped.
-	ResultStopped
 	// ResultUnknown means schemaValidator doesn't know the check would be success or fail.
 	ResultUnknown
 )
@@ -177,7 +175,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	defer s.mux.RUnlock()
 	if !s.isStarted {
 		log.Infof("[domain-ddl] the schema validator stopped before checking")
-		return ResultStopped
+		return ResultUnknown
 	}
 	if s.lease == 0 {
 		return ResultSucc

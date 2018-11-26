@@ -52,9 +52,6 @@ func (s *SchemaChecker) Check(txnTS uint64) error {
 		switch result {
 		case ResultSucc:
 			return nil
-		case ResultStopped:
-			metrics.SchemaLeaseErrorCounter.WithLabelValues("stopped").Inc()
-			return ErrSchemaValidatorStopped
 		case ResultFail:
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
 			return ErrInfoSchemaChanged

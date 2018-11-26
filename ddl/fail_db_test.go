@@ -224,7 +224,7 @@ func (s *testDBSuite) TestFailSchemaSyncer(c *C) {
 	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
 	_, err := tk.Exec("insert into t values(1)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[domain:3]Schema validator is stopped, it means TiDB is disconnected from the pd/etcd.")
+	c.Assert(err.Error(), Equals, "[domain:1]Information schema is out of date.")
 	s.dom.MockReloadFailed.SetValue(false)
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {
