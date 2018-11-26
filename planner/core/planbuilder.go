@@ -458,7 +458,7 @@ func (b *PlanBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
 	}.Init(b.ctx)
-	is.stats = &property.StatsInfo{}
+	is.stats = property.NewSimpleStats(0)
 	cop := &copTask{indexPlan: is}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.Init(b.ctx)
@@ -571,7 +571,7 @@ func (b *PlanBuilder) buildPhysicalIndexScan(dbName model.CIStr, tblInfo *model.
 		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
 	}.Init(b.ctx)
-	is.stats = &statsInfo{}
+	is.stats = property.NewSimpleStats(0)
 	cop := &copTask{indexPlan: is}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.Init(b.ctx)
@@ -647,8 +647,8 @@ func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, erro
 			return nil, errors.Trace(err)
 		}
 		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
-		genColumnName := model.GetTableColumnID(tableInfo, column.ColumnInfo)
-		p.GenExprs[genColumnName] = expr
+		genColumnID := model.TableColumnID{TableID: tableInfo.ID, ColumnID: column.ColumnInfo.ID}
+		p.GenExprs[genColumnID] = expr
 	}
 
 	readerPlans, indices, err := b.buildPhysicalIndexScans(tbl.Schema, as)

@@ -268,7 +268,7 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
+func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	readerExecs := make([]*IndexLookUpExecutor, 0, len(v.IndexLookUpReaders))
 	for _, readerPlan := range v.IndexLookUpReaders {
 		readerExec, err := buildNoRangeIndexLookUpReader(b, readerPlan)

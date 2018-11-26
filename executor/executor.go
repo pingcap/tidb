@@ -451,7 +451,13 @@ func (e *CheckTableExec) Close() error {
 }
 
 func (e *CheckTableExec) checkIndex(ctx context.Context, src *IndexLookUpExecutor) error {
-	chk := src.newChunk()
+	cols := src.schema.Columns
+	retFieldTypes := make([]*types.FieldType, len(cols))
+	for i := range cols {
+		retFieldTypes[i] = cols[i].RetType
+	}
+	chk := chunk.New(retFieldTypes, e.initCap, e.maxChunkSize)
+	log.Warnf(".................. types %v, cols %v", retFieldTypes, cols)
 	for {
 		err := src.Next(ctx, chk)
 		if err != nil {
@@ -490,7 +496,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		log.Warnf("check table, greater %v index %s error %v", greater, idxNames[idxOffset], errors.ErrorStack(err))
 		t := e.srcs[idxOffset].table
-		txn := e.ctx.Txn()
+		txn := e.ctx.Txn(true)
 		if greater == admin.IdxCntGreater {
 			err = e.checkIndex(ctx, e.srcs[idxOffset])
 		} else {
@@ -501,7 +507,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			}
 		}
 		if err != nil && admin.ErrDataInConsistent.Equal(err) {
-			return ErrAdminCheckTable.Gen("%v err:%v", t.Meta().Name, err)
+			return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Meta().Name, err)
 		}
 		return errors.Trace(err)
 	}
