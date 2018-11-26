@@ -609,7 +609,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 type sessionPool struct {
 	resources chan pools.Resource
 	factory   pools.Factory
-	closed    int64
+	mu        struct {
+		sync.RWMutex
+		closed bool
+	}
 }
 
 func newSessionPool(cap int, factory pools.Factory) *sessionPool {
@@ -633,9 +636,13 @@ func (p *sessionPool) Get() (resource pools.Resource, err error) {
 }
 
 func (p *sessionPool) Put(resource pools.Resource) {
-	if atomic.LoadInt64(&p.closed) != 0 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.mu.closed {
+		resource.Close()
 		return
 	}
+
 	select {
 	case p.resources <- resource:
 	default:
@@ -643,9 +650,13 @@ func (p *sessionPool) Put(resource pools.Resource) {
 	}
 }
 func (p *sessionPool) Close() {
-	if !atomic.CompareAndSwapInt64(&p.closed, 0, 1) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.mu.closed {
 		return
 	}
+	p.mu.closed = true
+
 	for r := range p.resources {
 		r.Close()
 	}
