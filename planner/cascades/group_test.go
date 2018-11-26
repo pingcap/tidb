@@ -85,3 +85,21 @@ func (s *testCascadesSuite) TestGroupExists(c *C) {
 	g.Delete(expr)
 	c.Assert(g.Exists(expr), IsFalse)
 }
+
+func (s *testCascadesSuite) TestGroupGetFirstElem(c *C) {
+	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
+	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx))
+	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
+	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx))
+	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
+
+	g := NewGroup(expr0)
+	g.Insert(expr1)
+	g.Insert(expr2)
+	g.Insert(expr3)
+	g.Insert(expr4)
+
+	c.Assert(g.GetFirstElem(OperandProjection).Value.(*GroupExpr), Equals, expr0)
+	c.Assert(g.GetFirstElem(OperandLimit).Value.(*GroupExpr), Equals, expr1)
+	c.Assert(g.GetFirstElem(OperandAny).Value.(*GroupExpr), Equals, expr0)
+}
