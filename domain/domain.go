@@ -905,8 +905,9 @@ func recoverInDomain(funcName string, quit bool) {
 
 // Domain error codes.
 const (
-	codeInfoSchemaExpired terror.ErrCode = 1
-	codeInfoSchemaChanged terror.ErrCode = 2
+	codeInfoSchemaExpired      terror.ErrCode = 1
+	codeInfoSchemaChanged      terror.ErrCode = 2
+	codeSchemaValidatorStopped terror.ErrCode = 3
 )
 
 var (
@@ -914,6 +915,8 @@ var (
 	ErrInfoSchemaExpired = terror.ClassDomain.New(codeInfoSchemaExpired, "Information schema is out of date.")
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
 	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged, "Information schema is changed.")
+	// ErrSchemaValidatorStopped returns the error that schema validator is stopped.
+	ErrSchemaValidatorStopped = terror.ClassDomain.New(codeSchemaValidatorStopped, "Schema validator is stopped, it means TiDB is disconnected from the pd/etcd.")
 )
 
 func init() {
