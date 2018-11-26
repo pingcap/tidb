@@ -197,3 +197,31 @@ func (s *testDBSuite) TestAddIndexFailed(c *C) {
 	tk.MustExec("admin check index t idx_b")
 	tk.MustExec("admin check table t")
 }
+
+// TestFailSchemaSyncer test when the schema syncer is done,
+// should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
+func (s *testDBSuite) TestFailSchemaSyncer(c *C) {
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
+	c.Assert(ok, IsTrue)
+	s.dom.MockReloadFailed.SetValue(true)
+	mockSyncer.CloseSession()
+	// wait the schemaValidator is stopped.
+	for i := 0; i < 50; i++ {
+		time.Sleep(20 * time.Millisecond)
+		if s.dom.SchemaValidator.IsStarted() == false {
+			break
+		}
+	}
+
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
+	s.dom.MockReloadFailed.SetValue(false)
+	// wait the schemaValidator is started.
+	for i := 0; i < 10; i++ {
+		time.Sleep(500 * time.Millisecond)
+		if s.dom.SchemaValidator.IsStarted() == true {
+			break
+		}
+	}
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+}

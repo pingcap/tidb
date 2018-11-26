@@ -47,6 +47,8 @@ type SchemaValidator interface {
 	Restart()
 	// Reset resets SchemaValidator to initial state.
 	Reset()
+	// IsStarted indicates whether SchemaValidator is started.
+	IsStarted() bool
 }
 
 type deltaSchemaInfo struct {
@@ -71,6 +73,13 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 		lease:            lease,
 		deltaSchemaInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
 	}
+}
+
+func (s *schemaValidator) IsStarted() bool {
+	s.mux.Lock()
+	isStarted := s.isStarted
+	s.mux.Unlock()
+	return isStarted
 }
 
 func (s *schemaValidator) Stop() {
