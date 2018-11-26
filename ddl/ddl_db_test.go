@@ -1447,9 +1447,14 @@ func (s *testDBSuite) TestTableForeignKey(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("create table t1 (a int, b int);")
+	// test create table with foreign key.
 	failSQL := "create table t2 (c int, foreign key (a) references t1(a));"
 	s.testErrorCode(c, failSQL, tmysql.ErrKeyColumnDoesNotExits)
-	s.tk.MustExec("drop table if exists t1,t2;")
+	// test add foreign key.
+	s.tk.MustExec("create table t3 (a int, b int);")
+	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
+	s.testErrorCode(c, failSQL, tmysql.ErrKeyColumnDoesNotExits)
+	s.tk.MustExec("drop table if exists t1,t2,t3;")
 }
 
 func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
