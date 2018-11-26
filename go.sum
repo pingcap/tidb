@@ -288,6 +288,12 @@ github.com/tiancaiamao/appdash v0.0.0-20180531100431-4c381bd170b4 h1:5bjWl6aDMoS
 github.com/tiancaiamao/appdash v0.0.0-20180531100431-4c381bd170b4/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/appdash v0.0.0-20181119072148-76031cd9221b h1:BQ//2HJMFUzwB/1F93AO1dIrFbQ7WkpGwGTaXTjIT4U=
 github.com/tiancaiamao/appdash v0.0.0-20181119072148-76031cd9221b/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
+github.com/tiancaiamao/appdash v0.0.0-20181123031933-95fc874caf9b h1:e0zfdwJxNFWpZ1MQLzaiQWj1Y+K3zpYnXa9ITsqEfxc=
+github.com/tiancaiamao/appdash v0.0.0-20181123031933-95fc874caf9b/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
+github.com/tiancaiamao/appdash v0.0.0-20181123161744-e4cb055678c5 h1:zdCNw1GrvITrMxw1iAM8kY7SFdElwXJjS6il6GhGPS8=
+github.com/tiancaiamao/appdash v0.0.0-20181123161744-e4cb055678c5/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
+github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
+github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/parser v0.0.0-20181119080529-4f0494809ee4 h1:lhhW5L1FEVc/3+I5H15FkGebWwiulJCYlUplxsafYaw=
 github.com/tiancaiamao/parser v0.0.0-20181119080529-4f0494809ee4/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
 github.com/tiancaiamao/parser v0.0.0-20181119121440-cb1b3dd4f1d7 h1:aqm88+aLvVg92zsePFhq7wOhwc07wpGYAi2dCfUisUk=
@@ -413,3 +419,5 @@ honnef.co/go/tools v0.0.0-20180728063816-88497007e858/go.mod h1:rf3lG4BRIbNafJWh
 honnef.co/go/tools v0.0.0-20180920025451-e3ad64cb4ed3/go.mod h1:rf3lG4BRIbNafJWhAfAdb/ePZxsR/4RtNHQocxwk9r4=
 sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4 h1:VO9oZbbkvTwqLimlQt15QNdOOBArT2dw/bvzsMZBiqQ=
 sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4/go.mod h1:hI742Nqp5OhwiqlzhgfbWU4mW4yO10fP+LoT9WOswdU=
+sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67 h1:e1sMhtVq9AfcEy8AXNb8eSg6gbzfdpYhoNqnPJa+GzI=
+sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67/go.mod h1:L5q+DGLGOQFpo1snNEkLOJT2d1YTW66rWNzatr3He1k=
