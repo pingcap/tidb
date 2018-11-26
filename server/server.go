@@ -355,17 +355,17 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 }
 
 func killConn(conn *clientConn, query bool) {
+	if !query {
+		// Mark the client connection status as WaitShutdown, when the goroutine detect
+		// this, it will end the dispatch loop and exit.
+		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+	}
+
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
 	if cancelFunc != nil {
 		cancelFunc()
-	}
-
-	if !query {
-		// Mark the client connection status as WaitShutdown, when the goroutine detect
-		// this, it will end the dispatch loop and exit.
-		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
 	}
 }
 
