@@ -570,6 +570,18 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb/abc"))
 	c.Assert(err, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/db-table/5"))
+	c.Assert(err, IsNil)
+	var dbtbl *dbTableInfo
+	decoder = json.NewDecoder(resp.Body)
+	err = decoder.Decode(&dbtbl)
+	c.Assert(err, IsNil)
+	c.Assert(dbtbl.TableInfo.Name.L, Equals, "user")
+	c.Assert(dbtbl.DBInfo.Name.L, Equals, "mysql")
+	se, err := session.CreateSession(ts.store.(kv.Storage))
+	c.Assert(err, IsNil)
+	c.Assert(dbtbl.SchemaVersion, Equals, domain.GetDomain(se.(sessionctx.Context)).InfoSchema().SchemaMetaVersion())
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
