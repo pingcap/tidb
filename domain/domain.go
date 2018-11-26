@@ -498,7 +498,7 @@ func (do *Domain) mustReload() (exitLoop bool) {
 		default:
 		}
 
-		time.Sleep(time.Second)
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
