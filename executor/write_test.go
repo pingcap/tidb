@@ -2099,3 +2099,11 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	tk.MustExec(`insert into t (b) values (6);`)
 	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
 }
+
+func (s *testSuite) TestDefEnumInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
+	tk.MustExec("insert into test (id)  values (1)")
+	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
+}
