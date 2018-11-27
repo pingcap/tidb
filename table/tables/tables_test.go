@@ -341,7 +341,7 @@ PARTITION BY RANGE ( id ) (
 )`
 	_, err := ts.se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
@@ -460,7 +460,8 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 		_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
 		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
-
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
+	c.Assert(err, IsNil)
 }
 
 // TestPartitionGetPhysicalID tests partition.GetPhysicalID().
