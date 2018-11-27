@@ -240,7 +240,7 @@ const (
 	DefCurretTS                      = 0
 	DefMaxChunkSize                  = 32
 	DefDMLBatchSize                  = 20000
-	DefMaxPreparedStmtCount          = 16382
+	DefMaxPreparedStmtCount          = -1
 	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
