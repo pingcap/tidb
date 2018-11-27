@@ -5,13 +5,14 @@
 - Discussion at: https://github.com/pingcap/tidb/issues/7974
 
 ## Abstract
-This proposal proposes to implement VIEW feature in TiDB, aimed to make SQL easier to write.
+This proposal proposes to implement basic VIEW feature in TiDB, aimed to make SQL easier to write. VIEW's advanced feature would be considered later.
 
 ## Background
 A database view is a searchable object in a database that is defined by a query. Though a view doesn’t store data, some refer to a VIEW as "virtual tables", and you can query a view like you can query a table. A view can combine data from two or more tables, using joins, and also just contain a subset of information. This makes them convenient to abstract, or hide, complicated queries.
 
 Below is a visual depiction of a view:
-  ![AnatomyOfAview](imgs/view.png)
+  ![AnatomyOfAview](imgs/view.png)   
+  reference from https://www.essentialsql.com/what-is-a-relational-database-view/
   
 A view is created from a query using the "`CREATE OR REPLACE VIEW`" command. In the example below we are creating a PopularBooks view based on a query which selects all Books that have the IsPopular field checked. Following is the query:
 ```mysql
@@ -28,53 +29,23 @@ SELECT Author, Title FROM PopularBooks ORDER BY Author
 In general you can use any of the SELECT clauses, such as GROUP BY, in a select statement containing a view.
 
 ## Proposal
-I implement the "`CREATE OR REPLACE`" command to create a view with the `SELECT` statement, implement "`DROP VIEW`" to drop a view, and "`SHOW FULL TABLES`" can also display the view list with different table types. The "`SHOW CREATE TABlE`" command can also regenerate a view create command.
+This proposal is aimed to implement basic VIEW feature, which contains "CREATE OR REPLACE VIEW", "SELECT FROM VIEW", "DROP VIEW" and "SHOW TABLE STATUS". All other unimplemented feature will list as compatibility and discuss later.
+and we mainly introduce new struct named `ViewInfo` to store view's metadata.
 
 ## Rationale
 `VIEW` is just a `TableInfo` object store with a `ViewInfo` struct, and only supports limited DDL operations.  
-Let me describe more details about the view DDL operation:
-1. Create a VIEW  
-    1. Parse the create view statement and build a logical plan for select cause part. If any grammar error occurs, return errors to parser.   
-    2. Examine view definer's privileges. Definer should own both `CREATE_VIEW` and base table's `SELECT` privileges.  
-    3. Examine create view statement, If ViewFieldList cause part is empty, then we should generate view column names from SelectStmt cause. Otherwise check len(ViewFieldList) == len(Columns from SelectStmt). And then we save column names to `TableInfo.Columns`.
-    4. Test SELECT cause with following extra rules to see if this view is updatable. This part is difficult, following rules need more details.
-        * There must be no duplicate view column names.
-        * The view must contain all columns in the base table that do not have a default value.
-        * The view columns must be simple column references. They must not be expressions or const expressions.  
-    5. Store the view definition into following tables
-        * `INFORMATION_SCHEMA.VIEWS` lists one row for each view, this need to be done later.
-        * `INFORMATION_SCHEMA.VIEW_COLUMN_USAGE` lists one row for each column in a view including the base table of the column where possible   
-        * `INFORMATION_SCHEMA.VIEW_TABLE_USAGE` lists one row for each table used in a view 
-      
-2. Drop a view  
-  Implement DROP VIEW grammar, and delete the existing view tableinfo object.  
-3. Select from a view  
-  3.1 In function `func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error)`, if `tn *ast.TableName` is a view, then we build a select `LogicalPlan` from view's view_select string.
-      The most important part is we build a `Projection` with `TableInfo.Columns` and `ViewInfo.Cols` at top of select's `LogicalPlan`.  
-4. Insert/Update into a view  
-  This is view's advanced feature, we will discuss this later. 
-5. Describe a view  
-  Generate the view select logicalplan. If any error occurs, return the error to parser. Otherwise, return `SELECT` cause's column info.
-6. Show Create Table
-  Regenerate create view statement from `TableInfo`.
-
-## Compatibility
-It makes TiDB more compatible with MySQL.
-
-## Implementation
-We define a new struct named `ViewInfo`:
-```go
+Here is `ViewInfo`'s attributes and detail attribute explaination:
+```
 type ViewInfo struct {
 	Algorithm   AlgorithmType    `json:"view_algorithm"`
 	Definer     string           `json:"view_definer"`  
 	Security    SecurityType     `json:"view_security""`
 	SelectStmt  string           `json:"view_select"`
 	CheckOption CheckOptionType  `json:"view_checkoption"`
-	isUpdatable bool             `json:"view_isUpdatable"`
 	Cols        []string         `json:"view_cols"`
+	isUpdatable bool             `json:"view_isUpdatable"`
 }
 ```
-Here is the detail explaination about viewinfo parameters:
 * AlgorithmType  
     The view SQL AlGORITHM characteristic. The value is one of UNDEFINED、MERGE OR TEMPTABLE, if no ALGORITHM clause is present, UNDEFINED is the default algorithm.
     We will implement Algorithm=UNDEFINED only now.
@@ -90,11 +61,45 @@ Here is the detail explaination about viewinfo parameters:
 * SelectStmt
     This string is the select sql statement after sql rewriter.
 * Cols
-    This string array is the view's origin column names.
+    This string array is the view's column alias names.
 * TableInfo.Columns
-    `TableInfo.Columns` only stores view's column alias names, if no alias name specific, it stores the same values as `ViewInfo.Cols`.
+    `TableInfo.Columns` only stores view's column origin names, if no alias name specific, it stores the same values as `ViewInfo.Cols`.
 
 We add `ViewInfo` struct point which named `View` to `TableInfo`. If `&View` is nil, then this tableinfo is a base table, else this tableinfo is a view. 
+ 
+Let me describe more details about the view DDL operation:
+1. Create VIEW  
+   This proposal only support following grammar to create view:
+   ```mysql
+    CREATE
+        [OR REPLACE]
+        [ALGORITHM = {UNDEFINED | MERGE | TEMPTABLE}]
+        [DEFINER = { user | CURRENT_USER }]
+        [SQL SECURITY { DEFINER | INVOKER }]
+        VIEW view_name [(column_list)]
+        AS select_statement
+        [WITH [CASCADED | LOCAL] CHECK OPTION]
+    ```
+    1. Parse the create view statement and build a logical plan for select cause part. If any grammar error occurs, return errors to parser.   
+    2. Examine view definer's privileges. Definer should own both `CREATE_VIEW` and base table's `SELECT` privileges.  
+    3. Examine create view statement, If ViewFieldList cause part is empty, then we should generate view column names from SelectStmt cause. Otherwise check len(ViewFieldList) == len(Columns from SelectStmt). And then we save column names to `TableInfo.Columns` .
+      
+2. Drop a view  
+  Implement `DROP VIEW` grammar, and delete the existing view tableinfo object. This function should reuse `DROP TABLE` code logical
+3. Select from a view  
+  3.1 In function `func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error)`, if `tn *ast.TableName` is a view, then we build a select `LogicalPlan` from view's view_select string.
+      The most important part is we build a `Projection` with `TableInfo.Columns` and `ViewInfo.Cols` at top of select's `LogicalPlan`.  
+4. Insert/Update into a view  
+  This is view's advanced feature, we will discuss this later. 
+5. Describe a view  
+  Generate the view select logicalplan. If any error occurs, return the error to parser. Otherwise, return `SELECT` cause's column info.
+6. Show Create Table
+  Regenerate create view statement from `TableInfo`.
+
+## Compatibility
+It makes TiDB more compatible with MySQL.
+
+## Implementation
 
 Following is the main implementation details:  
 1. ast/ddl.go  
