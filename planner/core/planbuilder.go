@@ -175,7 +175,7 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
 	case *ast.PrepareStmt:
-		return b.buildPrepare(x)
+		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
 		return b.buildSelect(x)
 	case *ast.UnionStmt:
@@ -396,7 +396,7 @@ func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) 
 	return selectLock
 }
 
-func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) (Plan, error) {
+func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	p := &Prepare{
 		Name: x.Name,
 	}
@@ -409,7 +409,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) (Plan, error) {
 	} else {
 		p.SQLText = x.SQLText
 	}
-	return p, nil
+	return p
 }
 
 func (b *PlanBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Plan, error) {
