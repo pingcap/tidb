@@ -222,7 +222,7 @@ func (cc *clientConn) getSessionVarsWaitTimeout() uint64 {
 	if err != nil {
 		log.Errorf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
 		// if get waitTimeout error, use default value
-		waitTimeout, _ = strconv.ParseUint(variable.WaitTimeoutDefaultValue, 10, 64)
+		waitTimeout = variable.DefWaitTimeout
 	}
 	return waitTimeout
 }

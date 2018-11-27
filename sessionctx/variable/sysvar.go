@@ -535,7 +535,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_buffer_pool_size", "134217728"},
 	{ScopeGlobal, "innodb_adaptive_flushing", "ON"},
 	{ScopeNone, "datadir", "/usr/local/mysql/data/"},
-	{ScopeGlobal | ScopeSession, WaitTimeout, WaitTimeoutDefaultValue},
+	{ScopeGlobal | ScopeSession, WaitTimeout, strconv.FormatInt(DefWaitTimeout, 10)},
 	{ScopeGlobal, "innodb_monitor_enable", ""},
 	{ScopeNone, "date_format", "%Y-%m-%d"},
 	{ScopeGlobal, "innodb_buffer_pool_filename", "ib_buffer_pool"},
@@ -776,8 +776,6 @@ const (
 	BlockEncryptionMode = "block_encryption_mode"
 	// WaitTimeout is the name for 'wait_timeout' system variable.
 	WaitTimeout = "wait_timeout"
-	// WaitTimeoutDefaultValue is the default value of 'wait_timeout' system variable.
-	WaitTimeoutDefaultValue = "28800"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
