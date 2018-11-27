@@ -83,7 +83,7 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
 		if err != nil {
@@ -104,7 +104,7 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	for chk.NumRows() < e.maxChunkSize {
+	for chk.NumRows() < chk.Capacity() {
 		if e.Idx >= len(e.rowPtrs) {
 			return nil
 		}
@@ -186,7 +186,8 @@ func (e *SortExec) buildKeyChunks() error {
 	e.keyChunks.GetMemTracker().AttachTo(e.memTracker)
 
 	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
-		keyChk := chunk.NewChunkWithCapacity(e.keyTypes, e.rowChunks.GetChunk(chkIdx).NumRows())
+		rows := e.rowChunks.GetChunk(chkIdx).NumRows()
+		keyChk := chunk.New(e.keyTypes, rows, rows)
 		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
 		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
 		if err != nil {
@@ -314,7 +315,7 @@ func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	if !e.fetched {
 		e.totalLimit = e.limit.Offset + e.limit.Count
 		e.Idx = int(e.limit.Offset)
@@ -331,7 +332,7 @@ func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	for chk.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
+	for chk.NumRows() < chk.Capacity() && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 		chk.AppendRow(row)
 		e.Idx++
@@ -378,7 +379,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	}
 	var childKeyChk *chunk.Chunk
 	if e.keyChunks != nil {
-		childKeyChk = chunk.NewChunkWithCapacity(e.keyTypes, e.maxChunkSize)
+		childKeyChk = chunk.New(e.keyTypes, e.initCap, e.maxChunkSize)
 	}
 	childRowChk := e.children[0].newFirstChunk()
 	for {
@@ -410,7 +411,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 
 func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error {
 	if childKeyChk != nil {
-		childKeyChk.Reset()
+		childKeyChk.GrowAndReset(e.maxChunkSize)
 		err := expression.VectorizedExecute(e.ctx, e.keyExprs, chunk.NewIterator4Chunk(childRowChk), childKeyChk)
 		if err != nil {
 			return errors.Trace(err)
