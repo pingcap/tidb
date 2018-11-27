@@ -16,6 +16,7 @@ package variable
 import (
 	"crypto/tls"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	"strconv"
 )
 
 const (

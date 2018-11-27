@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
-	"strconv"
 )
 
 var _ = Suite(&testPrepareSuite{})
