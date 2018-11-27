@@ -511,7 +511,8 @@ func DatumToConstant(d types.Datum, tp byte) *Constant {
 }
 
 // GetParamExpression generate a getparam function expression.
-func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, useCache bool) (Expression, error) {
+func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expression, error) {
+	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.DefaultParamTypeForValue(v.GetValue(), tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
@@ -525,4 +526,58 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, useCa
 		value.DeferredExpr = f
 	}
 	return value, nil
+}
+
+// ParamToByItemNode generate ByItem node from ParamMarkerExpr.
+func ParamToByItemNode(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (*ast.ByItem, bool, error) {
+	value, err := GetParamExpression(ctx, v)
+	if err != nil {
+		return nil, true, errors.Trace(err)
+	}
+	str, isNull, err := GetStringFromConstant(ctx, value)
+	if err != nil {
+		return nil, true, errors.Trace(err)
+	}
+	if isNull {
+		return nil, true, nil
+	}
+	pos, err := strconv.Atoi(str)
+	if err == nil {
+		byItem := &ast.ByItem{Expr: &ast.PositionExpr{N: pos, P: v}}
+		return byItem, false, nil
+	}
+	return nil, true, nil
+}
+
+// GetStringFromConstant gets a string value from the Constant expression.
+func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bool, error) {
+	con, ok := value.(*Constant)
+	if !ok {
+		err := errors.Errorf("Not a Constant expression %+v", value)
+		return "", true, errors.Trace(err)
+	}
+	str, isNull, err := con.EvalString(ctx, chunk.Row{})
+	if err != nil {
+		return "", true, errors.Trace(err)
+	}
+	if isNull {
+		return "", true, nil
+	}
+	return str, false, nil
+}
+
+// GetIntFromConstant gets an interger value from the Constant expression.
+func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, error) {
+	str, isNull, err := GetStringFromConstant(ctx, value)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	if isNull {
+		return 0, true, nil
+	}
+	intNum, err := strconv.Atoi(str)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	return intNum, false, nil
 }

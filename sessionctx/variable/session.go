@@ -174,6 +174,7 @@ type SessionVars struct {
 	MemQuota
 	BatchSize
 	RetryLimit          int64
+	InPrepare           bool
 	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
