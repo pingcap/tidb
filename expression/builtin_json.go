@@ -748,7 +748,7 @@ func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bo
 	}
 	_, err = json.ParseBinaryFromString(str)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, false, nil
 	}
 	return 1, false, nil
 }
