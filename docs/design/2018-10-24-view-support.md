@@ -29,7 +29,7 @@ SELECT Author, Title FROM PopularBooks ORDER BY Author
 In general you can use any of the SELECT clauses, such as GROUP BY, in a select statement containing a view.
 
 ## Proposal
-This proposal is aimed to implement basic VIEW feature, which contains "CREATE OR REPLACE VIEW", "SELECT FROM VIEW", "DROP VIEW" and "SHOW TABLE STATUS". All other unimplemented feature will list as compatibility and discuss later.
+This proposal is prepared to implement basic VIEW feature, which contains "CREATE OR REPLACE VIEW", "SELECT FROM VIEW", "DROP VIEW" and "SHOW TABLE STATUS". All other unimplemented feature will list as compatibility and discuss later.
 and we mainly introduce new struct named `ViewInfo` to store view's metadata.
 
 ## Rationale
@@ -41,22 +41,22 @@ type ViewInfo struct {
 	Definer     string           `json:"view_definer"`  
 	Security    SecurityType     `json:"view_security""`
 	SelectStmt  string           `json:"view_select"`
-	CheckOption CheckOptionType  `json:"view_checkoption"`
+	CheckOption CheckOption      `json:"view_checkoption"`
 	Cols        []string         `json:"view_cols"`
-	isUpdatable bool             `json:"view_isUpdatable"`
+	IsUpdatable bool             `json:"view_isUpdatable"`
 }
 ```
-* AlgorithmType  
+* AlgorithmType  ref https://dev.mysql.com/doc/refman/5.7/en/view-algorithms.html   
     The view SQL AlGORITHM characteristic. The value is one of UNDEFINED、MERGE OR TEMPTABLE, if no ALGORITHM clause is present, UNDEFINED is the default algorithm.
     We will implement Algorithm=UNDEFINED only now.
-* DEFINER  
+* Definer  ref https://dev.mysql.com/doc/refman/5.7/en/create-view.html  
     The account of the user who created the view, in 'user_name'@'host_name' format.
-* SECURITYTYPE  
+* SecurityType  ref https://dev.mysql.com/doc/refman/5.7/en/create-view.html  
     The view SQL SECURITY characteristic. The value is one of DEFINER or INVOKER.
-* CheckOptionType  
+* CheckOptionType  ref https://dev.mysql.com/doc/refman/5.7/en/view-check-option.html  
     The WITH CHECK OPTION clause can be given for an updatable view to prevent inserts to rows for which the WHERE clause in the select_statement is not true. It also prevents updates to rows for which the WHERE clause is true but the update would cause it to be not true (in other words, it prevents visible rows from being updated to nonvisible rows).  
     In a WITH CHECK OPTION clause for an updatable view, the LOCAL and CASCADED keywords determine the scope of check testing when the view is defined in terms of another view. When neither keyword is given, the default is CASCADED.
-* isUpdatable  
+* IsUpdatable  ref https://dev.mysql.com/doc/refman/5.7/en/view-updatability.html  
     This parameter mark if this view is updatable.
 * SelectStmt
     This string is the select sql statement after sql rewriter.
@@ -70,7 +70,7 @@ We add `ViewInfo` struct point which named `View` to `TableInfo`. If `&View` is 
 Let me describe more details about the view DDL operation:
 1. Create VIEW  
    This proposal only support following grammar to create view:
-   ```mysql
+   ```
     CREATE
         [OR REPLACE]
         [ALGORITHM = {UNDEFINED | MERGE | TEMPTABLE}]
@@ -83,35 +83,25 @@ Let me describe more details about the view DDL operation:
     1. Parse the create view statement and build a logical plan for select cause part. If any grammar error occurs, return errors to parser.   
     2. Examine view definer's privileges. Definer should own both `CREATE_VIEW` and base table's `SELECT` privileges.  
     3. Examine create view statement, If ViewFieldList cause part is empty, then we should generate view column names from SelectStmt cause. Otherwise check len(ViewFieldList) == len(Columns from SelectStmt). And then we save column names to `TableInfo.Columns` .
-      
 2. Drop a view  
   Implement `DROP VIEW` grammar, and delete the existing view tableinfo object. This function should reuse `DROP TABLE` code logical
 3. Select from a view  
-  3.1 In function `func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error)`, if `tn *ast.TableName` is a view, then we build a select `LogicalPlan` from view's view_select string.
-      The most important part is we build a `Projection` with `TableInfo.Columns` and `ViewInfo.Cols` at top of select's `LogicalPlan`.  
-4. Insert/Update into a view  
-  This is view's advanced feature, we will discuss this later. 
-5. Describe a view  
-  Generate the view select logicalplan. If any error occurs, return the error to parser. Otherwise, return `SELECT` cause's column info.
-6. Show Create Table
-  Regenerate create view statement from `TableInfo`.
+  3.1 In function `func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error)`, if `tn *ast.TableName` is a view, then we build a select `LogicalPlan` from view's `SelectStmt` string. But this solution meet a problem,for example:  
+    1.  First we create a table with statement like `create table t(a int,b int)`
+    2.  Then create a view with statement like `create view v like select * from t`.
+    3.  If we query view `v`, database will rewrite view's `SelectStmt` from `select * from t` into <bold>`select a as a,b as b from t`</bold>
+    4.  Once I drop table `t` and recreate table with statement like `create table t(c int,d int)`
+    5.  We query view `v` again, database will rewrite view's `SelectStmt` from `select * from t` into <bold>`select c as c,d as d from t`</bold>
+    6.  So the problem is view's statement can be rewrite to different sql and generate different query set.
+    In able to resolve the problem describe above, we build a `Projection` at the top of original select's `LogicalPlan`, just like we rewriter view's `SelectStmt` from `select * from t` into `select a as a,b as b from (select * from t)`.
+    This is a temporary fix and we will implement TiDB to rewrite sql with replace all wildcard finally.
+4. Show table status
+  Modify `SHOW TABLE STATUS` function to support show view status, and we use this command to check if `CREATE VIEW` and `DROP VIEW` operation is successful. To reuse `SHOW TABLE STAUS` code logical is perferred.
 
 ## Compatibility
-It makes TiDB more compatible with MySQL.
+Add TiDB support basic view feature without affecting other existing functions, and makes TiDB more compatible with MySQL.
 
 ## Implementation
-
-Following is the main implementation details:  
-1. ast/ddl.go  
-I do check both the view name and the SELECT statement, viewname is a tablename object.
-2. planner/core/planbuilder.go  
-The code executes SELECT and returns `expression.columns` within `plan.Schema()`.
-3. ddl_api.go  
-We convert `expression.columns` into `table.Column` and reuse function `buildTableInfo` to build view
-4. logical_plan_builder.go  
-Every time we make a `SELECT` statement within a view, modify the `buildDataSource` function to rewrite the view table to select `LogicalPlan`.
-
-## SubTask Schedule
 |Action  |Priority|Deadline|Notes|
 | ------ | ------ | ------ |-----|
 |`CREATE [OR REPLACE] VIEW view_name [(column_list)] AS select_statement`|P1|2019/01/15|This task must be done before any other tasks.|
