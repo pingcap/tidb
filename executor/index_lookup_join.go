@@ -200,13 +200,14 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
 	iw := &innerWorker{
-		innerCtx:      e.innerCtx,
-		outerCtx:      e.outerCtx,
-		taskCh:        taskCh,
-		ctx:           e.ctx,
-		executorChk:   chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
-		indexRanges:   copiedRanges,
-		keyOff2IdxOff: e.keyOff2IdxOff,
+		innerCtx:              e.innerCtx,
+		outerCtx:              e.outerCtx,
+		taskCh:                taskCh,
+		ctx:                   e.ctx,
+		executorChk:           chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
+		indexRanges:           copiedRanges,
+		keyOff2IdxOff:         e.keyOff2IdxOff,
+		nextColCompareFilters: e.nextColCompareFilters,
 	}
 	return iw
 }

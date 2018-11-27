@@ -1623,10 +1623,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			readerBuilder: &dataReaderBuilder{innerPlan, b},
 			rowTypes:      innerTypes,
 		},
-		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
-		indexRanges:   v.Ranges,
-		keyOff2IdxOff: v.KeyOff2IdxOff,
+		workerWg:              new(sync.WaitGroup),
+		joiner:                newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		indexRanges:           v.Ranges,
+		keyOff2IdxOff:         v.KeyOff2IdxOff,
+		nextColCompareFilters: v.CompareFilters,
 	}
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
@@ -1966,7 +1967,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 			for _, nextColRan := range nextColRanges {
 				for _, ran := range ranges {
 					ran.LowVal[lastPos] = nextColRan.LowVal[0]
-					ran.LowVal[lastPos] = nextColRan.HighVal[0]
+					ran.HighVal[lastPos] = nextColRan.HighVal[0]
 					ran.LowExclude = nextColRan.LowExclude
 					ran.HighExclude = nextColRan.HighExclude
 				}

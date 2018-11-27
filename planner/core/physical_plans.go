@@ -232,8 +232,9 @@ type PhysicalIndexJoin struct {
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges []*ranger.Range
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
-	KeyOff2IdxOff  []int
-	compareFilters *ColWithCompareOps
+	KeyOff2IdxOff []int
+	// CompareFilters ... (will finish in later commit)
+	CompareFilters *ColWithCompareOps
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.

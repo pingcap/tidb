@@ -346,7 +346,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, innerJ
 		innerPlan:       innerPlan,
 		KeyOff2IdxOff:   newKeyOff,
 		Ranges:          ranges,
-		compareFilters:  compareFilters,
+		CompareFilters:  compareFilters,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
@@ -606,6 +606,7 @@ func (cwc *ColWithCompareOps) resolveIndices(schema *expression.Schema) {
 
 func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) ([]*ranger.Range, []int, []expression.Expression, *ColWithCompareOps, error) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.schema.Columns, indexInfo)
+	log.Warnf("index cols: %v", idxCols)
 	if len(idxCols) == 0 {
 		return nil, nil, nil, nil, nil
 	}
@@ -661,12 +662,13 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 		return ranges, idxOff2keyOff, remained, nil, nil
 	}
 	nextCol := idxCols[nextColPos]
+	log.Warnf("next col: %v", nextCol)
 	nextColCmpFilterManager := &ColWithCompareOps{
 		targetCol:         nextCol,
 		affectedColSchema: expression.NewSchema(),
 	}
 loopCandidates:
-	for _, filter := range rangeFilterCandidates {
+	for _, filter := range p.OtherConditions {
 		sf, ok := filter.(*expression.ScalarFunction)
 		if !ok || !(sf.FuncName.L == ast.LE || sf.FuncName.L == ast.LT || sf.FuncName.L == ast.GE || sf.FuncName.L == ast.GT) {
 			continue
@@ -695,6 +697,7 @@ loopCandidates:
 			nextColCmpFilterManager.appendNewExpr(symmetricOp[sf.FuncName.L], sf.GetArgs()[0], affectedCols)
 		}
 	}
+	log.Warnf("next col filters: %v", nextColCmpFilterManager.opArg)
 	if len(nextColCmpFilterManager.OpType) == 0 {
 		colAccesses, colRemained := ranger.DetachCondsForTableRange(p.ctx, rangeFilterCandidates, nextCol)
 		remained = append(remained, colRemained...)
