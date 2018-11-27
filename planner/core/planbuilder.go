@@ -401,8 +401,11 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		// TODO: Prepared statement from variable expression do not work as expected.
-		// p.SQLText, _ = x.SQLVar.GetValue().(string)
+		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
+			p.SQLText = v
+		} else {
+			p.SQLText = "NULL"
+		}
 	} else {
 		p.SQLText = x.SQLText
 	}
@@ -961,7 +964,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) Plan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
-	case *ast.SetPwdStmt, *ast.RevokeStmt:
+	case *ast.RevokeStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
 	case *ast.KillStmt:
 		// If you have the SUPER privilege, you can kill all threads and statements.
@@ -1617,7 +1620,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			"Create_options", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowColumns:
 		names = table.ColDescFieldNames(s.Full)

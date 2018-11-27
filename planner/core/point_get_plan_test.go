@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -34,14 +35,21 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, key idx_bc(b,c))")
