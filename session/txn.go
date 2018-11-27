@@ -14,6 +14,7 @@
 package session
 
 import (
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -30,7 +31,7 @@ import (
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
 // 1. It holds all statement related modification in the buffer before flush to the txn,
 // so if execute statement meets error, the txn won't be made dirty.
-// 2. It's a lazy transaction, that means it's a txnFuture befort StartTS() is really need.
+// 2. It's a lazy transaction, that means it's a txnFuture before StartTS() is really need.
 type TxnState struct {
 	// States of a TxnState should be one of the followings:
 	// Invalid: kv.Transaction == nil && txnFuture == nil
@@ -53,9 +54,13 @@ func (st *TxnState) init() {
 	st.mutations = make(map[int64]*binlog.TableMutation)
 }
 
-// Valid overrides Transaction interface.
+// Valid implements the kv.Transaction interface.
 func (st *TxnState) Valid() bool {
 	return st.Transaction != nil && st.Transaction.Valid()
+}
+
+func (st *TxnState) pending() bool {
+	return st.Transaction == nil && st.txnFuture != nil
 }
 
 func (st *TxnState) validOrPending() bool {
@@ -191,6 +196,10 @@ func (st *TxnState) cleanup() {
 		delete(st.mutations, key)
 	}
 	if st.dirtyTableOP != nil {
+		empty := dirtyTableOperation{}
+		for i := 0; i < len(st.dirtyTableOP); i++ {
+			st.dirtyTableOP[i] = empty
+		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
 }
@@ -244,6 +253,11 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	oracleStore := s.store.GetOracle()
 	tsFuture := oracleStore.GetTimestampAsync(ctx)
 	return &txnFuture{tsFuture, s.store}

@@ -125,6 +125,15 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 	tc.TableDeltaMap[tableID] = item
 }
 
+// Cleanup clears up transaction info that no longer use.
+func (tc *TransactionContext) Cleanup() {
+	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	tc.DirtyDB = nil
+	tc.Binlog = nil
+	tc.Histroy = nil
+	tc.TableDeltaMap = nil
+}
+
 // ClearDelta clears the delta map.
 func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
@@ -646,13 +655,24 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 
 // special session variables.
 const (
-	SQLModeVar          = "sql_mode"
-	AutocommitVar       = "autocommit"
-	CharacterSetResults = "character_set_results"
-	MaxAllowedPacket    = "max_allowed_packet"
-	TimeZone            = "time_zone"
-	TxnIsolation        = "tx_isolation"
-	TxnIsolationOneShot = "tx_isolation_one_shot"
+	SQLModeVar           = "sql_mode"
+	AutocommitVar        = "autocommit"
+	CharacterSetResults  = "character_set_results"
+	MaxAllowedPacket     = "max_allowed_packet"
+	TimeZone             = "time_zone"
+	TxnIsolation         = "tx_isolation"
+	TransactionIsolation = "transaction_isolation"
+	TxnIsolationOneShot  = "tx_isolation_one_shot"
+)
+
+var (
+	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
+	TxIsolationNames = map[string]struct{}{
+		"READ-UNCOMMITTED": {},
+		"READ-COMMITTED":   {},
+		"REPEATABLE-READ":  {},
+		"SERIALIZABLE":     {},
+	}
 )
 
 // TableDelta stands for the changed count for one table.
