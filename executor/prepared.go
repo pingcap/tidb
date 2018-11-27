@@ -97,6 +97,10 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 // Next implements the Executor Next interface.
 func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
+	vars.InPrepare = true
+	defer func() {
+		vars.InPrepare = false
+	}()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
 		// Make sure it is idempotent.
