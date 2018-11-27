@@ -71,7 +71,7 @@ func (t *mockTxn) Iter(k Key, upperBound Key) (Iterator, error) {
 	return nil, nil
 }
 
-func (t *mockTxn) IterReverse(k Key) (Iterator, error) {
+func (t *mockTxn) IterReverse(k Key, lowerBound Key) (Iterator, error) {
 	return nil, nil
 }
 
@@ -214,6 +214,6 @@ func (s *mockSnapshot) Iter(k Key, upperBound Key) (Iterator, error) {
 	return s.store.Iter(k, upperBound)
 }
 
-func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
-	return s.store.IterReverse(k)
+func (s *mockSnapshot) IterReverse(k Key, lowerBound Key) (Iterator, error) {
+	return s.store.IterReverse(k, lowerBound)
 }

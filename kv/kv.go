@@ -87,8 +87,7 @@ type Retriever interface {
 	// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 	// The returned iterator will iterate from greater key to smaller key.
 	// If k is nil, the returned iterator will be positioned at the last key.
-	// TODO: Add lower bound limit
-	IterReverse(k Key) (Iterator, error)
+	IterReverse(k Key, lowerBound Key) (Iterator, error)
 }
 
 // Mutator is the interface wraps the basic Set and Delete methods.

@@ -228,12 +228,12 @@ func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 }
 
 // IterReverse overrides the Transaction interface.
-func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.IterReverse(k)
+func (st *TxnState) IterReverse(k kv.Key, lowerBound kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.IterReverse(k, lowerBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.IterReverse(k)
+	retrieverIt, err := st.Transaction.IterReverse(k, lowerBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

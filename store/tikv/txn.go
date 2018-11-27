@@ -128,14 +128,14 @@ func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 }
 
 // IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
+func (txn *tikvTxn) IterReverse(k kv.Key, lowerBound kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse").Inc()
 	start := time.Now()
 	defer func() {
 		metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse").Observe(time.Since(start).Seconds())
 	}()
 
-	return txn.us.IterReverse(k)
+	return txn.us.IterReverse(k, lowerBound)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {

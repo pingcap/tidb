@@ -28,6 +28,7 @@ import (
 type Scanner struct {
 	snapshot     *tikvSnapshot
 	batchSize    int
+	reverse      bool
 	valid        bool
 	cache        []*pb.KvPair
 	idx          int
@@ -36,14 +37,18 @@ type Scanner struct {
 	eof          bool
 }
 
-func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int) (*Scanner, error) {
+func newScannerInternal(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int, reverse bool) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
 	}
+	if reverse {
+		startKey = kv.Key(startKey).Next()
+	}
 	scanner := &Scanner{
 		snapshot:     snapshot,
 		batchSize:    batchSize,
+		reverse:      reverse,
 		valid:        true,
 		nextStartKey: startKey,
 		endKey:       endKey,
@@ -53,6 +58,14 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSiz
 		return scanner, nil
 	}
 	return scanner, errors.Trace(err)
+}
+
+func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int) (*Scanner, error) {
+	return newScannerInternal(snapshot, startKey, endKey, batchSize, false)
+}
+
+func newScannerReverse(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSize int) (*Scanner, error) {
+	return newScannerInternal(snapshot, startKey, endKey, batchSize, true)
 }
 
 // Valid return valid.
@@ -100,10 +113,12 @@ func (s *Scanner) Next() error {
 		}
 
 		current := s.cache[s.idx]
-		if len(s.endKey) > 0 && kv.Key(current.Key).Cmp(kv.Key(s.endKey)) >= 0 {
-			s.eof = true
-			s.Close()
-			return nil
+		if len(s.endKey) > 0 {
+			if res := kv.Key(current.Key).Cmp(kv.Key(s.endKey)); (s.reverse && res <= 0) || (!s.reverse && res >= 0) {
+				s.eof = true
+				s.Close()
+				return nil
+			}
 		}
 		// Try to resolve the lock
 		if current.GetError() != nil {
@@ -163,6 +178,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			Scan: &pb.ScanRequest{
 				StartKey: s.nextStartKey,
 				EndKey:   reqEndKey,
+				Reverse:  s.reverse,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 				KeyOnly:  s.snapshot.keyOnly,
@@ -213,11 +229,18 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		s.cache, s.idx = kvPairs, 0
 		if len(kvPairs) < s.batchSize {
 			// No more data in current Region. Next getData() starts
-			// from current Region's endKey.
-			s.nextStartKey = loc.EndKey
-			if len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0) {
-				// Current Region is the last one.
-				s.eof = true
+			// from current Region's edge key.
+			if s.reverse {
+				s.nextStartKey = loc.StartKey
+				if len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) <= 0) {
+					s.eof = true
+				}
+			} else {
+				s.nextStartKey = loc.EndKey
+				if len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0) {
+					// Current Region is the last one.
+					s.eof = true
+				}
 			}
 			return nil
 		}
@@ -226,7 +249,11 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		// may get an empty response if the Region in fact does not have
 		// more data.
 		lastKey := kvPairs[len(kvPairs)-1].GetKey()
-		s.nextStartKey = kv.Key(lastKey).Next()
+		if !s.reverse {
+			s.nextStartKey = kv.Key(lastKey).Next()
+		} else {
+			s.nextStartKey = kv.Key(lastKey)
+		}
 		return nil
 	}
 }
