@@ -651,11 +651,12 @@ func (p *sessionPool) Put(resource pools.Resource) {
 }
 func (p *sessionPool) Close() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.mu.closed {
+		p.mu.Unlock()
 		return
 	}
 	p.mu.closed = true
+	p.mu.Unlock()
 
 	close(p.resources)
 	for r := range p.resources {
