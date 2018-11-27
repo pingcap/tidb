@@ -60,38 +60,38 @@ const (
 )
 
 // GetOperand maps logical plan operator to Operand.
-func GetOperand(p plannercore.LogicalPlan) (Operand, error) {
-	switch x := p.(type) {
+func GetOperand(p plannercore.LogicalPlan) Operand {
+	switch p.(type) {
 	case *plannercore.LogicalJoin:
-		return OperandJoin, nil
+		return OperandJoin
 	case *plannercore.LogicalAggregation:
-		return OperandAggregation, nil
+		return OperandAggregation
 	case *plannercore.LogicalProjection:
-		return OperandProjection, nil
+		return OperandProjection
 	case *plannercore.LogicalSelection:
-		return OperandSelection, nil
+		return OperandSelection
 	case *plannercore.LogicalApply:
-		return OperandApply, nil
+		return OperandApply
 	case *plannercore.LogicalMaxOneRow:
-		return OperandMaxOneRow, nil
+		return OperandMaxOneRow
 	case *plannercore.LogicalTableDual:
-		return OperandTableDual, nil
+		return OperandTableDual
 	case *plannercore.DataSource:
-		return OperandDataSource, nil
+		return OperandDataSource
 	case *plannercore.LogicalUnionScan:
-		return OperandUnionScan, nil
+		return OperandUnionScan
 	case *plannercore.LogicalUnionAll:
-		return OperandUnionAll, nil
+		return OperandUnionAll
 	case *plannercore.LogicalSort:
-		return OperandSort, nil
+		return OperandSort
 	case *plannercore.LogicalTopN:
-		return OperandTopN, nil
+		return OperandTopN
 	case *plannercore.LogicalLock:
-		return OperandLock, nil
+		return OperandLock
 	case *plannercore.LogicalLimit:
-		return OperandLimit, nil
+		return OperandLimit
 	default:
-		return OperandUnsupported, plannercore.ErrUnsupportedType.GenWithStack("Unsupported LogicalPlan(%T) for GetOperand", x)
+		return OperandUnsupported
 	}
 }
 
@@ -112,6 +112,16 @@ func (o Operand) match(t Operand) bool {
 type Pattern struct {
 	operand  Operand
 	children []*Pattern
+}
+
+// NewPattern creats a pattern node according to the operand.
+func NewPattern(operand Operand) *Pattern {
+	return &Pattern{operand: operand}
+}
+
+// SetChildren sets the children information for a pattern node.
+func (p *Pattern) SetChildren(children ...*Pattern) {
+	p.children = children
 }
 
 // BuildPattern builds a Pattern from Operand and child Patterns.

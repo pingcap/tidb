@@ -1081,6 +1081,13 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec(`CREATE TABLE t1 (c1 float)`)
 	tk.MustExec("INSERT INTO t1 SET c1 = 1")
 	tk.MustExec("UPDATE t1 SET c1 = 1.2 WHERE c1=1;")
+
+	// issue 8119
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 float(1,1));")
+	tk.MustExec("insert into t values (0.0);")
+	_, err = tk.Exec("update t set c1 = 2.0;")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {
@@ -2080,7 +2087,7 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
 
 	tk.MustExec(`update t set b = 3 where a = 30001;`)
 	tk.MustExec(`insert into t (b) values (4);`)

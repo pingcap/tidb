@@ -28,7 +28,7 @@ require (
 	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26
-	github.com/pingcap/parser v0.0.0-20181113053654-2ee7239a49ee
+	github.com/pingcap/parser v0.0.0-20181120072820-10951bcfca73
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v0.0.0-20181112132202-4860a0d5de03
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
@@ -38,8 +38,10 @@ require (
 	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
 	github.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20170806203942-52369c62f446 // indirect
+	github.com/shirou/gopsutil v2.18.10+incompatible
 	github.com/sirupsen/logrus v1.2.0
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
+	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/twinj/uuid v1.0.0
 	github.com/uber/jaeger-client-go v2.15.0+incompatible
 	github.com/uber/jaeger-lib v1.5.0 // indirect
@@ -47,4 +49,6 @@ require (
 	golang.org/x/text v0.3.0
 	google.golang.org/grpc v1.16.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
+	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
+	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
