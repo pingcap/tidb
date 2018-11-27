@@ -23,11 +23,6 @@ import (
 	"golang.org/x/net/context"
 )
 
-// XAPI error codes.
-const (
-	codeInvalidResp = 1
-)
-
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (SelectResult, error) {

@@ -109,7 +109,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
+	if err := e.resultHandler.nextChunk(ctx, chk, e.maxChunkSize); err != nil {
 		e.feedback.Invalidate()
 		return err
 	}
@@ -167,9 +167,9 @@ func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) 
 	tr.optionalFinished = false
 }
 
-func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk, maxBatchSize int) error {
 	if !tr.optionalFinished {
-		err := tr.optionalResult.Next(ctx, chk)
+		err := tr.optionalResult.Next(ctx, chk, maxBatchSize)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -178,7 +178,7 @@ func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) e
 		}
 		tr.optionalFinished = true
 	}
-	return tr.result.Next(ctx, chk)
+	return tr.result.Next(ctx, chk, maxBatchSize)
 }
 
 func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err error) {

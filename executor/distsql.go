@@ -253,7 +253,7 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-	err := e.result.Next(ctx, chk)
+	err := e.result.Next(ctx, chk, e.maxChunkSize)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
@@ -435,7 +435,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		keepOrder:    e.keepOrder,
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
-		maxChunkSize: e.maxChunkSize,
 	}
 	if worker.batchSize > worker.maxBatchSize {
 		worker.batchSize = worker.maxBatchSize
@@ -530,7 +529,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
@@ -542,7 +541,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		for resultTask.cursor < len(resultTask.rows) {
 			chk.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if chk.NumRows() >= e.maxChunkSize {
+			if chk.NumRows() >= chk.Capacity() {
 				return nil
 			}
 		}
@@ -579,7 +578,6 @@ type indexWorker struct {
 	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
 	batchSize    int
 	maxBatchSize int
-	maxChunkSize int
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -603,7 +601,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
+	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.batchSize, w.maxBatchSize)
 	for {
 		handles, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {
@@ -631,21 +629,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	handles = make([]int64, 0, w.batchSize)
-	for len(handles) < w.batchSize {
-		err = errors.Trace(idxResult.Next(ctx, chk))
-		if err != nil {
-			return handles, err
-		}
-		if chk.NumRows() == 0 {
-			return handles, nil
-		}
-		for i := 0; i < chk.NumRows(); i++ {
-			handles = append(handles, chk.GetRow(i).GetInt64(0))
-		}
+	err = errors.Trace(idxResult.Next(ctx, chk, w.maxBatchSize))
+	if err != nil {
+		return handles, err
 	}
-	w.batchSize *= 2
-	if w.batchSize > w.maxBatchSize {
-		w.batchSize = w.maxBatchSize
+	for i := 0; i < chk.NumRows(); i++ {
+		handles = append(handles, chk.GetRow(i).GetInt64(0))
 	}
 	return handles, nil
 }
