@@ -61,6 +61,7 @@ var (
 	_ builtinFunc = &builtinJSONRemoveSig{}
 	_ builtinFunc = &builtinJSONMergeSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
+	_ builtinFunc = &builtinJSONDepthSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
@@ -759,8 +760,34 @@ type jsonDepthFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONDepthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONDepthSig) Clone() builtinFunc {
+	newSig := &builtinJSONDepthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonDepthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_DEPTH")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
+	sig := &builtinJSONDepthSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonDepthSig)
+	return sig, nil
+}
+
+func (b *builtinJSONDepthSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+
+	return int64(obj.GetElemDepth()), false, nil
 }
 
 type jsonKeysFunctionClass struct {
