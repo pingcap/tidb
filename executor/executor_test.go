@@ -1102,6 +1102,12 @@ func (s *testSuite) TestUnion(c *C) {
 	for i := 0; i < 4; i++ {
 		tk.MustQuery("SELECT(SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a ASC  LIMIT 1) AS dev").Check(testkit.Rows("0"))
 	}
+
+	// #issue 8231
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (uid int(1))")
+	tk.MustExec("INSERT INTO t1 SELECT 150")
+	tk.MustQuery("SELECT 'a' UNION SELECT uid FROM t1 order by 1 desc;").Check(testkit.Rows("a", "150"))
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
@@ -3328,4 +3334,17 @@ func (s *testSuite) TestRowID(c *C) {
 	tk.MustExec(`create table t(a varchar(5) primary key)`)
 	tk.MustExec(`insert into t values('a')`)
 	tk.MustQuery("select *, _tidb_rowid from t use index(`primary`) where _tidb_rowid=1").Check(testkit.Rows("a 1"))
+}
+
+func (s *testSuite) TestDoSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int)`)
+	_, err := tk.Exec(`do 1 in (select * from t)`)
+	c.Assert(err, IsNil, Commentf("err %v", err))
+	tk.MustExec(`insert into t values(1)`)
+	r, err := tk.Exec(`do 1 in (select * from t)`)
+	c.Assert(err, IsNil, Commentf("err %v", err))
+	c.Assert(r, IsNil, Commentf("result of Do not empty"))
 }
