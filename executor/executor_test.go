@@ -1107,7 +1107,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (uid int(1))")
 	tk.MustExec("INSERT INTO t1 SELECT 150")
-	tk.MustQuery("SELECT 'a' UNION SELECT uid FROM t1;").Check(testkit.Rows("a", "150"))
+	tk.MustQuery("SELECT 'a' UNION SELECT uid FROM t1 order by 1 desc;").Check(testkit.Rows("a", "150"))
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
