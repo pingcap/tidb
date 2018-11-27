@@ -107,10 +107,11 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 // UpperBounds: (x < y1); (x < y2); (x < y3)
 type PartitionExpr struct {
 	// Column is the column appeared in the by range expression, partition pruning need this to work.
-	Expr        expression.Expression
 	Column      *expression.Column
 	Ranges      []expression.Expression
 	UpperBounds []expression.Expression
+	// Expr is the hash partition expression.
+	Expr expression.Expression
 }
 
 func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
@@ -183,6 +184,8 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
 	for i := 0; i < int(pi.Num); i++ {
+		// If pi.Expr return negative number, this expression is not right, but this is only used to prune partition when do union now.
+		// Maybe mod(abs(-1),5) is better.
 		fmt.Fprintf(&buf, "MOD((%s),(%d))=%d", pi.Expr, pi.Num, i)
 		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
@@ -222,51 +225,61 @@ func partitionRecordKey(pid int64, handle int64) kv.Key {
 // locatePartition returns the partition ID of the input record.
 func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	var err error
-	var isNull bool
-	idx := 0
+	var idx int
 	switch t.meta.Partition.Type {
 	case model.PartitionTypeRange:
-		partitionExprs := t.partitionExpr.UpperBounds
-		idx = sort.Search(len(partitionExprs), func(i int) bool {
-			var ret int64
-			ret, isNull, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-			if err != nil {
-				return true // Break the search.
-			}
-			if isNull {
-				// If the column value used to determine the partition is NULL, the row is inserted into the lowest partition.
-				// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-handling-nulls.html
-				return true // Break the search.
-			}
-			return ret > 0
-		})
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if isNull {
-			idx = 0
-		}
-		if idx < 0 || idx >= len(partitionExprs) {
-			// The data does not belong to any of the partition?
-			return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
-		}
-
+		idx, err = t.locateRangePartition(ctx, pi, r)
 	case model.PartitionTypeHash:
-		var ret int64
-		ret, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if isNull {
-			idx = 0
-		} else {
-			if ret < 0 {
-				ret = 0 - ret
-			}
-			idx = int(ret % int64(t.meta.Partition.Num))
-		}
+		idx, err = t.locateHashPartition(ctx, pi, r)
+	}
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 	return pi.Definitions[idx].ID, nil
+}
+
+func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	var err error
+	var isNull bool
+	partitionExprs := t.partitionExpr.UpperBounds
+	idx := sort.Search(len(partitionExprs), func(i int) bool {
+		var ret int64
+		ret, isNull, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		if err != nil {
+			return true // Break the search.
+		}
+		if isNull {
+			// If the column value used to determine the partition is NULL, the row is inserted into the lowest partition.
+			// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-handling-nulls.html
+			return true // Break the search.
+		}
+		return ret > 0
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if isNull {
+		idx = 0
+	}
+	if idx < 0 || idx >= len(partitionExprs) {
+		// The data does not belong to any of the partition?
+		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
+	}
+	return idx, nil
+}
+
+func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+	if err != nil {
+		return 0, err
+	}
+	if isNull {
+		return 0, nil
+	}
+	if ret < 0 {
+		ret = 0 - ret
+	}
+	return int(ret % int64(t.meta.Partition.Num)), nil
 }
 
 // GetPartition returns a Table, which is actually a partition.
