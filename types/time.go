@@ -23,10 +23,10 @@ import (
 	gotime "time"
 	"unicode"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -614,6 +614,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	)
 
 	seps, fracStr := splitDateTime(str)
+	var truncatedOrIncorrect bool
 	switch len(seps) {
 	case 1:
 		l := len(seps[0])
@@ -638,14 +639,14 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			year = adjustYear(year)
 		case 8: // YYYYMMDD
 			_, err = fmt.Sscanf(seps[0], "%4d%2d%2d", &year, &month, &day)
-		case 6:
-			// YYMMDD
+		case 6, 5:
+			// YYMMDD && YYMMD
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d", &year, &month, &day)
 			year = adjustYear(year)
 		default:
 			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
 		}
-		if l == 6 || l == 8 {
+		if l == 5 || l == 6 || l == 8 {
 			// YYMMDD or YYYYMMDD
 			// We must handle float => string => datetime, the difference is that fractional
 			// part of float type is discarded directly, while fractional part of string type
@@ -654,21 +655,29 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 				// 20170118.123423 => 2017-01-18 00:00:00
 			} else {
 				// '20170118.123423' => 2017-01-18 12:34:23.234
-				fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+				switch len(fracStr) {
+				case 0:
+				case 1, 2:
+					_, err = fmt.Sscanf(fracStr, "%2d ", &hour)
+				case 3, 4:
+					_, err = fmt.Sscanf(fracStr, "%2d%2d ", &hour, &minute)
+				default:
+					_, err = fmt.Sscanf(fracStr, "%2d%2d%2d ", &hour, &minute, &second)
+				}
+				truncatedOrIncorrect = err != nil
 			}
 		}
 		if l == 9 || l == 10 {
-			switch len(fracStr) {
-			case 0:
+			if len(fracStr) == 0 {
 				second = 0
-			case 1:
-				_, err = fmt.Sscanf(fracStr, "%1d", &second)
-			case 2:
-				_, err = fmt.Sscanf(fracStr, "%2d", &second)
-			default:
-				_, err = fmt.Sscanf(fracStr[:2], "%2d", &second)
-				sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", str))
+			} else {
+				_, err = fmt.Sscanf(fracStr, "%2d ", &second)
 			}
+			truncatedOrIncorrect = err != nil
+		}
+		if truncatedOrIncorrect && sc != nil {
+			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", str))
+			err = nil
 		}
 	case 3:
 		// YYYY-MM-DD
@@ -682,7 +691,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
 	default:
-		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
+		return ZeroDatetime, errors.Trace(ErrIncorrectDatetimeValue.GenWithStackByArgs(str))
 	}
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
@@ -777,7 +786,10 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64) (int64, error) {
+func AdjustYear(y int64, fromStr bool) (int64, error) {
+	if y == 0 && !fromStr {
+		return y, nil
+	}
 	y = int64(adjustYear(int(y)))
 	if y < int64(MinYear) || y > int64(MaxYear) {
 		return 0, errors.Trace(ErrInvalidYear)
@@ -928,7 +940,7 @@ func (d Duration) Compare(o Duration) int {
 // but parses str to Duration then compares.
 func (d Duration) CompareString(sc *stmtctx.StatementContext, str string) (int, error) {
 	// use MaxFsp to parse the string
-	o, err := ParseDuration(str, MaxFsp)
+	o, err := ParseDuration(sc, str, MaxFsp)
 	if err != nil {
 		return 0, err
 	}
@@ -967,7 +979,7 @@ func (d Duration) MicroSecond() int {
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
 // returns the duration type Time value.
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-func ParseDuration(str string, fsp int) (Duration, error) {
+func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, error) {
 	var (
 		day, hour, minute, second int
 		err                       error
@@ -1036,7 +1048,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			case 1: // 0S
 				_, err = fmt.Sscanf(integeralPart, "%1d", &second)
 			default: // Maybe contains date.
-				t, err1 := ParseDatetime(nil, str)
+				t, err1 := ParseDatetime(sc, str)
 				if err1 != nil {
 					return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
 				}

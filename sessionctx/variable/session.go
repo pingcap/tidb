@@ -21,20 +21,20 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -122,6 +122,15 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 		item.ColSize[key] += val
 	}
 	tc.TableDeltaMap[tableID] = item
+}
+
+// Cleanup clears up transaction info that no longer use.
+func (tc *TransactionContext) Cleanup() {
+	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	tc.DirtyDB = nil
+	tc.Binlog = nil
+	tc.Histroy = nil
+	tc.TableDeltaMap = nil
 }
 
 // ClearDelta clears the delta map.
@@ -619,13 +628,24 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 
 // special session variables.
 const (
-	SQLModeVar          = "sql_mode"
-	AutocommitVar       = "autocommit"
-	CharacterSetResults = "character_set_results"
-	MaxAllowedPacket    = "max_allowed_packet"
-	TimeZone            = "time_zone"
-	TxnIsolation        = "tx_isolation"
-	TxnIsolationOneShot = "tx_isolation_one_shot"
+	SQLModeVar           = "sql_mode"
+	AutocommitVar        = "autocommit"
+	CharacterSetResults  = "character_set_results"
+	MaxAllowedPacket     = "max_allowed_packet"
+	TimeZone             = "time_zone"
+	TxnIsolation         = "tx_isolation"
+	TransactionIsolation = "transaction_isolation"
+	TxnIsolationOneShot  = "tx_isolation_one_shot"
+)
+
+var (
+	// TxIsolationNames are the valid values of the variable "tx_isolation" or "transaction_isolation".
+	TxIsolationNames = map[string]struct{}{
+		"READ-UNCOMMITTED": {},
+		"READ-COMMITTED":   {},
+		"REPEATABLE-READ":  {},
+		"SERIALIZABLE":     {},
+	}
 )
 
 // TableDelta stands for the changed count for one table.

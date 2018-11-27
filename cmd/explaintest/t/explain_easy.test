@@ -80,3 +80,6 @@ begin;
 insert tb values ('1');
 explain select * from ta where a = 1;
 rollback;
+
+explain SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
+explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)

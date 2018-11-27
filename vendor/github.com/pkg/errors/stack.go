@@ -1,36 +1,12 @@
 package errors
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"path"
 	"runtime"
-	"strconv"
 	"strings"
 )
-
-// StackTracer retrieves the StackTrace
-// Generally you would want to use the GetStackTracer function to do that.
-type StackTracer interface {
-	StackTrace() StackTrace
-}
-
-// GetStackTracer will return the first StackTracer in the causer chain.
-// This function is used by AddStack to avoid creating redundant stack traces.
-//
-// You can also use the StackTracer interface on the returned error to get the stack trace.
-func GetStackTracer(origErr error) StackTracer {
-	var stacked StackTracer
-	WalkDeep(origErr, func(err error) bool {
-		if stackTracer, ok := err.(StackTracer); ok {
-			stacked = stackTracer
-			return true
-		}
-		return false
-	})
-	return stacked
-}
 
 // Frame represents a program counter inside a stack frame.
 type Frame uintptr
@@ -70,15 +46,9 @@ func (f Frame) line() int {
 //
 // Format accepts flags that alter the printing of some verbs, as follows:
 //
-//    %+s   function name and path of source file relative to the compile time
-//          GOPATH separated by \n\t (<funcname>\n\t<path>)
+//    %+s   path of source file relative to the compile time GOPATH
 //    %+v   equivalent to %+s:%d
 func (f Frame) Format(s fmt.State, verb rune) {
-	f.format(s, s, verb)
-}
-
-// format allows stack trace printing calls to be made with a bytes.Buffer.
-func (f Frame) format(w io.Writer, s fmt.State, verb rune) {
 	switch verb {
 	case 's':
 		switch {
@@ -86,83 +56,46 @@ func (f Frame) format(w io.Writer, s fmt.State, verb rune) {
 			pc := f.pc()
 			fn := runtime.FuncForPC(pc)
 			if fn == nil {
-				io.WriteString(w, "unknown")
+				io.WriteString(s, "unknown")
 			} else {
 				file, _ := fn.FileLine(pc)
-				io.WriteString(w, fn.Name())
-				io.WriteString(w, "\n\t")
-				io.WriteString(w, file)
+				fmt.Fprintf(s, "%s\n\t%s", fn.Name(), file)
 			}
 		default:
-			io.WriteString(w, path.Base(f.file()))
+			io.WriteString(s, path.Base(f.file()))
 		}
 	case 'd':
-		io.WriteString(w, strconv.Itoa(f.line()))
+		fmt.Fprintf(s, "%d", f.line())
 	case 'n':
 		name := runtime.FuncForPC(f.pc()).Name()
-		io.WriteString(w, funcname(name))
+		io.WriteString(s, funcname(name))
 	case 'v':
-		f.format(w, s, 's')
-		io.WriteString(w, ":")
-		f.format(w, s, 'd')
+		f.Format(s, 's')
+		io.WriteString(s, ":")
+		f.Format(s, 'd')
 	}
 }
 
 // StackTrace is stack of Frames from innermost (newest) to outermost (oldest).
 type StackTrace []Frame
 
-// Format formats the stack of Frames according to the fmt.Formatter interface.
-//
-//    %s	lists source files for each Frame in the stack
-//    %v	lists the source file and line number for each Frame in the stack
-//
-// Format accepts flags that alter the printing of some verbs, as follows:
-//
-//    %+v   Prints filename, function, and line number for each Frame in the stack.
 func (st StackTrace) Format(s fmt.State, verb rune) {
-	var b bytes.Buffer
 	switch verb {
 	case 'v':
 		switch {
 		case s.Flag('+'):
-			b.Grow(len(st) * stackMinLen)
-			for _, fr := range st {
-				b.WriteByte('\n')
-				fr.format(&b, s, verb)
+			for _, f := range st {
+				fmt.Fprintf(s, "\n%+v", f)
 			}
 		case s.Flag('#'):
-			fmt.Fprintf(&b, "%#v", []Frame(st))
+			fmt.Fprintf(s, "%#v", []Frame(st))
 		default:
-			st.formatSlice(&b, s, verb)
+			fmt.Fprintf(s, "%v", []Frame(st))
 		}
 	case 's':
-		st.formatSlice(&b, s, verb)
+		fmt.Fprintf(s, "%s", []Frame(st))
 	}
-	io.Copy(s, &b)
 }
-
-// formatSlice will format this StackTrace into the given buffer as a slice of
-// Frame, only valid when called with '%s' or '%v'.
-func (st StackTrace) formatSlice(b *bytes.Buffer, s fmt.State, verb rune) {
-	b.WriteByte('[')
-	if len(st) == 0 {
-		b.WriteByte(']')
-		return
-	}
-
-	b.Grow(len(st) * (stackMinLen / 4))
-	st[0].format(b, s, verb)
-	for _, fr := range st[1:] {
-		b.WriteByte(' ')
-		fr.format(b, s, verb)
-	}
-	b.WriteByte(']')
-}
-
-// stackMinLen is a best-guess at the minimum length of a stack trace. It
-// doesn't need to be exact, just give a good enough head start for the buffer
-// to avoid the expensive early growth.
-const stackMinLen = 96
 
 // stack represents a stack of program counters.
 type stack []uintptr
@@ -172,14 +105,10 @@ func (s *stack) Format(st fmt.State, verb rune) {
 	case 'v':
 		switch {
 		case st.Flag('+'):
-			var b bytes.Buffer
-			b.Grow(len(*s) * stackMinLen)
 			for _, pc := range *s {
 				f := Frame(pc)
-				b.WriteByte('\n')
-				f.format(&b, st, 'v')
+				fmt.Fprintf(st, "\n%+v", f)
 			}
-			io.Copy(st, &b)
 		}
 	}
 }
@@ -193,13 +122,9 @@ func (s *stack) StackTrace() StackTrace {
 }
 
 func callers() *stack {
-	return callersSkip(4)
-}
-
-func callersSkip(skip int) *stack {
 	const depth = 32
 	var pcs [depth]uintptr
-	n := runtime.Callers(skip, pcs[:])
+	n := runtime.Callers(3, pcs[:])
 	var st stack = pcs[0:n]
 	return &st
 }
@@ -212,15 +137,42 @@ func funcname(name string) string {
 	return name[i+1:]
 }
 
-// NewStack is for library implementers that want to generate a stack trace.
-// Normally you should insted use AddStack to get an error with a stack trace.
-//
-// The result of this function can be turned into a stack trace by calling .StackTrace()
-//
-// This function takes an argument for the number of stack frames to skip.
-// This avoids putting stack generation function calls like this one in the stack trace.
-// A value of 0 will give you the line that called NewStack(0)
-// A library author wrapping this in their own function will want to use a value of at least 1.
-func NewStack(skip int) StackTracer {
-	return callersSkip(skip + 3)
+func trimGOPATH(name, file string) string {
+	// Here we want to get the source file path relative to the compile time
+	// GOPATH. As of Go 1.6.x there is no direct way to know the compiled
+	// GOPATH at runtime, but we can infer the number of path segments in the
+	// GOPATH. We note that fn.Name() returns the function name qualified by
+	// the import path, which does not include the GOPATH. Thus we can trim
+	// segments from the beginning of the file path until the number of path
+	// separators remaining is one more than the number of path separators in
+	// the function name. For example, given:
+	//
+	//    GOPATH     /home/user
+	//    file       /home/user/src/pkg/sub/file.go
+	//    fn.Name()  pkg/sub.Type.Method
+	//
+	// We want to produce:
+	//
+	//    pkg/sub/file.go
+	//
+	// From this we can easily see that fn.Name() has one less path separator
+	// than our desired output. We count separators from the end of the file
+	// path until it finds two more than in the function name and then move
+	// one character forward to preserve the initial path segment without a
+	// leading separator.
+	const sep = "/"
+	goal := strings.Count(name, sep) + 2
+	i := len(file)
+	for n := 0; n < goal; n++ {
+		i = strings.LastIndex(file[:i], sep)
+		if i == -1 {
+			// not enough separators found, set i so that the slice expression
+			// below leaves file unmodified
+			i = -len(sep)
+			break
+		}
+	}
+	// get back to 0 or trim the leading separator
+	file = file[i+len(sep):]
+	return file
 }

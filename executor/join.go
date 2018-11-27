@@ -19,16 +19,16 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -211,8 +211,11 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			}
 			return
 		}
-
 		if !hasWaitedForInner {
+			if outerResult.NumRows() == 0 {
+				e.finished.Store(true)
+				return
+			}
 			jobFinished, innerErr := e.wait4Inner()
 			if innerErr != nil {
 				e.joinResultCh <- &hashjoinWorkerResult{
@@ -241,7 +244,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 			return false, errors.Trace(err)
 		}
 	}
-	if e.hashTable.Len() == 0 && e.joinType == plannercore.InnerJoin {
+	if e.hashTable.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
 		return true, nil
 	}
 	return false, nil
@@ -259,6 +262,8 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 		select {
 		case <-doneCh:
 			return
+		case <-e.closeCh:
+			return
 		default:
 			if e.finished.Load().(bool) {
 				return
@@ -272,7 +277,12 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 			if chk.NumRows() == 0 {
 				return
 			}
-			chkCh <- chk
+			select {
+			case chkCh <- chk:
+				break
+			case <-e.closeCh:
+				return
+			}
 			e.innerResult.Add(chk)
 		}
 	}
@@ -524,19 +534,14 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	doneCh := make(chan struct{})
 	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
-	if e.finished.Load().(bool) {
-		return
-	}
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
 	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
-		// fetchInnerRows may be blocked by this channel, so read from the channel to unblock it.
-		select {
-		case <-innerResultCh:
-		default:
-		}
+	}
+	// wait fetchInnerRows be finished.
+	for range innerResultCh {
 	}
 }
 

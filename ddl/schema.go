@@ -14,10 +14,10 @@
 package ddl
 
 import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pkg/errors"
 )
 
 func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -129,6 +129,9 @@ func getIDs(tables []*model.TableInfo) []int64 {
 	ids := make([]int64, 0, len(tables))
 	for _, t := range tables {
 		ids = append(ids, t.ID)
+		if t.GetPartitionInfo() != nil {
+			ids = append(ids, getPartitionIDs(t)...)
+		}
 	}
 
 	return ids

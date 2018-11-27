@@ -22,15 +22,15 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -143,8 +143,6 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 		}(se)
 	}
 	wg.Wait()
-	se.sysSessionPool().Close()
-	c.Assert(se.sysSessionPool().IsClosed(), Equals, true)
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
@@ -178,7 +176,7 @@ func removeStore(c *C, dbPath string) {
 	os.RemoveAll(dbPath)
 }
 
-func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
+func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	ctx := context.Background()
 	if len(args) == 0 {
 		rs, err := se.Execute(ctx, sql)
@@ -198,7 +196,7 @@ func exec(se Session, sql string, args ...interface{}) (ast.RecordSet, error) {
 	return rs, nil
 }
 
-func mustExecSQL(c *C, se Session, sql string, args ...interface{}) ast.RecordSet {
+func mustExecSQL(c *C, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
 	rs, err := exec(se, sql, args...)
 	c.Assert(err, IsNil)
 	return rs

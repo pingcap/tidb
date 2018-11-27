@@ -18,22 +18,22 @@ import (
 	"io"
 	"sort"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -730,7 +730,7 @@ func fillGenColData(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t 
 		if !col.IsGenerated() || col.GeneratedStored == true {
 			continue
 		}
-		genColumnName := model.GetTableColumnID(tableInfo, col.ColumnInfo)
+		genColumnName := GetTableColumnID(tableInfo, col.ColumnInfo)
 		if expr, ok := genExprs[genColumnName]; ok {
 			var val types.Datum
 			val, err = expr.Eval(chunk.MutRowFromDatums(row).ToRow())
@@ -745,6 +745,11 @@ func fillGenColData(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t 
 		}
 	}
 	return nil
+}
+
+// GetTableColumnID gets a ID of a column with table ID	// TableColumnID is composed by table ID and column ID.
+func GetTableColumnID(tableInfo *model.TableInfo, col *model.ColumnInfo) string {
+	return fmt.Sprintf("%d_%d", tableInfo.ID, col.ID)
 }
 
 // admin error codes.

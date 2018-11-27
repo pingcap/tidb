@@ -27,8 +27,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
+	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	log "github.com/sirupsen/logrus"
@@ -161,6 +161,9 @@ func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 
 func runTestRegression(c *C, overrider configOverrider, dbName string) {
 	runTestsOnNewDB(c, overrider, dbName, func(dbt *DBTest) {
+		// Show the user
+		dbt.mustExec("select user()")
+
 		// Create Table
 		dbt.mustExec("CREATE TABLE test (val TINYINT)")
 

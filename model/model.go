@@ -19,11 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/types"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 )
 
 // SchemaState is the state for schema elements.
@@ -114,7 +113,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 // bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
 func (c *ColumnInfo) GetDefaultValue() interface{} {
 	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
-		return hack.String(c.DefaultValueBit)
+		return string(c.DefaultValueBit)
 	}
 	return c.DefaultValue
 }
