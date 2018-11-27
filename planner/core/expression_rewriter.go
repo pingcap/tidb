@@ -943,8 +943,8 @@ func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 	pos := v.N
 	str := strconv.Itoa(pos)
-	stkLen := len(er.ctxStack)
 	if v.P != nil {
+		stkLen := len(er.ctxStack)
 		val := er.ctxStack[stkLen-1]
 		intNum, isNull, err := expression.GetIntFromConstant(er.ctx, val)
 		er.ctxStack = er.ctxStack[:stkLen-1]

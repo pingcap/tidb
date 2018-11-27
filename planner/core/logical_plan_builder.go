@@ -831,7 +831,7 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 			}
 			newItem, isNull, err := expression.ParamToByItemNode(b.ctx, x)
 			if err != nil {
-				err := errors.Errorf("Unknown column '%+v' in 'order clause'", "?")
+				err := ErrUnknownColumn.GenWithStackByArgs("?", clauseMsg[b.curClause])
 				return nil, errors.Trace(err)
 			}
 			if isNull {
@@ -1588,7 +1588,7 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 			}
 			newItem, isNull, err := expression.ParamToByItemNode(b.ctx, x)
 			if err != nil {
-				err := errors.Errorf("Unknown column '%+v' in 'group statement'", "?")
+				err := ErrUnknownColumn.GenWithStackByArgs("?", clauseMsg[b.curClause])
 				return nil, nil, errors.Trace(err)
 			}
 			if isNull {
