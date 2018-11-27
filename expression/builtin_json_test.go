@@ -631,15 +631,16 @@ func (s *testEvaluatorSuite) TestJSONValid(c *C) {
 	tbl := []struct {
 		input    []interface{}
 		expected interface{}
+		success  bool
 	}{
-		{[]interface{}{nil}, nil},
-		{[]interface{}{`hello`}, 0},
-		{[]interface{}{`"hello"`}, 1},
-		{[]interface{}{`{"a": 1}`}, 1},
-		{[]interface{}{`{"a": 1`}, 0},
-		{[]interface{}{1}, 0},
-		{[]interface{}{`1`}, 1},
-		{[]interface{}{`"1"`}, 1},
+		{[]interface{}{nil}, nil, true},
+		{[]interface{}{`hello`}, 0, true},
+		{[]interface{}{`"hello"`}, 1, true},
+		{[]interface{}{`{"a": 1}`}, 1, true},
+		{[]interface{}{`{"a": 1`}, 0, false},
+		{[]interface{}{1}, 0, true},
+		{[]interface{}{`1`}, 1, true},
+		{[]interface{}{`"1"`}, 1, true},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.input...)
@@ -647,10 +648,14 @@ func (s *testEvaluatorSuite) TestJSONValid(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		if t.expected == nil {
-			c.Assert(d.IsNull(), IsTrue)
+		if t.success {
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
+			}
 		} else {
-			c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
+			c.Assert(err, NotNil)
 		}
 	}
 }
