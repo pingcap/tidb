@@ -1157,6 +1157,7 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 	s, err := CreateSession(store)
 	if err == nil {
 		// initialize session variables for test.
+		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 2
 	}
 	return s, errors.Trace(err)
@@ -1396,6 +1397,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
 	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
+	variable.TiDBInitChunkSize + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBEnableCascadesPlanner + quoteCommaQuote +
 	variable.TiDBRetryLimit + quoteCommaQuote +
