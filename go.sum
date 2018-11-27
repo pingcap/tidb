@@ -153,8 +153,8 @@ github.com/mattn/go-shellwords v1.0.3/go.mod h1:3xCvwCdWdlDJUrvuMn7Wuy9eWs4pE8vq
 github.com/matttproud/golang_protobuf_extensions v1.0.0/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/matttproud/golang_protobuf_extensions v1.0.1 h1:4hp9jkHxhMHkqkrB3Ix0jegS5sx/RkqARlsWZ6pIwiU=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
-github.com/mccxj/parser v0.0.0-20181117141729-5290889cded5 h1:tY+q4ScytCgy28jQmQUcp9BYDdDILR6MB+q1XLh3T2Y=
-github.com/mccxj/parser v0.0.0-20181117141729-5290889cded5/go.mod h1:JVWd/CsptJFL2Bq8AP7b5L+XG8QZdsjwSPmu7sWLh94=
+github.com/mccxj/parser v0.0.0-20181126225823-65ef5b397655 h1:bsRwvdDASRYyP3qWzMuactRpLZj/ud+NvLh4rQboUNU=
+github.com/mccxj/parser v0.0.0-20181126225823-65ef5b397655/go.mod h1:JVWd/CsptJFL2Bq8AP7b5L+XG8QZdsjwSPmu7sWLh94=
 github.com/montanaflynn/stats v0.0.0-20151014174947-eeaced052adb/go.mod h1:wL8QJuTMNUDYhXwkmfOly8iTdp5TEcJFWZD2D7SIkUc=
 github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 h1:pmpDGKLw4n82EtrNiLqB+xSz/JQwFOaZuMALYUHwX5s=
 github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808/go.mod h1:wL8QJuTMNUDYhXwkmfOly8iTdp5TEcJFWZD2D7SIkUc=
