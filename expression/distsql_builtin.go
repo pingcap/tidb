@@ -355,6 +355,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CoalesceInt:
 		f = &builtinCoalesceIntSig{base}
 
+	case tipb.ScalarFuncSig_CaseWhenJson:
+		f = &builtinCaseWhenJSONSig{base}
 	case tipb.ScalarFuncSig_CaseWhenDecimal:
 		f = &builtinCaseWhenDecimalSig{base}
 	case tipb.ScalarFuncSig_CaseWhenDuration:
@@ -436,6 +438,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinLikeSig{base}
 	case tipb.ScalarFuncSig_JsonLengthSig:
 		f = &builtinJSONLengthSig{base}
+	case tipb.ScalarFuncSig_JsonDepthSig:
+		f = &builtinJSONDepthSig{base}
 
 	case tipb.ScalarFuncSig_InInt:
 		f = &builtinInIntSig{base}
@@ -505,6 +509,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		return convertDuration(expr.Val)
 	case tipb.ExprType_MysqlTime:
 		return convertTime(expr.Val, expr.FieldType, sc.TimeZone)
+	case tipb.ExprType_MysqlJson:
+		return convertJSON(expr.Val)
 	}
 	if expr.Tp != tipb.ExprType_ScalarFunc {
 		panic("should be a tipb.ExprType_ScalarFunc")
@@ -639,4 +645,16 @@ func convertDuration(val []byte) (*Constant, error) {
 	}
 	d.SetMysqlDuration(types.Duration{Duration: time.Duration(i), Fsp: types.MaxFsp})
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeDuration)}, nil
+}
+
+func convertJSON(val []byte) (*Constant, error) {
+	var d types.Datum
+	_, d, err := codec.DecodeOne(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid json % x", val)
+	}
+	if d.Kind() != types.KindMysqlJSON {
+		return nil, errors.Errorf("invalid Datum.Kind() %d", d.Kind())
+	}
+	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeJSON)}, nil
 }
