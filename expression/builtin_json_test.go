@@ -647,8 +647,9 @@ func (s *testEvaluatorSuite) TestJSONValid(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
 		if t.success {
+			c.Assert(err, IsNil)
+
 			if t.expected == nil {
 				c.Assert(d.IsNull(), IsTrue)
 			} else {
