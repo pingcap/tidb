@@ -92,7 +92,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
 	// Reload schema.
-	_, err = s.se.Execute(context.Background(), "alter table t add column t1 int")
+	_, err = s.se.Execute(context.Background(), "alter table t comment 'test1'")
 	c.Assert(err, IsNil)
 	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
@@ -125,7 +125,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
 	// Reload schema.
-	_, err = s.se.Execute(context.Background(), "alter table tx add column t1 int")
+	_, err = s.se.Execute(context.Background(), "alter table tx comment 'tx'")
 	c.Assert(err, IsNil)
 	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
