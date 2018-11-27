@@ -88,21 +88,21 @@ func (s *testUnionStoreSuite) TestIterReverse(c *C) {
 	s.store.Set([]byte("2"), []byte("2"))
 	s.store.Set([]byte("3"), []byte("3"))
 
-	iter, err := s.us.IterReverse(nil)
+	iter, err := s.us.IterReverse(nil, nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("3"), []byte("2"), []byte("1")}, [][]byte{[]byte("3"), []byte("2"), []byte("1")})
 
-	iter, err = s.us.IterReverse([]byte("3"))
+	iter, err = s.us.IterReverse([]byte("3"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("1")}, [][]byte{[]byte("2"), []byte("1")})
 
 	s.us.Set([]byte("0"), []byte("0"))
-	iter, err = s.us.IterReverse([]byte("3"))
+	iter, err = s.us.IterReverse([]byte("3"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("1"), []byte("0")}, [][]byte{[]byte("2"), []byte("1"), []byte("0")})
 
 	s.us.Delete([]byte("1"))
-	iter, err = s.us.IterReverse([]byte("3"))
+	iter, err = s.us.IterReverse([]byte("3"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("0")}, [][]byte{[]byte("2"), []byte("0")})
 }

@@ -65,12 +65,12 @@ func (m *memDbBuffer) SetCap(cap int) {
 
 }
 
-func (m *memDbBuffer) IterReverse(k Key) (Iterator, error) {
+func (m *memDbBuffer) IterReverse(k Key, lowerBound Key) (Iterator, error) {
 	var i *memDbIter
 	if k == nil {
-		i = &memDbIter{iter: m.db.NewIterator(&util.Range{}), reverse: true}
+		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Start: lowerBound}), reverse: true}
 	} else {
-		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Limit: []byte(k)}), reverse: true}
+		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Start: lowerBound, Limit: []byte(k)}), reverse: true}
 	}
 	i.iter.Last()
 	return i, nil

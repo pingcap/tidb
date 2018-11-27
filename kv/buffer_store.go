@@ -88,12 +88,12 @@ func (s *BufferStore) Iter(k Key, upperBound Key) (Iterator, error) {
 }
 
 // IterReverse implements the Retriever interface.
-func (s *BufferStore) IterReverse(k Key) (Iterator, error) {
-	bufferIt, err := s.MemBuffer.IterReverse(k)
+func (s *BufferStore) IterReverse(k Key, lowerBound Key) (Iterator, error) {
+	bufferIt, err := s.MemBuffer.IterReverse(k, lowerBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := s.r.IterReverse(k)
+	retrieverIt, err := s.r.IterReverse(k, lowerBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

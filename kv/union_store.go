@@ -134,11 +134,11 @@ func (lmb *lazyMemBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
 	return lmb.mb.Iter(k, upperBound)
 }
 
-func (lmb *lazyMemBuffer) IterReverse(k Key) (Iterator, error) {
+func (lmb *lazyMemBuffer) IterReverse(k Key, lowerBound Key) (Iterator, error) {
 	if lmb.mb == nil {
 		return invalidIterator{}, nil
 	}
-	return lmb.mb.IterReverse(k)
+	return lmb.mb.IterReverse(k, lowerBound)
 }
 
 func (lmb *lazyMemBuffer) Size() int {

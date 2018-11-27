@@ -48,7 +48,7 @@ func (s testMockSuite) TestInterface(c *C) {
 		transaction.Get(Key("lock"))
 		transaction.Set(Key("lock"), []byte{})
 		transaction.Iter(Key("lock"), nil)
-		transaction.IterReverse(Key("lock"))
+		transaction.IterReverse(Key("lock"), nil)
 	}
 	transaction.Commit(context.Background())
 
