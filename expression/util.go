@@ -534,19 +534,12 @@ func ParamToByItemNode(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (*ast.
 	if err != nil {
 		return nil, true, errors.Trace(err)
 	}
-	str, isNull, err := GetStringFromConstant(ctx, value)
-	if err != nil {
+	pos, isNull, err := GetIntFromConstant(ctx, value)
+	if err != nil || isNull {
 		return nil, true, errors.Trace(err)
 	}
-	if isNull {
-		return nil, true, nil
-	}
-	pos, err := strconv.Atoi(str)
-	if err == nil {
-		byItem := &ast.ByItem{Expr: &ast.PositionExpr{N: pos, P: v}}
-		return byItem, false, nil
-	}
-	return nil, true, nil
+	byItem := &ast.ByItem{Expr: &ast.PositionExpr{N: pos, P: v}}
+	return byItem, false, nil
 }
 
 // GetStringFromConstant gets a string value from the Constant expression.
@@ -557,11 +550,8 @@ func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bo
 		return "", true, errors.Trace(err)
 	}
 	str, isNull, err := con.EvalString(ctx, chunk.Row{})
-	if err != nil {
+	if err != nil || isNull {
 		return "", true, errors.Trace(err)
-	}
-	if isNull {
-		return "", true, nil
 	}
 	return str, false, nil
 }
@@ -572,12 +562,9 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 	if err != nil {
 		return 0, true, errors.Trace(err)
 	}
-	if isNull {
-		return 0, true, nil
-	}
 	intNum, err := strconv.Atoi(str)
-	if err != nil {
-		return 0, true, errors.Trace(err)
+	if err != nil || isNull {
+		return 0, true, nil
 	}
 	return intNum, false, nil
 }
