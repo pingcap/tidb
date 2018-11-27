@@ -1509,7 +1509,8 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
 			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d %s (by %s).", vars.ConnectionID, schemaVersion, ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d %s (by %s).", vars.ConnectionID, schemaVersion, stmt.Text(), user)
+			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d cur_db:%s %s (by %s).", vars.ConnectionID,
+				schemaVersion, vars.CurrentDB, stmt.Text(), user)
 		}
 	default:
 		logQuery(node.Text(), vars)
