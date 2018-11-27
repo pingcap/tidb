@@ -272,7 +272,7 @@ var defaultConf = Config{
 		Enabled:  true,
 		Capacity: 2048000,
 	},
-	MaxPreparedStmtCount: 16382,
+	MaxPreparedStmtCount: -1,
 	LowerCaseTableNames:  2,
 	Log: Log{
 		Level:  "info",

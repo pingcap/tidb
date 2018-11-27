@@ -49,7 +49,7 @@ lower-case-table-names = 2
 compatible-kill-query = false
 
 # The total number limit of prepared statements in one server
-max-prepared-stmt-count = 16382
+max-prepared-stmt-count = -1
 
 [log]
 # Log level: debug, info, warn, error, fatal.

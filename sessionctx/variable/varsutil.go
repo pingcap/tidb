@@ -295,7 +295,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case WaitTimeout:
 		return checkUInt64SystemVar(name, value, 1, 31536000, vars)
 	case MaxPreparedStmtCount:
-		return checkUInt64SystemVar(name, value, 0, 1048576, vars)
+		return checkInt64SystemVar(name, value, -1, 1048576, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil

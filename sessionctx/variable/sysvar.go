@@ -519,7 +519,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, "innodb_create_intrinsic", ""},
 	{ScopeGlobal, "gtid_executed_compression_period", ""},
 	{ScopeGlobal, "ndb_log_empty_epochs", ""},
-	{ScopeGlobal, MaxPreparedStmtCount, strconv.FormatUint(DefMaxPreparedStmtCount, 10)},
+	{ScopeGlobal, MaxPreparedStmtCount, strconv.FormatInt(DefMaxPreparedStmtCount, 10)},
 	{ScopeNone, "have_geometry", "YES"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_max_mem_size", "16384"},
 	{ScopeGlobal | ScopeSession, "net_retry_count", "10"},

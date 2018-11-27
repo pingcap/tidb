@@ -540,7 +540,7 @@ func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt *ast.Prepared) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
 		maxPreparedStmtCount := atomic.LoadInt64(&config.GetGlobalConfig().MaxPreparedStmtCount)
 		newPreparedStmtCount := atomic.AddInt64(&preparedStmtCount, 1)
-		if maxPreparedStmtCount > 0 && newPreparedStmtCount > maxPreparedStmtCount {
+		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
 			atomic.AddInt64(&preparedStmtCount, -1)
 			return ErrMaxPreparedStmtCountReached.GenWithStackByArgs(maxPreparedStmtCount)
 		}

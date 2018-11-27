@@ -243,7 +243,7 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	c.Assert(prePrepared, Equals, deallocPrepared)
 
 	// test change global limit and make it affected in test session.
-	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("16382"))
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
 	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
 	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
 	time.Sleep(3 * time.Second) // renew a session after 2 sec
