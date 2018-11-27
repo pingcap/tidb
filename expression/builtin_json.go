@@ -722,7 +722,7 @@ func (b *builtinJSONValidJSONSig) Clone() builtinFunc {
 func (b *builtinJSONValidJSONSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, isNull, errors.Trace(err)
 	}
 	return 1, false, nil
 }
@@ -744,11 +744,11 @@ func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bo
 
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, err
+		return 0, isNull, errors.Trace(err)
 	}
 	_, err = json.ParseBinaryFromString(str)
 	if err != nil {
-		return 0, false, err
+		return 0, false, errors.Trace(err)
 	}
 	return 1, false, nil
 }

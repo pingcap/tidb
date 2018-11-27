@@ -637,7 +637,7 @@ func (s *testEvaluatorSuite) TestJSONValid(c *C) {
 		{[]interface{}{`hello`}, 0, true},
 		{[]interface{}{`"hello"`}, 1, true},
 		{[]interface{}{`{"a": 1}`}, 1, true},
-		{[]interface{}{`{"a": 1`}, 0, false},
+		{[]interface{}{`{"a": 1`}, 0, true},
 		{[]interface{}{1}, 0, true},
 		{[]interface{}{`1`}, 1, true},
 		{[]interface{}{`"1"`}, 1, true},
