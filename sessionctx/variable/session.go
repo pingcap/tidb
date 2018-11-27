@@ -124,6 +124,15 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 	tc.TableDeltaMap[tableID] = item
 }
 
+// Cleanup clears up transaction info that no longer use.
+func (tc *TransactionContext) Cleanup() {
+	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	tc.DirtyDB = nil
+	tc.Binlog = nil
+	tc.Histroy = nil
+	tc.TableDeltaMap = nil
+}
+
 // ClearDelta clears the delta map.
 func (tc *TransactionContext) ClearDelta() {
 	tc.TableDeltaMap = nil
