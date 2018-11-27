@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -66,6 +67,8 @@ type IndexLookUpJoin struct {
 	indexRanges   []*ranger.Range
 	keyOff2IdxOff []int
 	innerPtrBytes [][]byte
+
+	nextColCompareFilters *plannercore.ColWithCompareOps
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -123,8 +126,9 @@ type innerWorker struct {
 	ctx         sessionctx.Context
 	executorChk *chunk.Chunk
 
-	indexRanges   []*ranger.Range
-	keyOff2IdxOff []int
+	indexRanges           []*ranger.Range
+	nextColCompareFilters *plannercore.ColWithCompareOps
+	keyOff2IdxOff         []int
 }
 
 // Open implements the Executor interface.
@@ -423,13 +427,18 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	}
 }
 
+type indexJoinLookUpContent struct {
+	keys []types.Datum
+	row  chunk.Row
+}
+
 func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) error {
-	dLookUpKeys, err := iw.constructDatumLookupKeys(task)
+	lookUpContents, err := iw.constructDatumLookupKeys(task)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dLookUpKeys = iw.sortAndDedupDatumLookUpKeys(dLookUpKeys)
-	err = iw.fetchInnerResults(ctx, task, dLookUpKeys)
+	lookUpContents = iw.sortAndDedupLookUpContents(lookUpContents)
+	err = iw.fetchInnerResults(ctx, task, lookUpContents)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -440,8 +449,8 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 	return nil
 }
 
-func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types.Datum, error) {
-	dLookUpKeys := make([][]types.Datum, 0, task.outerResult.NumRows())
+func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([]*indexJoinLookUpContent, error) {
+	lookUpContents := make([]*indexJoinLookUpContent, 0, task.outerResult.NumRows())
 	keyBuf := make([]byte, 0, 64)
 	for i := 0; i < task.outerResult.NumRows(); i++ {
 		dLookUpKey, err := iw.constructDatumLookupKey(task, i)
@@ -460,11 +469,11 @@ func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types
 		}
 		// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 		task.encodedLookUpKeys.AppendBytes(0, keyBuf)
-		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
+		lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: task.outerResult.GetRow(i)})
 	}
 
 	task.memTracker.Consume(task.encodedLookUpKeys.MemoryUsage())
-	return dLookUpKeys, nil
+	return lookUpContents, nil
 }
 
 func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int) ([]types.Datum, error) {
@@ -496,20 +505,23 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 	return dLookupKey, nil
 }
 
-func (iw *innerWorker) sortAndDedupDatumLookUpKeys(dLookUpKeys [][]types.Datum) [][]types.Datum {
-	if len(dLookUpKeys) < 2 {
-		return dLookUpKeys
+func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLookUpContent) []*indexJoinLookUpContent {
+	if len(lookUpContents) < 2 {
+		return lookUpContents
 	}
 	sc := iw.ctx.GetSessionVars().StmtCtx
-	sort.Slice(dLookUpKeys, func(i, j int) bool {
-		cmp := compareRow(sc, dLookUpKeys[i], dLookUpKeys[j])
-		return cmp < 0
+	sort.Slice(lookUpContents, func(i, j int) bool {
+		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[j].keys)
+		if cmp != 0 || iw.nextColCompareFilters == nil {
+			return cmp < 0
+		}
+		return iw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[j].row) < 0
 	})
-	deDupedLookupKeys := dLookUpKeys[:1]
-	for i := 1; i < len(dLookUpKeys); i++ {
-		cmp := compareRow(sc, dLookUpKeys[i], dLookUpKeys[i-1])
-		if cmp != 0 {
-			deDupedLookupKeys = append(deDupedLookupKeys, dLookUpKeys[i])
+	deDupedLookupKeys := lookUpContents[:1]
+	for i := 1; i < len(lookUpContents); i++ {
+		cmp := compareRow(sc, lookUpContents[i].keys, lookUpContents[i-1].keys)
+		if cmp != 0 || (iw.nextColCompareFilters != nil && iw.nextColCompareFilters.CompareRow(lookUpContents[i].row, lookUpContents[i-1].row) != 0) {
+			deDupedLookupKeys = append(deDupedLookupKeys, lookUpContents[i])
 		}
 	}
 	return deDupedLookupKeys
@@ -529,8 +541,8 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
 	return 0
 }
 
-func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask, dLookUpKeys [][]types.Datum) error {
-	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, iw.indexRanges, iw.keyOff2IdxOff)
+func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask, lookUpContent []*indexJoinLookUpContent) error {
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters)
 	if err != nil {
 		return errors.Trace(err)
 	}

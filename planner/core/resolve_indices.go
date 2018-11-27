@@ -125,6 +125,12 @@ func (p *PhysicalIndexJoin) ResolveIndices() {
 	for i, expr := range p.OtherConditions {
 		p.OtherConditions[i] = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
 	}
+	if p.compareFilters != nil {
+		p.compareFilters.resolveIndices(p.children[p.OuterIndex].Schema())
+		for i := range p.compareFilters.affectedColSchema.Columns {
+			p.compareFilters.affectedColSchema.Columns[i] = p.compareFilters.affectedColSchema.Columns[i].ResolveIndices(p.children[p.OuterIndex].Schema()).(*expression.Column)
+		}
+	}
 }
 
 // ResolveIndices implements Plan interface.
