@@ -692,14 +692,21 @@ func (s *testSuite) TestPrepareDealloc(c *C) {
 func (s *testSuite) TestPreparedIssue8153(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
 		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
+		var err error
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -719,7 +726,7 @@ func (s *testSuite) TestPreparedIssue8153(c *C) {
 		r.Check(testkit.Rows("3 1", "2 2", "1 3"))
 
 		tk.MustExec(`set @param = 3`)
-		_, err := tk.Exec(`execute stmt using @param;`)
+		_, err = tk.Exec(`execute stmt using @param;`)
 		c.Assert(err.Error(), Equals, "[planner:1054]Unknown column '?' in 'order clause'")
 
 		tk.MustExec(`set @param = '##'`)
