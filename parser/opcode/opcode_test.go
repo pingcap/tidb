@@ -13,12 +13,27 @@
 
 package opcode
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestT(t *testing.T) {
 	op := Plus
 	if op.String() != "plus" {
 		t.Fatalf("invalid op code")
+	}
+
+	if len(Ops) != len(opsLiteral) {
+		t.Error("inconsistent count ops and opsliteral")
+	}
+	var buf bytes.Buffer
+	for op := range Ops {
+		op.Format(&buf)
+		if buf.String() != opsLiteral[op] {
+			t.Error("format op fail", op)
+		}
+		buf.Reset()
 	}
 
 	// Test invalid opcode
