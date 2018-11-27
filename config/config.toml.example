@@ -122,6 +122,8 @@ metrics-interval = 15
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
+# Max memory size to use, 0 use the total usable memory in the machine.
+max-memory = 0
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
 
@@ -162,6 +164,7 @@ header-timeout = 5
 [prepared-plan-cache]
 enabled = false
 capacity = 100
+memory-guard-ratio = 0.1
 
 [opentracing]
 # Enable opentracing.

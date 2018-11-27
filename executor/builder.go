@@ -671,6 +671,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		stmtNode:     v.StmtNode,
 		builder:      b,
+		format:       v.Format,
 	}
 }
 
@@ -1078,12 +1079,12 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 				ordinal = append(ordinal, partialOrdinal+1)
 				partialOrdinal++
 			}
-			finalDesc := aggDesc.Split(ordinal)
-			partialAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
+			partialAggDesc, finalDesc := aggDesc.Split(ordinal)
+			partialAggFunc := aggfuncs.Build(b.ctx, partialAggDesc, i)
 			finalAggFunc := aggfuncs.Build(b.ctx, finalDesc, i)
 			e.PartialAggFuncs = append(e.PartialAggFuncs, partialAggFunc)
 			e.FinalAggFuncs = append(e.FinalAggFuncs, finalAggFunc)
-			if aggDesc.Name == ast.AggFuncGroupConcat {
+			if partialAggDesc.Name == ast.AggFuncGroupConcat {
 				// For group_concat, finalAggFunc and partialAggFunc need shared `truncate` flag to do duplicate.
 				finalAggFunc.(interface{ SetTruncated(t *int32) }).SetTruncated(
 					partialAggFunc.(interface{ GetTruncated() *int32 }).GetTruncated(),
