@@ -592,7 +592,7 @@ func (s *testAggFuncSuit) TestVarPop(c *C) {
 	result = distinctVarPopFunc.GetResult(evalCtx)
 	c.Assert(result.IsNull(), IsTrue)
 	for _, row := range s.rows {
-		err := distinctVarPopFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		err = distinctVarPopFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 		c.Assert(err, IsNil)
 	}
 	result = distinctVarPopFunc.GetResult(evalCtx)
