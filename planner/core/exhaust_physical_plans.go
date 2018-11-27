@@ -631,8 +631,8 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 	}
 	keyMatchedLen := len(idxCols) - 1
 	for ; keyMatchedLen > 0; keyMatchedLen-- {
-		if idxOff2keyOff[keyMatchedLen] == -1 {
-			continue
+		if idxOff2keyOff[keyMatchedLen] != -1 {
+			break
 		}
 	}
 	remained := make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
