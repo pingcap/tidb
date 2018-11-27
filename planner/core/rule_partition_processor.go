@@ -110,7 +110,6 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		newDataSource.statisticTable = getStatsTable(ds.context(), ds.table.Meta(), pi.Definitions[i].ID)
 		children = append(children, &newDataSource)
 	}
-
 	if len(children) == 0 {
 		// No result after table pruning.
 		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())

@@ -398,26 +398,28 @@ PARTITION BY RANGE ( id ) (
 	tbInfo = tb.Meta()
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
+}
 
-	// test for hash partition table.
-	createTable1 = `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4; `
-	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition = 'on';")
+func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
+	_, err := ts.se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), createTable1)
+	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition = 'on';")
 	c.Assert(err, IsNil)
-	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
 	c.Assert(err, IsNil)
-	tbInfo = tb.Meta()
-	p0 = tbInfo.Partition.Definitions[0]
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tbInfo := tb.Meta()
+	p0 := tbInfo.Partition.Definitions[0]
 	c.Assert(ts.se.NewTxn(), IsNil)
-	rid, err = tb.AddRecord(ts.se, types.MakeDatums(8), false)
+	rid, err := tb.AddRecord(ts.se, types.MakeDatums(8), false)
 	c.Assert(err, IsNil)
 
 	// Check that add record writes to the partition, rather than the table.
-	txn = ts.se.Txn(true)
-	val, err = txn.Get(tables.PartitionRecordKey(p0.ID, rid))
+	txn := ts.se.Txn(true)
+	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
 	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
@@ -436,7 +438,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 
 	// Check index count equals to data count.
-	tk = testkit.NewTestKitWithInit(c, ts.store)
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from t1 use index(id)").Check(testkit.Rows("4"))
 	tk.MustQuery("select count(*) from t1 use index(id) where id > 2").Check(testkit.Rows("3"))
