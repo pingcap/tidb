@@ -115,16 +115,19 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		finalAggDesc.Args = args
 	case ast.AggFuncVarPop:
 		args := make([]expression.Expression, 0, 3)
+		// first argument is the count of elements.
 		args = append(args, &expression.Column{
 			ColName: model.NewCIStr(fmt.Sprintf("var_pop_final_col_%d", ordinal[0])),
 			Index:   ordinal[0],
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		})
+		// second argument is the sum of elements.
 		args = append(args, &expression.Column{
 			ColName: model.NewCIStr(fmt.Sprintf("var_pop_final_col_%d", ordinal[1])),
 			Index:   ordinal[1],
 			RetType: a.RetTp,
 		})
+		// third argument is the variance of elements.
 		args = append(args, &expression.Column{
 			ColName: model.NewCIStr(fmt.Sprintf("var_pop_final_col_%d", ordinal[2])),
 			Index:   ordinal[2],
