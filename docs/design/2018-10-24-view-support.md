@@ -86,7 +86,7 @@ Let me describe more details about the view DDL operation:
 2. Drop a view  
   Implement `DROP VIEW` grammar, and delete the existing view tableinfo object. This function should reuse `DROP TABLE` code logical
 3. Select from a view  
-  3.1 In function `func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error)`, if `tn *ast.TableName` is a view, then we build a select `LogicalPlan` from view's `SelectStmt` string. But this solution meet a problem,here is the example:  
+    In function `func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error)`, if `tn *ast.TableName` is a view, then we build a select `LogicalPlan` from view's `SelectStmt` string. But this solution meet a problem,here is the example:  
     ```mysql
        create table t(a int,b int);
        create view v like select * from t;
@@ -98,11 +98,11 @@ Let me describe more details about the view DDL operation:
        drop table t;
        create table t(c int,d int);
     ```
-    If we rebuild table v from sql above and query view `v` again, database will rewrite view's `SelectStmt` from `select * from t` into <bold>`select c as c,d as d from t`</bold>
-    So the problem is view's statement can be rewrite to different sql and generate different query set.
-    In order to resolve the problem describe above, we build a `Projection` at the top of original select's `LogicalPlan`, just like we rewriter view's `SelectStmt` from `select * from t` into `select a as a,b as b from (select * from t)`.
-    This is a temporary fix and we will implement TiDB to rewrite sql with replace all wildcard finally.
-4. Show table status
+    If we rebuild table `v` from sql above and query from view `v` again, database will rewrite view's `SelectStmt` from `select * from t` into <bold>`select c as c,d as d from t`</bold>
+    So the problem is view's statement can be rewrite to different sql and generate different query set.  
+    In order to resolve the problem describe above, we build a `Projection` at the top of original select's `LogicalPlan`, just like we rewriter view's `SelectStmt` from `select * from t` into `select a as a,b as b from (select * from t)`.  
+    This is a temporary fix and we will implement TiDB to rewrite sql with replace all wildcard finally.  
+4. Show table status  
   Modify `SHOW TABLE STATUS` function to support show view status, and we use this command to check if `CREATE VIEW` and `DROP VIEW` operation is successful. To reuse `SHOW TABLE STAUS` code logical is perferred.
 
 ## Compatibility
