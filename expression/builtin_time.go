@@ -4541,7 +4541,20 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	default:
 		flen, decimal = 17, 6
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, types.ETInt, types.ETInt, types.ETReal)
+	arg0Type, arg1Type := args[0].GetType().EvalType(), args[1].GetType().EvalType()
+	// For ETString type, arg must be evaluated rounding down to int64
+	// For other types, arg is evaluated rounding to int64
+	if arg0Type == types.ETString {
+		arg0Type = types.ETReal
+	} else {
+		arg0Type = types.ETInt
+	}
+	if arg1Type == types.ETString {
+		arg1Type = types.ETReal
+	} else {
+		arg1Type = types.ETInt
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, arg0Type, arg1Type, types.ETReal)
 	bf.tp.Flen, bf.tp.Decimal = flen, decimal
 	sig := &builtinMakeTimeSig{bf}
 	return sig, nil
@@ -4557,18 +4570,28 @@ func (b *builtinMakeTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
+// calculate for hour and minute
+func (b *builtinMakeTimeSig) getIntParam(arg Expression, row chunk.Row) (int64, bool, error) {
+	if arg.GetType().EvalType() == types.ETReal {
+		fRes, isNull, err := arg.EvalReal(b.ctx, row)
+		return int64(fRes), isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+	iRes, isNull, err := arg.EvalInt(b.ctx, row)
+	return iRes, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+}
+
 // evalDuration evals a builtinMakeTimeIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
 func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	dur := types.ZeroDuration
 	dur.Fsp = types.MaxFsp
-	hour, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	hour, isNull, err := b.getIntParam(b.args[0], row)
 	if isNull || err != nil {
-		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		return dur, isNull, err
 	}
-	minute, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	minute, isNull, err := b.getIntParam(b.args[1], row)
 	if isNull || err != nil {
-		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		return dur, isNull, err
 	}
 	if minute < 0 || minute >= 60 {
 		return dur, true, nil

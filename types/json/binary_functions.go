@@ -731,3 +731,42 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 		return CompareBinary(obj, target) == 0
 	}
 }
+
+// GetElemDepth for JSON_DEPTH
+// Returns the maximum depth of a JSON document
+// rules referenced by MySQL JSON_DEPTH function
+// [https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-depth]
+// 1) An empty array, empty object, or scalar value has depth 1.
+// 2) A nonempty array containing only elements of depth 1 or nonempty object containing only member values of depth 1 has depth 2.
+// 3) Otherwise, a JSON document has depth greater than 2.
+// e.g. depth of '{}', '[]', 'true': 1
+// e.g. depth of '[10, 20]', '[[], {}]': 2
+// e.g. depth of '[10, {"a": 20}]': 3
+func (bj BinaryJSON) GetElemDepth() int {
+	switch bj.TypeCode {
+	case TypeCodeObject:
+		len := bj.GetElemCount()
+		maxDepth := 0
+		for i := 0; i < len; i++ {
+			obj := bj.objectGetVal(i)
+			depth := obj.GetElemDepth()
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		}
+		return maxDepth + 1
+	case TypeCodeArray:
+		len := bj.GetElemCount()
+		maxDepth := 0
+		for i := 0; i < len; i++ {
+			obj := bj.arrayGetElem(i)
+			depth := obj.GetElemDepth()
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		}
+		return maxDepth + 1
+	default:
+		return 1
+	}
+}
