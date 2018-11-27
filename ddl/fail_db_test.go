@@ -92,8 +92,9 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
-	// Reload schema.
-	s.dom.ResetHandle(s.store)
+	// Execute ddl statement reload schema.
+	_, err = s.se.Execute(context.Background(), "alter table t comment 'test1'")
+	c.Assert(err, IsNil)
 	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
@@ -105,8 +106,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(err, IsNil)
 
 	// test for renaming table
-	gofail.Enable("github.com/pingcap/tidb/ddl/errRenameTable", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errRenameTable")
+	gofail.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/renameTableErr")
 	_, err = s.se.Execute(context.Background(), "create table tx(a int)")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tx values(1)")
@@ -124,8 +125,9 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
-	// Reload schema.
-	s.dom.ResetHandle(s.store)
+	// Execute ddl statement reload schema.
+	_, err = s.se.Execute(context.Background(), "alter table tx comment 'tx'")
+	c.Assert(err, IsNil)
 	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
