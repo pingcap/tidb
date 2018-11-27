@@ -656,9 +656,9 @@ func (p *sessionPool) Close() {
 		return
 	}
 	p.mu.closed = true
+	close(p.resources)
 	p.mu.Unlock()
 
-	close(p.resources)
 	for r := range p.resources {
 		r.Close()
 	}
