@@ -78,14 +78,14 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 	return nil
 }
 
-func (e *InsertExec) checkPartitions(rows [][]types.Datum)(error)  {
+func (e *InsertExec) checkPartitions(rows [][]types.Datum) error {
 	tablePartitionInfo := e.Table.Meta().GetPartitionInfo()
-	partitionNames := make(map[model.CIStr] struct{})
+	partitionNames := make(map[model.CIStr]struct{})
 	for _, partName := range e.PartitionNames {
-		partitionNames[partName] =struct {}{}
+		partitionNames[partName] = struct{}{}
 	}
 	if nil == tablePartitionInfo {
-		return table.ErrPartitionClauseOnNonpartitioned;
+		return table.ErrPartitionClauseOnNonpartitioned
 	}
 	tablePartitionNames := make(map[model.CIStr]bool)
 	for _, def := range tablePartitionInfo.Definitions {
@@ -94,10 +94,9 @@ func (e *InsertExec) checkPartitions(rows [][]types.Datum)(error)  {
 
 	for _, insertPartitionName := range e.PartitionNames {
 		if _, ok := tablePartitionNames[insertPartitionName]; !ok {
-			return table.ErrUnknownPartition
+			return table.ErrUnknownPartition.FastGen(mysql.MySQLErrName[mysql.ErrUnknownPartition], insertPartitionName, e.Table.Meta().Name)
 		}
 	}
-
 
 	for _, row := range rows {
 		defPos, err := e.Table.LocationPartition(e.ctx, row)

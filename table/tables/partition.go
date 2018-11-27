@@ -168,7 +168,7 @@ func (t *partitionedTable) PartitionExpr() *PartitionExpr {
 	return t.partitionExpr
 }
 
-func (t *partitionedTable) LocatePartition(ctx sessionctx.Context, r []types.Datum) (int, error)  {
+func (t *partitionedTable) LocationPartition(ctx sessionctx.Context, r []types.Datum) (int, error) {
 	return t.searchPartitionDef(ctx, t.Meta().Partition, r)
 }
 
@@ -186,7 +186,7 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	return pi.Definitions[idx].ID, nil
 }
 
-func (t *partitionedTable) searchPartitionDef(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error)  {
+func (t *partitionedTable) searchPartitionDef(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
 	var err error
 	var isNull bool
 	partitionExprs := t.partitionExpr.UpperBounds
