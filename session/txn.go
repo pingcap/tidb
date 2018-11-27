@@ -226,6 +226,10 @@ func (st *TxnState) cleanup() {
 		delete(st.mutations, key)
 	}
 	if st.dirtyTableOP != nil {
+		empty := dirtyTableOperation{}
+		for i := 0; i < len(st.dirtyTableOP); i++ {
+			st.dirtyTableOP[i] = empty
+		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
 }
