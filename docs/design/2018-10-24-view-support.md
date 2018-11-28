@@ -33,22 +33,22 @@ This proposal is prepared to implement basic VIEW feature, which contains "CREAT
 We introduce `ViewInfo` to store the metadata for view and add an attribute `*ViewInfo` which named `View` to TableInfo. If `TableInfo.ViewInfo` != nil, then this `TableInfo` is a base table, else this `TableInfo` is a view.:
 ```
 type ViewInfo struct {
-	Algorithm   AlgorithmType    `json:"view_algorithm"`
+	Algorithm   Algorithm        `json:"view_algorithm"`
 	Definer     UserIdentity     `json:"view_definer"`  
-	Security    SecurityType     `json:"view_security""`
+	Security    Security         `json:"view_security""`
 	SelectStmt  string           `json:"view_select"`
-	CheckOption CheckOptionType  `json:"view_checkoption"`
+	CheckOption CheckOption      `json:"view_checkoption"`
 	Cols        []model.CIStr    `json:"view_cols"`
 }
 ```
-* [AlgorithmType](https://dev.mysql.com/doc/refman/5.7/en/view-algorithms.html)  
+* [Algorithm](https://dev.mysql.com/doc/refman/5.7/en/view-algorithms.html)  
     The view SQL AlGORITHM characteristic. The value is one of UNDEFINED、MERGE OR TEMPTABLE, if no ALGORITHM clause is present, UNDEFINED is the default algorithm.
     We will implement Algorithm=MERGE only now.
 * [Definer](https://dev.mysql.com/doc/refman/5.7/en/create-view.html)  
     The account of the user who created the view, in 'user_name'@'host_name' format.
-* [SecurityType](https://dev.mysql.com/doc/refman/5.7/en/create-view.html)  
+* [Security](https://dev.mysql.com/doc/refman/5.7/en/create-view.html)  
     The view SQL SECURITY characteristic. The value is one of DEFINER or INVOKER.
-* [CheckOptionType](https://dev.mysql.com/doc/refman/5.7/en/view-check-option.html)  
+* [CheckOption](https://dev.mysql.com/doc/refman/5.7/en/view-check-option.html)  
     The WITH CHECK OPTION clause can be given for an updatable view to prevent inserts to rows for which the WHERE clause in the select_statement is not true. It also prevents updates to rows for which the WHERE clause is true but the update would cause it to be not true (in other words, it prevents visible rows from being updated to nonvisible rows).  
     In a WITH CHECK OPTION clause for an updatable view, the LOCAL and CASCADED keywords determine the scope of check testing when the view is defined in terms of another view. When neither keyword is given, the default is CASCADED.
 * SelectStmt  
