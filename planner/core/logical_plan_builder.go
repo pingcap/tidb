@@ -18,6 +18,7 @@ import (
 	"math"
 	"math/bits"
 	"reflect"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -827,20 +828,12 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	sort := LogicalSort{}.Init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
-		switch x := item.Expr.(type) {
+		switch v := item.Expr.(type) {
 		case *driver.ParamMarkerExpr:
 			if b.ctx.GetSessionVars().InPrepare {
 				continue
 			}
-			newItem, isNull, err := expression.ParamToByItemNode(b.ctx, x)
-			if err != nil {
-				err := ErrUnknownColumn.GenWithStackByArgs("?", clauseMsg[b.curClause])
-				return nil, errors.Trace(err)
-			}
-			if isNull {
-				continue
-			}
-			item = newItem
+			item = &ast.ByItem{Expr: &ast.PositionExpr{P: v}}
 		}
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
 		if err != nil {
@@ -1167,6 +1160,7 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
+	ctx    sessionctx.Context
 	fields []*ast.SelectField
 	schema *expression.Schema
 	err    error
@@ -1211,14 +1205,19 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 	case *ast.PositionExpr:
-		if v.N < 1 || v.N > len(g.fields) {
-			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", v.N)
+		pos, isNull, err := expression.PosFromPositionExpr(g.ctx, v)
+		if err != nil || isNull {
+			g.err = ErrUnknownColumn.GenWithStackByArgs("?", clauseMsg[groupByClause])
 			return inNode, false
 		}
-		ret := g.fields[v.N-1].Expr
+		if pos < 1 || pos > len(g.fields) {
+			g.err = ErrUnknownColumn.GenWithStackByArgs(strconv.Itoa(v.N), clauseMsg[groupByClause])
+			return inNode, false
+		}
+		ret := g.fields[pos-1].Expr
 		ret.Accept(extractor)
 		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[v.N-1].Text())
+			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
 			return inNode, false
 		}
 		return ret, true
@@ -1576,6 +1575,7 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{
+		ctx:    b.ctx,
 		fields: fields,
 		schema: p.Schema(),
 	}
@@ -1583,20 +1583,13 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		hasParam := false
 		resolver.inExpr = false
 		var retExpr ast.Node
-		switch x := item.Expr.(type) {
+		switch v := item.Expr.(type) {
 		case *driver.ParamMarkerExpr:
 			hasParam = true
 			if b.ctx.GetSessionVars().InPrepare {
 				continue
 			}
-			newItem, isNull, err := expression.ParamToByItemNode(b.ctx, x)
-			if err != nil {
-				err := ErrUnknownColumn.GenWithStackByArgs("?", clauseMsg[b.curClause])
-				return nil, nil, errors.Trace(err)
-			}
-			if isNull {
-				continue
-			}
+			newItem := &ast.ByItem{Expr: &ast.PositionExpr{P: v}}
 			retExpr, _ = newItem.Expr.Accept(resolver)
 		default:
 			retExpr, _ = item.Expr.Accept(resolver)
