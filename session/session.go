@@ -189,7 +189,7 @@ func (s *session) cleanRetryInfo() {
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
-		delete(s.sessionVars.PreparedStmts, stmtID)
+		s.sessionVars.RemovePreparedStmt(stmtID)
 	}
 }
 
@@ -418,6 +418,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	if err != nil {
 		label = metrics.LblError
 	}
+	s.sessionVars.TxnCtx.Cleanup()
 	metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), label).Inc()
 	return errors.Trace(err)
 }
@@ -435,6 +436,7 @@ func (s *session) RollbackTxn(ctx context.Context) error {
 	}
 	s.cleanRetryInfo()
 	s.txn.changeToInvalid()
+	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }
@@ -577,7 +579,12 @@ func sqlForLog(sql string) string {
 	return executor.QueryReplacer.Replace(sql)
 }
 
-func (s *session) sysSessionPool() *pools.ResourcePool {
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
+func (s *session) sysSessionPool() sessionPool {
 	return domain.GetDomain(s).SysSessionPool()
 }
 
@@ -1090,6 +1097,9 @@ func (s *session) Close() {
 	if err := s.RollbackTxn(ctx); err != nil {
 		log.Error("session Close error:", errors.ErrorStack(err))
 	}
+	if s.sessionVars != nil {
+		s.sessionVars.WithdrawAllPreparedStmt()
+	}
 }
 
 // GetSessionVars implements the context.Context interface.
@@ -1100,12 +1110,15 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
 
-	// Check IP.
+	// Check IP or localhost.
 	var success bool
 	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt)
 	if success {
 		s.sessionVars.User = user
 		return true
+	} else if user.Hostname == variable.DefHostname {
+		log.Errorf("User connection verification failed %s", user)
+		return false
 	}
 
 	// Check Hostname.
@@ -1128,7 +1141,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 
 func getHostByIP(ip string) []string {
 	if ip == "127.0.0.1" {
-		return []string{"localhost"}
+		return []string{variable.DefHostname}
 	}
 	addrs, err := net.LookupAddr(ip)
 	terror.Log(errors.Trace(err))
@@ -1279,7 +1292,8 @@ func createSession(store kv.Storage) (*session, error) {
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity)
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
@@ -1301,7 +1315,8 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionVars: variable.NewSessionVars(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
-		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity)
+		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
+			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
@@ -1368,6 +1383,8 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.MaxAllowedPacket + quoteCommaQuote +
 	variable.TimeZone + quoteCommaQuote +
 	variable.BlockEncryptionMode + quoteCommaQuote +
+	variable.WaitTimeout + quoteCommaQuote +
+	variable.MaxPreparedStmtCount + quoteCommaQuote +
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check + quoteCommaQuote +
 	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +
@@ -1504,7 +1521,8 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 		if ss, ok := node.(ast.SensitiveStmtNode); ok {
 			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d %s (by %s).", vars.ConnectionID, schemaVersion, ss.SecureText(), user)
 		} else {
-			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d %s (by %s).", vars.ConnectionID, schemaVersion, stmt.Text(), user)
+			log.Infof("[CRUCIAL OPERATION] con:%d schema_ver:%d cur_db:%s %s (by %s).", vars.ConnectionID,
+				schemaVersion, vars.CurrentDB, stmt.Text(), user)
 		}
 	default:
 		logQuery(node.Text(), vars)
