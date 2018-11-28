@@ -1403,6 +1403,11 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	// Coalesce partition can only be used on hash/key partitions.
+	if t.Meta().Partition.Type == model.PartitionTypeRange {
+		return errors.Trace(ErrCoalesceOnlyOnHashPartition)
+	}
+
 	// We don't support coalesce partitions hash type partition now.
 	if t.Meta().Partition.Type == model.PartitionTypeHash {
 		return errors.Trace(ErrUnsupportedCoalescePartition)

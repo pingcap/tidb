@@ -3722,4 +3722,12 @@ func (s *testDBSuite) TestPartitionErrorCode(c *C) {
 	partitions 12;`)
 	_, err = s.tk.Exec("alter table clients coalesce partition 4;")
 	c.Assert(ddl.ErrUnsupportedCoalescePartition.Equal(err), IsTrue)
+
+	s.tk.MustExec(`create table t_part (a int key)
+		partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+		);`)
+	_, err = s.tk.Exec("alter table t_part coalesce partition 4;")
+	c.Assert(ddl.ErrCoalesceOnlyOnHashPartition.Equal(err), IsTrue)
 }
