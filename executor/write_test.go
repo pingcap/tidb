@@ -1082,6 +1082,13 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec(`CREATE TABLE t1 (c1 float)`)
 	tk.MustExec("INSERT INTO t1 SET c1 = 1")
 	tk.MustExec("UPDATE t1 SET c1 = 1.2 WHERE c1=1;")
+
+	// issue 8119
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 float(1,1));")
+	tk.MustExec("insert into t values (0.0);")
+	_, err = tk.Exec("update t set c1 = 2.0;")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {
