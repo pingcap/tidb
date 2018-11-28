@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -403,6 +404,16 @@ func setGlobalVars() {
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
 	if plannercore.PreparedPlanCacheEnabled() {
 		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = cfg.PreparedPlanCache.MemoryGuardRatio
+		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
+			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		}
+		plannercore.PreparedPlanCacheMaxMemory = cfg.Performance.MaxMemory
+		total, err := memory.MemTotal()
+		terror.MustNil(err)
+		if plannercore.PreparedPlanCacheMaxMemory > total || plannercore.PreparedPlanCacheMaxMemory <= 0 {
+			plannercore.PreparedPlanCacheMaxMemory = total
+		}
 	}
 
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
@@ -502,6 +513,8 @@ func closeDomainAndStorage() {
 func cleanup() {
 	if graceful {
 		svr.GracefulDown()
+	} else {
+		svr.KillAllConnections()
 	}
 	closeDomainAndStorage()
 }

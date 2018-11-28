@@ -120,3 +120,21 @@ PARTITION BY RANGE ( a ) (
 		assertTableEqual(c, originTables[i], t)
 	}
 }
+
+func (s *testDumpStatsSuite) TestDumpAlteredTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	h := s.do.StatsHandle()
+	oriLease := h.Lease
+	h.Lease = 1
+	defer func() { h.Lease = oriLease }()
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("alter table t drop column a")
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	_, err = h.DumpStatsToJSON("test", table.Meta())
+	c.Assert(err, IsNil)
+}
