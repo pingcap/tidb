@@ -198,3 +198,43 @@ func (s *testDBSuite) TestAddIndexFailed(c *C) {
 	tk.MustExec("admin check index t idx_b")
 	tk.MustExec("admin check table t")
 }
+
+// TestFailSchemaSyncer test when the schema syncer is done,
+// should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
+func (s *testDBSuite) TestFailSchemaSyncer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	defer tk.MustExec("drop table if exists t")
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
+	c.Assert(ok, IsTrue)
+
+	// make reload failed.
+	s.dom.MockReloadFailed.SetValue(true)
+	mockSyncer.CloseSession()
+	// wait the schemaValidator is stopped.
+	for i := 0; i < 50; i++ {
+		if s.dom.SchemaValidator.IsStarted() == false {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
+	_, err := tk.Exec("insert into t values(1)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[domain:1]Information schema is out of date.")
+	s.dom.MockReloadFailed.SetValue(false)
+	// wait the schemaValidator is started.
+	for i := 0; i < 50; i++ {
+		if s.dom.SchemaValidator.IsStarted() == true {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	_, err = tk.Exec("insert into t values(1)")
+	c.Assert(err, IsNil)
+}
