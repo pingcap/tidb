@@ -177,8 +177,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.name != "" {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
-	vars.PreparedStmts[e.ID] = prepared
-	return nil
+	return vars.AddPreparedStmt(e.ID, prepared)
 }
 
 // ExecuteExec represents an EXECUTE executor.
@@ -242,7 +241,7 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			vars, id, vars.PreparedStmts[id].SchemaVersion,
 		))
 	}
-	delete(vars.PreparedStmts, id)
+	vars.RemovePreparedStmt(id)
 	return nil
 }
 
