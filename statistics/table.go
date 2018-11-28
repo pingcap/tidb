@@ -140,17 +140,10 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{
-					ID:                histID,
-					NDV:               distinct,
-					NullCount:         nullCount,
-					tp:                &colInfo.FieldType,
-					LastUpdateVersion: histVer,
-					TotColSize:        totColSize,
-				},
-				Info:     colInfo,
-				Count:    count + nullCount,
-				isHandle: tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				Histogram: *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				Info:      colInfo,
+				Count:     count + nullCount,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			break
 		}
