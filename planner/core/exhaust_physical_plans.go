@@ -545,6 +545,8 @@ var symmetricOp = map[string]string{
 	ast.LE: ast.GE,
 }
 
+// ColWithCompareOps is used in index join to handle the column with compare functions(>=, >, <, <=).
+// It stores the compare functions and build ranges in execution phase.
 type ColWithCompareOps struct {
 	targetCol         *expression.Column
 	OpType            []string
@@ -567,6 +569,7 @@ func (cwc *ColWithCompareOps) appendNewExpr(opName string, arg expression.Expres
 	}
 }
 
+// CompareRow sorts the row for deduplicate.
 func (cwc *ColWithCompareOps) CompareRow(lhs, rhs chunk.Row) int {
 	for i, col := range cwc.affectedColSchema.Columns {
 		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)
@@ -577,6 +580,7 @@ func (cwc *ColWithCompareOps) CompareRow(lhs, rhs chunk.Row) int {
 	return 0
 }
 
+// BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
 func (cwc *ColWithCompareOps) BuildRangesByRow(ctx sessionctx.Context, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
 	for i, opType := range cwc.OpType {
@@ -615,6 +619,7 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 	notKeyIdxCols := make([]*expression.Column, 0, len(idxCols))
 	notKeyIdxColsLen := make([]int, 0, len(idxCols))
 	matchedKeyCnt := 0
+	// This loop finds out what index column appears in join key, and what is not.
 	for i, idxCol := range idxCols {
 		idxOff2keyOff[i] = tmpSchema.ColumnIndex(idxCol)
 		if idxOff2keyOff[i] >= 0 {
@@ -625,6 +630,11 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 		notKeyIdxCols = append(notKeyIdxCols, idxCol)
 		notKeyIdxColsLen = append(notKeyIdxColsLen, colLengths[i])
 	}
+	// If no index column appears in join key, we just break.
+	// TODO: It may meet this case: There's no join key condition, but have compare filters.
+	//  e.g. select * from t1, t2 on t1.a=t2.a and t2.b > t1.b-10 and t2.b < t1.b where t1.a=1 and t2.a=1.
+	//       After constant propagation. The t1.a=t2.a is removed. And if we have index (t2.a, t2.b). It can apply index join
+	//       to speed up.
 	if matchedKeyCnt <= 0 {
 		return nil, nil, nil, nil, nil
 	}
@@ -636,6 +646,7 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 	}
 	remained := make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
 	rangeFilterCandidates := make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
+	// This loop deal first filter out the expressions that contains columns not in index.
 	for _, innerFilter := range innerPlan.pushedDownConds {
 		affectedCols := expression.ExtractColumns(innerFilter)
 		if expression.ColumnSliceIsIntersect(affectedCols, possibleUsedKeys) {
@@ -644,9 +655,11 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 		}
 		rangeFilterCandidates = append(rangeFilterCandidates, innerFilter)
 	}
+	// Extract the eq/in functions of possible join key. This returned list keeps the same order with index column.
 	notKeyEqAndIn, remainedEqAndIn, rangeFilterCandidates, _ := ranger.ExtractEqAndInCondition(p.ctx, rangeFilterCandidates, notKeyIdxCols, notKeyIdxColsLen)
 	// We hope that the index cols appeared in the join keys can all be used to build range. If it cannot be satisfied,
 	// we'll mark this index as cannot be used for index join.
+	// So we should make sure that all columns before the keyMatchedLen is join key or has eq/in function.
 	if len(notKeyEqAndIn) < keyMatchedLen-matchedKeyCnt {
 		return nil, nil, nil, nil, nil
 	}
@@ -666,7 +679,8 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 		targetCol:         nextCol,
 		affectedColSchema: expression.NewSchema(),
 	}
-loopCandidates:
+	// We first loop the other conds to see whether there's conditions can be used to build range.
+loopOtherConds:
 	for _, filter := range p.OtherConditions {
 		sf, ok := filter.(*expression.ScalarFunction)
 		if !ok || !(sf.FuncName.L == ast.LE || sf.FuncName.L == ast.LT || sf.FuncName.L == ast.GE || sf.FuncName.L == ast.GT) {
@@ -679,7 +693,7 @@ loopCandidates:
 			}
 			for _, col := range affectedCols {
 				if innerPlan.schema.Contains(col) {
-					continue loopCandidates
+					continue loopOtherConds
 				}
 			}
 			nextColCmpFilterManager.appendNewExpr(sf.FuncName.L, sf.GetArgs()[1], affectedCols)
@@ -690,7 +704,7 @@ loopCandidates:
 			}
 			for _, col := range affectedCols {
 				if innerPlan.schema.Contains(col) {
-					continue loopCandidates
+					continue loopOtherConds
 				}
 			}
 			nextColCmpFilterManager.appendNewExpr(symmetricOp[sf.FuncName.L], sf.GetArgs()[0], affectedCols)
@@ -734,6 +748,7 @@ func (p *LogicalJoin) buildTemplateRange(idxOff2KeyOff []int, matchedKeyCnt int,
 			ranges = append(ranges, ran)
 		}
 	} else if haveExtraCol {
+		// Reserve a position for the last col.
 		ranges = append(ranges, &ranger.Range{
 			LowVal:  make([]types.Datum, pointLength+1, pointLength+1),
 			HighVal: make([]types.Datum, pointLength+1, pointLength+1),
