@@ -2115,3 +2115,11 @@ func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
 }
+
+func (s *testSuite) TestDefEnumInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
+	tk.MustExec("insert into test (id)  values (1)")
+	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
+}
