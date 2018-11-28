@@ -124,7 +124,6 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
-	// Execute ddl statement reload schema.
 	_, err = s.se.Execute(context.Background(), "alter table tx comment 'tx'")
 	c.Assert(err, IsNil)
 	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
