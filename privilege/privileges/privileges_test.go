@@ -348,6 +348,43 @@ func (s *testPrivilegeSuite) TestUseDb(c *C) {
 
 }
 
+func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
+
+	se := newSession(c, s.store, s.dbName)
+	// high privileged user
+	mustExec(c, se, "CREATE USER 'asuper'")
+	mustExec(c, se, "CREATE USER 'anobody'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	mustExec(c, se, "CREATE DATABASE atest")
+	mustExec(c, se, "use atest")
+	mustExec(c, se, "CREATE TABLE t1 (a int)")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "analyze table mysql.user")
+	// low privileged user
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "analyze table t1")
+	c.Assert(err, NotNil) // fails
+
+	// try again after SELECT privilege granted
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "GRANT SELECT ON atest.* TO 'anobody'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "analyze table t1")
+	c.Assert(err, NotNil) // stll fails (only select)
+
+	// Add INSERT privilege and it should work.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "GRANT INSERT ON atest.* TO 'anobody'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "analyze table t1")
+	c.Assert(err, IsNil)
+
+}
+
 func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 
 	// This test tests no privilege check for INFORMATION_SCHEMA database.
