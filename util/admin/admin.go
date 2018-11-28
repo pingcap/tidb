@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -232,8 +233,9 @@ func getCount(ctx sessionctx.Context, sql string) (int64, error) {
 }
 
 const (
-	TblCntGreater byte = 1
-	IdxCntGreater byte = 2
+	InvalidGreater byte = 0
+	TblCntGreater  byte = 1
+	IdxCntGreater  byte = 2
 )
 
 // CheckIndicesCount compares indices count with table count.
@@ -246,28 +248,55 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	for i, idx := range indices {
-		startTime := time.Now()
-		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
-		idxCnt, err := getCount(ctx, sql)
-		if err != nil {
-			return 0, 0, errors.Trace(err)
-		}
 
-		if tblCnt == idxCnt {
-			log.Warnf("---............... no.%d, name %v sub %v", i, idx, time.Since(startTime))
-			continue
-		}
-
-		var ret byte
-		if tblCnt > idxCnt {
-			ret = TblCntGreater
-		} else if idxCnt > tblCnt {
-			ret = IdxCntGreater
-		}
-		return ret, i, errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+	wg := sync.WaitGroup{}
+	type result struct {
+		greater byte
+		offsert int
+		err     error
 	}
+	retCh := make(chan result, len(indices))
+	startT := time.Now()
+	for i, idx := range indices {
+		wg.Add(1)
+		go func(num int, idx string, ch chan result) {
+			defer wg.Done()
+			startTime := time.Now()
+			sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
+			idxCnt, err := getCount(ctx, sql)
+			if err != nil {
+				ch <- result{
+					greater: InvalidGreater,
+					offsert: i,
+					err:     err,
+				}
+			}
 
+			if tblCnt == idxCnt {
+				log.Warnf("count ............... no.%d name %v, sub %v", num, idx, time.Since(startTime))
+				return
+			}
+
+			var ret byte
+			if tblCnt > idxCnt {
+				ret = TblCntGreater
+			} else if idxCnt > tblCnt {
+				ret = IdxCntGreater
+			}
+			ch <- result{
+				greater: ret,
+				offsert: i,
+				err:     errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt),
+			}
+		}(i, idx, retCh)
+	}
+	wg.Wait()
+
+	log.Warnf("finish count .................. sub %v", time.Since(startT))
+	if len(retCh) > 0 {
+		ret := <-retCh
+		return ret.greater, ret.offsert, err
+	}
 	return 0, 0, nil
 }
 

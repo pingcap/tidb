@@ -497,14 +497,16 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		log.Warnf("check table, greater %v index %s error %v", greater, idxNames[idxOffset], errors.ErrorStack(err))
 		t := e.srcs[idxOffset].table
 		txn := e.ctx.Txn(true)
-		if greater == admin.IdxCntGreater {
+		switch greater {
+		case admin.IdxCntGreater:
 			err = e.checkIndex(ctx, e.srcs[idxOffset])
-		} else {
+		case admin.TblCntGreater:
 			if t.Meta().GetPartitionInfo() != nil {
 				err = e.doCheckPartitionedTable(txn, t.(table.PartitionedTable), e.indices[idxOffset])
 			} else {
 				err = admin.CheckRecordAndIndex(e.ctx, txn, t, e.indices[idxOffset], e.genExprs)
 			}
+		default:
 		}
 		if err != nil && admin.ErrDataInConsistent.Equal(err) {
 			return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Meta().Name, err)
@@ -513,21 +515,24 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	wg := sync.WaitGroup{}
+	startT := time.Now()
 	for i, src := range e.srcs {
 		wg.Add(1)
 		go func(num int) {
 			defer wg.Done()
 			startTime := time.Now()
 			e.checkIndex(ctx, src)
-			log.Warnf(".................. no.%d sub %v", num, time.Since(startTime))
+			log.Warnf(".................. no.%d index look up, sub %v", num, time.Since(startTime))
 		}(i)
 	}
 	wg.Wait()
 
+	log.Warnf("finish 111 .................. sub %v", time.Since(startT))
 	select {
 	case err = <-e.errCh:
 	default:
 	}
+	log.Warnf("finish 222 .................. sub %v", time.Since(startT))
 	return errors.Trace(err)
 }
 
