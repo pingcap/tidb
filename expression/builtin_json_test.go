@@ -15,7 +15,7 @@ package expression
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -66,6 +66,7 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`},
 		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`},
 		{`Invalid Json string\tis OK`, `Invalid Json string	is OK`},
+		{`"1\\u2232\\u22322"`, `1\u2232\u22322`},
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
@@ -413,6 +414,206 @@ func (s *testEvaluatorSuite) TestJSONContainsPath(c *C) {
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		if t.success {
 			c.Assert(err, IsNil)
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONLength(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONLength]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{`null`}, 1, true},
+		{[]interface{}{`true`}, 1, true},
+		{[]interface{}{`false`}, 1, true},
+		{[]interface{}{`1`}, 1, true},
+		{[]interface{}{`-1`}, 1, true},
+		{[]interface{}{`1.1`}, 1, true},
+		{[]interface{}{`"1"`}, 1, true},
+		{[]interface{}{`"1"`, "$.a"}, 1, true},
+		{[]interface{}{`null`, "$.a"}, 1, true},
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		{[]interface{}{nil, "a"}, nil, true},
+		{[]interface{}{`{"a": 1}`, nil}, nil, true},
+		{[]interface{}{nil, nil}, nil, true},
+		// Tests with path expression
+		{[]interface{}{`[1,2,[1,[5,[3]]]]`, "$[2]"}, 2, true},
+		{[]interface{}{`[{"a":1}]`, "$"}, 1, true},
+		{[]interface{}{`[{"a":1,"b":2}]`, "$[0].a"}, 1, true},
+		{[]interface{}{`{"a":{"a":1},"b":2}`, "$"}, 2, true},
+		{[]interface{}{`{"a":{"a":1},"b":2}`, "$.a"}, 1, true},
+		{[]interface{}{`{"a":{"a":1},"b":2}`, "$.a.a"}, 1, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa"}, 1, true},
+		// Tests without path expression
+		{[]interface{}{`{}`}, 0, true},
+		{[]interface{}{`{"a":1}`}, 1, true},
+		{[]interface{}{`{"a":[1]}`}, 1, true},
+		{[]interface{}{`{"b":2, "c":3}`}, 2, true},
+		{[]interface{}{`[1]`}, 1, true},
+		{[]interface{}{`[1,2]`}, 2, true},
+		{[]interface{}{`[1,2,[1,3]]`}, 3, true},
+		{[]interface{}{`[1,2,[1,[5,[3]]]]`}, 3, true},
+		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`}, 3, true},
+		{[]interface{}{`[{"a":1}]`}, 1, true},
+		{[]interface{}{`[{"a":1,"b":2}]`}, 1, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 1, true},
+		// Tests path expression contains any asterisk
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.*"}, nil, false},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$[*]"}, nil, false},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$**.a"}, nil, false},
+		// Tests path expression does not identify a section of the target document
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.c"}, nil, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[3]"}, nil, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].b"}, nil, true},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONKeys]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		{[]interface{}{nil, "$.c"}, nil, true},
+		{[]interface{}{`{"a": 1}`, nil}, nil, true},
+		{[]interface{}{nil, nil}, nil, true},
+
+		// Tests with other type
+		{[]interface{}{`1`}, nil, false},
+		{[]interface{}{`"str"`}, nil, false},
+		{[]interface{}{`true`}, nil, false},
+		{[]interface{}{`null`}, nil, false},
+		{[]interface{}{`[1, 2]`}, nil, false},
+		{[]interface{}{`["1", "2"]`}, nil, false},
+
+		// Tests without path expression
+		{[]interface{}{`{}`}, `[]`, true},
+		{[]interface{}{`{"a": 1}`}, `["a"]`, true},
+		{[]interface{}{`{"a": 1, "b": 2}`}, `["a", "b"]`, true},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`}, `["a", "b"]`, true},
+
+		// Tests with path expression
+		{[]interface{}{`{"a": 1}`, "$.a"}, nil, false},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a"}, `["c"]`, true},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.c"}, nil, false},
+
+		// Tests path expression contains any asterisk
+		{[]interface{}{`{}`, "$.*"}, nil, false},
+		{[]interface{}{`{"a": 1}`, "$.*"}, nil, false},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.*"}, nil, false},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.*"}, nil, false},
+
+		// Tests path expression does not identify a section of the target document
+		{[]interface{}{`{"a": 1}`, "$.b"}, nil, true},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.c"}, nil, true},
+		{[]interface{}{`{"a": {"c": 3}, "b": 2}`, "$.a.d"}, nil, true},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+			switch x := t.expected.(type) {
+			case string:
+				var j1 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(x)
+				c.Assert(err, IsNil)
+				j2 := d.GetMysqlJSON()
+				var cmp int
+				cmp = json.CompareBinary(j1, j2)
+				c.Assert(cmp, Equals, 0)
+			case nil:
+				c.Assert(d.IsNull(), IsTrue)
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONDepth(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONDepth]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{`null`}, 1, true},
+		{[]interface{}{`true`}, 1, true},
+		{[]interface{}{`false`}, 1, true},
+		{[]interface{}{`1`}, 1, true},
+		{[]interface{}{`-1`}, 1, true},
+		{[]interface{}{`1.1`}, 1, true},
+		{[]interface{}{`"1"`}, 1, true},
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		// Tests depth
+		{[]interface{}{`{}`}, 1, true},
+		{[]interface{}{`[]`}, 1, true},
+		{[]interface{}{`[10, 20]`}, 2, true},
+		{[]interface{}{`[[], {}]`}, 2, true},
+		{[]interface{}{`{"Name": "Homer"}`}, 2, true},
+		{[]interface{}{`[10, {"a": 20}]`}, 3, true},
+		{[]interface{}{`{"Person": {"Name": "Homer", "Age": 39, "Hobbies": ["Eating", "Sleeping"]} }`}, 4, true},
+		{[]interface{}{`{"a":1}`}, 2, true},
+		{[]interface{}{`{"a":[1]}`}, 3, true},
+		{[]interface{}{`{"b":2, "c":3}`}, 2, true},
+		{[]interface{}{`[1]`}, 2, true},
+		{[]interface{}{`[1,2]`}, 2, true},
+		{[]interface{}{`[1,2,[1,3]]`}, 3, true},
+		{[]interface{}{`[1,2,[1,[5,[3]]]]`}, 5, true},
+		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`}, 6, true},
+		{[]interface{}{`[{"a":1}]`}, 3, true},
+		{[]interface{}{`[{"a":1,"b":2}]`}, 3, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 4, true},
+		// Tests non-json
+		{[]interface{}{`a`}, nil, false},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+
 			if t.expected == nil {
 				c.Assert(d.IsNull(), IsTrue)
 			} else {

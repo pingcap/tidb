@@ -20,15 +20,14 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -127,14 +126,6 @@ func (w *worker) start(d *ddlCtx) {
 
 	ticker := time.NewTicker(checkTime)
 	defer ticker.Stop()
-	defer func() {
-		r := recover()
-		if r != nil {
-			buf := util.GetStack()
-			log.Errorf("[ddl-%s] ddl %s, %v %s", w, d.uuid, r, buf)
-			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-		}
-	}()
 
 	for {
 		select {
@@ -285,18 +276,21 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	switch job.Type {
-	case model.ActionAddIndex:
-		if job.State != model.JobStateRollbackDone {
-			break
+	if !job.IsCancelled() {
+		switch job.Type {
+		case model.ActionAddIndex:
+			if job.State != model.JobStateRollbackDone {
+				break
+			}
+
+			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+			err = w.deleteRange(job)
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition:
+			err = w.deleteRange(job)
 		}
-		// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-		err = w.deleteRange(job)
-	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition:
-		err = w.deleteRange(job)
-	}
-	if err != nil {
-		return errors.Trace(err)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	_, err = t.DeQueueDDLJob()
@@ -389,6 +383,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)
 			if job.IsCancelled() {
+				txn.Reset()
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -459,16 +454,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
-		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
-		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			log.Infof("[ddl-%s] run the cancelling DDL job %s", w, job)
-			w.reorgCtx.notifyReorgCancel()
-		} else {
-			job.State = model.JobStateCancelled
-			job.Error = errCancelledDDLJob
-			job.ErrorCount++
-			return
-		}
+		return convertJob2RollbackJob(w, d, t, job)
 	}
 
 	if !job.IsRollingback() && !job.IsCancelling() {
@@ -491,7 +477,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(t, job)
 	case model.ActionModifyColumn:
-		ver, err = onModifyColumn(t, job)
+		ver, err = w.onModifyColumn(t, job)
 	case model.ActionSetDefaultValue:
 		ver, err = onSetDefaultValue(t, job)
 	case model.ActionAddIndex:
@@ -519,7 +505,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
-		err = errInvalidDDLJob.GenWithStack("invalid ddl job %v", job)
+		err = errInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
 	// Save errors in job, so that others can know errors happened.
@@ -528,7 +514,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if job.State != model.JobStateCancelled {
 			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
 		} else {
-			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, errors.ErrorStack(err))
+			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, err)
 		}
 
 		job.Error = toTError(err)

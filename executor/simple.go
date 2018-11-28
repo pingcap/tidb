@@ -17,19 +17,20 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -83,8 +84,25 @@ func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	return errors.Trace(err)
 }
 
+func (e *SimpleExec) dbAccessDenied(dbname string) error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.GenWithStackByArgs(u, h, dbname)
+}
+
 func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	dbname := model.NewCIStr(s.DBName)
+
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(dbname)) {
+		return e.dbAccessDenied(dbname.O)
+	}
+
 	dbinfo, exists := e.is.SchemaByName(dbname)
 	if !exists {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbname)
@@ -113,6 +131,8 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
+	// Call ctx.Txn(true) to active pending txn.
+	e.ctx.Txn(true)
 	return nil
 }
 
@@ -124,9 +144,9 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	log.Debugf("con:%d execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	if e.ctx.Txn().Valid() {
+	if e.ctx.Txn(true).Valid() {
 		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
-		return e.ctx.Txn().Rollback()
+		return e.ctx.Txn(true).Rollback()
 	}
 	return nil
 }
@@ -206,7 +226,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn().Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
+		err := e.ctx.Txn(true).Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -285,14 +305,22 @@ func userExists(ctx sessionctx.Context, name string, host string) (bool, error) 
 }
 
 func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
+	var u, h string
 	if s.User == nil {
-		vars := e.ctx.GetSessionVars()
-		s.User = vars.User
-		if s.User == nil {
+		if e.ctx.GetSessionVars().User == nil {
 			return errors.New("Session error is empty")
 		}
+		u = e.ctx.GetSessionVars().User.AuthUsername
+		h = e.ctx.GetSessionVars().User.AuthHostname
+	} else {
+		checker := privilege.GetPrivilegeManager(e.ctx)
+		if checker != nil && !checker.RequestVerification("", "", "", mysql.SuperPriv) {
+			return ErrDBaccessDenied.GenWithStackByArgs(u, h, "mysql")
+		}
+		u = s.User.Username
+		h = s.User.Hostname
 	}
-	exists, err := userExists(e.ctx, s.User.Username, s.User.Hostname)
+	exists, err := userExists(e.ctx, u, h)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -301,7 +329,7 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 	}
 
 	// update mysql.user
-	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), s.User.Username, s.User.Hostname)
+	sql := fmt.Sprintf(`UPDATE %s.%s SET password="%s" WHERE User="%s" AND Host="%s";`, mysql.SystemDB, mysql.UserTable, auth.EncodePassword(s.Password), u, h)
 	_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return errors.Trace(err)
@@ -325,7 +353,9 @@ func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:
-		// TODO: A dummy implement
+		if s.ReadLock {
+			return errors.New("FLUSH TABLES WITH READ LOCK is not supported.  Please use @@tidb_snapshot")
+		}
 	case ast.FlushPrivileges:
 		dom := domain.GetDomain(e.ctx)
 		sysSessionPool := dom.SysSessionPool()

@@ -19,14 +19,15 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
@@ -147,6 +148,7 @@ func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 
 func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	se := newSession(c, s.store, s.dbName)
+	ctx, _ := se.(sessionctx.Context)
 	mustExec(c, se, `CREATE USER 'show'@'localhost' identified by '123';`)
 	mustExec(c, se, `GRANT Index ON *.* TO  'show'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
@@ -222,18 +224,28 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 		`GRANT Update ON test.test TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
-	// Fix a issue that empty privileges is displayed when revoke after grant.
-	mustExec(c, se, "TRUNCATE TABLE mysql.db")
-	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, "TRUNCATE TABLE mysql.tables_priv")
-	mustExec(c, se, `GRANT ALL PRIVILEGES ON `+"`"+`te%`+"`"+`.* TO 'show'@'localhost'`)
-	mustExec(c, se, `REVOKE ALL PRIVILEGES ON `+"`"+`te%`+"`"+`.* FROM 'show'@'localhost'`)
+	// Expected behavior: Usage still exists after revoking all privileges
+	mustExec(c, se, `REVOKE ALL PRIVILEGES ON *.* FROM 'show'@'localhost'`)
+	mustExec(c, se, `REVOKE Select on test.* FROM 'show'@'localhost'`)
+	mustExec(c, se, `REVOKE ALL ON test1.* FROM 'show'@'localhost'`)
+	mustExec(c, se, `REVOKE UPDATE on test.test FROM 'show'@'localhost'`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
-	// It should not be "GRANT ON `te%`.* to 'show'@'localhost'"
-	c.Assert(gs, HasLen, 0)
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT USAGE ON *.* TO 'show'@'localhost'`)
 
+	// Usage should not exist after dropping the user
+	// Which we need privileges to do so!
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	mustExec(c, se, `DROP USER 'show'@'localhost'`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+
+	// This should now return an error
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	// cant show grants for non-existent
+	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	c.Assert(terror.ErrorEqual(err, errNonexistingGrant), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
@@ -260,6 +272,26 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	se = newSession(c, s.store, s.dbName)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "drop", Hostname: "localhost"}
 	mustExec(c, se, `DROP TABLE todrop;`)
+}
+
+func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
+
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER 'superuser'")
+	mustExec(c, se, "CREATE USER 'nobodyuser'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser", Hostname: "localhost", AuthUsername: "superuser", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "SET PASSWORD for 'nobodyuser' = 'newpassword'")
+
+	// low privileged user trying to set password for other user (fails)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser", Hostname: "localhost", AuthUsername: "nobodyuser", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "SET PASSWORD for 'superuser' = 'newpassword'")
+	c.Assert(err, NotNil)
+
 }
 
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
@@ -289,6 +321,31 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil), IsFalse)
+}
+
+func (s *testPrivilegeSuite) TestUseDb(c *C) {
+
+	se := newSession(c, s.store, s.dbName)
+	// high privileged user
+	mustExec(c, se, "CREATE USER 'usesuper'")
+	mustExec(c, se, "CREATE USER 'usenobody'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "use mysql")
+	// low privileged user
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "use mysql")
+	c.Assert(err, NotNil)
+
+	// try again after privilege granted
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "GRANT SELECT ON mysql.* TO 'usenobody'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "use mysql")
+	c.Assert(err, IsNil)
+
 }
 
 func (s *testPrivilegeSuite) TestInformationSchema(c *C) {

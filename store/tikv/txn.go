@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -75,7 +75,7 @@ func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.snapshot.vars = vars
 }
 
-// SetMemBufCap sets the transaction's MemBuffer capability, to reduce memory allocations.
+// SetCap sets the transaction's MemBuffer capability, to reduce memory allocations.
 func (txn *tikvTxn) SetCap(cap int) {
 	txn.us.SetCap(cap)
 }
@@ -115,23 +115,23 @@ func (txn *tikvTxn) String() string {
 	return fmt.Sprintf("%d", txn.StartTS())
 }
 
-func (txn *tikvTxn) Seek(k kv.Key) (kv.Iterator, error) {
+func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek").Inc()
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("seek").Observe(time.Since(start).Seconds()) }()
 
-	return txn.us.Seek(k)
+	return txn.us.Iter(k, upperBound)
 }
 
-// SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (txn *tikvTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse").Inc()
 	start := time.Now()
 	defer func() {
 		metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse").Observe(time.Since(start).Seconds())
 	}()
 
-	return txn.us.SeekReverse(k)
+	return txn.us.IterReverse(k)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
@@ -192,20 +192,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 
 	// latches enabled
-	var bypassLatch bool
-	if option := txn.us.GetOption(kv.BypassLatch); option != nil {
-		bypassLatch = option.(bool)
-	}
-	// When bypassLatch flag is true, commit directly.
-	if bypassLatch {
-		err = committer.executeAndWriteFinishBinlog(ctx)
-		if err == nil {
-			txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.commitTS)
-		}
-		log.Debug("[kv]", connID, " txnLatches enabled while txn not retryable, 2pc directly:", err)
-		return errors.Trace(err)
-	}
-
 	// for transactions which need to acquire latches
 	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
 	defer txn.store.txnLatches.UnLock(lock)

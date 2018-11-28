@@ -20,11 +20,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -211,6 +211,26 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 	sc = origSc
+
+	// create table tt(a bigint unsigned);
+	// insert into tt values(18446744073709551615);
+	// select cast(a as decimal(65, 0)) from tt;
+	ft = &types.FieldType{
+		Tp:      mysql.TypeNewDecimal,
+		Flag:    mysql.BinaryFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+		Flen:    65,
+		Decimal: 0,
+	}
+	rt := types.NewFieldType(mysql.TypeLonglong)
+	rt.Flag = mysql.BinaryFlag | mysql.UnsignedFlag
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewUintDatum(18446744073709551615), RetType: rt}, ft)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	u, err := res.GetMysqlDecimal().ToUint()
+	c.Assert(err, IsNil)
+	c.Assert(u == 18446744073709551615, IsTrue)
 
 	// cast(bad_string as decimal)
 	for _, s := range []string{"hello", ""} {
@@ -1060,6 +1080,48 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	c.Assert(isNull, Equals, false)
 	c.Assert(err, IsNil)
 	c.Assert(iRes, Equals, int64(0))
+}
+
+func (s *testEvaluatorSuite) TestCastJSONAsDecimalSig(c *C) {
+	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
+	originIgnoreTruncate := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = originIgnoreTruncate
+	}()
+
+	col := &Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0}
+	decFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, []Expression{col}), false)
+	decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
+	decFunc.tp.Flen = 60
+	decFunc.tp.Decimal = 2
+	sig := &builtinCastJSONAsDecimalSig{decFunc}
+
+	var tests = []struct {
+		In  string
+		Out *types.MyDecimal
+	}{
+		{`{}`, types.NewDecFromStringForTest("0")},
+		{`[]`, types.NewDecFromStringForTest("0")},
+		{`3`, types.NewDecFromStringForTest("3")},
+		{`-3`, types.NewDecFromStringForTest("-3")},
+		{`4.5`, types.NewDecFromStringForTest("4.5")},
+		{`"1234"`, types.NewDecFromStringForTest("1234")},
+		// test truncate
+		{`"1234.1234"`, types.NewDecFromStringForTest("1234.12")},
+		{`"1234.4567"`, types.NewDecFromStringForTest("1234.46")},
+		// test big decimal
+		{`"1234567890123456789012345678901234567890123456789012345"`, types.NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
+	}
+	for _, tt := range tests {
+		j, err := json.ParseBinaryFromString(tt.In)
+		c.Assert(err, IsNil)
+		row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(j)})
+		res, isNull, err := sig.evalDecimal(row.ToRow())
+		c.Assert(isNull, Equals, false)
+		c.Assert(err, IsNil)
+		c.Assert(res.Compare(tt.Out), Equals, 0)
+	}
 }
 
 // TestWrapWithCastAsTypesClasses tests WrapWithCastAsInt/Real/String/Decimal.

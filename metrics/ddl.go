@@ -63,7 +63,7 @@ var (
 			Name:      "update_self_ver_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of update self version",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{LblVersion, LblResult})
+		}, []string{LblResult})
 
 	OwnerUpdateGlobalVersion   = "update_global_version"
 	OwnerGetGlobalVersion      = "get_global_version"
@@ -75,7 +75,7 @@ var (
 			Name:      "owner_handle_syncer_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle syncer",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{LblType, LblVersion, LblResult})
+		}, []string{LblType, LblResult})
 
 	// Metrics for ddl_worker.go.
 	WorkerAddDDLJob         = "add_job"
@@ -93,7 +93,7 @@ var (
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
-	IsDDLOwner        = "is_ddl_owner"
+	DDLOwner          = "owner"
 	DDLCounter        = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -105,6 +105,5 @@ var (
 
 // Label constants.
 const (
-	LblAction  = "action"
-	LblVersion = "version"
+	LblAction = "action"
 )

@@ -14,14 +14,15 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/types/parser_driver"
 )
 
 type simpleRewriter struct {
@@ -42,6 +43,17 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr)
+}
+
+// ParseSimpleExprCastWithTableInfo parses simple expression string to Expression.
+// And the expr returns will cast to the target type.
+func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo, targetFt *types.FieldType) (Expression, error) {
+	e, err := ParseSimpleExprWithTableInfo(ctx, exprStr, tableInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e = BuildCastFunction(ctx, e, targetFt)
+	return e, nil
 }
 
 // RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
@@ -107,7 +119,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			return originInNode, false
 		}
 		sr.push(column)
-	case *ast.ValueExpr:
+	case *driver.ValueExpr:
 		value := &Constant{Value: v.Datum, RetType: &v.Type}
 		sr.push(value)
 	case *ast.FuncCallExpr:
@@ -137,10 +149,12 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		if v.Sel == nil {
 			sr.inToExpression(len(v.List), v.Not, &v.Type)
 		}
-	case *ast.ParamMarkerExpr:
-		tp := types.NewFieldType(mysql.TypeUnspecified)
-		types.DefaultParamTypeForValue(v.GetValue(), tp)
-		value := &Constant{Value: v.Datum, RetType: tp}
+	case *driver.ParamMarkerExpr:
+		var value Expression
+		value, sr.err = GetParamExpression(sr.ctx, v, sr.useCache())
+		if sr.err != nil {
+			return retNode, false
+		}
 		sr.push(value)
 	case *ast.RowExpr:
 		sr.rowToScalarFunc(v)
@@ -154,6 +168,10 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		return retNode, false
 	}
 	return originInNode, true
+}
+
+func (sr *simpleRewriter) useCache() bool {
+	return sr.ctx.GetSessionVars().StmtCtx.UseCache
 }
 
 func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
@@ -256,6 +274,9 @@ func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, 
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+		}
+		if op == ast.NE {
+			return ComposeDNFCondition(sr.ctx, funcs...), nil
 		}
 		return ComposeCNFCondition(sr.ctx, funcs...), nil
 	default:

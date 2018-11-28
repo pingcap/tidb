@@ -18,20 +18,21 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -128,6 +129,25 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
+	// Be careful, very dirty hack in this line!!!
+	// IndexLookUpJoin need to rebuild executor (the dataReaderBuilder) during
+	// executing. However `executor.Next()` is lazy evaluation when the RecordSet
+	// result is drained.
+	// Lazy evaluation means the saved session context may change during executor's
+	// building and its running.
+	// A specific sequence for example:
+	//
+	// e := buildExecutor()   // txn at build time
+	// recordSet := runStmt(e)
+	// session.CommitTxn()    // txn closed
+	// recordSet.Next()
+	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
+	//
+	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
+	// so even txn is destroyed later, the dataReaderBuilder could still use the
+	// cached start ts to construct DAG.
+	e.innerCtx.readerBuilder.getStartTS()
+
 	err := e.children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -189,6 +209,10 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 
 // Next implements the Executor interface.
 func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	e.joinResult.Reset()
 	for {
@@ -317,11 +341,11 @@ func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst
 // buildTask builds a lookUpJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	ow.executor.newChunk()
+	ow.executor.newFirstChunk()
 
 	task := &lookUpJoinTask{
 		doneCh:            make(chan error, 1),
-		outerResult:       ow.executor.newChunk(),
+		outerResult:       ow.executor.newFirstChunk(),
 		encodedLookUpKeys: chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, ow.ctx.GetSessionVars().MaxChunkSize),
 		lookupMap:         mvmap.NewMVMap(),
 	}
@@ -511,7 +535,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		return errors.Trace(err)
 	}
 	defer terror.Call(innerExec.Close)
-	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
@@ -523,7 +547,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = innerExec.newChunk()
+		iw.executorChk = innerExec.newFirstChunk()
 	}
 	task.innerResult = innerResult
 	return nil

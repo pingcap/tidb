@@ -22,13 +22,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -323,6 +323,15 @@ func (d *Datum) GetRaw() []byte {
 	return d.b
 }
 
+// SetAutoID set the auto increment ID according to its int flag.
+func (d *Datum) SetAutoID(id int64, flag uint) {
+	if mysql.HasUnsignedFlag(flag) {
+		d.SetUint64(uint64(id))
+	} else {
+		d.SetInt64(id)
+	}
+}
+
 // GetValue gets the value of the datum of any kind.
 func (d *Datum) GetValue() interface{} {
 	switch d.k {
@@ -546,7 +555,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string) (int, erro
 		dt, err := ParseDatetime(sc, s)
 		return d.GetMysqlTime().Compare(dt), errors.Trace(err)
 	case KindMysqlDuration:
-		dur, err := ParseDuration(s, MaxFsp)
+		dur, err := ParseDuration(sc, s, MaxFsp)
 		return d.GetMysqlDuration().Compare(dur), errors.Trace(err)
 	case KindMysqlSet:
 		return CompareString(d.GetMysqlSet().String(), s), nil
@@ -593,7 +602,7 @@ func (d *Datum) compareMysqlDuration(sc *stmtctx.StatementContext, dur Duration)
 	case KindMysqlDuration:
 		return d.GetMysqlDuration().Compare(dur), nil
 	case KindString, KindBytes:
-		dDur, err := ParseDuration(d.GetString(), MaxFsp)
+		dDur, err := ParseDuration(sc, d.GetString(), MaxFsp)
 		return dDur.Compare(dur), errors.Trace(err)
 	default:
 		return d.compareFloat64(sc, dur.Seconds())
@@ -1039,13 +1048,13 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		if timeNum < -MaxDuration {
 			return ret, ErrInvalidTimeFormat.GenWithStack("Incorrect time value: '%s'", timeStr)
 		}
-		t, err := ParseDuration(timeStr, fsp)
+		t, err := ParseDuration(sc, timeStr, fsp)
 		ret.SetValue(t)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
 	case KindString, KindBytes:
-		t, err := ParseDuration(d.GetString(), fsp)
+		t, err := ParseDuration(sc, d.GetString(), fsp)
 		ret.SetValue(t)
 		if err != nil {
 			return ret, errors.Trace(err)
@@ -1153,9 +1162,10 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 
 func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var (
-		ret Datum
-		y   int64
-		err error
+		ret     Datum
+		y       int64
+		err     error
+		fromStr bool
 	)
 	switch d.k {
 	case KindString, KindBytes:
@@ -1163,6 +1173,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
+		fromStr = true
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Time.Year())
 	case KindMysqlDuration:
@@ -1174,7 +1185,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		}
 		y = ret.GetInt64()
 	}
-	y, err = AdjustYear(y)
+	y, err = AdjustYear(y, fromStr)
 	if err != nil {
 		return invalidConv(d, target.Tp)
 	}
@@ -1743,6 +1754,12 @@ func NewBinaryLiteralDatum(b BinaryLiteral) (d Datum) {
 // NewMysqlBitDatum creates a new MysqlBit Datum for a BinaryLiteral value.
 func NewMysqlBitDatum(b BinaryLiteral) (d Datum) {
 	d.SetMysqlBit(b)
+	return d
+}
+
+// NewMysqlEnumDatum creates a new MysqlEnum Datum for a Enum value.
+func NewMysqlEnumDatum(e Enum) (d Datum) {
+	d.SetMysqlEnum(e)
 	return d
 }
 

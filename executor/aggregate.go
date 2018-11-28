@@ -15,17 +15,21 @@ package executor
 
 import (
 	"sync"
+	"time"
 
+	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
 )
@@ -235,7 +239,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.partialResultMap = make(aggPartialResultMapper, 0)
 	e.groupKeyBuffer = make([]byte, 0, 8)
 	e.groupValDatums = make([]types.Datum, 0, len(e.groupKeyBuffer))
-	e.childResult = e.children[0].newChunk()
+	e.childResult = e.children[0].newFirstChunk()
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -270,12 +274,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			partialResultsMap: make(aggPartialResultMapper, 0),
 			groupByItems:      e.GroupByItems,
 			groupValDatums:    make([]types.Datum, 0, len(e.GroupByItems)),
-			chk:               e.children[0].newChunk(),
+			chk:               e.children[0].newFirstChunk(),
 		}
 
 		e.partialWorkers[i] = w
 		e.inputCh <- &HashAggInput{
-			chk:        e.children[0].newChunk(),
+			chk:        e.children[0].newFirstChunk(),
 			giveBackCh: w.inputCh,
 		}
 	}
@@ -292,7 +296,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(e.retTypes()),
 		}
-		e.finalWorkers[i].finalResultHolderCh <- e.newChunk()
+		e.finalWorkers[i].finalResultHolderCh <- e.newFirstChunk()
 	}
 }
 
@@ -313,9 +317,18 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
+func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
+	output <- &AfFinalResult{err: errors.Errorf("%v", r)}
+	buf := util.GetStack()
+	log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
+}
+
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
 	defer func() {
+		if r := recover(); r != nil {
+			recoveryHashAgg(w.globalOutputCh, r)
+		}
 		if needShuffle {
 			w.shuffleIntermData(sc, finalConcurrency)
 		}
@@ -491,6 +504,9 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
 	defer func() {
+		if r := recover(); r != nil {
+			recoveryHashAgg(w.outputCh, r)
+		}
 		waitGroup.Done()
 	}()
 	if err := w.consumeIntermData(ctx); err != nil {
@@ -501,6 +517,14 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("hashagg.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	if e.isUnparallelExec {
 		return errors.Trace(e.unparallelExec(ctx, chk))
@@ -516,6 +540,9 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 		err   error
 	)
 	defer func() {
+		if r := recover(); r != nil {
+			recoveryHashAgg(e.finalOutputCh, r)
+		}
 		for i := range e.partialInputChs {
 			close(e.partialInputChs[i])
 		}
@@ -734,7 +761,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	e.childResult = e.children[0].newChunk()
+	e.childResult = e.children[0].newFirstChunk()
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
@@ -756,8 +783,15 @@ func (e *StreamAggExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("streamAgg.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
-
 	for !e.executed && chk.NumRows() < e.maxChunkSize {
 		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {

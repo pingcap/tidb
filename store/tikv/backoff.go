@@ -20,11 +20,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/terror"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -107,7 +107,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
 	case boPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case BoRegionMiss:
-		return NewBackoffFn(100, 500, NoJitter)
+		// change base time to 2ms, because it may recover soon.
+		return NewBackoffFn(2, 500, NoJitter)
 	case BoUpdateLeader:
 		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
@@ -184,6 +185,9 @@ type Backoffer struct {
 	vars       *kv.Variables
 }
 
+// txnStartKey is a key for transaction start_ts info in context.Context.
+const txnStartKey = "_txn_start_key"
+
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
@@ -195,7 +199,9 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 
 // WithVars sets the kv.Variables to the Backoffer and return it.
 func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
-	b.vars = vars
+	if vars != nil {
+		b.vars = vars
+	}
 	return b
 }
 
@@ -225,7 +231,11 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.totalSleep += f(b.ctx)
 	b.types = append(b.types, typ)
 
-	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms)", err, b.totalSleep, b.maxSleep)
+	var startTs interface{} = ""
+	if ts := b.ctx.Value(txnStartKey); ts != nil {
+		startTs = ts
+	}
+	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms), type: %s, txn_start_ts: %v", err, b.totalSleep, b.maxSleep, typ.String(), startTs)
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {

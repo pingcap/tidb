@@ -15,13 +15,13 @@ package chunk
 
 import (
 	"github.com/pingcap/check"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
 func (s *testChunkSuite) TestIterator(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
-	chk := NewChunkWithCapacity(fields, 32)
+	chk := New(fields, 32, 1024)
 	n := 10
 	var expected []int64
 	for i := 0; i < n; i++ {
@@ -29,8 +29,8 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 		expected = append(expected, int64(i))
 	}
 	var rows []Row
-	li := NewList(fields, 1)
-	li2 := NewList(fields, 5)
+	li := NewList(fields, 1, 2)
+	li2 := NewList(fields, 8, 16)
 	var ptrs []RowPtr
 	var ptrs2 []RowPtr
 	for i := 0; i < n; i++ {

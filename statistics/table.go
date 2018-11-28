@@ -19,15 +19,15 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -177,17 +177,11 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{
-					ID:                histID,
-					NDV:               distinct,
-					NullCount:         nullCount,
-					tp:                &colInfo.FieldType,
-					LastUpdateVersion: histVer,
-					TotColSize:        totColSize,
-				},
+				Histogram: *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
 				Info:      colInfo,
 				Count:     count + nullCount,
 				ErrorRate: errorRate,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			break
 		}
@@ -206,6 +200,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 				CMSketch:  cms,
 				Count:     int64(hg.totalRowCount()),
 				ErrorRate: errorRate,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			break
 		}
@@ -229,7 +224,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool) (*Table, error) {
-	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
+	table, ok := h.statsCache.Load().(statsCache)[physicalID]
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if !ok {
@@ -394,7 +389,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
 	c := t.Columns[colID]
-	result, err := c.equalRowCount(sc, value)
+	result, err := c.equalRowCount(sc, value, t.ModifyCount)
 	result *= c.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -551,7 +546,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			// so we use heuristic methods to estimate the selectivity.
 			if idx.NDV > 0 && len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal) {
 				// for equality queries
-				selectivity = 1.0 / float64(idx.NDV)
+				selectivity = float64(coll.ModifyCount) / float64(idx.NDV) / idx.totalRowCount()
 			} else {
 				// for range queries
 				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.totalRowCount()
@@ -610,7 +605,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
-			t.Columns[col.ID] = &Column{Info: col}
+			t.Columns[col.ID] = &Column{Info: col, isHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag)}
 		}
 	}
 	for _, idx := range tblInfo.Indices {

@@ -23,7 +23,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
@@ -53,8 +53,10 @@ func (s *testSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	err := s.ln.Close()
-	c.Assert(err, IsNil)
+	if s.ln != nil {
+		err := s.ln.Close()
+		c.Assert(err, IsNil)
+	}
 }
 
 var (
@@ -71,6 +73,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 			Endpoints:   endpoints,
 			DialTimeout: dialTimeout,
 		})
+		c.Assert(err, IsNil)
 		defer func() {
 			if cli != nil {
 				cli.Close()
@@ -87,6 +90,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 			Endpoints:   endpoints,
 			DialTimeout: dialTimeout,
 		})
+		c.Assert(err, IsNil)
 		defer func() {
 			if cli != nil {
 				cli.Close()

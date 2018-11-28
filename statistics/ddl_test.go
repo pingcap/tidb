@@ -15,7 +15,7 @@ package statistics_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
@@ -137,7 +137,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	c.Assert(count, Equals, float64(2))
 	count, err = statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(1), tableInfo.Columns[3].ID)
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, float64(2))
+	c.Assert(count, Equals, float64(0))
 
 	testKit.MustExec("alter table t add column c4 datetime NOT NULL default CURRENT_TIMESTAMP")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
@@ -170,4 +170,50 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	rs.Check(testkit.Rows("1"))
 	rs = testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id = ? and hist_id = 1 and is_index = 1", tableInfo.ID)
 	rs.Check(testkit.Rows("2"))
+}
+
+func (s *testStatsCacheSuite) TestDDLPartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+)`
+	testKit.MustExec(createTable)
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	h.Update(is)
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		c.Assert(statsTbl.Pseudo, IsFalse)
+	}
+
+	testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("alter table t add column c varchar(15) DEFAULT '123'")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	is = do.InfoSchema()
+	h.Update(is)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	pi = tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		c.Assert(statsTbl.Pseudo, IsFalse)
+		c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count), Equals, 3.0)
+	}
 }

@@ -16,25 +16,25 @@ package admin
 import (
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
+	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -106,7 +106,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			found = true
 			// These states can't be cancelled.
 			if job.IsDone() || job.IsSynced() {
-				errs[i] = errors.New("This job is finished, so can't be cancelled")
+				errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(id)
 				continue
 			}
 			// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
@@ -130,7 +130,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			}
 		}
 		if !found {
-			errs[i] = errors.New("Can't find this job")
+			errs[i] = ErrDDLJobNotFound.GenWithStackByArgs(id)
 		}
 	}
 	return errs, nil
@@ -221,7 +221,7 @@ type RecordData struct {
 }
 
 func getCount(ctx sessionctx.Context, sql string) (int64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(ctx, sql)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -295,7 +295,7 @@ func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex tab
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
 // genExprs is use to calculate the virtual generate column.
-func CompareIndexData(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[string]expression.Expression) error {
+func CompareIndexData(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	err := checkIndexAndRecord(sessCtx, txn, t, idx, genExprs)
 	if err != nil {
 		return errors.Trace(err)
@@ -337,7 +337,7 @@ func adjustDatumKind(vals1, vals2 []types.Datum) {
 	}
 }
 
-func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[string]expression.Expression) error {
+func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	it, err := idx.SeekFirst(txn)
 	if err != nil {
 		return errors.Trace(err)
@@ -353,6 +353,8 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rowDecoder := makeRowDecoder(t, cols, genExprs)
+	sc := sessCtx.GetSessionVars().StmtCtx
 	for {
 		vals1, h, err := it.Next()
 		if terror.ErrorEqual(err, io.EOF) {
@@ -365,7 +367,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if err != nil {
 			return errors.Trace(err)
 		}
-		vals2, err := rowWithCols(sessCtx, txn, t, h, cols, genExprs)
+		vals2, err := rowWithCols(sessCtx, txn, t, h, cols, rowDecoder)
 		vals2 = tables.TruncateIndexValuesIfNeeded(t.Meta(), idx.Meta(), vals2)
 		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
@@ -375,7 +377,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			return errors.Trace(err)
 		}
 		adjustDatumKind(vals1, vals2)
-		if !reflect.DeepEqual(vals1, vals2) {
+		if !compareDatumSlice(sc, vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}
 			return ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record1, record2)
@@ -385,8 +387,21 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	return nil
 }
 
+func compareDatumSlice(sc *stmtctx.StatementContext, val1s, val2s []types.Datum) bool {
+	if len(val1s) != len(val2s) {
+		return false
+	}
+	for i, v := range val1s {
+		res, err := v.CompareDatum(sc, &val2s[i])
+		if err != nil || res != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[string]expression.Expression) error {
+func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
@@ -503,6 +518,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	}
 
 	startKey := t.RecordKey(0)
+	sc := sessCtx.GetSessionVars().StmtCtx
 	filterFunc := func(h int64, vals []types.Datum, cols []*table.Column) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
@@ -514,7 +530,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 			return true, nil
 		}
 
-		if !reflect.DeepEqual(vals, vals2) {
+		if !compareDatumSlice(sc, vals, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals2}
 			record2 := &RecordData{Handle: h, Values: vals}
 			return false, ErrDataInConsistent.GenWithStack("data:%#v != record:%#v", record1, record2)
@@ -537,16 +553,38 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	return nil
 }
 
+func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) decoder.RowDecoder {
+	cols := t.Cols()
+	tblInfo := t.Meta()
+	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
+	for _, v := range decodeCol {
+		col := cols[v.Offset]
+		tpExpr := decoder.Column{
+			Info: col.ToInfo(),
+		}
+		if col.IsGenerated() && !col.GeneratedStored {
+			for _, c := range cols {
+				if _, ok := col.Dependences[c.Name.L]; ok {
+					decodeColsMap[c.ID] = decoder.Column{
+						Info: c.ToInfo(),
+					}
+				}
+			}
+			tpExpr.GenExpr = genExpr[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
+		}
+		decodeColsMap[col.ID] = tpExpr
+	}
+	return decoder.NewRowDecoder(cols, decodeColsMap)
+}
+
 // genExprs use to calculate generated column value.
-func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, genExprs map[string]expression.Expression) ([]types.Datum, error) {
+func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder decoder.RowDecoder) ([]types.Datum, error) {
 	key := t.RecordKey(h)
 	value, err := txn.Get(key)
-	genColFlag := false
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	v := make([]types.Datum, len(cols))
-	colTps := make(map[int64]*types.FieldType, len(cols))
 	for i, col := range cols {
 		if col == nil {
 			continue
@@ -562,32 +600,11 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 			}
 			continue
 		}
-		// If have virtual generate column , decode all columns.
-		if col.IsGenerated() && col.GeneratedStored == false {
-			genColFlag = true
-		}
-		colTps[col.ID] = &col.FieldType
-	}
-	// if have virtual generate column, decode all columns
-	if genColFlag {
-		for _, c := range t.Cols() {
-			if c.State != model.StatePublic {
-				continue
-			}
-			colTps[c.ID] = &c.FieldType
-		}
 	}
 
-	rowMap, err := tablecodec.DecodeRow(value, colTps, sessCtx.GetSessionVars().Location())
+	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if genColFlag && genExprs != nil {
-		err = fillGenColData(sessCtx, rowMap, t, cols, genExprs)
-		if err != nil {
-			return v, errors.Trace(err)
-		}
 	}
 
 	for i, col := range cols {
@@ -621,8 +638,11 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 
 // genExprs use to calculate generated column value.
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
-	fn table.RecordIterFunc, genExprs map[string]expression.Expression) error {
-	it, err := retriever.Seek(startKey)
+	fn table.RecordIterFunc, genExprs map[model.TableColumnID]expression.Expression) error {
+	prefix := t.RecordPrefix()
+	keyUpperBound := prefix.PrefixNext()
+
+	it, err := retriever.Iter(startKey, keyUpperBound)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -633,23 +653,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	}
 
 	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
-
-	genColFlag := false
-	colMap := make(map[int64]*types.FieldType, len(cols))
-	for _, col := range cols {
-		if col.IsGenerated() && col.GeneratedStored == false {
-			genColFlag = true
-			break
-		}
-		colMap[col.ID] = &col.FieldType
-	}
-	if genColFlag {
-		for _, col := range t.Cols() {
-			colMap[col.ID] = &col.FieldType
-		}
-	}
-
-	prefix := t.RecordPrefix()
+	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
@@ -659,18 +663,10 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, sessCtx.GetSessionVars().Location())
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if genColFlag && genExprs != nil {
-			err = fillGenColData(sessCtx, rowMap, t, cols, genExprs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
@@ -698,44 +694,13 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	return nil
 }
 
-// genExprs use to calculate generated column value.
-func fillGenColData(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t table.Table, cols []*table.Column, genExprs map[string]expression.Expression) error {
-	tableInfo := t.Meta()
-	row := make([]types.Datum, len(t.Cols()))
-	for _, col := range t.Cols() {
-		ri, ok := rowMap[col.ID]
-		if ok {
-			row[col.Offset] = ri
-		}
-	}
-
-	var err error
-	for _, col := range cols {
-		if !col.IsGenerated() || col.GeneratedStored == true {
-			continue
-		}
-		genColumnName := model.GetTableColumnID(tableInfo, col.ColumnInfo)
-		if expr, ok := genExprs[genColumnName]; ok {
-			var val types.Datum
-			val, err = expr.Eval(chunk.MutRowFromDatums(row).ToRow())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			val, err = table.CastValue(sessCtx, val, col.ToInfo())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			rowMap[col.ID] = val
-		}
-	}
-	return nil
-}
-
 // admin error codes.
 const (
 	codeDataNotEqual       terror.ErrCode = 1
 	codeRepeatHandle                      = 2
 	codeInvalidColumnState                = 3
+	codeDDLJobNotFound                    = 4
+	codeCancelFinishedJob                 = 5
 )
 
 var (
@@ -743,4 +708,8 @@ var (
 	ErrDataInConsistent   = terror.ClassAdmin.New(codeDataNotEqual, "data isn't equal")
 	errRepeatHandle       = terror.ClassAdmin.New(codeRepeatHandle, "handle is repeated")
 	errInvalidColumnState = terror.ClassAdmin.New(codeInvalidColumnState, "invalid column state")
+	// ErrDDLJobNotFound indicates the job id was not found.
+	ErrDDLJobNotFound = terror.ClassAdmin.New(codeDDLJobNotFound, "DDL Job:%v not found")
+	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
+	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(codeCancelFinishedJob, "This job:%v is finished, so can't be cancelled")
 )

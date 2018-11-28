@@ -24,23 +24,27 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
+	"github.com/ngaut/sync2"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -51,11 +55,12 @@ type Domain struct {
 	privHandle      *privileges.Handle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
+	statsUpdating   sync2.AtomicInt32
 	ddl             ddl.DDL
 	info            *InfoSyncer
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *pools.ResourcePool
+	sysSessionPool  *sessionPool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
@@ -330,12 +335,29 @@ func (do *Domain) Reload() error {
 	return nil
 }
 
-// LogTopNSlowQuery keeps topN recent slow queries in domain.
-func (do *Domain) LogTopNSlowQuery(query *SlowQueryInfo) {
+// LogSlowQuery keeps topN recent slow queries in domain.
+func (do *Domain) LogSlowQuery(query *SlowQueryInfo) {
+	do.slowQuery.mu.RLock()
+	defer do.slowQuery.mu.RUnlock()
+	if do.slowQuery.mu.closed {
+		return
+	}
+
 	select {
 	case do.slowQuery.ch <- query:
 	default:
 	}
+}
+
+// ShowSlowQuery returns the slow queries.
+func (do *Domain) ShowSlowQuery(showSlow *ast.ShowSlow) []*SlowQueryInfo {
+	msg := &showSlowMessage{
+		request: showSlow,
+	}
+	msg.Add(1)
+	do.slowQuery.msgCh <- msg
+	msg.Wait()
+	return msg.result
 }
 
 func (do *Domain) topNSlowQueryLoop() {
@@ -346,12 +368,35 @@ func (do *Domain) topNSlowQueryLoop() {
 	for {
 		select {
 		case now := <-ticker.C:
-			do.slowQuery.Refresh(now)
+			do.slowQuery.RemoveExpired(now)
 		case info, ok := <-do.slowQuery.ch:
 			if !ok {
 				return
 			}
 			do.slowQuery.Append(info)
+		case msg := <-do.slowQuery.msgCh:
+			req := msg.request
+			if req.Tp == ast.ShowSlowTop {
+				msg.result = do.slowQuery.QueryTop(int(req.Count), req.Kind)
+			} else if req.Tp == ast.ShowSlowRecent {
+				msg.result = do.slowQuery.QueryRecent(int(req.Count))
+			}
+			msg.Done()
+		}
+	}
+}
+
+func (do *Domain) infoSyncerKeeper() {
+	defer do.wg.Done()
+	defer recoverInDomain("infoSyncerKeeper", false)
+	for {
+		select {
+		case <-do.info.Done():
+			log.Info("[ddl] server info syncer need to restart")
+			do.info.Restart(context.Background())
+			log.Info("[ddl] server info syncer restarted.")
+		case <-do.exit:
+			return
 		}
 	}
 }
@@ -385,16 +430,27 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
+			// The etcd is responsible for schema synchronization, we should ensure there is at most two diffrent schema version
+			// in the TiDB cluster, to make the data/schema be consistent. If we lost connection/session to etcd, the cluster
+			// will treats this TiDB as a down instance, and etcd will remove the key of `/tidb/ddl/all_schema_versions/tidb-id`.
+			// Say the schema version now is 1, the owner is changing the schema version to 2, it will not wait for this down TiDB syncing the schema,
+			// then continue to change the TiDB schema to version 3. Unfortunately, this down TiDB schema version will still be version 1.
+			// And version 1 is not consistent to version 3. So we need to stop the schema validator to prohibit the DML executing.
 			do.SchemaValidator.Stop()
 			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
 			}
+			// The schema maybe changed, must reload schema then the schema validator can restart.
+			exitLoop := do.mustReload()
+			if exitLoop {
+				// domain is closed.
+				log.Errorf("[ddl] domain is closed. exit loadSchemaInLoop")
+				return
+			}
 			do.SchemaValidator.Restart()
-		case <-do.info.Done():
-			log.Info("[ddl] reload schema in loop, server info syncer need restart")
-			do.info.Restart(context.Background())
+			log.Info("[ddl] schema syncer restarted.")
 		case <-do.exit:
 			return
 		}
@@ -423,6 +479,29 @@ func (do *Domain) mustRestartSyncer() error {
 	}
 }
 
+// mustReload tries to Reload the schema, it returns until it's successful or the domain is closed.
+// it returns false when it is sucessful, returns true when the domain is closed.
+func (do *Domain) mustReload() (exitLoop bool) {
+	for {
+		err := do.Reload()
+		if err == nil {
+			log.Infof("[ddl] mustReload succeed.")
+			return false
+		}
+
+		log.Infof("[ddl] reload the schema failed: %v", err)
+		// If the domain is closed, we returns immediately.
+		select {
+		case <-do.exit:
+			log.Infof("[ddl] domain is closed.")
+			return true
+		default:
+		}
+
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
 	if do.ddl != nil {
@@ -435,8 +514,8 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
-	do.slowQuery.Close()
 	do.sysSessionPool.Close()
+	do.slowQuery.Close()
 	do.wg.Wait()
 	log.Info("[domain] close")
 }
@@ -496,10 +575,10 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		store:           store,
 		SchemaValidator: NewSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
+		sysSessionPool:  newSessionPool(capacity, factory),
 		statsLease:      statsLease,
 		infoHandle:      infoschema.NewHandle(store),
-		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7),
+		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7, 500),
 	}
 }
 
@@ -507,12 +586,19 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	if ebd, ok := do.store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
+			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+					grpc.WithBackoffMaxDelay(time.Second * 3),
+					grpc.WithKeepaliveParams(keepalive.ClientParameters{
+						Time:                time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+						Timeout:             time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
+						PermitWithoutStream: true,
+					}),
 				},
 				TLS: ebd.TLSConfig(),
 			})
@@ -561,11 +647,71 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	do.wg.Add(1)
 	go do.topNSlowQueryLoop()
 
+	do.wg.Add(1)
+	go do.infoSyncerKeeper()
 	return nil
 }
 
+type sessionPool struct {
+	resources chan pools.Resource
+	factory   pools.Factory
+	mu        struct {
+		sync.RWMutex
+		closed bool
+	}
+}
+
+func newSessionPool(cap int, factory pools.Factory) *sessionPool {
+	return &sessionPool{
+		resources: make(chan pools.Resource, cap),
+		factory:   factory,
+	}
+}
+
+func (p *sessionPool) Get() (resource pools.Resource, err error) {
+	var ok bool
+	select {
+	case resource, ok = <-p.resources:
+		if !ok {
+			err = errors.New("session pool closed")
+		}
+	default:
+		resource, err = p.factory()
+	}
+	return
+}
+
+func (p *sessionPool) Put(resource pools.Resource) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.mu.closed {
+		resource.Close()
+		return
+	}
+
+	select {
+	case p.resources <- resource:
+	default:
+		resource.Close()
+	}
+}
+func (p *sessionPool) Close() {
+	p.mu.Lock()
+	if p.mu.closed {
+		p.mu.Unlock()
+		return
+	}
+	p.mu.closed = true
+	close(p.resources)
+	p.mu.Unlock()
+
+	for r := range p.resources {
+		r.Close()
+	}
+}
+
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *pools.ResourcePool {
+func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
 }
 
@@ -635,6 +781,20 @@ func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
+// StatsUpdating checks if the stats worker is updating.
+func (do *Domain) StatsUpdating() bool {
+	return do.statsUpdating.Get() > 0
+}
+
+// SetStatsUpdating sets the value of stats updating.
+func (do *Domain) SetStatsUpdating(val bool) {
+	if val {
+		do.statsUpdating.Set(1)
+	} else {
+		do.statsUpdating.Set(0)
+	}
+}
+
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 
@@ -651,6 +811,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	owner := do.newStatsOwner()
 	do.wg.Add(1)
+	do.SetStatsUpdating(true)
 	go do.updateStatsWorker(ctx, owner)
 	if RunAutoAnalyze {
 		do.wg.Add(1)
@@ -700,6 +861,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
 	defer func() {
+		do.SetStatsUpdating(false)
 		recoverInDomain("updateStatsWorker", false)
 		do.wg.Done()
 	}()
@@ -820,3 +982,8 @@ var (
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
 	ErrInfoSchemaChanged = terror.ClassDomain.New(codeInfoSchemaChanged, "Information schema is changed.")
 )
+
+func init() {
+	// Map error codes to mysql error codes.
+	terror.ErrClassToMySQLCodes[terror.ClassDomain] = make(map[terror.ErrCode]uint16)
+}

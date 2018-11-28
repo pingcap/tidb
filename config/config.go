@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pkg/errors"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
@@ -47,6 +47,7 @@ type Config struct {
 	Host             string          `toml:"host" json:"host"`
 	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
 	Port             uint            `toml:"port" json:"port"`
+	Cors             string          `toml:"cors" json:"cors"`
 	Store            string          `toml:"store" json:"store"`
 	Path             string          `toml:"path" json:"path"`
 	Socket           string          `toml:"socket" json:"socket"`
@@ -87,9 +88,9 @@ type Log struct {
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
 	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint   `toml:"slow-threshold" json:"slow-threshold"`
+	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen     uint   `toml:"query-log-max-len" json:"query-log-max-len"`
+	QueryLogMaxLen     uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
 // Security is the security section of the config.
@@ -149,6 +150,7 @@ type Status struct {
 // Performance is the performance section of the config.
 type Performance struct {
 	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
+	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
@@ -157,6 +159,7 @@ type Performance struct {
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -182,13 +185,14 @@ type TxnLocalLatches struct {
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
-	Enabled  bool `toml:"enabled" json:"enabled"`
-	Capacity uint `toml:"capacity" json:"capacity"`
+	Enabled          bool    `toml:"enabled" json:"enabled"`
+	Capacity         uint    `toml:"capacity" json:"capacity"`
+	MemoryGuardRatio float64 `toml:"memory-guard-ratio" json:"memory-guard-ratio"`
 }
 
 // OpenTracing is the opentracing section of the config.
 type OpenTracing struct {
-	Enable     bool                `toml:"enable" json:"enbale"`
+	Enable     bool                `toml:"enable" json:"enable"`
 	Sampler    OpenTracingSampler  `toml:"sampler" json:"sampler"`
 	Reporter   OpenTracingReporter `toml:"reporter" json:"reporter"`
 	RPCMetrics bool                `toml:"rpc-metrics" json:"rpc-metrics"`
@@ -236,13 +240,15 @@ type TiKVClient struct {
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
+	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
 }
 
 // Binlog is the config for binlog.
 type Binlog struct {
-	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	Enable       bool   `toml:"enable" json:"enable"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
-	// If IgnoreError is true, when writting binlog meets error, TiDB would
+	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 }
@@ -251,6 +257,7 @@ var defaultConf = Config{
 	Host:             "0.0.0.0",
 	AdvertiseAddress: "",
 	Port:             4000,
+	Cors:             "",
 	Store:            "mocktikv",
 	Path:             "/tmp/tidb",
 	RunDDL:           true,
@@ -261,8 +268,8 @@ var defaultConf = Config{
 	MemQuotaQuery:    32 << 30,
 	EnableStreaming:  false,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  false,
-		Capacity: 10240000,
+		Enabled:  true,
+		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
@@ -272,9 +279,9 @@ var defaultConf = Config{
 			LogRotate: true,
 			MaxSize:   logutil.DefaultLogMaxSize,
 		},
-		SlowThreshold:      300,
+		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
-		QueryLogMaxLen:     2048,
+		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -282,6 +289,7 @@ var defaultConf = Config{
 		MetricsInterval: 15,
 	},
 	Performance: Performance{
+		MaxMemory:           0,
 		TCPKeepAlive:        true,
 		CrossJoin:           true,
 		StatsLease:          "3s",
@@ -290,6 +298,7 @@ var defaultConf = Config{
 		FeedbackProbability: 0.05,
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
+		ForcePriority:       "NO_PRIORITY",
 	},
 	XProtocol: XProtocol{
 		XHost: "",
@@ -300,8 +309,9 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:  false,
-		Capacity: 100,
+		Enabled:          false,
+		Capacity:         100,
+		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
 		Enable: false,
@@ -316,6 +326,7 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
+		MaxTxnTimeUse:        590,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

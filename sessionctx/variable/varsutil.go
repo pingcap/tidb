@@ -22,11 +22,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pkg/errors"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
@@ -83,6 +83,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", false, errors.Trace(err)
 		}
 		return string(j), true, nil
+	case TiDBForcePriority:
+		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
+	case TiDBSlowLogThreshold:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
+	case TiDBQueryLogMaxLen:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -230,6 +236,16 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case FlushTime:
 		return checkUInt64SystemVar(name, value, 0, secondsPerYear, vars)
+	case ForeignKeyChecks:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			// TiDB does not yet support foreign keys.
+			// For now, resist the change and show a warning.
+			vars.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(name, value))
+			return "OFF", nil
+		} else if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case GroupConcatMaxLen:
 		// The reasonable range of 'group_concat_max_len' is 4~18446744073709551615(64-bit platforms)
 		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len for details
@@ -242,6 +258,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, 2, vars)
 	case InnodbLockWaitTimeout:
 		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
+	// See "https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_allowed_packet"
+	case MaxAllowedPacket:
+		return checkUInt64SystemVar(name, value, 1024, 1073741824, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
@@ -271,15 +290,19 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 400, 524288, vars)
 	case TmpTableSize:
 		return checkUInt64SystemVar(name, value, 1024, math.MaxUint64, vars)
+	case WaitTimeout:
+		return checkUInt64SystemVar(name, value, 1, 31536000, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
 		}
 		return value, nil
+	case ValidatePasswordLength, ValidatePasswordNumberCount:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
-		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates:
+		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
@@ -287,11 +310,21 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
-		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
+		TiDBOptInSubqToJoinAndAgg,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete:
+		TiDBBatchDelete, TiDBEnableCascadesPlanner:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBEnableTablePartition:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		case strings.EqualFold(value, "AUTO"):
+			return "auto", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
@@ -320,7 +353,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TIDBMemQuotaIndexLookupReader,
 		TIDBMemQuotaIndexLookupJoin,
 		TIDBMemQuotaNestedLoopApply,
-		TiDBRetryLimit:
+		TiDBRetryLimit,
+		TiDBSlowLogThreshold,
+		TiDBQueryLogMaxLen:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
@@ -332,6 +367,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", errors.Trace(err)
 		}
 		return v, nil
+	case TxnIsolation, TransactionIsolation:
+		upVal := strings.ToUpper(value)
+		_, exists := TxIsolationNames[upVal]
+		if !exists {
+			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return upVal, nil
 	}
 	return value, nil
 }
@@ -369,7 +411,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
-		d, err := types.ParseDuration(s[1:], 0)
+		d, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
 			ofst := int(d.Duration / time.Second)
 			if s[0] == '-' {
