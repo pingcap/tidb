@@ -43,7 +43,6 @@ type ViewInfo struct {
 	SelectStmt  string           `json:"view_select"`
 	CheckOption CheckOption      `json:"view_checkoption"`
 	Cols        []string         `json:"view_cols"`
-	IsUpdatable bool             `json:"view_isUpdatable"`
 }
 ```
 * AlgorithmType  ref https://dev.mysql.com/doc/refman/5.7/en/view-algorithms.html   
@@ -56,8 +55,6 @@ type ViewInfo struct {
 * CheckOptionType  ref https://dev.mysql.com/doc/refman/5.7/en/view-check-option.html  
     The WITH CHECK OPTION clause can be given for an updatable view to prevent inserts to rows for which the WHERE clause in the select_statement is not true. It also prevents updates to rows for which the WHERE clause is true but the update would cause it to be not true (in other words, it prevents visible rows from being updated to nonvisible rows).  
     In a WITH CHECK OPTION clause for an updatable view, the LOCAL and CASCADED keywords determine the scope of check testing when the view is defined in terms of another view. When neither keyword is given, the default is CASCADED.
-* IsUpdatable  ref https://dev.mysql.com/doc/refman/5.7/en/view-updatability.html  
-    This parameter mark if this view is updatable.
 * SelectStmt
     This string is the origin select sql statement.
 * Cols
@@ -100,7 +97,7 @@ Let me describe more details about the view DDL operation:
     ```
     If we rebuild table `v` from sql above and query from view `v` again, database will rewrite view's `SelectStmt` from `select * from t` into <bold>`select c as c,d as d from t`</bold>
     So the problem is view's statement can be rewrite to different sql and generate different query set.  
-    In order to resolve the problem describe above, we build a `Projection` at the top of original select's `LogicalPlan`, just like we rewriter view's `SelectStmt` from `select * from t` into `select a as a,b as b from (select * from t)`.  
+    In order to solve the problem describe above, we must build a `Projection` at the top of original select's `LogicalPlan`, just like we rewrite view's `SelectStmt` from `select * from t` into `select a as a,b as b from (select * from t)`.  
     This is a temporary fix and we will implement TiDB to rewrite sql with replace all wildcard finally.  
 4. Show table status  
   Modify `SHOW TABLE STATUS` function to support show view status, and we use this command to check if `CREATE VIEW` and `DROP VIEW` operation is successful. To reuse `SHOW TABLE STAUS` code logical is perferred.
