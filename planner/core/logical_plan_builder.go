@@ -18,7 +18,6 @@ import (
 	"math"
 	"math/bits"
 	"reflect"
-	"strconv"
 	"strings"
 	"unicode"
 
@@ -1228,11 +1227,11 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	case *ast.PositionExpr:
 		pos, isNull, err := expression.PosFromPositionExpr(g.ctx, v)
 		if err != nil || isNull {
-			g.err = ErrUnknownColumn.GenWithStackByArgs("?", clauseMsg[groupByClause])
+			g.err = ErrUnknown.GenWithStackByArgs()
 			return inNode, false
 		}
 		if pos < 1 || pos > len(g.fields) {
-			g.err = ErrUnknownColumn.GenWithStackByArgs(strconv.Itoa(pos), clauseMsg[groupByClause])
+			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", pos)
 			return inNode, false
 		}
 		ret := g.fields[pos-1].Expr
