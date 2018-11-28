@@ -38,8 +38,8 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 		// Make sure the store is tikv store.
 		return
 	}
-	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
-	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
+	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSizeForTest)
+	atomic.StoreInt32(&executor.LookupTableTaskChannelSizeForTest, 1)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_index_lookup_size = '10'")
 	tk.MustExec("use test")
@@ -62,7 +62,7 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 	rs.Close()
 	time.Sleep(time.Millisecond * 50)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
-	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
+	atomic.StoreInt32(&executor.LookupTableTaskChannelSizeForTest, originSize)
 }
 
 func checkGoroutineExists(keyword string) bool {

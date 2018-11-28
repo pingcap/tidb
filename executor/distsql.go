@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"io"
 	"math"
 	"runtime"
 	"sort"
@@ -50,8 +51,8 @@ var (
 	_ Executor = &IndexLookUpExecutor{}
 )
 
-// LookupTableTaskChannelSize represents the channel size of the index double read taskChan.
-var LookupTableTaskChannelSize int32 = 50
+// lookupTableTaskChannelSize represents the channel size of the index double read taskChan.
+var lookupTableTaskChannelSize int32 = 50
 
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
@@ -97,15 +98,9 @@ func (task *lookupTableTask) Swap(i, j int) {
 	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
 }
 
-// Closeable is a interface for closeable structures.
-type Closeable interface {
-	// Close closes the object.
-	Close() error
-}
-
 // closeAll closes all objects even if an object returns an error.
 // If multiple objects returns error, the first error will be returned.
-func closeAll(objs ...Closeable) error {
+func closeAll(objs ...io.Closer) error {
 	var err error
 	for _, obj := range objs {
 		if obj != nil {
@@ -381,7 +376,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.finished = make(chan struct{})
-	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&lookupTableTaskChannelSize))
 
 	var err error
 	if e.corColInIdxSide {
@@ -631,14 +626,23 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	handles = make([]int64, 0, w.batchSize)
-	err = errors.Trace(idxResult.Next(ctx, chk, w.maxBatchSize))
-	if err != nil {
-		return handles, err
+	for {
+		err = errors.Trace(idxResult.Next(ctx, chk, w.maxChunkSize))
+		if err != nil {
+			return handles, err
+		}
+		if chk.NumRows() == 0 {
+			return handles, nil
+		}
+		handles = append(handles, chunk.GetInt64InColumn(chk, 0)...)
+		if len(handles) >= w.batchSize {
+			if w.batchSize < w.maxBatchSize {
+				w.batchSize *= 2
+			}
+			return handles, nil
+		}
+		chk.Reset() // reset ahead so result.Next never grow chunk until `handles` reach batchSize
 	}
-	for i := 0; i < chk.NumRows(); i++ {
-		handles = append(handles, chk.GetRow(i).GetInt64(0))
-	}
-	return handles, nil
 }
 
 func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {

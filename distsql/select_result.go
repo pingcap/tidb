@@ -114,8 +114,8 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 }
 
 // Next reads data to the chunk.
-func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk, maxBatchSize int) error {
-	chk.GrowAndReset(maxBatchSize)
+func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk, maxChunkSize int) error {
+	chk.GrowAndReset(maxChunkSize)
 	for chk.NumRows() < chk.Capacity() {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()

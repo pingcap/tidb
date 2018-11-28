@@ -42,8 +42,8 @@ type streamResult struct {
 
 func (r *streamResult) Fetch(context.Context) {}
 
-func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk, maxBatchSize int) error {
-	chk.GrowAndReset(maxBatchSize)
+func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk, maxChunkSize int) error {
+	chk.GrowAndReset(maxChunkSize)
 	for chk.NumRows() < chk.Capacity() {
 		err := r.readDataIfNecessary(ctx)
 		if err != nil {
