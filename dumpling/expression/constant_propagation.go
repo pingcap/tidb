@@ -292,10 +292,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
-	solver := &propConstSolver{}
-	solver.colMapper = make(map[int64]int)
-	solver.ctx = ctx
-	return solver.solve(conditions)
+	return newPropConstSolver().PropagateConstant(ctx, conditions)
 }
 
 type propOuterJoinConstSolver struct {
@@ -550,4 +547,22 @@ func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Exp
 	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx
 	return solver.solve(joinConds, filterConds)
+}
+
+// PropagateConstantSolver is a constant propagate solver.
+type PropagateConstantSolver interface {
+	PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression
+}
+
+// newPropConstSolver returns a PropagateConstantSolver.
+func newPropConstSolver() PropagateConstantSolver {
+	solver := &propConstSolver{}
+	solver.colMapper = make(map[int64]int)
+	return solver
+}
+
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
+func (s *propConstSolver) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+	s.ctx = ctx
+	return s.solve(conditions)
 }
