@@ -358,7 +358,11 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	if col.Tp == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
 		// the default value is the first element of the enum list
-		return types.NewDatum(col.FieldType.Elems[0]), nil
+		defEnum, err := types.ParseEnumValue(col.FieldType.Elems, 1)
+		if err != nil {
+			return types.Datum{}, err
+		}
+		return types.NewMysqlEnumDatum(defEnum), nil
 	}
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		// Auto increment column doesn't has default value and we should not return error.

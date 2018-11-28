@@ -16,7 +16,6 @@ package executor_test
 import (
 	"fmt"
 	"strconv"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -612,13 +611,13 @@ func (s *testSuite) TestShow2(c *C) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	create_time := model.TSConvert2Time(tblInfo.Meta().UpdateTS).String()
-	r := tk.MustQuery("show table status from test like 't'")
-	timeStr := time.Now().Format("2006-01-02 15:04:05")
-	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", create_time, timeStr, timeStr)))
+	create_time := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
 
 	// The Hostname is the actual host
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	r := tk.MustQuery("show table status from test like 't'")
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 0 0 0 0 0 0 0 %s <nil> <nil> utf8mb4_bin   注释", create_time)))
 
 	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
 
@@ -627,6 +626,37 @@ func (s *testSuite) TestShow2(c *C) {
 
 	tk.MustQuery("show grants for current_user()").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
+}
+
+func (s *testSuite) TestUnprivilegedShow(c *C) {
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE DATABASE testshow")
+	tk.MustExec("USE testshow")
+	tk.MustExec("CREATE TABLE t1 (a int)")
+	tk.MustExec("CREATE TABLE t2 (a int)")
+
+	tk.MustExec(`CREATE USER 'lowprivuser'`) // no grants
+	tk.MustExec(`FLUSH PRIVILEGES`)
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	rs, err := tk.Exec("SHOW TABLE STATUS FROM testshow")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.MustExec("GRANT ALL ON testshow.t1 TO 'lowprivuser'")
+	tk.MustExec(`FLUSH PRIVILEGES`)
+	tk.Se.Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("testshow"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	create_time := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
+
+	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 0 %s <nil> <nil> utf8mb4_bin   ", create_time)))
+
 }
 
 func (s *testSuite) TestCollation(c *C) {
@@ -650,6 +680,8 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint);`)
+
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
 	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
 	tk.MustExec("show table status;")
