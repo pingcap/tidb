@@ -3342,3 +3342,35 @@ func (s *testSuite) TestDoSubquery(c *C) {
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
 }
+
+func (s *testSuite) TestSelectHashPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists th`)
+	tk.MustExec("set @@session.tidb_enable_table_partition = 'on';")
+	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
+	defer tk.MustExec(`drop table if exists th`)
+	tk.MustExec(`insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);`)
+	tk.MustExec("insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);")
+	tk.MustQuery("select b from th order by a").Check(testkit.Rows("-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"))
+	tk.MustQuery(" select * from th where a=-2;").Check(testkit.Rows("-2 -2"))
+	tk.MustQuery(" select * from th where a=5;").Check(testkit.Rows("5 5"))
+	// Test for select prune partitions.
+	result := tk.MustQuery("desc select * from th where a=-2;")
+	result.Check(testkit.Rows(
+		"TableReader_8 10.00 root data:Selection_7",
+		"└─Selection_7 10.00 cop eq(test.th.a, -2)",
+		"  └─TableScan_6 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	// Test select union all partition.
+	result = tk.MustQuery("desc select * from th;")
+	result.Check(testkit.Rows(
+		"Union_8 30000.00 root ",
+		"├─TableReader_10 10000.00 root data:TableScan_9",
+		"│ └─TableScan_9 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"├─TableReader_12 10000.00 root data:TableScan_11",
+		"│ └─TableScan_11 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_14 10000.00 root data:TableScan_13",
+		"  └─TableScan_13 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+}

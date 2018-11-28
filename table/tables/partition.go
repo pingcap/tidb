@@ -184,9 +184,7 @@ func generateHashPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error)
 	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, dbName, tblInfo.Name, tblInfo.Columns)
 	schema := expression.NewSchema(columns...)
 	for i := 0; i < int(pi.Num); i++ {
-		// If pi.Expr return negative number, this expression is not right, but this is only used to prune partition when do union now.
-		// Maybe mod(abs(-1),5) is better.
-		fmt.Fprintf(&buf, "MOD((%s),(%d))=%d", pi.Expr, pi.Num, i)
+		fmt.Fprintf(&buf, "MOD(ABS(%s),(%d))=%d", pi.Expr, pi.Num, i)
 		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
