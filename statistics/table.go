@@ -307,7 +307,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
 	hist := t.Columns[colID]
-	result, err := hist.equalRowCount(sc, value)
+	result, err := hist.equalRowCount(sc, value, t.ModifyCount)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
