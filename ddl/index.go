@@ -1179,6 +1179,11 @@ func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInf
 	return nil
 }
 
+// FindIndexByName exports for testing.
+func FindIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
+	return findIndexByName(idxName, indices)
+}
+
 func allocateIndexID(tblInfo *model.TableInfo) int64 {
 	tblInfo.MaxIndexID++
 	return tblInfo.MaxIndexID

@@ -113,6 +113,14 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
 				continue
 			}
+			switch job.Type {
+			case model.ActionDropIndex:
+				if job.SchemaState == model.StateDeleteOnly ||
+					job.SchemaState == model.StateDeleteReorganization {
+					errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+					continue
+				}
+			}
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
 			err := job.DecodeArgs(job.RawArgs)
@@ -701,6 +709,7 @@ const (
 	codeInvalidColumnState                = 3
 	codeDDLJobNotFound                    = 4
 	codeCancelFinishedJob                 = 5
+	codeCannotCancelDDLJob                = 6
 )
 
 var (
@@ -712,4 +721,6 @@ var (
 	ErrDDLJobNotFound = terror.ClassAdmin.New(codeDDLJobNotFound, "DDL Job:%v not found")
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
 	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(codeCancelFinishedJob, "This job:%v is finished, so can't be cancelled")
+	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
+	ErrCannotCancelDDLJob = terror.ClassAdmin.New(codeCannotCancelDDLJob, "This job:%v is almost finished, can't be cancelled now")
 )
