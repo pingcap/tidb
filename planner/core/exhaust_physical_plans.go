@@ -606,7 +606,6 @@ func (cwc *ColWithCompareOps) resolveIndices(schema *expression.Schema) {
 
 func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) ([]*ranger.Range, []int, []expression.Expression, *ColWithCompareOps, error) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.schema.Columns, indexInfo)
-	log.Warnf("index cols: %v", idxCols)
 	if len(idxCols) == 0 {
 		return nil, nil, nil, nil, nil
 	}
@@ -629,9 +628,9 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 	if matchedKeyCnt <= 0 {
 		return nil, nil, nil, nil, nil
 	}
-	keyMatchedLen := len(idxCols) - 1
+	keyMatchedLen := len(idxCols)
 	for ; keyMatchedLen > 0; keyMatchedLen-- {
-		if idxOff2keyOff[keyMatchedLen] != -1 {
+		if idxOff2keyOff[keyMatchedLen-1] != -1 {
 			break
 		}
 	}
@@ -655,6 +654,7 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 	nextColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// If all cols have been considered, we can return the current result.
 	if nextColPos == len(idxCols) {
+		remained = append(remained, rangeFilterCandidates...)
 		ranges, err := p.buildTemplateRange(idxOff2keyOff, matchedKeyCnt, notKeyEqAndIn, nil, false)
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -662,7 +662,6 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 		return ranges, idxOff2keyOff, remained, nil, nil
 	}
 	nextCol := idxCols[nextColPos]
-	log.Warnf("next col: %v", nextCol)
 	nextColCmpFilterManager := &ColWithCompareOps{
 		targetCol:         nextCol,
 		affectedColSchema: expression.NewSchema(),
@@ -697,7 +696,6 @@ loopCandidates:
 			nextColCmpFilterManager.appendNewExpr(symmetricOp[sf.FuncName.L], sf.GetArgs()[0], affectedCols)
 		}
 	}
-	log.Warnf("next col filters: %v", nextColCmpFilterManager.opArg)
 	if len(nextColCmpFilterManager.OpType) == 0 {
 		colAccesses, colRemained := ranger.DetachCondsForTableRange(p.ctx, rangeFilterCandidates, nextCol)
 		remained = append(remained, colRemained...)
@@ -711,6 +709,7 @@ loopCandidates:
 		}
 		return ranges, idxOff2keyOff, remained, nil, nil
 	}
+	remained = append(remained, rangeFilterCandidates...)
 	ranges, err := p.buildTemplateRange(idxOff2keyOff, matchedKeyCnt, notKeyEqAndIn, nil, true)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -780,6 +779,7 @@ func (p *LogicalJoin) buildTemplateRange(idxOff2KeyOff []int, matchedKeyCnt int,
 				if err != nil {
 					return nil, err
 				}
+				newRange.HighVal[i] = newRange.LowVal[i]
 				newRanges = append(newRanges, newRange)
 			}
 			ranges = append(ranges, newRanges...)
