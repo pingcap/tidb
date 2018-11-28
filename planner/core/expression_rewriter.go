@@ -947,13 +947,13 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 		stkLen := len(er.ctxStack)
 		val := er.ctxStack[stkLen-1]
 		intNum, isNull, err := expression.GetIntFromConstant(er.ctx, val)
-		er.ctxStack = er.ctxStack[:stkLen-1]
 		str = "?"
 		if err == nil {
 			if isNull {
 				return
 			}
 			pos = intNum
+			er.ctxStack = er.ctxStack[:stkLen-1]
 		}
 		er.err = err
 	}

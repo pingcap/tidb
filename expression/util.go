@@ -528,18 +528,20 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expr
 	return value, nil
 }
 
-// ParamToByItemNode generate ByItem node from ParamMarkerExpr.
-func ParamToByItemNode(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (*ast.ByItem, bool, error) {
-	value, err := GetParamExpression(ctx, v)
+// PosFromPositionExpr generates a position value from PositionExpr.
+func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool, error) {
+	if v.P == nil {
+		return v.N, false, nil
+	}
+	value, err := GetParamExpression(ctx, v.P.(*driver.ParamMarkerExpr))
 	if err != nil {
-		return nil, true, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	pos, isNull, err := GetIntFromConstant(ctx, value)
 	if err != nil || isNull {
-		return nil, true, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
-	byItem := &ast.ByItem{Expr: &ast.PositionExpr{N: pos, P: v}}
-	return byItem, false, nil
+	return pos, false, nil
 }
 
 // GetStringFromConstant gets a string value from the Constant expression.
