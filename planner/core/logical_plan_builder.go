@@ -1232,7 +1232,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 		if pos < 1 || pos > len(g.fields) {
-			g.err = ErrUnknownColumn.GenWithStackByArgs(strconv.Itoa(v.N), clauseMsg[groupByClause])
+			g.err = ErrUnknownColumn.GenWithStackByArgs(strconv.Itoa(pos), clauseMsg[groupByClause])
 			return inNode, false
 		}
 		ret := g.fields[pos-1].Expr
