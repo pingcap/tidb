@@ -29,16 +29,12 @@ import (
 	"golang.org/x/net/context"
 )
 
-// MinRowCountLimit is used to limit the rows to execute in the statement.
-const MinRowCountLimit = 100
-
 // InsertValues is the data to insert.
 type InsertValues struct {
 	baseExecutor
 	batchChecker
 
 	rowCount       uint64
-	rowCountLimit  uint64
 	maxRowsInBatch uint64
 	lastInsertID   uint64
 	hasRefCols     bool
@@ -185,6 +181,7 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 	}
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchSize := sessVars.DMLBatchSize
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	for i, list := range e.Lists {
@@ -194,7 +191,7 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 			return errors.Trace(err)
 		}
 		rows = append(rows, row)
-		if e.rowCount%e.rowCountLimit == 0 {
+		if e.rowCount%uint64(batchSize) == 0 {
 			if err = exec(rows); err != nil {
 				return err
 			}
@@ -304,6 +301,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchSize := sessVars.DMLBatchSize
 
 	for {
 		err := selectExec.Next(ctx, chk)
@@ -322,7 +320,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 				return errors.Trace(err)
 			}
 			rows = append(rows, row)
-			if e.rowCount%e.rowCountLimit == 0 {
+			if e.rowCount%uint64(batchSize) == 0 {
 				if err = exec(rows); err != nil {
 					return errors.Trace(err)
 				}

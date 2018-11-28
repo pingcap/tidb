@@ -552,19 +552,15 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	baseExec.initCap = chunk.ZeroCapacity
 
 	ivs := &InsertValues{
-		baseExecutor:  baseExec,
-		Table:         v.Table,
-		Columns:       v.Columns,
-		Lists:         v.Lists,
-		SetList:       v.SetList,
-		GenColumns:    v.GenCols.Columns,
-		GenExprs:      v.GenCols.Exprs,
-		hasRefCols:    v.NeedFillDefaultValue,
-		SelectExec:    selectExec,
-		rowCountLimit: uint64(b.ctx.GetSessionVars().DMLBatchSize / len(v.Table.Cols())),
-	}
-	if ivs.rowCountLimit < MinRowCountLimit {
-		ivs.rowCountLimit = MinRowCountLimit
+		baseExecutor: baseExec,
+		Table:        v.Table,
+		Columns:      v.Columns,
+		Lists:        v.Lists,
+		SetList:      v.SetList,
+		GenColumns:   v.GenCols.Columns,
+		GenExprs:     v.GenCols.Exprs,
+		hasRefCols:   v.NeedFillDefaultValue,
+		SelectExec:   selectExec,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
