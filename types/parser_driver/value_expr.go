@@ -67,6 +67,10 @@ type ValueExpr struct {
 	projectionOffset int
 }
 
+func (n *ValueExpr) Restore() *ast.SQLSentence {
+	panic("implement me")
+}
+
 // GetDatumString implements the ast.ValueExpr interface.
 func (n *ValueExpr) GetDatumString() string {
 	return n.GetString()
@@ -148,6 +152,10 @@ type ParamMarkerExpr struct {
 	ValueExpr
 	Offset int
 	Order  int
+}
+
+func (n *ParamMarkerExpr) Restore() *ast.SQLSentence {
+	panic("implement me")
 }
 
 func newParamMarkerExpr(offset int) ast.ParamMarkerExpr {
