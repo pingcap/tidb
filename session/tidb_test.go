@@ -143,8 +143,6 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 		}(se)
 	}
 	wg.Wait()
-	se.sysSessionPool().Close()
-	c.Assert(se.sysSessionPool().IsClosed(), Equals, true)
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
