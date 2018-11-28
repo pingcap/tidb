@@ -559,11 +559,11 @@ func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bo
 // GetIntFromConstant gets an interger value from the Constant expression.
 func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, error) {
 	str, isNull, err := GetStringFromConstant(ctx, value)
-	if err != nil {
+	if err != nil || isNull {
 		return 0, true, errors.Trace(err)
 	}
 	intNum, err := strconv.Atoi(str)
-	if err != nil || isNull {
+	if err != nil {
 		return 0, true, nil
 	}
 	return intNum, false, nil
