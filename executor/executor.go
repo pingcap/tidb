@@ -457,7 +457,7 @@ func (e *CheckTableExec) checkIndex(ctx context.Context, src *IndexLookUpExecuto
 		retFieldTypes[i] = cols[i].RetType
 	}
 	chk := chunk.New(retFieldTypes, e.initCap, e.maxChunkSize)
-	log.Warnf(".................. types %v, cols %v", retFieldTypes, cols)
+	// log.Warnf(".................. types %v, cols %v", retFieldTypes, cols)
 	for {
 		err := src.Next(ctx, chk)
 		if err != nil {
@@ -513,12 +513,14 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	wg := sync.WaitGroup{}
-	for _, src := range e.srcs {
+	for i, src := range e.srcs {
 		wg.Add(1)
-		go func() {
+		go func(num int) {
 			defer wg.Done()
+			startTime := time.Now()
 			e.checkIndex(ctx, src)
-		}()
+			log.Warnf(".................. no.%d sub %v", num, time.Since(startTime))
+		}(i)
 	}
 	wg.Wait()
 

@@ -247,6 +247,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		return 0, 0, errors.Trace(err)
 	}
 	for i, idx := range indices {
+		startTime := time.Now()
 		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
@@ -254,6 +255,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		}
 
 		if tblCnt == idxCnt {
+			log.Warnf("---............... no.%d, name %v sub %v", i, idx, time.Since(startTime))
 			continue
 		}
 
