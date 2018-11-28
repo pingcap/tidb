@@ -61,8 +61,7 @@ type Config struct {
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames  int   `toml:"lower-case-table-names" json:"lower-case-table-names"`
-	MaxPreparedStmtCount int64 `toml:"max-prepared-stmt-count" json:"max-prepared-stmt-count"`
+	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
 	Log                 Log               `toml:"log" json:"log"`
 	Security            Security          `toml:"security" json:"security"`
@@ -272,8 +271,7 @@ var defaultConf = Config{
 		Enabled:  true,
 		Capacity: 2048000,
 	},
-	MaxPreparedStmtCount: -1,
-	LowerCaseTableNames:  2,
+	LowerCaseTableNames: 2,
 	Log: Log{
 		Level:  "info",
 		Format: "text",

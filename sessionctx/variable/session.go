@@ -538,7 +538,11 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 // AddPreparedStmt adds prepareStmt to current session and count in global.
 func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt *ast.Prepared) error {
 	if _, exists := s.PreparedStmts[stmtID]; !exists {
-		maxPreparedStmtCount := atomic.LoadInt64(&config.GetGlobalConfig().MaxPreparedStmtCount)
+		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
+		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)
+		if err != nil {
+			maxPreparedStmtCount = DefMaxPreparedStmtCount
+		}
 		newPreparedStmtCount := atomic.AddInt64(&preparedStmtCount, 1)
 		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
 			atomic.AddInt64(&preparedStmtCount, -1)
@@ -604,12 +608,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
-	case MaxPreparedStmtCount:
-		maxPsStmt, err := strconv.ParseInt(val, 10, 64)
-		if err != nil {
-			maxPsStmt = DefMaxPreparedStmtCount
-		}
-		atomic.StoreInt64(&config.GetGlobalConfig().MaxPreparedStmtCount, maxPsStmt)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
