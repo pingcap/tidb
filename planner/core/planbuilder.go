@@ -401,8 +401,11 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		// TODO: Prepared statement from variable expression do not work as expected.
-		// p.SQLText, _ = x.SQLVar.GetValue().(string)
+		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
+			p.SQLText = v
+		} else {
+			p.SQLText = "NULL"
+		}
 	} else {
 		p.SQLText = x.SQLText
 	}
