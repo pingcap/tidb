@@ -17,9 +17,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -31,12 +33,16 @@ func TestT(t *testing.T) {
 var _ = Suite(&testCascadesSuite{})
 
 type testCascadesSuite struct {
+	*parser.Parser
+	is   infoschema.InfoSchema
 	sctx sessionctx.Context
 }
 
 func (s *testCascadesSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	s.sctx = mock.NewContext()
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockTable()})
+	s.sctx = plannercore.MockContext()
+	s.Parser = parser.New()
 }
 
 func (s *testCascadesSuite) TearDownSuite(c *C) {
