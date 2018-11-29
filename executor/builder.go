@@ -548,16 +548,16 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	baseExec.initCap = chunk.ZeroCapacity
 
 	ivs := &InsertValues{
-		baseExecutor: baseExec,
-		Table:        v.Table,
-		Columns:      v.Columns,
-		Lists:        v.Lists,
-		SetList:      v.SetList,
-		GenColumns:   v.GenCols.Columns,
-		GenExprs:     v.GenCols.Exprs,
-		hasRefCols:   v.NeedFillDefaultValue,
+		baseExecutor:   baseExec,
+		Table:          v.Table,
+		Columns:        v.Columns,
+		Lists:          v.Lists,
+		SetList:        v.SetList,
+		GenColumns:     v.GenCols.Columns,
+		GenExprs:       v.GenCols.Exprs,
+		hasRefCols:     v.NeedFillDefaultValue,
 		PartitionNames: v.PartitionNames,
-		SelectExec:   selectExec,
+		SelectExec:     selectExec,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {

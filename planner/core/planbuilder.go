@@ -1082,11 +1082,11 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 	}
 
 	insertPlan := Insert{
-		Table:       tableInPlan,
-		Columns:     insert.Columns,
-		tableSchema: schema,
-		IsReplace:   insert.IsReplace,
- 		PartitionNames: insert.PartitionNames,
+		Table:          tableInPlan,
+		Columns:        insert.Columns,
+		tableSchema:    schema,
+		IsReplace:      insert.IsReplace,
+		PartitionNames: insert.PartitionNames,
 	}.Init(b.ctx)
 
 	b.visitInfo = append(b.visitInfo, visitInfo{
