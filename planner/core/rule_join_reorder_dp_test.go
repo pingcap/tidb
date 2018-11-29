@@ -34,7 +34,7 @@ type testJoinReorderDPSuite struct {
 }
 
 func (s *testJoinReorderDPSuite) SetUpTest(c *C) {
-	s.ctx = mockContext()
+	s.ctx = MockContext()
 	s.ctx.GetSessionVars().PlanID = -1
 }
 
