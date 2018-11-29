@@ -207,6 +207,9 @@ const (
 	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
 	// It may happen when inserting some data outside of all table partitions.
 	codeTrgInvalidCreationCtx = 1604
+	codeUnknownPartition = 1735
+	codePartitionClauseOnNonpartitioned = 1747
+	codeRowDoesNotMatchGivenPartitionSet = 1748
 )
 
 // Slice is used for table sorting.
@@ -228,6 +231,9 @@ func init() {
 		codeNoDefaultValue:        mysql.ErrNoDefaultForField,
 		codeTruncateWrongValue:    mysql.ErrTruncatedWrongValueForField,
 		codeTrgInvalidCreationCtx: mysql.ErrTrgInvalidCreationCtx,
+		codePartitionClauseOnNonpartitioned : mysql.ErrPartitionClauseOnNonpartitioned,
+		codeRowDoesNotMatchGivenPartitionSet :mysql.ErrRowDoesNotMatchGivenPartitionSet,
+		codeUnknownPartition : mysql.ErrUnknownPartition,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }
