@@ -31,12 +31,12 @@ type node struct {
 	maxCommitTS uint64
 	value       *Lock
 
-	next *node
+	next nodePtr
 }
 
 // latch stores a key's waiting transactions information.
 type latch struct {
-	queue   *node
+	queue   nodePtr
 	count   int
 	waiting []*Lock
 	sync.Mutex
@@ -93,6 +93,7 @@ func (l *Lock) SetCommitTS(commitTS uint64) {
 // but conceptually a latch is a queue, and a slot is an index to the queue
 type Latches struct {
 	slots []latch
+	nodeAlloc
 }
 
 type bytesSlice [][]byte
@@ -177,7 +178,7 @@ func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 	latch.Lock()
 	defer latch.Unlock()
 
-	find := findNode(latch.queue, key)
+	find := findNode(&latches.nodeAlloc, latch.queue, key)
 	if find.value != lock {
 		panic("releaseSlot wrong")
 	}
@@ -230,15 +231,20 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 		latch.recycle(lock.startTS)
 	}
 
-	find := findNode(latch.queue, key)
+	find := findNode(&latches.nodeAlloc, latch.queue, key)
 	if find == nil {
-		tmp := &node{
-			slotID: slotID,
-			key:    key,
-			value:  lock,
-		}
+		ptr := latches.nodeAlloc.New()
+		tmp := ptr.Value(&latches.nodeAlloc)
+		tmp.slotID = slotID
+		tmp.key = key
+		tmp.value = lock
+		// tmp := &node{
+		// 	slotID: slotID,
+		// 	key:    key,
+		// 	value:  lock,
+		// }
 		tmp.next = latch.queue
-		latch.queue = tmp
+		latch.queue = ptr
 		latch.count++
 
 		lock.acquiredCount++
@@ -290,11 +296,65 @@ func (latches *Latches) recycle(currentTS uint64) {
 	log.Debugf("recycle run at %v, recycle count = %d...\n", time.Now(), total)
 }
 
-func findNode(list *node, key []byte) *node {
-	for n := list; n != nil; n = n.next {
+func findNode(alloc *nodeAlloc, list nodePtr, key []byte) *node {
+	for ptr := list; !ptr.IsNil(); ptr = ptr.Next(alloc) {
+		n := ptr.Value(alloc)
 		if bytes.Compare(n.key, key) == 0 {
 			return n
 		}
 	}
 	return nil
+}
+
+const nodeBlockSize = 1024
+
+type nodeBlock [nodeBlockSize]node
+
+func (b *nodeBlock) init(start int) {
+	for i := 0; i < nodeBlockSize; i++ {
+		(*b)[i].next = nodePtr(start + i + 1)
+	}
+}
+
+type nodeAlloc struct {
+	// Note that physically, all nodeBlocks are not in a continuous memory,
+	// but logically they are conotinuous:
+	// data[0] contains node[0-1023]
+	// data[1] contains node[1024-2047] ...
+	data     []*nodeBlock
+	freeList nodePtr
+}
+
+func (a *nodeAlloc) New() nodePtr {
+	if a.freeList.IsNil() {
+		block := new(nodeBlock)
+		start := len(a.data) * nodeBlockSize
+		block.init(start)
+		a.data = append(a.data, block)
+		a.freeList = nodePtr(start)
+		if a.freeList == 0 {
+			// nodePtr == 0 means IsNil, so don't use the data[0] node.
+			a.freeList++
+		}
+	}
+	ret := a.freeList
+	n := ret.Value(a)
+	a.freeList = n.next
+	*n = node{}
+	return ret
+}
+
+type nodePtr int
+
+func (p nodePtr) IsNil() bool {
+	return p == 0
+}
+
+func (p nodePtr) Next(alloc *nodeAlloc) nodePtr {
+	return p.Value(alloc).next
+}
+
+func (p nodePtr) Value(alloc *nodeAlloc) *node {
+	b := alloc.data[p/nodeBlockSize]
+	return &(*b)[p%nodeBlockSize]
 }
