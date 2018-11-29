@@ -1174,14 +1174,15 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTime(sc, val, b.tp.Tp, b.tp.Decimal)
-	if err != nil {
-		return res, false, errors.Trace(err)
+	hasWarning := err != nil
+	if err = handleInvalidTimeError(b.ctx, err); err != nil {
+		return res, true, err
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
-	return res, false, errors.Trace(err)
+	return res, hasWarning, err
 }
 
 type builtinCastStringAsDurationSig struct {
