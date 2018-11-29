@@ -68,8 +68,9 @@ type ValueExpr struct {
 	projectionOffset int
 }
 
-func (n *ValueExpr) Restore(sb *strings.Builder) {
+func (n *ValueExpr) Restore(sb *strings.Builder) error {
 	n.Format(sb)
+	return nil
 }
 
 // GetDatumString implements the ast.ValueExpr interface.
@@ -155,8 +156,9 @@ type ParamMarkerExpr struct {
 	Order  int
 }
 
-func (n *ParamMarkerExpr) Restore(sb *strings.Builder) {
+func (n *ParamMarkerExpr) Restore(sb *strings.Builder) error {
 	sb.WriteString("?")
+	return nil
 }
 
 func newParamMarkerExpr(offset int) ast.ParamMarkerExpr {
