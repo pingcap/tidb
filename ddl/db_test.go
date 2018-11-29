@@ -518,6 +518,66 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 	s.mustExec(c, "alter table t drop index idx_c2")
 }
 
+// TestCancelDropTable tests cancel ddl job which type is drop table.
+func (s *testDBSuite) TestCancelDropTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+	testCases := []struct {
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		// model.JobStateNone means the jobs is canceled before the first run.
+		{model.JobStateNone, model.StateNone, true},
+		{model.JobStateRunning, model.StateWriteOnly, true},
+		{model.JobStateRunning, model.StateDeleteOnly, true},
+	}
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
+	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	hook := &ddl.TestDDLCallback{}
+	for i, testCase := range testCases {
+		hook.OnJobRunBeforeExported = func(job *model.Job) {
+			if job.Type == model.ActionDropTable && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+				jobIDs := []int64{job.ID}
+				hookCtx := mock.NewContext()
+				hookCtx.Store = s.store
+				err := hookCtx.NewTxn()
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
+				errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
+				if errs[0] != nil {
+					checkErr = errors.Trace(errs[0])
+					return
+				}
+				checkErr = hookCtx.Txn(true).Commit(context.Background())
+			}
+		}
+		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+		rs, err := s.tk.Exec("drop table t;")
+		if rs != nil {
+			rs.Close()
+		}
+		c.Assert(checkErr, IsNil)
+		_ = err
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+		s.mustExec(c, "insert into t values (?, ?)", i, i)
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
+}
+
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)

@@ -117,6 +117,16 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, errCancelledDDLJob
 }
 
+func rollingbackDropTable(job *model.Job) error {
+	// cancel before owner first time do this job.
+	if job.State == model.JobStateNone {
+		job.State = model.JobStateCancelled
+		return errCancelledDDLJob
+	}
+	job.State = model.JobStateRollingback
+	return errCancelledDDLJob
+}
+
 func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 	if job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
@@ -137,6 +147,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddColumn(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddindex(w, d, t, job)
+	case model.ActionDropTable:
+		err = rollingbackDropTable(job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
