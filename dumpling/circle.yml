@@ -10,3 +10,6 @@ jobs:
       - run:
           name: "Build & Test"
           command: make dev
+      - run:
+          name: "Go mod tidy"
+          command: ./hack/check-tidy.sh
