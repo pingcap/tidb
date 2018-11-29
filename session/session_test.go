@@ -15,7 +15,6 @@ package session_test
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
