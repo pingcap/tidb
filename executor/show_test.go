@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
