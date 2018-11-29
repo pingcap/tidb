@@ -90,11 +90,9 @@ var (
 // 3: it does not pass the probabilistic sampler.
 func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	if q.hist == nil || q.hist.Len() == 0 {
-		q.Invalidate()
 		return false
 	}
 	if numOfRanges > MaxNumberOfRanges || rand.Float64() > FeedbackProbability {
-		q.Invalidate()
 		return false
 	}
 	return true

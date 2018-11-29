@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -5651,4 +5652,51 @@ func getExpressionFsp(ctx sessionctx.Context, expression Expression) (int, error
 		return types.GetFsp(str), nil
 	}
 	return mathutil.Min(expression.GetType().Decimal, types.MaxFsp), nil
+}
+
+//tidbParseTsoFunction extracts physical time from a tso
+type tidbParseTsoFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbParseTsoFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTp := args[0].GetType().EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, types.ETInt)
+
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, types.DefaultFsp
+	sig := &builtinTidbParseTsoSig{bf}
+	return sig, nil
+}
+
+type builtinTidbParseTsoSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTidbParseTsoSig) Clone() builtinFunc {
+	newSig := &builtinTidbParseTsoSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals a builtinTidbParseTsoSig.
+func (b *builtinTidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil || arg <= 0 {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+
+	t := oracle.GetTimeFromTS(uint64(arg))
+	result := types.Time{
+		Time: types.FromGoTime(t),
+		Type: mysql.TypeDatetime,
+		Fsp:  types.MaxFsp,
+	}
+	err = result.ConvertTimeZone(time.Local, b.ctx.GetSessionVars().Location())
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	return result, false, nil
 }
