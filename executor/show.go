@@ -717,12 +717,12 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	if partitionInfo == nil {
 		return
 	}
-	// this if statement takes care of range columns case
 	if partitionInfo.Type == model.PartitionTypeHash {
 		fmt.Fprintf(buf, "\nPARTITION BY HASH( %s )", partitionInfo.Expr)
 		fmt.Fprintf(buf, "\nPARTITIONS %d", partitionInfo.Num)
 		return
 	}
+	// this if statement takes care of range columns case
 	if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
 		buf.WriteString("\nPARTITION BY RANGE COLUMNS(")
 		for i, col := range partitionInfo.Columns {
