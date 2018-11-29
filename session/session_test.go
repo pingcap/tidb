@@ -2229,3 +2229,20 @@ func (s *testSessionSuite) TestSetGroupConcatMaxLen(c *C) {
 	_, err = tk.Exec("set @@group_concat_max_len='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 }
+
+func (s *testSessionSuite) TestTxnGoString(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists gostr;")
+	tk.MustExec("create table gostr (id int);")
+	str1 := fmt.Sprintf("%#v", tk.Se.Txn(false))
+	c.Assert(str1, Equals, "Txn{state=invalid}")
+	tk.MustExec("begin")
+	txn := tk.Se.Txn(false)
+	c.Assert(fmt.Sprintf("%#v", txn), Equals, fmt.Sprintf("Txn{state=valid, startTS=%d}", txn.StartTS()))
+
+	tk.MustExec("insert into gostr values (1)")
+	c.Assert(fmt.Sprintf("%#v", txn), Equals, fmt.Sprintf("Txn{state=valid, startTS=%d}", txn.StartTS()))
+
+	tk.MustExec("rollback")
+	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
+}

@@ -14,6 +14,9 @@
 package session
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -74,6 +77,33 @@ func (st *TxnState) String() string {
 		return "txnFuture"
 	}
 	return "invalid transaction"
+}
+
+// GoString implements the "%#v" format for fmt.Printf.
+func (st *TxnState) GoString() string {
+	var s strings.Builder
+	s.WriteString("Txn{")
+	if st.pending() {
+		s.WriteString("state=pending")
+	} else if st.Valid() {
+		s.WriteString("state=valid")
+		fmt.Fprintf(&s, ", startTS=%d", st.Transaction.StartTS())
+		if len(st.dirtyTableOP) > 0 {
+			fmt.Fprintf(&s, ", len(dirtyTable)=%d", len(st.dirtyTableOP))
+		}
+		if len(st.mutations) > 0 {
+			fmt.Fprintf(&s, ", len(mutations)=%d", len(st.mutations))
+		}
+	} else {
+		s.WriteString("state=invalid")
+	}
+
+	if st.fail != nil {
+		s.WriteString(", fail=")
+		s.WriteString(st.fail.Error())
+	}
+	s.WriteString("}")
+	return s.String()
 }
 
 func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
