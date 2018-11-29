@@ -68,6 +68,7 @@ type ValueExpr struct {
 	projectionOffset int
 }
 
+// Restore implements Recoverable interface.
 func (n *ValueExpr) Restore(sb *strings.Builder) error {
 	n.Format(sb)
 	return nil
@@ -156,6 +157,7 @@ type ParamMarkerExpr struct {
 	Order  int
 }
 
+// Restore implements Recoverable interface.
 func (n *ParamMarkerExpr) Restore(sb *strings.Builder) error {
 	sb.WriteString("?")
 	return nil
