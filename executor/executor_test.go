@@ -1062,6 +1062,12 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t2 (a int not null, b char (10) not null)")
 	tk.MustExec("insert into t2 values(1,'a'),(2,'b'),(3,'c'),(3,'c')")
 	tk.MustQuery("select a from t1 union select a from t1 order by (select a+1);").Check(testkit.Rows("1", "2", "3"))
+
+	// #issue 8231
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (uid int(1))")
+	tk.MustExec("INSERT INTO t1 SELECT 150")
+	tk.MustQuery("SELECT 'a' UNION SELECT uid FROM t1 order by 1 desc;").Check(testkit.Rows("a", "150"))
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
