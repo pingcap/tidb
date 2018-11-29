@@ -602,6 +602,8 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
+	s.mustExec(c, "alter table t add index idx_c2(c2)")
+	s.mustExec(c, "alter table t drop index idx_c2")
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
