@@ -926,7 +926,7 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 		ranLowEncode, ranHighEncode []byte
 		err                         error
 	)
-	newIndexHist := &Index{Info: idx.Info}
+	newIndexHist := &Index{Info: idx.Info, statsVer: idx.statsVer, CMSketch: idx.CMSketch}
 	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 
 	lowBucketIdx, highBucketIdx := 0, 0
@@ -996,7 +996,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 		if !ok {
 			continue
 		}
-		newCol := &Column{Info: oldCol.Info, isHandle: oldCol.isHandle}
+		newCol := &Column{Info: oldCol.Info, isHandle: oldCol.isHandle, CMSketch: oldCol.CMSketch}
 		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		var err error
 		splitRanges := oldCol.Histogram.SplitRange(node.Ranges, false)
