@@ -115,14 +115,16 @@ func (s *testCascadesSuite) TestGetInsertGroupImpl(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroup(expr)
-	rootProp := &property.PhysicalProperty{TaskTp: property.RootTaskType}
-	copProp := &property.PhysicalProperty{TaskTp: property.CopSingleReadTaskType}
-	impl := g.getImpl(rootProp)
+	col := &expression.Column{}
+	emptyProp := &property.PhysicalProperty{}
+	orderProp := &property.PhysicalProperty{}
+	orderProp.Cols = append(orderProp.Cols, col)
+	impl := g.getImpl(emptyProp)
 	c.Assert(impl, IsNil)
 	impl = &baseImplementation{plan: &plannercore.PhysicalLimit{}}
-	g.insertImpl(rootProp, impl)
-	newImpl := g.getImpl(rootProp)
+	g.insertImpl(emptyProp, impl)
+	newImpl := g.getImpl(emptyProp)
 	c.Assert(newImpl, Equals, impl)
-	newImpl = g.getImpl(copProp)
+	newImpl = g.getImpl(orderProp)
 	c.Assert(newImpl, Not(Equals), impl)
 }

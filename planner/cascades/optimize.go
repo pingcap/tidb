@@ -127,16 +127,18 @@ func findMoreEquiv(g *Group, elem *list.Element) (eraseCur bool, err error) {
 	return eraseCur, nil
 }
 
-// onPhaseImplementation starts implementating physical operators from giving root Group.
+// onPhaseImplementation starts implementating physical operators from given root Group.
 func onPhaseImplementation(sctx sessionctx.Context, g *Group) (plannercore.Plan, error) {
 	prop := &property.PhysicalProperty{
-		TaskTp:      property.RootTaskType,
 		ExpectedCnt: math.MaxFloat64,
 	}
-	// TODO replace MaxFloat64 by variable from sctx, or other sources.
+	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
 	impl, err := implGroup(g, prop, math.MaxFloat64)
-	if err != nil || impl == nil {
+	if err != nil {
 		return nil, err
+	}
+	if impl == nil {
+		return nil, plannercore.ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 	return impl.getPlan(), nil
 }
