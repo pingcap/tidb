@@ -363,7 +363,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
-			log.Warnf("[%s] con:%d retryable error: %v, txn: %v", s.getSQLLabel(), s.sessionVars.ConnectionID, err, s.txn)
+			log.Warnf("[%s] con:%d retryable error: %v, txn: %#v", s.getSQLLabel(), s.sessionVars.ConnectionID, err, &s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -389,7 +389,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 
 	if err != nil {
-		log.Warnf("con:%d finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
+		log.Warnf("con:%d finished txn:%#v, %v", s.sessionVars.ConnectionID, &s.txn, err)
 		return errors.Trace(err)
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
@@ -564,7 +564,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			metrics.SessionRetryErrorCounter.WithLabelValues(label, metrics.LblReachMax)
 			return errors.Trace(err)
 		}
-		log.Warnf("[%s] con:%d retryable error: %v, txn: %v", label, connID, err, s.txn)
+		log.Warnf("[%s] con:%d retryable error: %v, txn: %#v", label, connID, err, &s.txn)
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
