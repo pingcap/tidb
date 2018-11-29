@@ -68,10 +68,8 @@ type ValueExpr struct {
 	projectionOffset int
 }
 
-func (n *ValueExpr) Restore() *ast.SQLSentence {
-	var builder strings.Builder
-	n.Format(&builder)
-	return ast.NewSQLSentence().Text(builder.String())
+func (n *ValueExpr) Restore(sb *strings.Builder) {
+	n.Format(sb)
 }
 
 // GetDatumString implements the ast.ValueExpr interface.
@@ -157,8 +155,8 @@ type ParamMarkerExpr struct {
 	Order  int
 }
 
-func (n *ParamMarkerExpr) Restore() *ast.SQLSentence {
-	return ast.NewSQLSentence().Text("?")
+func (n *ParamMarkerExpr) Restore(sb *strings.Builder) {
+	sb.WriteString("?")
 }
 
 func newParamMarkerExpr(offset int) ast.ParamMarkerExpr {
