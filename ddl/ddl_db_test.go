@@ -442,6 +442,61 @@ LOOP:
 	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }
 
+// TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
+func (s *testDBSuite) TestCancelAddIndex1(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+	for i := 0; i < 50; i++ {
+		s.mustExec(c, "insert into t values (?, ?)", i, i)
+	}
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
+	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn()
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = hookCtx.Txn(true).Commit(context.Background())
+		}
+	}
+	s.dom.DDL().SetHook(hook)
+	rs, err := s.tk.Exec("alter table t add index idx_c2(c2)")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(checkErr, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	s.dom.DDL().SetHook(&ddl.TestDDLCallback{})
+	t := s.testGetTable(c, "t")
+	for _, idx := range t.Indices() {
+		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
+	}
+
+	s.mustExec(c, "alter table t add index idx_c2(c2)")
+	s.mustExec(c, "alter table t drop index idx_c2")
+}
+
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)

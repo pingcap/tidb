@@ -145,7 +145,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetString(0), Equals, "1")
-	c.Assert(row.GetString(1), Equals, "error: Can't find this job")
+	c.Assert(row.GetString(1), Equals, "error: [admin:4]DDL Job:1 not found")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
