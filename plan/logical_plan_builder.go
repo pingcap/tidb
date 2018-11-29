@@ -816,7 +816,7 @@ func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	} else {
 		b.curClause = orderByClause
 	}
-	sort := LogicalSort{}.Init(b.ctx)
+	sort := LogicalSort{}.init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)

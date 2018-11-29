@@ -1203,11 +1203,11 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		}
 	}
 	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {
-		er.err = ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
+		er.err = ErrTablenameNotAllowedHere.GenByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
 		return
 	}
 	if er.b.curClause == globalOrderByClause {
 		er.b.curClause = orderByClause
 	}
-	er.err = ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[er.b.curClause])
+	er.err = ErrUnknownColumn.GenByArgs(v.String(), clauseMsg[er.b.curClause])
 }
