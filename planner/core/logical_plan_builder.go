@@ -819,6 +819,26 @@ func (by *ByItems) Clone() *ByItems {
 	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
 }
 
+// itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
+type itemTransformer struct {
+	ctx     sessionctx.Context
+	isParam bool
+}
+
+func (t *itemTransformer) Enter(inNode ast.Node) (ast.Node, bool) {
+	switch inNode.(type) {
+	case *driver.ParamMarkerExpr:
+		newNode := expression.ConvertToByItemExpr(t.ctx, inNode)
+		t.isParam = true
+		return newNode, true
+	}
+	return inNode, false
+}
+
+func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
+	return inNode, false
+}
+
 func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
@@ -827,14 +847,10 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	}
 	sort := LogicalSort{}.Init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
+	transformer := &itemTransformer{ctx: b.ctx}
 	for _, item := range byItems {
-		switch v := item.Expr.(type) {
-		case *driver.ParamMarkerExpr:
-			if b.ctx.GetSessionVars().InPrepare {
-				continue
-			}
-			item = &ast.ByItem{Expr: &ast.PositionExpr{P: v}}
-		}
+		newExpr, _ := item.Expr.Accept(transformer)
+		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1160,17 +1176,22 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
-	ctx    sessionctx.Context
-	fields []*ast.SelectField
-	schema *expression.Schema
-	err    error
-	inExpr bool
+	ctx     sessionctx.Context
+	fields  []*ast.SelectField
+	schema  *expression.Schema
+	err     error
+	inExpr  bool
+	isParam bool
 }
 
 func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch inNode.(type) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
+	case *driver.ParamMarkerExpr:
+		newNode := expression.ConvertToByItemExpr(g.ctx, inNode)
+		g.isParam = true
+		return newNode, true
 	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
 	default:
 		g.inExpr = true
@@ -1580,25 +1601,12 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		schema: p.Schema(),
 	}
 	for _, item := range gby.Items {
-		hasParam := false
 		resolver.inExpr = false
-		var retExpr ast.Node
-		switch v := item.Expr.(type) {
-		case *driver.ParamMarkerExpr:
-			hasParam = true
-			if b.ctx.GetSessionVars().InPrepare {
-				continue
-			}
-			newItem := &ast.ByItem{Expr: &ast.PositionExpr{P: v}}
-			retExpr, _ = newItem.Expr.Accept(resolver)
-		default:
-			retExpr, _ = item.Expr.Accept(resolver)
-		}
-
+		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
 			return nil, nil, errors.Trace(resolver.err)
 		}
-		if !hasParam {
+		if !resolver.isParam {
 			item.Expr = retExpr.(ast.ExprNode)
 		}
 
