@@ -366,7 +366,7 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCount(value types.Datum) float64 {
 	// all the values is null
-	if hg.Bounds == nil {
+	if hg.Bounds.NumRows() == 0 {
 		return 0
 	}
 	index, match := hg.Bounds.LowerBound(0, &value)
@@ -637,16 +637,16 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
-func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (float64, error) {
+func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, modifyCount int64) (float64, error) {
 	if val.IsNull() {
 		return float64(c.NullCount), nil
 	}
 	// all the values is null
-	if c.Histogram.Bounds == nil {
+	if c.Histogram.Bounds.NumRows() == 0 {
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {
-		return c.totalRowCount() / (float64(c.NDV)), nil
+		return float64(modifyCount) / float64(c.NDV), nil
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
@@ -667,7 +667,7 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			// the point case.
 			if !rg.LowExclude && !rg.HighExclude {
 				var cnt float64
-				cnt, err = c.equalRowCount(sc, rg.LowVal[0])
+				cnt, err = c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -681,14 +681,14 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			cnt += float64(modifyCount) / outOfRangeBetweenRate
 		}
 		if rg.LowExclude {
-			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0])
+			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0], modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
 		}
 		if !rg.HighExclude {
-			highCnt, err := c.equalRowCount(sc, rg.HighVal[0])
+			highCnt, err := c.equalRowCount(sc, rg.HighVal[0], modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -715,10 +715,10 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
-func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {
+func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) float64 {
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return idx.totalRowCount() / (float64(idx.NDV))
+		return float64(modifyCount) / (float64(idx.NDV))
 	}
 	if idx.CMSketch != nil {
 		return float64(idx.CMSketch.queryBytes(b))
@@ -740,7 +740,7 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if fullLen && bytes.Equal(lb, rb) {
 			if !indexRange.LowExclude && !indexRange.HighExclude {
-				totalCount += idx.equalRowCount(sc, lb)
+				totalCount += idx.equalRowCount(sc, lb, modifyCount)
 			}
 			continue
 		}
