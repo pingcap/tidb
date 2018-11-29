@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -68,7 +69,9 @@ type ValueExpr struct {
 }
 
 func (n *ValueExpr) Restore() *ast.SQLSentence {
-	panic("implement me")
+	var builder strings.Builder
+	n.Format(&builder)
+	return ast.NewSQLSentence().Text(builder.String())
 }
 
 // GetDatumString implements the ast.ValueExpr interface.
@@ -155,7 +158,7 @@ type ParamMarkerExpr struct {
 }
 
 func (n *ParamMarkerExpr) Restore() *ast.SQLSentence {
-	panic("implement me")
+	return ast.NewSQLSentence().Text("?")
 }
 
 func newParamMarkerExpr(offset int) ast.ParamMarkerExpr {
