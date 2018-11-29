@@ -59,21 +59,21 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	c.Assert(s.cache.mu.regions, HasLen, len)
 	c.Assert(s.cache.mu.sorted.Len(), Equals, len)
 	for _, r := range s.cache.mu.regions {
-		c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey(), true))
+		c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey(), false))
 	}
 }
 
 func (s *testRegionCacheSuite) getRegion(c *C, key []byte) *Region {
 	_, err := s.cache.LocateKey(s.bo, key)
 	c.Assert(err, IsNil)
-	r := s.cache.searchCachedRegion(key, true)
+	r := s.cache.searchCachedRegion(key, false)
 	c.Assert(r, NotNil)
 	return r
 }
 func (s *testRegionCacheSuite) getRegionWithEndKey(c *C, key []byte) *Region {
 	_, err := s.cache.LocateEndKey(s.bo, key)
 	c.Assert(err, IsNil)
-	r := s.cache.searchCachedRegion(key, false)
+	r := s.cache.searchCachedRegion(key, true)
 	c.Assert(r, NotNil)
 	return r
 }
@@ -96,7 +96,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
 	s.checkCache(c, 1)
 	s.cache.mu.regions[r.VerID()].lastAccess = 0
-	r = s.cache.searchCachedRegion([]byte("a"), true)
+	r = s.cache.searchCachedRegion([]byte("a"), false)
 	c.Assert(r, IsNil)
 }
 
@@ -294,7 +294,7 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
 	// Both region2 and store should be dropped from cache.
 	c.Assert(s.cache.storeMu.stores, HasLen, 0)
-	c.Assert(s.cache.searchCachedRegion([]byte("x"), true), IsNil)
+	c.Assert(s.cache.searchCachedRegion([]byte("x"), false), IsNil)
 	s.checkCache(c, 0)
 }
 
