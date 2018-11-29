@@ -34,7 +34,6 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	rootGroup.prop.Stats = property.NewSimpleStats(10.0)
 
 	prop := &property.PhysicalProperty{
-		TaskTp:      property.RootTaskType,
 		ExpectedCnt: math.MaxFloat64,
 	}
 	impl, err := implGroup(rootGroup, prop, 0.0)

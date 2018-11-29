@@ -20,7 +20,7 @@ import (
 )
 
 func (s *testCascadesSuite) TestGetEnforcerRules(c *C) {
-	prop := &property.PhysicalProperty{TaskTp: property.CopSingleReadTaskType}
+	prop := &property.PhysicalProperty{}
 	enforcers := GetEnforcerRules(prop)
 	c.Assert(enforcers, IsNil)
 	col := &expression.Column{}
@@ -30,27 +30,16 @@ func (s *testCascadesSuite) TestGetEnforcerRules(c *C) {
 	c.Assert(len(enforcers), Equals, 1)
 	_, ok := enforcers[0].(*OrderEnforcer)
 	c.Assert(ok, IsTrue)
-	prop.TaskTp = property.RootTaskType
-	enforcers = GetEnforcerRules(prop)
-	c.Assert(enforcers, NotNil)
-	c.Assert(len(enforcers), Equals, 2)
-	_, ok = enforcers[1].(*RootEnforcer)
-	c.Assert(ok, IsTrue)
 }
 
 func (s *testCascadesSuite) TestNewProperties(c *C) {
-	prop := &property.PhysicalProperty{TaskTp: property.RootTaskType}
+	prop := &property.PhysicalProperty{}
 	col := &expression.Column{}
 	prop.Cols = append(prop.Cols, col)
 	enforcers := GetEnforcerRules(prop)
 	orderEnforcer, _ := enforcers[0].(*OrderEnforcer)
-	rootEnforcer, _ := enforcers[1].(*RootEnforcer)
 	newProps := orderEnforcer.NewProperties(prop)
 	c.Assert(len(newProps), Equals, 1)
 	c.Assert(len(newProps[0].Cols), Equals, 0)
 	c.Assert(len(orderEnforcer.reqProp.Cols), Equals, 1)
-	newProps = rootEnforcer.NewProperties(prop)
-	c.Assert(len(newProps), Equals, 2)
-	c.Assert(newProps[0].TaskTp, Equals, property.CopSingleReadTaskType)
-	c.Assert(newProps[1].TaskTp, Equals, property.CopDoubleReadTaskType)
 }
