@@ -1895,9 +1895,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	handles := make([]int64, 0, len(datums))
 	for _, datum := range datums {
-		if datum[0].IsNull() {
-			continue
-		}
 		handles = append(handles, datum[0].GetInt64())
 	}
 	return builder.buildTableReaderFromHandles(ctx, e, handles)
