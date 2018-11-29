@@ -46,6 +46,7 @@ const (
 	codeDupFieldName                 = mysql.ErrDupFieldName
 	codeNonUpdatableTable            = mysql.ErrNonUpdatableTable
 	codeInternal                     = mysql.ErrInternal
+	codeTablenameNotAllowedHere      = mysql.ErrTablenameNotAllowedHere
 )
 
 // error definitions.
@@ -56,6 +57,7 @@ var (
 	ErrStmtNotFound                = terror.ClassOptimizer.New(codeStmtNotFound, "Prepared statement not found")
 	ErrWrongParamCount             = terror.ClassOptimizer.New(codeWrongParamCount, "Wrong parameter count")
 	ErrSchemaChanged               = terror.ClassOptimizer.New(codeSchemaChanged, "Schema has changed")
+	ErrTablenameNotAllowedHere     = terror.ClassOptimizer.New(codeTablenameNotAllowedHere, "Table '%s' from one of the %ss cannot be used in %s")
 
 	ErrWrongUsage                   = terror.ClassOptimizer.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
 	ErrAmbiguous                    = terror.ClassOptimizer.New(codeAmbiguous, mysql.MySQLErrName[mysql.ErrNonUniq])
