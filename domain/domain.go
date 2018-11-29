@@ -57,7 +57,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *sessionPool
+	sysSessionPool  *SessionPool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
@@ -561,7 +561,8 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	return nil
 }
 
-type sessionPool struct {
+// SessionPool is a pool of session.
+type SessionPool struct {
 	resources chan pools.Resource
 	factory   pools.Factory
 	mu        struct {
@@ -570,14 +571,15 @@ type sessionPool struct {
 	}
 }
 
-func newSessionPool(cap int, factory pools.Factory) *sessionPool {
-	return &sessionPool{
+func newSessionPool(cap int, factory pools.Factory) *SessionPool {
+	return &SessionPool{
 		resources: make(chan pools.Resource, cap),
 		factory:   factory,
 	}
 }
 
-func (p *sessionPool) Get() (resource pools.Resource, err error) {
+// Get gets a resource from the pool.
+func (p *SessionPool) Get() (resource pools.Resource, err error) {
 	var ok bool
 	select {
 	case resource, ok = <-p.resources:
@@ -590,7 +592,8 @@ func (p *sessionPool) Get() (resource pools.Resource, err error) {
 	return
 }
 
-func (p *sessionPool) Put(resource pools.Resource) {
+// Put puts a resource into to pool.
+func (p *SessionPool) Put(resource pools.Resource) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.mu.closed {
@@ -604,7 +607,9 @@ func (p *sessionPool) Put(resource pools.Resource) {
 		resource.Close()
 	}
 }
-func (p *sessionPool) Close() {
+
+// Close closes the pool.
+func (p *SessionPool) Close() {
 	p.mu.Lock()
 	if p.mu.closed {
 		p.mu.Unlock()
@@ -620,7 +625,7 @@ func (p *sessionPool) Close() {
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *sessionPool {
+func (do *Domain) SysSessionPool() *SessionPool {
 	return do.sysSessionPool
 }
 
