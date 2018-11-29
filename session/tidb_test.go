@@ -143,7 +143,6 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	c.Skip("make leak should check it")
 	// TODO: testleak package should be able to find this leak.
 	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
-	defer dom.Close()
 	defer store.Close()
 	se, err := createSession(store)
 	c.Assert(err, IsNil)
@@ -162,8 +161,7 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 		}(se)
 	}
 	wg.Wait()
-	se.sysSessionPool().Close()
-	c.Assert(se.sysSessionPool().IsClosed(), Equals, true)
+	dom.Close()
 	for i := 0; i < 300; i++ {
 		// After and before should be Equal, but this test may be disturbed by other factors.
 		// So I relax the strict check to make CI more stable.

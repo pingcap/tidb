@@ -57,7 +57,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *pools.ResourcePool
+	sysSessionPool  *sessionPool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
@@ -495,7 +495,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		store:           store,
 		SchemaValidator: NewSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
+		sysSessionPool:  newSessionPool(capacity, factory),
 		statsLease:      statsLease,
 		infoHandle:      infoschema.NewHandle(store),
 	}
@@ -561,8 +561,66 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	return nil
 }
 
+type sessionPool struct {
+	resources chan pools.Resource
+	factory   pools.Factory
+	mu        struct {
+		sync.RWMutex
+		closed bool
+	}
+}
+
+func newSessionPool(cap int, factory pools.Factory) *sessionPool {
+	return &sessionPool{
+		resources: make(chan pools.Resource, cap),
+		factory:   factory,
+	}
+}
+
+func (p *sessionPool) Get() (resource pools.Resource, err error) {
+	var ok bool
+	select {
+	case resource, ok = <-p.resources:
+		if !ok {
+			err = errors.New("session pool closed")
+		}
+	default:
+		resource, err = p.factory()
+	}
+	return
+}
+
+func (p *sessionPool) Put(resource pools.Resource) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.mu.closed {
+		resource.Close()
+		return
+	}
+
+	select {
+	case p.resources <- resource:
+	default:
+		resource.Close()
+	}
+}
+func (p *sessionPool) Close() {
+	p.mu.Lock()
+	if p.mu.closed {
+		p.mu.Unlock()
+		return
+	}
+	p.mu.closed = true
+	close(p.resources)
+	p.mu.Unlock()
+
+	for r := range p.resources {
+		r.Close()
+	}
+}
+
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *pools.ResourcePool {
+func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
 }
 
