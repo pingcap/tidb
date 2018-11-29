@@ -383,14 +383,14 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 		if match {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
-		return hg.totalRowCount() / float64(hg.NDV)
+		return hg.notNullCount() / float64(hg.NDV)
 	}
 	if match {
 		cmp := chunk.GetCompareFunc(hg.Tp)
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
-		return hg.totalRowCount() / float64(hg.NDV)
+		return hg.notNullCount() / float64(hg.NDV)
 	}
 	return 0
 }
@@ -464,6 +464,13 @@ func (hg *Histogram) totalRowCount() float64 {
 		return float64(hg.NullCount)
 	}
 	return float64(hg.Buckets[hg.Len()-1].Count + hg.NullCount)
+}
+
+func (hg *Histogram) notNullCount() float64 {
+	if hg.Len() == 0 {
+		return 0
+	}
+	return float64(hg.Buckets[hg.Len()-1].Count)
 }
 
 // mergeBuckets is used to merge every two neighbor buckets.
@@ -680,11 +687,13 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 
 // AvgCountPerValue gets the average row count per value by the data of histogram.
 func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
+	factor := hg.getIncreaseFactor(totalCount)
+	totalNotNull := hg.notNullCount() * factor
 	curNDV := float64(hg.NDV) * hg.getIncreaseFactor(totalCount)
 	if curNDV == 0 {
 		curNDV = 1
 	}
-	return float64(totalCount) / curNDV
+	return totalNotNull / curNDV
 }
 
 func (hg *Histogram) outOfRange(val types.Datum) bool {
@@ -987,7 +996,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 		if !ok {
 			continue
 		}
-		newCol := &Column{Info: oldCol.Info}
+		newCol := &Column{Info: oldCol.Info, isHandle: oldCol.isHandle}
 		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		var err error
 		splitRanges := oldCol.Histogram.SplitRange(node.Ranges, false)

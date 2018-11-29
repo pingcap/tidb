@@ -24,21 +24,16 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
-var _ = Suite(&HistogramTestSuite{})
-
-type HistogramTestSuite struct {
-}
-
 func (s *testStatisticsSuite) TestNewHistogramBySelectivity(c *C) {
 	coll := &HistColl{
-		Count:   300,
+		Count:   330,
 		Columns: make(map[int64]*Column),
 		Indices: make(map[int64]*Index),
 	}
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
 	intCol := &Column{}
-	intCol.Histogram = *NewHistogram(1, 30, 0, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
+	intCol.Histogram = *NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
 	intCol.isHandle = true
 	for i := 0; i < 10; i++ {
 		intCol.Bounds.AppendInt64(0, int64(i*3))
@@ -63,7 +58,7 @@ num: 20 lower_bound: 24 upper_bound: 26 repeats: 10
 num: 30 lower_bound: 27 upper_bound: 29 repeats: 0`
 
 	stringCol := &Column{}
-	stringCol.Histogram = *NewHistogram(2, 15, 0, 0, types.NewFieldType(mysql.TypeString), chunk.InitialCapacity, 0)
+	stringCol.Histogram = *NewHistogram(2, 15, 30, 0, types.NewFieldType(mysql.TypeString), chunk.InitialCapacity, 0)
 	stringCol.Bounds.AppendString(0, "a")
 	stringCol.Bounds.AppendString(0, "aaaabbbb")
 	stringCol.Buckets = append(stringCol.Buckets, Bucket{Repeat: 10, Count: 60})
