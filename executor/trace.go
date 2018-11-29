@@ -86,7 +86,12 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			chk.AppendString(0, string(data))
+			const rowMax = 4096
+			for len(data) > rowMax {
+				chk.AppendString(0, string(data[:rowMax]))
+				data = data[rowMax:]
+			}
+			chk.AppendString(0, string(data[:rowMax]))
 		}
 		e.exhausted = true
 		return nil
