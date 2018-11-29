@@ -500,7 +500,8 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				return tikvrpc.FromBatchCommandsResponse(res), nil
 			case <-ctx1.Done():
 				atomic.StoreInt32(&entry.timeout, 1)
-				return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, ""))
+				log.Warnf("SendRequest to %s is canceled", addr)
+				return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled by caller"))
 			}
 		}
 	}
