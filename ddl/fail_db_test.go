@@ -91,8 +91,9 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
-	// Reload schema.
-	s.dom.ResetHandle(s.store)
+	// Execute ddl statement reload schema.
+	_, err = s.se.Execute(context.Background(), "alter table t comment 'test1'")
+	c.Assert(err, IsNil)
 	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
@@ -104,8 +105,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(err, IsNil)
 
 	// test for renaming table
-	gofail.Enable("github.com/pingcap/tidb/ddl/errRenameTable", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errRenameTable")
+	gofail.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/renameTableErr")
 	_, err = s.se.Execute(context.Background(), "create table tx(a int)")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tx values(1)")
@@ -123,8 +124,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
-	// Reload schema.
-	s.dom.ResetHandle(s.store)
+	_, err = s.se.Execute(context.Background(), "alter table tx comment 'tx'")
+	c.Assert(err, IsNil)
 	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
@@ -196,4 +197,44 @@ func (s *testDBSuite) TestAddIndexFailed(c *C) {
 	tk.MustExec("alter table t add index idx_b(b)")
 	tk.MustExec("admin check index t idx_b")
 	tk.MustExec("admin check table t")
+}
+
+// TestFailSchemaSyncer test when the schema syncer is done,
+// should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
+func (s *testDBSuite) TestFailSchemaSyncer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	defer tk.MustExec("drop table if exists t")
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
+	c.Assert(ok, IsTrue)
+
+	// make reload failed.
+	s.dom.MockReloadFailed.SetValue(true)
+	mockSyncer.CloseSession()
+	// wait the schemaValidator is stopped.
+	for i := 0; i < 50; i++ {
+		if s.dom.SchemaValidator.IsStarted() == false {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
+	_, err := tk.Exec("insert into t values(1)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[domain:1]Information schema is out of date.")
+	s.dom.MockReloadFailed.SetValue(false)
+	// wait the schemaValidator is started.
+	for i := 0; i < 50; i++ {
+		if s.dom.SchemaValidator.IsStarted() == true {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	_, err = tk.Exec("insert into t values(1)")
+	c.Assert(err, IsNil)
 }

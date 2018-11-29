@@ -151,7 +151,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetString(0), Equals, "1")
-	c.Assert(row.GetString(1), Equals, "error: Can't find this job")
+	c.Assert(row.GetString(1), Equals, "error: [admin:4]DDL Job:1 not found")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
@@ -1065,6 +1065,12 @@ func (s *testSuite) TestUnion(c *C) {
 	for i := 0; i < 4; i++ {
 		tk.MustQuery("SELECT(SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a ASC  LIMIT 1) AS dev").Check(testkit.Rows("0"))
 	}
+
+	// #issue 8231
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (uid int(1))")
+	tk.MustExec("INSERT INTO t1 SELECT 150")
+	tk.MustQuery("SELECT 'a' UNION SELECT uid FROM t1 order by 1 desc;").Check(testkit.Rows("a", "150"))
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {

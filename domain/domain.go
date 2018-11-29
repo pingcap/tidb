@@ -60,7 +60,7 @@ type Domain struct {
 	info            *InfoSyncer
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *pools.ResourcePool
+	sysSessionPool  *sessionPool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
@@ -386,6 +386,21 @@ func (do *Domain) topNSlowQueryLoop() {
 	}
 }
 
+func (do *Domain) infoSyncerKeeper() {
+	defer do.wg.Done()
+	defer recoverInDomain("infoSyncerKeeper", false)
+	for {
+		select {
+		case <-do.info.Done():
+			log.Info("[ddl] server info syncer need to restart")
+			do.info.Restart(context.Background())
+			log.Info("[ddl] server info syncer restarted.")
+		case <-do.exit:
+			return
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
@@ -415,16 +430,27 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
+			// The etcd is responsible for schema synchronization, we should ensure there is at most two diffrent schema version
+			// in the TiDB cluster, to make the data/schema be consistent. If we lost connection/session to etcd, the cluster
+			// will treats this TiDB as a down instance, and etcd will remove the key of `/tidb/ddl/all_schema_versions/tidb-id`.
+			// Say the schema version now is 1, the owner is changing the schema version to 2, it will not wait for this down TiDB syncing the schema,
+			// then continue to change the TiDB schema to version 3. Unfortunately, this down TiDB schema version will still be version 1.
+			// And version 1 is not consistent to version 3. So we need to stop the schema validator to prohibit the DML executing.
+			do.SchemaValidator.Stop()
 			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
 			}
+			// The schema maybe changed, must reload schema then the schema validator can restart.
+			exitLoop := do.mustReload()
+			if exitLoop {
+				// domain is closed.
+				log.Errorf("[ddl] domain is closed. exit loadSchemaInLoop")
+				return
+			}
+			do.SchemaValidator.Restart()
 			log.Info("[ddl] schema syncer restarted.")
-		case <-do.info.Done():
-			log.Info("[ddl] reload schema in loop, server info syncer need restart")
-			do.info.Restart(context.Background())
-			log.Info("[ddl] server info syncer restarted.")
 		case <-do.exit:
 			return
 		}
@@ -450,6 +476,29 @@ func (do *Domain) mustRestartSyncer() error {
 		}
 		time.Sleep(time.Second)
 		log.Infof("[ddl] restart the schema syncer failed %v", err)
+	}
+}
+
+// mustReload tries to Reload the schema, it returns until it's successful or the domain is closed.
+// it returns false when it is sucessful, returns true when the domain is closed.
+func (do *Domain) mustReload() (exitLoop bool) {
+	for {
+		err := do.Reload()
+		if err == nil {
+			log.Infof("[ddl] mustReload succeed.")
+			return false
+		}
+
+		log.Infof("[ddl] reload the schema failed: %v", err)
+		// If the domain is closed, we returns immediately.
+		select {
+		case <-do.exit:
+			log.Infof("[ddl] domain is closed.")
+			return true
+		default:
+		}
+
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -526,16 +575,11 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		store:           store,
 		SchemaValidator: NewSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
+		sysSessionPool:  newSessionPool(capacity, factory),
 		statsLease:      statsLease,
 		infoHandle:      infoschema.NewHandle(store),
 		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7, 500),
 	}
-}
-
-// ResetHandle resets the domain's infoschema handle. It is used for testing.
-func (do *Domain) ResetHandle(store kv.Storage) {
-	do.infoHandle = infoschema.NewHandle(store)
 }
 
 // Init initializes a domain.
@@ -603,11 +647,71 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	do.wg.Add(1)
 	go do.topNSlowQueryLoop()
 
+	do.wg.Add(1)
+	go do.infoSyncerKeeper()
 	return nil
 }
 
+type sessionPool struct {
+	resources chan pools.Resource
+	factory   pools.Factory
+	mu        struct {
+		sync.RWMutex
+		closed bool
+	}
+}
+
+func newSessionPool(cap int, factory pools.Factory) *sessionPool {
+	return &sessionPool{
+		resources: make(chan pools.Resource, cap),
+		factory:   factory,
+	}
+}
+
+func (p *sessionPool) Get() (resource pools.Resource, err error) {
+	var ok bool
+	select {
+	case resource, ok = <-p.resources:
+		if !ok {
+			err = errors.New("session pool closed")
+		}
+	default:
+		resource, err = p.factory()
+	}
+	return
+}
+
+func (p *sessionPool) Put(resource pools.Resource) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.mu.closed {
+		resource.Close()
+		return
+	}
+
+	select {
+	case p.resources <- resource:
+	default:
+		resource.Close()
+	}
+}
+func (p *sessionPool) Close() {
+	p.mu.Lock()
+	if p.mu.closed {
+		p.mu.Unlock()
+		return
+	}
+	p.mu.closed = true
+	close(p.resources)
+	p.mu.Unlock()
+
+	for r := range p.resources {
+		r.Close()
+	}
+}
+
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *pools.ResourcePool {
+func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
 }
 

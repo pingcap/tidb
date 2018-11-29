@@ -115,7 +115,7 @@ type planBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
-	// Collect the visit information for privilege check.
+	// visitInfo the visit information for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
@@ -248,7 +248,7 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	return p, nil
 }
 
-// Detect aggregate function or groupby clause.
+// detectSelectAgg detect aggregate function or groupby clause.
 func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
@@ -377,8 +377,11 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		// TODO: Prepared statement from variable expression do not work as expected.
-		// p.SQLText, _ = x.SQLVar.GetValue().(string)
+		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
+			p.SQLText = v
+		} else {
+			p.SQLText = "NULL"
+		}
 	} else {
 		p.SQLText = x.SQLText
 	}

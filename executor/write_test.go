@@ -1082,6 +1082,13 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec(`CREATE TABLE t1 (c1 float)`)
 	tk.MustExec("INSERT INTO t1 SET c1 = 1")
 	tk.MustExec("UPDATE t1 SET c1 = 1.2 WHERE c1=1;")
+
+	// issue 8119
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 float(1,1));")
+	tk.MustExec("insert into t values (0.0);")
+	_, err = tk.Exec("update t set c1 = 2.0;")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {
@@ -2098,4 +2105,12 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a + 1;`)
 	tk.MustExec(`insert into t (b) values (6);`)
 	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
+}
+
+func (s *testSuite) TestDefEnumInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
+	tk.MustExec("insert into test (id)  values (1)")
+	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
 }
