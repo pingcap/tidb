@@ -61,6 +61,7 @@ type StatementContext struct {
 	PadCharToFullLength    bool
 	BatchCheck             bool
 	InNullRejectCheck      bool
+	InPreparedStmt         bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
