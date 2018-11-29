@@ -321,7 +321,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	var syncer SchemaSyncer
 	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
-		// So we use mockOwnerManager and mockSchemaSyncer.
+		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(id, cancelFunc)
 		syncer = NewMockSchemaSyncer()
 	} else {
@@ -437,6 +437,12 @@ func (d *ddl) genGlobalID() (int64, error) {
 	var globalID int64
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
+
+		// gofail: var mockGenGlobalIDFail bool
+		// if mockGenGlobalIDFail {
+		//	 return errors.New("gofail genGlobalID error")
+		// }
+
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
 	})
