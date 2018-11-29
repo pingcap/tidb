@@ -496,6 +496,8 @@ func closeDomainAndStorage() {
 func cleanup() {
 	if graceful {
 		svr.GracefulDown()
+	} else {
+		svr.KillAllConnections()
 	}
 	closeDomainAndStorage()
 }
