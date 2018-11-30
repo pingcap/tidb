@@ -14,6 +14,7 @@
 package driver
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -71,6 +72,9 @@ type ValueExpr struct {
 // Restore implements Recoverable interface.
 func (n *ValueExpr) Restore(sb *strings.Builder) error {
 	n.Format(sb)
+	if r := recover(); r != nil {
+		return errors.New("ValueExpr.Format panic")
+	}
 	return nil
 }
 
