@@ -38,7 +38,7 @@ var (
 			Subsystem: "server",
 			Name:      "query_total",
 			Help:      "Counter of queries.",
-		}, []string{LblType, LblResult})
+		}, []string{LblDb, LblType, LblResult})
 
 	QueryDbCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

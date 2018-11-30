@@ -588,7 +588,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		label = strconv.Itoa(int(cmd))
 	}
 	if err != nil {
-		metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
+		metrics.QueryTotalCounter.WithLabelValues(cc.ctx.CurrentDB() , label, "Error").Inc()
 	} else {
 		metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 	}
