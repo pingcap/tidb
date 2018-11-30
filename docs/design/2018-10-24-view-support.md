@@ -33,11 +33,11 @@ This proposal is prepared to implement basic VIEW feature, which contains "CREAT
 We introduce `ViewInfo` to store the metadata for view and add an attribute `*ViewInfo` which named `View` to TableInfo. If `TableInfo.ViewInfo` != nil, then this `TableInfo` is a base table, else this `TableInfo` is a view.:
 ```
 type ViewInfo struct {
-	Algorithm   Algorithm        `json:"view_algorithm"`
+	Algorithm   ViewAlgorithm    `json:"view_algorithm"`
 	Definer     UserIdentity     `json:"view_definer"`  
-	Security    Security         `json:"view_security""`
+	Security    ViewSecurity     `json:"view_security""`
 	SelectStmt  string           `json:"view_select"`
-	CheckOption CheckOption      `json:"view_checkoption"`
+	CheckOption ViewCheckOption  `json:"view_checkoption"`
 	Cols        []model.CIStr    `json:"view_cols"`
 }
 ```
@@ -83,14 +83,13 @@ type ViewInfo struct {
        create view v like select * from t;
        select * from t;
     ```
-    Once we query from view `v`, database will rewrite view's `SelectStmt` from `select * from t` into **`select a as a,b as b from t`**
-    
+    Once we query from view `v`, database will rewrite view's `SelectStmt` from `select * from t` into **`select a as a,b as b from t`**.
+    But, if we alter the schema of t like this:
     ```mysql
        drop table t;
        create table t(c int,d int);
     ```
-    If we rebuild table `v` from sql above and query from view `v` again, database will rewrite view's `SelectStmt` from `select * from t` into **`select c as c,d as d from t`**
-    So the problem is view's statement can be rewrite to different sql and generate different query set.  
+    Executing `select * from v` now is equivalent to **`select c as c, d as d from t`**.The result of this query will be incompatible with the character of VIEW that a VIEW should be "frozen" after defined.
     In order to solve the problem describe above, we must build a `Projection` at the top of original select's `LogicalPlan`, just like we rewrite view's `SelectStmt` from `select * from t` into **`select a as a,b as b from (select * from t)`**.  
     This is a temporary fix and we will implement TiDB to rewrite sql with replace all wildcard finally.  
 4. Show table status  
