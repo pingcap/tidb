@@ -63,7 +63,7 @@ All notable changes to this project will be documented in this file. See also [R
 * [Add the `tidb_query_log_max_len` environment variable to set the length of the SQL statement to be truncated in the log dynamically](https://pingcap.com/docs/sql/tidb-specific/#tidb_query_log_max_len)
 
 ### DDL
-* Support the parallel execution of the Add index statement and other statements to avoid the time consuming Add index operation blocking other operations
+* Support the parallel execution of the add index statement and other statements to avoid the time consuming add index operation blocking other operations
 * Optimize the execution speed of `ADD INDEX` and improve it greatly in some scenarios
 * Support the `select tidb_is_ddl_owner()` statement to facilitate deciding whether TiDB is `DDL Owner`
 * Support the `ALTER TABLE FORCE` syntax
