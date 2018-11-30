@@ -1,4 +1,4 @@
-# Proposal: Support to restore SQL text from any `ast.Node`.
+# Proposal: Support to restore SQL text from a AST tree.
 
 - Author(s):     [Yilin Zhao](https://github.com/leoppro)
 - Last updated:  2018-11-29
@@ -18,47 +18,100 @@ Now some features(eg. Database name and table name mapping) need us to make any 
 
 ## Proposal
 
-<!--
-A precise statement of the proposed change:
-- The new named concepts and a set of metrics to be collected in this proposal (if applicable)
-- The overview of the design.
-- How it works?
-- What needs to be changed to implement this design?
-- What may be positively influenced by the proposed change?
-- What may be negatively impacted by the proposed change?
--->
+We know the AST is a type of tree structure of which child node corresponding to SQL text. 
+So we can walk through AST tree layer by layer and splice SQL text according to AST node. 
+There is a AST node parsed from `SELECT column0 FROM table0 UNION SELECT column1 FROM table1 WHERE a = 1`, 
+we can splice SQL text as the picture shows.
+
+![ast tree](./imgs/ast-tree.png)
 
 ## Rationale
 
-<!--
-A discussion of alternate approaches and the trade-offs, advantages, and disadvantages of the specified approach:
-- How other systems solve the same issue?
-- What other designs have been considered and what are their disadvantages?
-- What is the advantage of this design compared with other designs?
-- What is the disadvantage of this design?
-- What is the impact of not doing this?
--->
+See: [Rationale (Chinese)](https://docs.google.com/document/d/1KF4OvObvAzT0YW_KwiMRrsGZQMNVE03RdqShhStM_D4/edit?usp=sharing)
 
 ## Compatibility
 
-<!--
-A discussion of the change with regard to the compatibility issues:
-- Does this proposal make TiDB not compatible with the old versions?
-- Does this proposal make TiDB more compatible with MySQL?
--->
+None
 
 ## Implementation
 
-<!--
-A detailed description for each step in the implementation:
-- Does any former steps block this step?
-- Who will do it?
-- When to do it?
-- How long it takes to accomplish it?
--->
+### Code
 
-## Open issues (if applicable)
+There is a `Recoverable` interface in [pingcap/parser/ast.go](https://github.com/pingcap/parser/blob/master/ast/ast.go).  
 
-<!--
-A discussion of issues relating to this proposal for which the author does not know the solution. This section may be omitted if there are none.
--->
+```go
+// Recoverable can be restored to sql text
+type Recoverable interface {
+	// Restore append sql test to `sb`
+	Restore(sb *strings.Builder) error
+}
+```
+
+We need implement it for all `ast.Node()`.
+
+### Example
+
+I implemented the `Restore` function of `ast.CreateDatabasesStmt` and `ast.DropDatabaseStmt` for examples.
+
+```go
+// Restore implements Recoverable interface.
+func (n *CreateDatabaseStmt) Restore(sb *strings.Builder) error {
+	sb.WriteString("CREATE DATABASE ")
+	if n.IfNotExists {
+		sb.WriteString("IF NOT EXISTS ")
+	}
+	WriteName(sb, n.Name)
+	for _, option := range n.Options {
+		sb.WriteString(" ")
+		err := option.Restore(sb)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+```
+
+```go
+// Restore implements Recoverable interface.
+func (n *DropDatabaseStmt) Restore(sb *strings.Builder) error {
+	sb.WriteString("DROP DATABASE ")
+	if n.IfExists {
+		sb.WriteString("IF EXISTS ")
+	}
+	WriteName(sb, n.Name)
+	return nil
+}
+```
+
+### Test
+
+For `ast.StmtNode`:
+
+```go
+var sb strings.Builder
+err := stmt.Restore(&sb)
+c.Assert(err, IsNil)
+restoreSQL := sb.String()
+comment := Commentf("source %v \nrestore %v", t.src, restoreSQL)
+restoreStmt, err := parser.ParseOneStmt(restoreSQL, "", "")
+c.Assert(err, IsNil, comment)
+stmt.Accept(&cleaner)
+restoreStmt.Accept(&cleaner)
+c.Assert(restoreStmt, DeepEquals, stmt, comment)
+```
+
+We believe that a `Restore()` function is correct when it outputs sql text 
+can be parsed successfully and the AST correspond to output sql equals with input sql.
+
+For other `ast.Node`:
+
+Some `ast.Node` can't be restored to a complete SQL text, 
+to test them we can construct a complete SQL text.
+
+```go
+
+```
+### Note
+
+## Open issues
