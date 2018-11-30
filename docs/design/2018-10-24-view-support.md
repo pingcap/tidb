@@ -56,7 +56,7 @@ type ViewInfo struct {
 * Cols  
     This model.CIStr array stores view's column alias names.
 * TableInfo.Columns  
-    `TableInfo.Columns` only stores view's column origin names, if no alias name specific, it stores the same values as `ViewInfo.Cols`.
+    `TableInfo.Columns` only stores view's column origin names.
  
 ## Rationale
 1. Create VIEW  
