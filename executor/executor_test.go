@@ -3348,3 +3348,13 @@ func (s *testSuite) TestDoSubquery(c *C) {
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
 }
+
+func (s *testSuite) TestStrToDateBuiltin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select str_to_date('69/01/10','%y/%m/%d') from dual;`).Check(testkit.Rows("2069-01-10"))
+	tk.MustQuery(`select str_to_date('70/01/10','%y/%m/%d') from dual;`).Check(testkit.Rows("1970-01-10"))
+	tk.MustQuery(`select str_to_date('69/01/10','%Y/%m/%d') from dual;`).Check(testkit.Rows("2069-01-10"))
+	tk.MustQuery(`select str_to_date('70/01/10','%Y/%m/%d') from dual;`).Check(testkit.Rows("1970-01-10"))
+	tk.MustQuery(`select str_to_date('007/01/10','%Y/%m/%d') from dual;`).Check(testkit.Rows("0007-01-10"))
+	tk.MustQuery(`select str_to_date('0007/01/10','%Y/%m/%d') from dual;`).Check(testkit.Rows("0007-01-10"))
+}
