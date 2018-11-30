@@ -178,6 +178,9 @@ func (s *testSuite) TestInsertWithPartition(c *C) {
 	tk.MustExec(`CREATE TABLE t1(a BIGINT)`)
 	_, err := tk.Exec(`INSERT INTO t1 PARTITION(p0) VALUES(1)`)
 	c.Assert(terror.ErrorEqual(err, table.ErrPartitionClauseOnNonpartitioned), IsTrue)
+	_, err = tk.Exec(`REPLACE INTO t1 PARTITION(p0) VALUES(1)`)
+	c.Assert(terror.ErrorEqual(err, table.ErrPartitionClauseOnNonpartitioned), IsTrue)
+
 	tk.MustExec(`DROP TABLE IF EXISTS employees`)
 	tk.MustExec(`CREATE TABLE employees (
     	id INT NOT NULL,
@@ -194,12 +197,20 @@ func (s *testSuite) TestInsertWithPartition(c *C) {
     	PARTITION p2 VALUES LESS THAN (16),
     	PARTITION p3 VALUES LESS THAN MAXVALUE
 	)`)
-	tk.MustExec(`INSERT INTO employees(id, fname, lname, hired, job_code, store_id)
+	tk.MustExec(`INSERT INTO employees PARTITION(p1,p2) (id, fname, lname, hired, job_code, store_id)
+						VALUES(72, 'Mitchell', 'Wilson', '1998-06-25', 44, 13)`)
+	tk.MustExec(`REPLACE INTO employees PARTITION(p1,p2) (id, fname, lname, hired, job_code, store_id) 
 						VALUES(72, 'Mitchell', 'Wilson', '1998-06-25', 44, 13)`)
 	_, err = tk.Exec(`INSERT INTO employees PARTITION (p2) (id, fname, lname, hired, job_code, store_id)
 						VALUES(22, 'Mike', 'Pence', '1968-06-25', 02, 5)`)
 	c.Assert(terror.ErrorEqual(err, table.ErrRowDoesNotMatchGivenPartitionSet), IsTrue)
+	_, err = tk.Exec(`REPLACE INTO employees PARTITION (p2) (id, fname, lname, hired, job_code, store_id)
+						VALUES(22, 'Mike', 'Pence', '1968-06-25', 02, 5)`)
+	c.Assert(terror.ErrorEqual(err, table.ErrRowDoesNotMatchGivenPartitionSet), IsTrue)
 	_, err = tk.Exec(`INSERT INTO employees PARTITION (p5) (id, fname, lname, hired, job_code, store_id)
+						VALUES(22, 'Mike', 'Pence', '1968-06-25', 02, 5)`)
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p5' in table 'employees'")
+	_, err = tk.Exec(`REPLACE INTO employees PARTITION (p5) (id, fname, lname, hired, job_code, store_id)
 						VALUES(22, 'Mike', 'Pence', '1968-06-25', 02, 5)`)
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p5' in table 'employees'")
 
