@@ -171,6 +171,39 @@ func (s *testSuite) TestInsertWrongValueForField(c *C) {
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
 }
 
+func (s *testSuite) TestInsertWithPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test")
+	tk.MustExec(`DROP TABLE IF EXISTS t1`)
+	tk.MustExec(`CREATE TABLE t1(a BIGINT)`)
+	_, err := tk.Exec(`INSERT INTO t1 PARTITION(p0) VALUES(1)`)
+	c.Assert(terror.ErrorEqual(err, table.ErrPartitionClauseOnNonpartitioned), IsTrue)
+	tk.MustExec(`DROP TABLE IF EXISTS employees`)
+	tk.MustExec(`CREATE TABLE employees (
+    	id INT NOT NULL,
+    	fname VARCHAR(30),
+    	lname VARCHAR(30),
+    	hired DATE NOT NULL DEFAULT '1970-01-01',
+    	separated DATE NOT NULL DEFAULT '9999-12-31',
+    	job_code INT NOT NULL,
+    	store_id INT NOT NULL
+	)
+	PARTITION BY RANGE (store_id) (
+    	PARTITION p0 VALUES LESS THAN (6),
+    	PARTITION p1 VALUES LESS THAN (11),
+    	PARTITION p2 VALUES LESS THAN (16),
+    	PARTITION p3 VALUES LESS THAN MAXVALUE
+	)`)
+	tk.MustExec(`INSERT INTO employees(id, fname, lname, hired, job_code, store_id)
+						VALUES(72, 'Mitchell', 'Wilson', '1998-06-25', 44, 13)`)
+	_, err = tk.Exec(`INSERT INTO employees PARTITION (p2) (id, fname, lname, hired, job_code, store_id)
+						VALUES(22, 'Mike', 'Pence', '1968-06-25', 02, 5)`)
+	c.Assert(terror.ErrorEqual(err, table.ErrRowDoesNotMatchGivenPartitionSet), IsTrue)
+	_, err = tk.Exec(`INSERT INTO employees PARTITION (p2) (id, fname, lname, hired, job_code, store_id)
+						VALUES(22, 'Mike', 'Pence', '1968-06-25', 02, 5)`)
+	c.Assert(terror.ErrorEqual(err, table.ErrUnknownPartition), IsTrue)
+}
+
 func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
