@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/schemautil"
 	"io"
 	"math"
 	"math/rand"
@@ -586,7 +587,7 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 		}
 
 		t := s.testGetTable(c, "t")
-		indexInfo := ddl.FindIndexByName("idx_c2", t.Meta().Indices)
+		indexInfo := schemautil.FindIndexByName("idx_c2", t.Meta().Indices)
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
