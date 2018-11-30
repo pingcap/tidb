@@ -2,7 +2,7 @@
 
 - Author(s):     [Yilin Zhao](https://github.com/leoppro)
 - Last updated:  2018-11-29
-- Discussion at: 
+- Discussion at: https://github.com/pingcap/tidb/issues/8532
 
 ## Abstract
 
@@ -140,3 +140,5 @@ We can use `WriteName(sb, n.Name)` to append name to strings.Builder
 * Don't depend on `node.Text()`
 
 ## Open issues
+
+https://github.com/pingcap/tidb/issues/8532
