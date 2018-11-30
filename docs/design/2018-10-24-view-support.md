@@ -31,11 +31,11 @@ In general you can use any of the SELECT clauses, such as GROUP BY, in a select 
 ## Proposal
 This proposal is prepared to implement the basic VIEW feature, which contains `CREATE OR REPLACE VIEW`, `SELECT FROM VIEW`, `DROP VIEW` and `SHOW TABLE STATUS`. All other unimplemented features will be listed for compatibility and discussed later.
 We introduce `ViewInfo` to store the metadata for view and add an attribute `*ViewInfo` which named `View` to TableInfo. If `TableInfo.ViewInfo` != nil, then this `TableInfo` is a base table, otherwise this `TableInfo` is a view:
-```
+```go
 type ViewInfo struct {
 	Algorithm   ViewAlgorithm    `json:"view_algorithm"`
 	Definer     UserIdentity     `json:"view_definer"`  
-	Security    ViewSecurity     `json:"view_security""`
+	Security    ViewSecurity     `json:"view_security"`
 	SelectStmt  string           `json:"view_select"`
 	CheckOption ViewCheckOption  `json:"view_checkoption"`
 	Cols        []model.CIStr    `json:"view_cols"`
