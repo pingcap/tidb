@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -212,6 +213,18 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 
 func (cc *clientConn) writePacket(data []byte) error {
 	return cc.pkt.writePacket(data)
+}
+
+// getSessionVarsWaitTimeout get session variable wait_timeout
+func (cc *clientConn) getSessionVarsWaitTimeout() uint64 {
+	valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		log.Errorf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
+		// if get waitTimeout error, use default value
+		waitTimeout = variable.DefWaitTimeout
+	}
+	return waitTimeout
 }
 
 type handshakeResponse41 struct {
@@ -391,16 +404,17 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !cc.server.skipAuth() {
-		// Do Auth.
+	host := variable.DefHostname
+	if !cc.server.isUnixSocket() {
 		addr := cc.bufReadConn.RemoteAddr().String()
-		host, _, err1 := net.SplitHostPort(addr)
-		if err1 != nil {
+		// Do Auth.
+		host, _, err = net.SplitHostPort(addr)
+		if err != nil {
 			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
 		}
-		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
-			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
-		}
+	}
+	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
+		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
 	}
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
@@ -447,13 +461,22 @@ func (cc *clientConn) Run() {
 		}
 
 		cc.alloc.Reset()
+		// close connection when idle time is more than wait_timout
+		waitTimeout := cc.getSessionVarsWaitTimeout()
+		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
+		start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				errStack := errors.ErrorStack(err)
-				if !strings.Contains(errStack, "use of closed network connection") {
-					log.Errorf("con:%d read packet error, close this connection %s",
-						cc.connectionID, errStack)
+				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
+					idleTime := time.Now().Sub(start)
+					log.Infof("con:%d read packet timeout, close this connection, idle: %v, wait_timeout: %v", cc.connectionID, idleTime, waitTimeout)
+				} else {
+					errStack := errors.ErrorStack(err)
+					if !strings.Contains(errStack, "use of closed network connection") {
+						log.Errorf("con:%d read packet error, close this connection %s",
+							cc.connectionID, errStack)
+					}
 				}
 			}
 			return
