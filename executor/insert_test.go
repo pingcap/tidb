@@ -199,7 +199,7 @@ func (s *testSuite) TestInsertWithPartition(c *C) {
 	_, err = tk.Exec(`INSERT INTO employees PARTITION (p2) (id, fname, lname, hired, job_code, store_id)
 						VALUES(22, 'Mike', 'Pence', '1968-06-25', 02, 5)`)
 	c.Assert(terror.ErrorEqual(err, table.ErrRowDoesNotMatchGivenPartitionSet), IsTrue)
-	_, err = tk.Exec(`INSERT INTO employees PARTITION (p2) (id, fname, lname, hired, job_code, store_id)
+	_, err = tk.Exec(`INSERT INTO employees PARTITION (p5) (id, fname, lname, hired, job_code, store_id)
 						VALUES(22, 'Mike', 'Pence', '1968-06-25', 02, 5)`)
 	c.Assert(terror.ErrorEqual(err, table.ErrUnknownPartition), IsTrue)
 }
