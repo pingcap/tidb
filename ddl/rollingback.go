@@ -117,7 +117,7 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, errCancelledDDLJob
 }
 
-func rollingbackDropTable(job *model.Job) error {
+func rollingbackDropSchemaOrTable(job *model.Job) error {
 	// cancel before owner first time do this job.
 	if job.State == model.JobStateNone {
 		job.State = model.JobStateCancelled
@@ -147,8 +147,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddColumn(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddindex(w, d, t, job)
-	case model.ActionDropTable:
-		err = rollingbackDropTable(job)
+	case model.ActionDropTable, model.ActionDropSchema:
+		err = rollingbackDropSchemaOrTable(job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob

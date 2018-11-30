@@ -72,7 +72,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 }
 
-func rollBackDropTable(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) (ver int64, err error) {
+func rollbackDropTable(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) (ver int64, err error) {
 	originalState := tbInfo.State
 	tbInfo.State = model.StatePublic
 	// Change type to ActionCreateTable if for infoschema load schema diff.
@@ -112,11 +112,8 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 
 	if job.IsRollingback() && job.Type == model.ActionDropTable {
-		ver, err = rollBackDropTable(t, job, job.SchemaID, tblInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		return ver, nil
+		ver, err = rollbackDropTable(t, job, job.SchemaID, tblInfo)
+		return ver, errors.Trace(err)
 	}
 
 	originalState := job.SchemaState
