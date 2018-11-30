@@ -173,6 +173,9 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 	val, err := st.buf.Get(k)
 	if kv.IsErrNotFound(err) {
 		val, err = st.Transaction.Get(k)
+		if kv.IsErrNotFound(err) {
+			return nil, err
+		}
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
