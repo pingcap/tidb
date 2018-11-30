@@ -19,19 +19,17 @@ import (
 
 // Enforcer defines the interface for enforcer rules.
 type Enforcer interface {
-	// NewProperties generates relaxed properties with the help of enforcer.
-	NewProperties(prop *property.PhysicalProperty) (newProps []*property.PhysicalProperty)
+	// NewProperty generates relaxed property with the help of enforcer.
+	NewProperty(prop *property.PhysicalProperty) (newProp *property.PhysicalProperty)
 	// OnEnforce adds physical operators on top of child implementation to satisfy
-	// required physical property. Newly added operators by this method should have
-	// calculated cost. The group parameter is for cost computation.
-	OnEnforce(child Implementation, group *Group) (impl Implementation)
+	// required physical property.
+	OnEnforce(reqProp *property.PhysicalProperty, child Implementation) (impl Implementation)
 }
 
 // GetEnforcerRules gets all candidate enforcer rules based
 // on required physical property.
 func GetEnforcerRules(prop *property.PhysicalProperty) (enforcers []Enforcer) {
 	if !prop.IsEmpty() {
-		orderEnforcer := &OrderEnforcer{}
 		enforcers = append(enforcers, orderEnforcer)
 	}
 	return
@@ -39,19 +37,18 @@ func GetEnforcerRules(prop *property.PhysicalProperty) (enforcers []Enforcer) {
 
 // OrderEnforcer enforces order property on child implementation.
 type OrderEnforcer struct {
-	reqProp *property.PhysicalProperty
 }
 
-// NewProperties removes order property from required physical property.
-func (e *OrderEnforcer) NewProperties(prop *property.PhysicalProperty) (newProps []*property.PhysicalProperty) {
+var orderEnforcer = &OrderEnforcer{}
+
+// NewProperty removes order property from required physical property.
+func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *property.PhysicalProperty) {
 	// Order property cannot be empty now.
-	e.reqProp = prop
-	newProp := &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt}
-	newProps = append(newProps, newProp)
+	newProp = &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt}
 	return
 }
 
 // OnEnforce adds sort operator to satisfy required order property.
-func (e *OrderEnforcer) OnEnforce(child Implementation, group *Group) (impl Implementation) {
+func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child Implementation) (impl Implementation) {
 	return nil
 }

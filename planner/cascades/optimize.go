@@ -112,31 +112,27 @@ func implGroup(g *Group, reqPhysProp *property.PhysicalProperty, costLimit float
 			}
 			if groupImpl == nil || groupImpl.getCost() > cumCost {
 				groupImpl = impl
+				costLimit = cumCost
 			}
 		}
 	}
-	// Handle enforcing rules for required physical property.
+	// Handle enforcer rules for required physical property.
 	for _, rule := range GetEnforcerRules(reqPhysProp) {
-		newProps := rule.NewProperties(reqPhysProp)
-		for _, newReqPhysProp := range newProps {
-			childImpl, err := implGroup(g, newReqPhysProp, costLimit)
-			if err != nil {
-				return nil, err
-			}
-			if childImpl == nil {
-				continue
-			}
-			impl := rule.OnEnforce(childImpl, g)
-			if impl == nil {
-				continue
-			}
-			cumCost = impl.getCost()
-			if cumCost > costLimit {
-				continue
-			}
-			if groupImpl == nil || groupImpl.getCost() > cumCost {
-				groupImpl = impl
-			}
+		newReqPhysProp := rule.NewProperty(reqPhysProp)
+		enforceCost := rule.GetEnforceCost(outCount)
+		childImpl, err := implGroup(g, newReqPhysProp, costLimit-enforceCost)
+		if err != nil {
+			return nil, err
+		}
+		if childImpl == nil {
+			continue
+		}
+		impl := rule.OnEnforce(reqPhysProp, childImpl)
+		cumCost = enforceCost + childImpl.getCost()
+		impl.setCost(cumCost)
+		if groupImpl == nil || groupImpl.getCost() > cumCost {
+			groupImpl = impl
+			costLimit = cumCost
 		}
 	}
 	if groupImpl == nil || groupImpl.getCost() == math.MaxFloat64 {
