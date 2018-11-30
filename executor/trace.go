@@ -160,11 +160,6 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Rec
 	var rows []chunk.Row
 	chk := rs.NewChunk()
 
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
-
 	for {
 		err := rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {

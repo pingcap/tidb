@@ -665,7 +665,7 @@ type LimitExec struct {
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.Next", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("limit.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
