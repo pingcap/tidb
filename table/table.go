@@ -206,7 +206,10 @@ const (
 	codeTruncateWrongValue = 1366
 	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
 	// It may happen when inserting some data outside of all table partitions.
-	codeTrgInvalidCreationCtx = 1604
+	codeTrgInvalidCreationCtx            = 1604
+	codeUnknownPartition                 = 1735
+	codePartitionClauseOnNonpartitioned  = 1747
+	codeRowDoesNotMatchGivenPartitionSet = 1748
 )
 
 // Slice is used for table sorting.
@@ -222,12 +225,15 @@ func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeColumnCantNull:        mysql.ErrBadNull,
-		codeUnknownColumn:         mysql.ErrBadField,
-		codeDuplicateColumn:       mysql.ErrFieldSpecifiedTwice,
-		codeNoDefaultValue:        mysql.ErrNoDefaultForField,
-		codeTruncateWrongValue:    mysql.ErrTruncatedWrongValueForField,
-		codeTrgInvalidCreationCtx: mysql.ErrTrgInvalidCreationCtx,
+		codeColumnCantNull:                   mysql.ErrBadNull,
+		codeUnknownColumn:                    mysql.ErrBadField,
+		codeDuplicateColumn:                  mysql.ErrFieldSpecifiedTwice,
+		codeNoDefaultValue:                   mysql.ErrNoDefaultForField,
+		codeTruncateWrongValue:               mysql.ErrTruncatedWrongValueForField,
+		codeTrgInvalidCreationCtx:            mysql.ErrTrgInvalidCreationCtx,
+		codePartitionClauseOnNonpartitioned:  mysql.ErrPartitionClauseOnNonpartitioned,
+		codeRowDoesNotMatchGivenPartitionSet: mysql.ErrRowDoesNotMatchGivenPartitionSet,
+		codeUnknownPartition:                 mysql.ErrUnknownPartition,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }

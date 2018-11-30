@@ -383,9 +383,10 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 	return nil
 }
 
-func (t *tableCommon) LocationPartition(ctx sessionctx.Context, r []types.Datum) (int, error)  {
+func (t *tableCommon) LocationPartition(ctx sessionctx.Context, r []types.Datum) (int, error) {
 	return 0, table.ErrUnsupportedOp
 }
+
 // adjustRowValuesBuf adjust writeBufs.AddRowValues length, AddRowValues stores the inserting values that is used
 // by tablecodec.EncodeRow, the encoded row format is `id1, colval, id2, colval`, so the correct length is rowLen * 2. If
 // the inserting row has null value, AddRecord will skip it, so the rowLen will be different, so we need to adjust it.
