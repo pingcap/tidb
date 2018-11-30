@@ -110,8 +110,33 @@ Some `ast.Node` can't be restored to a complete SQL text,
 to test them we can construct a complete SQL text.
 
 ```go
-
+var cleaner NodeTextCleaner
+parser := parser.New()
+testNodes := []string{"select ++1", "select -+1", "select --1", "select -1"}
+for _, node := range testNodes {
+    stmt, err := parser.ParseOneStmt(node, "", "")
+    comment := Commentf("source %v", node)
+    c.Assert(err, IsNil, comment)
+    var sb strings.Builder
+    sb.WriteString("SELECT ")
+    err = stmt.(*SelectStmt).Fields.Fields[0].Expr.Restore(&sb)
+    c.Assert(err, IsNil, comment)
+    restoreSql := sb.String()
+    comment = Commentf("source %v ; restore %v", node, restoreSql)
+    stmt2, err := parser.ParseOneStmt(restoreSql, "", "")
+    c.Assert(err, IsNil, comment)
+    stmt.Accept(&cleaner)
+    stmt2.Accept(&cleaner)
+    c.Assert(stmt2, DeepEquals, stmt, comment)
+}
 ```
+
 ### Note
+
+* Table name, column name, etc... use back quotes to wrap
+
+We can use `WriteName(sb, n.Name)` to append name to strings.Builder
+
+* Don't depend on `node.Text()`
 
 ## Open issues
