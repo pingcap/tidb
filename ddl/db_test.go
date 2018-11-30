@@ -519,21 +519,30 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 }
 
 // TestCancelDropTable tests cancel ddl job which type is drop table.
-func (s *testDBSuite) TestCancelDropTable(c *C) {
+func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.mustExec(c, "use test_db")
+	s.mustExec(c, "create database if not exists test_drop_db")
+	s.mustExec(c, "use test_drop_db")
 	s.mustExec(c, "drop table if exists t")
 	s.mustExec(c, "create table t(c1 int, c2 int)")
 	defer s.mustExec(c, "drop table t;")
 	testCases := []struct {
-		jobState       model.JobState
-		JobSchemaState model.SchemaState
-		cancelSucc     bool
+		action                     model.ActionType
+		jobState                   model.JobState
+		JobSchemaState             model.SchemaState
+		cancelSucc                 bool
+		checkSchemaExistWhenCancel bool
 	}{
+		// Check drop table.
 		// model.JobStateNone means the jobs is canceled before the first run.
-		{model.JobStateNone, model.StateNone, true},
-		{model.JobStateRunning, model.StateWriteOnly, true},
-		{model.JobStateRunning, model.StateDeleteOnly, true},
+		{model.ActionDropTable, model.JobStateNone, model.StateNone, true, true},
+		{model.ActionDropTable, model.JobStateRunning, model.StateWriteOnly, true, false},
+		{model.ActionDropTable, model.JobStateRunning, model.StateDeleteOnly, true, false},
+
+		// Check drop database.
+		{model.ActionDropSchema, model.JobStateNone, model.StateNone, true, true},
+		{model.ActionDropSchema, model.JobStateRunning, model.StateWriteOnly, true, false},
+		{model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, true, false},
 	}
 	var checkErr error
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
@@ -541,8 +550,11 @@ func (s *testDBSuite) TestCancelDropTable(c *C) {
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	testCase := &testCases[0]
+	var dbInfo *model.DBInfo
+	var tblInfo table.Table
+	var dbOK, tblOK bool
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionDropTable && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
 			jobIDs := []int64{job.ID}
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
@@ -551,6 +563,11 @@ func (s *testDBSuite) TestCancelDropTable(c *C) {
 				checkErr = errors.Trace(err)
 				return
 			}
+			// Get dbInfo from info schema. Because the database key will not deleted in tikv before database state is StateNone.
+			// But infoschema delete db info when apply schemadiff when db info state is StateWriteOnly.
+			// tblInfo is same too.
+			dbInfo, dbOK = s.dom.InfoSchema().SchemaByID(job.SchemaID)
+			tblInfo, tblOK = s.dom.InfoSchema().TableByID(job.TableID)
 			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
@@ -564,11 +581,27 @@ func (s *testDBSuite) TestCancelDropTable(c *C) {
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	var err error
 	for i := range testCases {
 		testCase = &testCases[i]
-		rs, err := s.tk.Exec("drop table t;")
-		if rs != nil {
-			rs.Close()
+
+		if testCase.action == model.ActionDropTable {
+			_, err = s.tk.Exec("drop table t;")
+			c.Assert(tblOK, Equals, testCase.checkSchemaExistWhenCancel)
+			if tblOK {
+				c.Assert(tblInfo.Meta().State, Equals, model.StatePublic)
+			} else {
+				c.Assert(tblInfo, IsNil)
+			}
+		} else if testCase.action == model.ActionDropSchema {
+			_, err = s.tk.Exec("drop database test_drop_db;")
+			c.Assert(dbOK, Equals, testCase.checkSchemaExistWhenCancel)
+			if dbOK {
+				c.Assert(dbInfo.State, Equals, model.StatePublic)
+			} else {
+				c.Assert(dbInfo, IsNil)
+			}
+
 		}
 		c.Assert(checkErr, IsNil)
 		c.Assert(err, NotNil)
