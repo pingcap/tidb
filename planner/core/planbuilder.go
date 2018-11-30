@@ -94,17 +94,19 @@ const (
 	whereClause
 	groupByClause
 	showStatement
+	globalOrderByClause
 )
 
 var clauseMsg = map[clauseCode]string{
-	unknowClause:  "",
-	fieldList:     "field list",
-	havingClause:  "having clause",
-	onClause:      "on clause",
-	orderByClause: "order clause",
-	whereClause:   "where clause",
-	groupByClause: "group statement",
-	showStatement: "show statement",
+	unknowClause:        "",
+	fieldList:           "field list",
+	havingClause:        "having clause",
+	onClause:            "on clause",
+	orderByClause:       "order clause",
+	whereClause:         "where clause",
+	groupByClause:       "group statement",
+	showStatement:       "show statement",
+	globalOrderByClause: "global ORDER clause",
 }
 
 // PlanBuilder builds Plan from an ast.Node.
