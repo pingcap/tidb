@@ -527,12 +527,11 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	wg.Wait()
 
-	log.Warnf("finish 111 .................. sub %v", time.Since(startT))
 	select {
 	case err = <-e.errCh:
 	default:
 	}
-	log.Warnf("finish 222 .................. sub %v", time.Since(startT))
+	log.Warnf("finish .................. sub %v", time.Since(startT))
 	return errors.Trace(err)
 }
 
