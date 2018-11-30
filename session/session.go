@@ -1040,10 +1040,9 @@ func (s *session) Txn(active bool) kv.Transaction {
 	return &s.txn
 }
 
-func (s *session) NewTxn() error {
+func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		ctx := context.TODO()
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -1471,7 +1470,7 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(s.NewTxn())
+	return errors.Trace(s.NewTxn(ctx))
 }
 
 // InitTxnWithStartTS create a transaction with startTS.

@@ -204,7 +204,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = se.NewTxn()
+		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -769,7 +769,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = se.NewTxn()
+		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		// Make txn not read only.
 		se.Txn(true).Set(kv.Key("AAA"), []byte("BBB"))
@@ -1317,7 +1317,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = se.NewTxn()
+		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		// Make txn not read only.
 		se.Txn(true).Set(kv.Key("AAA"), []byte("BBB"))

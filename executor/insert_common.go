@@ -174,7 +174,7 @@ func (e *InsertValues) processSetList() error {
 }
 
 // insertRows processes `insert|replace into values ()` or `insert|replace into set x=y`
-func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err error) {
+func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) (err error) {
 	// For `insert|replace into set x=y`, process the set list here.
 	if err = e.processSetList(); err != nil {
 		return errors.Trace(err)
@@ -189,7 +189,7 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 		}
 		rows = append(rows, row)
 	}
-	return errors.Trace(exec(rows))
+	return errors.Trace(exec(ctx, rows))
 }
 
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
@@ -277,7 +277,7 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 	return nil
 }
 
-func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows [][]types.Datum) error) error {
+func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	fields := selectExec.retTypes()
@@ -307,12 +307,12 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 			}
 			rows = append(rows, row)
 			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-				if err := exec(rows); err != nil {
+				if err := exec(ctx, rows); err != nil {
 					return errors.Trace(err)
 				}
 				e.ctx.StmtCommit()
 				rows = rows[:0]
-				if err := e.ctx.NewTxn(); err != nil {
+				if err := e.ctx.NewTxn(ctx); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 				}
@@ -322,7 +322,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 			}
 		}
 	}
-	if err := exec(rows); err != nil {
+	if err := exec(ctx, rows); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

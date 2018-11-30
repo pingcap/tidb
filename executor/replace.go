@@ -143,7 +143,7 @@ func (e *ReplaceExec) removeIndexRow(r toBeCheckedRow) (bool, bool, error) {
 	return false, false, nil
 }
 
-func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
+func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -182,5 +182,5 @@ func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if len(e.children) > 0 && e.children[0] != nil {
 		return e.insertRowsFromSelect(ctx, e.exec)
 	}
-	return e.insertRows(e.exec)
+	return e.insertRows(ctx, e.exec)
 }

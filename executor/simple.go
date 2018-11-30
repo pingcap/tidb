@@ -59,7 +59,7 @@ func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	case *ast.FlushStmt:
 		err = e.executeFlush(x)
 	case *ast.BeginStmt:
-		err = e.executeBegin(x)
+		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
 		e.executeCommit(x)
 	case *ast.RollbackStmt:
@@ -117,12 +117,12 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
+func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	if txnCtx.Histroy != nil {
-		err := e.ctx.NewTxn()
+		err := e.ctx.NewTxn(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}

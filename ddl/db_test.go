@@ -481,7 +481,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 			jobIDs := []int64{job.ID}
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
-			err := hookCtx.NewTxn()
+			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -724,7 +724,7 @@ LOOP:
 
 	// get all row handles
 	ctx := s.s.(sessionctx.Context)
-	c.Assert(ctx.NewTxn(), IsNil)
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := s.testGetTable(c, "test_add_index")
 	handles := make(map[int64]struct{})
 	startKey := t.RecordKey(math.MinInt64)
@@ -748,7 +748,7 @@ LOOP:
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
 	ctx.Txn(true).Rollback()
 
-	c.Assert(ctx.NewTxn(), IsNil)
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	defer ctx.Txn(true).Rollback()
 
 	it, err := nidx.SeekFirst(ctx.Txn(true))
@@ -846,7 +846,7 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	f := func() map[int64]struct{} {
 		handles := make(map[int64]struct{})
 
-		c.Assert(ctx.NewTxn(), IsNil)
+		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		defer ctx.Txn(true).Rollback()
 
 		it, err := idx.SeekFirst(ctx.Txn(true))
@@ -1088,7 +1088,7 @@ LOOP:
 	t := s.testGetTable(c, "t2")
 	i := 0
 	j := 0
-	ctx.NewTxn()
+	ctx.NewTxn(context.Background())
 	defer ctx.Txn(true).Rollback()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -3519,7 +3519,7 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		var err error
-		err = hookCtx.NewTxn()
+		err = hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -3597,7 +3597,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		var err error
-		err = hookCtx.NewTxn()
+		err = hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -3742,7 +3742,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 		pid := def.ID
 		partition := tbl.(table.PartitionedTable).GetPartition(pid)
 		startKey := partition.RecordKey(math.MinInt64)
-		c.Assert(ctx.NewTxn(), IsNil)
+		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := partition.IterRecords(ctx, startKey, partition.Cols(),
 			func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 				num++

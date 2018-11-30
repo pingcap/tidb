@@ -126,7 +126,7 @@ func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 }
 
 func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn(true))
 	ver, err := m.GetSchemaVersion()

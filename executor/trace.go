@@ -86,6 +86,13 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+
+			// Split json data into rows to avoid the max packet size limitation.
+			const maxRowLen = 4096
+			for len(data) > maxRowLen {
+				chk.AppendString(0, string(data[:maxRowLen]))
+				data = data[maxRowLen:]
+			}
 			chk.AppendString(0, string(data))
 		}
 		e.exhausted = true

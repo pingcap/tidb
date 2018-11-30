@@ -61,7 +61,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	tblInfo.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	tblInfo.PKIsHandle = true
 	ctx := testNewContext(d)
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -187,7 +187,7 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interf
 
 func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context, delOnlyTbl, writeOnlyTbl table.Table) error {
 	// DeleteOnlyTable: insert t values (4, 4);
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -260,7 +260,7 @@ func (s *testIndexChangeSuite) checkAddWriteOnly(d *ddl, ctx sessionctx.Context,
 
 func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, writeTbl, publicTbl table.Table) error {
 	// WriteOnlyTable: insert t values (6, 6)
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -327,7 +327,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 
 func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context, publicTbl, writeTbl table.Table) error {
 	// WriteOnlyTable insert t values (8, 8)
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -367,7 +367,7 @@ func (s *testIndexChangeSuite) checkDropWriteOnly(d *ddl, ctx sessionctx.Context
 
 func (s *testIndexChangeSuite) checkDropDeleteOnly(d *ddl, ctx sessionctx.Context, writeTbl, delTbl table.Table) error {
 	// WriteOnlyTable insert t values (9, 9)
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}

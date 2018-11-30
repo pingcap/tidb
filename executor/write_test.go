@@ -2082,7 +2082,7 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	s.ctx.Store = s.store
 	tbl, err := s.domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.NewTxn(), IsNil)
+	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
