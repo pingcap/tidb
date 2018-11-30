@@ -22,25 +22,52 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-func extractInnerJoinGroup(p *LogicalJoin) ([]LogicalPlan, []*expression.ScalarFunction, []expression.Expression) {
+// extractJoinGroup will extract the nodes that connected by join tree.
+// A join tree is a tree that all node is join except the leaves.
+func extractJoinGroup(p *LogicalJoin) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
 	if p.reordered || p.preferJoinType > uint(0) || p.JoinType != InnerJoin || p.StraightJoin {
 		return nil, nil, nil
 	}
 	lChild := p.children[0]
 	rChild := p.children[1]
-	lJoin, ok := lChild.(*LogicalJoin)
-	if !ok {
-		eqConds := make([]*expression.ScalarFunction, len(p.EqualConditions))
-		otherConds := make([]expression.Expression, len(p.OtherConditions))
-		copy(eqConds, p.EqualConditions)
+	lJoin, lOk := lChild.(*LogicalJoin)
+	rJoin, rOk := rChild.(*LogicalJoin)
+	if !lOk && !rOk {
+		eqEdges = make([]*expression.ScalarFunction, len(p.EqualConditions))
+		otherConds = make([]expression.Expression, len(p.OtherConditions))
+		copy(eqEdges, p.EqualConditions)
 		copy(otherConds, p.OtherConditions)
-		return []LogicalPlan{lChild, rChild}, eqConds, otherConds
+		return []LogicalPlan{lChild, rChild}, eqEdges, otherConds
 	}
-	lhsJoinGroup, eqEdges, otherConds := extractInnerJoinGroup(lJoin)
-	if lhsJoinGroup == nil {
-		return nil, nil, nil
+	if lOk {
+		lhsJoinGroup, lEqEdges, lOtherConds := extractJoinGroup(lJoin)
+		// If left side is
+		if lhsJoinGroup == nil {
+			group = append(group, lJoin)
+		} else {
+			group = append(group, lhsJoinGroup...)
+			eqEdges = append(eqEdges, lEqEdges...)
+			otherConds = append(otherConds, lOtherConds...)
+		}
+	} else {
+		group = append(group, lChild)
 	}
-	return append(lhsJoinGroup, rChild), append(eqEdges, p.EqualConditions...), append(otherConds, p.OtherConditions...)
+
+	if rOk {
+		rhsJoinGroup, rEqEdges, rOtherConds := extractJoinGroup(rJoin)
+		if rhsJoinGroup == nil {
+			group = append(group, rJoin)
+		} else {
+			group = append(group, rhsJoinGroup...)
+			eqEdges = append(eqEdges, rEqEdges...)
+			otherConds = append(otherConds, rOtherConds...)
+
+		}
+	} else {
+		group = append(group, rChild)
+	}
+
+	return group, append(eqEdges, p.EqualConditions...), append(otherConds, p.OtherConditions...)
 }
 
 type joinReOrderGreedySolver struct {
@@ -50,6 +77,8 @@ type joinReOrderGreedySolver struct {
 	otherConds   []expression.Expression
 }
 
+// solve will construct a join tree by given join group using greedy algorithm.
+// We first choose the node with least cost. Then always find the node which can join with current tree and have least cost.
 func (s *joinReOrderGreedySolver) solve() (LogicalPlan, error) {
 	for _, node := range s.curJoinGroup {
 		_, err := node.deriveStats()
@@ -82,7 +111,7 @@ func (s *joinReOrderGreedySolver) enlargeJoinTree() (LogicalPlan, error) {
 		var finalRemainOthers []expression.Expression
 		var bestJoin LogicalPlan
 		for i, node := range s.curJoinGroup {
-			newJoin, remainOthers := s.connectedAndNewNode(curJoinTree, node)
+			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree, node)
 			if newJoin == nil {
 				continue
 			}
@@ -108,7 +137,7 @@ func (s *joinReOrderGreedySolver) enlargeJoinTree() (LogicalPlan, error) {
 	return curJoinTree, nil
 }
 
-func (s *joinReOrderGreedySolver) connectedAndNewNode(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
+func (s *joinReOrderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
 	var usedEdges []*expression.ScalarFunction
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
@@ -125,7 +154,7 @@ func (s *joinReOrderGreedySolver) connectedAndNewNode(leftNode, rightNode Logica
 	if len(usedEdges) == 0 {
 		return nil, nil
 	}
-	newJoin := s.newJoin(leftNode, rightNode)
+	newJoin := s.newCartesianJoin(leftNode, rightNode)
 	newJoin.EqualConditions = usedEdges
 	for _, eqCond := range newJoin.EqualConditions {
 		newJoin.LeftJoinKeys = append(newJoin.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
@@ -142,14 +171,15 @@ func (s *joinReOrderGreedySolver) connectedAndNewNode(leftNode, rightNode Logica
 }
 
 func (s *joinReOrderGreedySolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) LogicalPlan {
+	resultJoinGroup := make([]LogicalPlan, 0, (len(cartesianJoinGroup)+1)/2)
 	for len(cartesianJoinGroup) > 1 {
-		resultJoinGroup := make([]LogicalPlan, 0, len(cartesianJoinGroup))
+		resultJoinGroup = resultJoinGroup[:0]
 		for i := 0; i < len(cartesianJoinGroup); i += 2 {
 			if i+1 == len(cartesianJoinGroup) {
 				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
 				break
 			}
-			newJoin := s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
+			newJoin := s.newCartesianJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
 			for i := len(s.otherConds) - 1; i >= 0; i-- {
 				cols := expression.ExtractColumns(s.otherConds[i])
 				if newJoin.schema.ColumnsIndices(cols) != nil {
@@ -159,12 +189,12 @@ func (s *joinReOrderGreedySolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan
 			}
 			resultJoinGroup = append(resultJoinGroup, newJoin)
 		}
-		cartesianJoinGroup = resultJoinGroup
+		cartesianJoinGroup, resultJoinGroup = resultJoinGroup, cartesianJoinGroup
 	}
 	return cartesianJoinGroup[0]
 }
 
-func (s *joinReOrderGreedySolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
+func (s *joinReOrderGreedySolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
@@ -181,7 +211,7 @@ func (s *joinReOrderGreedySolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 
 func (s *joinReOrderGreedySolver) optimizeRecursive(p LogicalPlan) (LogicalPlan, error) {
 	if join, ok := p.(*LogicalJoin); ok {
-		s.curJoinGroup, s.eqEdges, s.otherConds = extractInnerJoinGroup(join)
+		s.curJoinGroup, s.eqEdges, s.otherConds = extractJoinGroup(join)
 		if len(s.curJoinGroup) != 0 {
 			var err error
 			p, err = s.solve()
