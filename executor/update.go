@@ -84,6 +84,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			for _, flag := range flags {
 				if flag {
 					updatable = true
+					break
 				}
 			}
 			if !updatable {
