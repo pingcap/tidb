@@ -14,12 +14,12 @@
 package driver
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -70,13 +70,11 @@ type ValueExpr struct {
 }
 
 // Restore implements Recoverable interface.
-func (n *ValueExpr) Restore(sb *strings.Builder) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = errors.New("ValueExpr.Format panic")
-		}
-	}()
-	n.Format(sb)
+func (n *ValueExpr) Restore(sb *strings.Builder) error {
+	err := n.format(sb)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -86,7 +84,7 @@ func (n *ValueExpr) GetDatumString() string {
 }
 
 // Format the ExprNode into a Writer.
-func (n *ValueExpr) Format(w io.Writer) {
+func (n *ValueExpr) format(w io.Writer) error {
 	var s string
 	switch n.Kind() {
 	case types.KindNull:
@@ -118,9 +116,18 @@ func (n *ValueExpr) Format(w io.Writer) {
 			s = n.GetBinaryLiteral().ToBitLiteralString(true)
 		}
 	default:
-		panic("Can't format to string")
+		return errors.New("can't format to string")
 	}
 	fmt.Fprint(w, s)
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *ValueExpr) Format(w io.Writer) {
+	err := n.format(w)
+	if err != nil {
+		panic("Can't format to string")
+	}
 }
 
 // newValueExpr creates a ValueExpr with value, and sets default field type.
