@@ -19,7 +19,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Optimize correlated subquery, push down Filter, and extend the index selection range, to improve the efficiency of some queries by orders of magnitude
 * Support using Index Hint and Join Hint in the `UPDATE` and `DELETE` statement 
 * Support pushing down more functions:`ABS` / `CEIL` / `FLOOR` / `IS TRUE` / `IS FALSE`
-* Optimize the constant folding algorithm for the IF` and `IFNULL` built-in functions
+* Optimize the constant folding algorithm for the `IF` and `IFNULL` built-in functions
 * Optimize the output of the `EXPLAIN` statement and use hierarchy structure to show the relationship between operators
 
 ### SQL executor
