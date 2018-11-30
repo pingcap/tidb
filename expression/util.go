@@ -529,12 +529,10 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expr
 }
 
 // ConvertToByItemExpr rewrites ByItem.ExprNode to a proper ExprNode.
-func ConvertToByItemExpr(ctx sessionctx.Context, n ast.Node) ast.Node {
+func ConvertToByItemExpr(n ast.Node) ast.Node {
 	switch v := n.(type) {
 	case *driver.ParamMarkerExpr:
-		if !ctx.GetSessionVars().StmtCtx.InPreparedStmt {
-			return &ast.PositionExpr{P: v}
-		}
+		return &ast.PositionExpr{P: v}
 	}
 	return n
 }
