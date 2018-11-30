@@ -1234,7 +1234,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.MemTracker = memory.NewTracker(s.Text(), vars.MemQuotaQuery)
 	sc.NowTs = time.Time{}
 	sc.SysTs = time.Time{}
-	sc.InPreparedStmt = vars.StmtCtx.InPreparedStmt
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
@@ -1246,7 +1245,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
 		s, err = getPreparedStmt(execStmt, vars)
-		sc.InPreparedStmt = false
 	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
@@ -1307,8 +1305,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
-	case *ast.PrepareStmt:
-		sc.InPreparedStmt = true
 	default:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
