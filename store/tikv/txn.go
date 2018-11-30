@@ -92,6 +92,9 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
 	ret, err := txn.us.Get(k)
+	if kv.IsErrNotFound(err) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
