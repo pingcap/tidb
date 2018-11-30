@@ -1535,22 +1535,22 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	c.Assert(v.IsNull(), IsTrue)
 
 	tests := []struct {
-		input		string
-		months		int
-		expected	string
-	} {
-		{"1900-01-31",1,"1900-02-28"},
-		{"2000-01-31",1,"2000-02-29"},
-		{"2016-01-31",1,"2016-02-29"},
-		{"2018-07-31",1,"2018-08-31"},
-		{"2018-08-31",1,"2018-09-30"},
-		{"2018-07-31",2,"2018-09-30"},
-		{"2016-01-31",27,"2018-04-30"},
+		input    string
+		months   int
+		expected string
+	}{
+		{"1900-01-31", 1, "1900-02-28"},
+		{"2000-01-31", 1, "2000-02-29"},
+		{"2016-01-31", 1, "2016-02-29"},
+		{"2018-07-31", 1, "2018-08-31"},
+		{"2018-08-31", 1, "2018-09-30"},
+		{"2018-07-31", 2, "2018-09-30"},
+		{"2016-01-31", 27, "2018-04-30"},
 	}
 
-	for _, test := range tests{
-		args = types.MakeDatums(test.input,test.months,"MONTH")
-		f,err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
+	for _, test := range tests {
+		args = types.MakeDatums(test.input, test.months, "MONTH")
+		f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		v, err = evalBuiltinFunc(f, nil)

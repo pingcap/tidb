@@ -2639,7 +2639,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 	// it says October 32 converts to November 1
 	// it conflits with mysql
 	// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-	df := getFixDays(int(year),int(month),int(day),goTime)
+	df := getFixDays(int(year), int(month), int(day), goTime)
 	if df != 0 {
 		goTime = goTime.AddDate(int(year), int(month), df)
 	} else {
@@ -2667,7 +2667,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 	}
 
 	goTime = goTime.Add(dur)
-	df := getFixDays(int(year),int(month),int(day),goTime)
+	df := getFixDays(int(year), int(month), int(day), goTime)
 	if df != 0 {
 		goTime = goTime.AddDate(int(year), int(month), df)
 	} else {
