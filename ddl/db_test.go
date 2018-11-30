@@ -548,33 +548,35 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
-	for _, testCase := range testCases {
-		hook.OnJobRunBeforeExported = func(job *model.Job) {
-			if job.Type == model.ActionDropIndex && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-				jobID = job.ID
-				jobIDs := []int64{job.ID}
-				hookCtx := mock.NewContext()
-				hookCtx.Store = s.store
-				err := hookCtx.NewTxn()
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
-				errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
-
-				if errs[0] != nil {
-					checkErr = errors.Trace(errs[0])
-					return
-				}
-
-				checkErr = hookCtx.Txn(true).Commit(context.Background())
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropIndex && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobID = job.ID
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn()
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
 			}
+			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+
+			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
-		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	for i := range testCases {
+		testCase = &testCases[i]
 		if testCase.needAddIndex {
 			s.mustExec(c, "alter table t add index idx_c2(c2)")
 		}

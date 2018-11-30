@@ -83,6 +83,17 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
+func isJobRollbackable(job *model.Job, id int64) error {
+	switch job.Type {
+	case model.ActionDropIndex:
+		if job.SchemaState == model.StateDeleteOnly ||
+			job.SchemaState == model.StateDeleteReorganization {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
+	}
+	return nil
+}
+
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
@@ -113,14 +124,11 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
 				continue
 			}
-			switch job.Type {
-			case model.ActionDropIndex:
-				if job.SchemaState == model.StateDeleteOnly ||
-					job.SchemaState == model.StateDeleteReorganization {
-					errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(id)
-					continue
-				}
+			errs[i] = isJobRollbackable(job, id)
+			if errs[i] != nil {
+				continue
 			}
+
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
 			err := job.DecodeArgs(job.RawArgs)
