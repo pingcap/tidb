@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file. See also [R
 
 ### SQL Optimizer
 * Optimize the selection range of `Index Join` to improve the execution performance
-* Optimize the selection of outer table for `Index Join` and use the table with smaller estimated value of Row Count the as the outer table
+* Optimize the selection of outer table for `Index Join` and use the table with smaller estimated value of Row Count as the outer table
 * Optimize Join Hint `TIDB_SMJ` so that Merge Join can be used even without proper index available
 * Optimize Join Hint `TIDB_INLJ` to specify the Inner table to Join
 * Optimize correlated subquery, push down Filter, and extend the index selection range, to improve the efficiency of some queries by orders of magnitude
