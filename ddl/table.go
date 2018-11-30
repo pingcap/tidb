@@ -72,18 +72,25 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 }
 
-func rollbackDropTable(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) (ver int64, err error) {
-	originalState := tbInfo.State
-	tbInfo.State = model.StatePublic
-	// Change type to ActionCreateTable if for infoschema load schema diff.
+func rollbackDropTable(t *meta.Meta, job *model.Job, schemaID int64, tblInfo *model.TableInfo) (ver int64, err error) {
+	// If tblInfo state is public, no need to rollback.
+	if tblInfo.State == model.StatePublic {
+		job.State = model.JobStateRollbackDone
+		job.SchemaState = tblInfo.State
+		return ver, nil
+	}
+	// Recover table.
+	originalState := tblInfo.State
+	tblInfo.State = model.StatePublic
+	// Change type to ActionCreateTable for infoschema to load schema diff.
 	job.Type = model.ActionCreateTable
-	ver, err = updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 	job.Type = model.ActionDropTable
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	job.State = model.JobStateRollbackDone
-	job.SchemaState = tbInfo.State
+	job.SchemaState = tblInfo.State
 	return ver, nil
 }
 

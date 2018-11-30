@@ -71,13 +71,14 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 func rollbackDropSchema(t *meta.Meta, job *model.Job, dbInfo *model.DBInfo) (ver int64, err error) {
-	// If dbInfo schema state is public, nothing need to rollback.
+	// If dbInfo schema state is public, no need to rollback.
 	if dbInfo.State == model.StatePublic {
 		job.State = model.JobStateRollbackDone
 		job.SchemaState = dbInfo.State
 		return ver, nil
 	}
 	// Recover database.
+	// Change type to ActionCreateSchema for infoschema to load schema diff.
 	job.Type = model.ActionCreateSchema
 	defer func() {
 		job.Type = model.ActionDropSchema
@@ -98,6 +99,7 @@ func rollbackDropSchema(t *meta.Meta, job *model.Job, dbInfo *model.DBInfo) (ver
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	// Change type to ActionCreateTable for infoschema to load schema diff.
 	job.Type = model.ActionCreateTable
 	for _, tblInfo := range tables {
 		job.TableID = tblInfo.ID
