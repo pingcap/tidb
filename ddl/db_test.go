@@ -530,19 +530,18 @@ func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
 		action                     model.ActionType
 		jobState                   model.JobState
 		JobSchemaState             model.SchemaState
-		cancelSucc                 bool
 		checkSchemaExistWhenCancel bool
 	}{
 		// Check drop table.
 		// model.JobStateNone means the jobs is canceled before the first run.
-		{model.ActionDropTable, model.JobStateNone, model.StateNone, true, true},
-		{model.ActionDropTable, model.JobStateRunning, model.StateWriteOnly, true, false},
-		{model.ActionDropTable, model.JobStateRunning, model.StateDeleteOnly, true, false},
+		{model.ActionDropTable, model.JobStateNone, model.StateNone, true},
+		{model.ActionDropTable, model.JobStateRunning, model.StateWriteOnly, false},
+		{model.ActionDropTable, model.JobStateRunning, model.StateDeleteOnly, false},
 
 		// Check drop database.
-		{model.ActionDropSchema, model.JobStateNone, model.StateNone, true, true},
-		{model.ActionDropSchema, model.JobStateRunning, model.StateWriteOnly, true, false},
-		{model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, true, false},
+		{model.ActionDropSchema, model.JobStateNone, model.StateNone, true},
+		{model.ActionDropSchema, model.JobStateRunning, model.StateWriteOnly, false},
+		{model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
 	}
 	var checkErr error
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
