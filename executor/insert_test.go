@@ -201,7 +201,8 @@ func (s *testSuite) TestInsertWithPartition(c *C) {
 	c.Assert(terror.ErrorEqual(err, table.ErrRowDoesNotMatchGivenPartitionSet), IsTrue)
 	_, err = tk.Exec(`INSERT INTO employees PARTITION (p5) (id, fname, lname, hired, job_code, store_id)
 						VALUES(22, 'Mike', 'Pence', '1968-06-25', 02, 5)`)
-	c.Assert(terror.ErrorEqual(err, table.ErrUnknownPartition), IsTrue)
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p5' in table 'employees'")
+
 }
 
 func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
