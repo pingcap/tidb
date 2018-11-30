@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -820,15 +819,12 @@ func (by *ByItems) Clone() *ByItems {
 
 // itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
 type itemTransformer struct {
-	ctx     sessionctx.Context
-	isParam bool
 }
 
 func (t *itemTransformer) Enter(inNode ast.Node) (ast.Node, bool) {
 	switch inNode.(type) {
 	case *driver.ParamMarkerExpr:
-		newNode := expression.ConvertToByItemExpr(t.ctx, inNode)
-		t.isParam = true
+		newNode := expression.ConvertToByItemExpr(inNode)
 		return newNode, true
 	}
 	return inNode, false
@@ -846,7 +842,7 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	}
 	sort := LogicalSort{}.Init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
-	transformer := &itemTransformer{ctx: b.ctx}
+	transformer := &itemTransformer{}
 	for _, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
@@ -866,7 +862,27 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 // getUintForLimitOffset gets uint64 value for limit/offset.
 // For ordinary statement, limit/offset should be uint64 constant value.
 // For prepared statement, limit/offset is string. We should convert it to uint64.
-func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint64, error) {
+func getUintForLimitOffset(ctx sessionctx.Context, n ast.Node) (uint64, error) {
+	var val interface{}
+	switch v := n.(type) {
+	case *driver.ValueExpr:
+		val = v.GetValue()
+	case *driver.ParamMarkerExpr:
+		param, err := expression.GetParamExpression(ctx, v)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		str, isNull, err := expression.GetStringFromConstant(ctx, param)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if isNull {
+			return 0, nil
+		}
+		val = str
+	default:
+		return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", v)
+	}
 	switch v := val.(type) {
 	case uint64:
 		return v, nil
@@ -875,22 +891,23 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 			return uint64(v), nil
 		}
 	case string:
+		sc := ctx.GetSessionVars().StmtCtx
 		uVal, err := types.StrToUint(sc, v)
 		return uVal, errors.Trace(err)
 	}
 	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
-func extractLimitCountOffset(sc *stmtctx.StatementContext, limit *ast.Limit) (count uint64,
+func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count uint64,
 	offset uint64, err error) {
 	if limit.Count != nil {
-		count, err = getUintForLimitOffset(sc, limit.Count.(ast.ValueExpr).GetValue())
+		count, err = getUintForLimitOffset(ctx, limit.Count)
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
 	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(sc, limit.Offset.(ast.ValueExpr).GetValue())
+		offset, err = getUintForLimitOffset(ctx, limit.Offset)
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
@@ -904,8 +921,7 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		offset, count uint64
 		err           error
 	)
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if count, offset, err = extractLimitCountOffset(sc, limit); err != nil {
+	if count, offset, err = extractLimitCountOffset(b.ctx, limit); err != nil {
 		return nil, err
 	}
 
@@ -1188,7 +1204,7 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
 	case *driver.ParamMarkerExpr:
-		newNode := expression.ConvertToByItemExpr(g.ctx, inNode)
+		newNode := expression.ConvertToByItemExpr(inNode)
 		g.isParam = true
 		return newNode, true
 	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
@@ -1226,8 +1242,10 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		}
 	case *ast.PositionExpr:
 		pos, isNull, err := expression.PosFromPositionExpr(g.ctx, v)
-		if err != nil || isNull {
+		if err != nil {
 			g.err = ErrUnknown.GenWithStackByArgs()
+		}
+		if err != nil || isNull {
 			return inNode, false
 		}
 		if pos < 1 || pos > len(g.fields) {
