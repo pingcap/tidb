@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -843,7 +842,26 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 // getUintForLimitOffset gets uint64 value for limit/offset.
 // For ordinary statement, limit/offset should be uint64 constant value.
 // For prepared statement, limit/offset is string. We should convert it to uint64.
-func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint64, error) {
+//func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint64, error) {
+func getUintForLimitOffset(ctx sessionctx.Context, n ast.Node) (uint64, error) {
+	var val interface{}
+	switch v := n.(type) {
+	case *driver.ValueExpr:
+		val = v.GetValue()
+	case *driver.ParamMarkerExpr:
+		param, err := expression.GetParamExpression(ctx, v, ctx.GetSessionVars().StmtCtx.UseCache)
+		if err != nil {
+			return 0, err
+		}
+		str, isNull, err := expression.GetStringFromConstant(ctx, param)
+		if err != nil {
+			return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", param)
+		}
+		if isNull {
+			return 0, nil
+		}
+		val = str
+	}
 	switch v := val.(type) {
 	case uint64:
 		return v, nil
@@ -852,22 +870,22 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 			return uint64(v), nil
 		}
 	case string:
-		uVal, err := types.StrToUint(sc, v)
+		uVal, err := types.StrToUint(ctx.GetSessionVars().StmtCtx, v)
 		return uVal, errors.Trace(err)
 	}
 	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
-func extractLimitCountOffset(sc *stmtctx.StatementContext, limit *ast.Limit) (count uint64,
+func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count uint64,
 	offset uint64, err error) {
 	if limit.Count != nil {
-		count, err = getUintForLimitOffset(sc, limit.Count.(ast.ValueExpr).GetValue())
+		count, err = getUintForLimitOffset(ctx, limit.Count)
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
 	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(sc, limit.Offset.(ast.ValueExpr).GetValue())
+		offset, err = getUintForLimitOffset(ctx, limit.Offset)
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
@@ -881,8 +899,7 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		offset, count uint64
 		err           error
 	)
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if count, offset, err = extractLimitCountOffset(sc, limit); err != nil {
+	if count, offset, err = extractLimitCountOffset(b.ctx, limit); err != nil {
 		return nil, err
 	}
 

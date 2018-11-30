@@ -526,3 +526,30 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, useCa
 	}
 	return value, nil
 }
+
+// GetStringFromConstant gets a string value from the Constant expression.
+func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bool, error) {
+	con, ok := value.(*Constant)
+	if !ok {
+		err := errors.Errorf("Not a Constant expression %+v", value)
+		return "", true, errors.Trace(err)
+	}
+	str, isNull, err := con.EvalString(ctx, chunk.Row{})
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
+	}
+	return str, false, nil
+}
+
+// GetIntFromConstant gets an interger value from the Constant expression.
+func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, error) {
+	str, isNull, err := GetStringFromConstant(ctx, value)
+	if err != nil || isNull {
+		return 0, true, errors.Trace(err)
+	}
+	intNum, err := strconv.Atoi(str)
+	if err != nil {
+		return 0, true, nil
+	}
+	return intNum, false, nil
+}
