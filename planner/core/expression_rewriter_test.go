@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testExpressionRewriterSuite{})
@@ -57,4 +58,47 @@ func (s *testExpressionRewriterSuite) TestBinaryOpFunction(c *C) {
 	tk.MustExec("INSERT INTO t VALUES (1, 2, 3), (NULL, 2, 3  ), (1, NULL, 3),(1, 2,   NULL),(NULL, 2, 3+1), (1, NULL, 3+1), (1, 2+1, NULL),(NULL, 2, 3-1), (1, NULL, 3-1), (1, 2-1, NULL)")
 	tk.MustQuery("SELECT * FROM t WHERE (a,b,c) <= (1,2,3) order by b").Check(testkit.Rows("1 1 <nil>", "1 2 3"))
 	tk.MustQuery("SELECT * FROM t WHERE (a,b,c) > (1,2,3) order by b").Check(testkit.Rows("1 3 <nil>"))
+}
+
+func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1(
+		a varchar(10) default 'def',
+		b varchar(10),
+		c int default '10',
+		d double default '3.14',
+		e datetime default '20180101',
+		f datetime default current_timestamp);`)
+	tk.MustExec("insert into t1(a, b, c, d) values ('1', '1', 1, 1)")
+	tk.MustQuery(`select
+		default(a) as defa, 
+		default(b) as defb,
+		default(c) as defc,
+		default(d) as defd,
+		default(e) as defe,
+		default(f) as deff
+		from t1`).Check(testutil.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|<nil>"))
+
+	tk.MustExec("create table t2(a varchar(10), b varchar(10))")
+	tk.MustExec("insert into t2 values ('1', '1')")
+	_, err = tk.Exec("select default(a) from t1, t2")
+	c.Assert(err, NotNil)
+	tk.MustQuery("select default(t1.a) from t1, t2").Check(testkit.Rows("def"))
+
+	tk.MustExec("prepare stmt from 'select default(a) from t1';")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("def"))
+	tk.MustExec("alter table t1 modify a varchar(10) default 'DEF'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("DEF"))
+
+	tk.MustExec("update t1 set c = c + default(c)")
+	tk.MustQuery("select c from t1").Check(testkit.Rows("11"))
 }
