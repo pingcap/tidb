@@ -137,6 +137,47 @@ func (s *testDDLSuite) TestTableError(c *C) {
 
 }
 
+func (s *testDDLSuite) TestViewError(c *C) {
+	store := testCreateStore(c, "test_view_error")
+	defer store.Close()
+
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	defer d.Stop()
+	ctx := testNewContext(d)
+
+	// Schema ID is wrong, so dropping table is failed.
+	doDDLJobErr(c, -1, 1, model.ActionDropTable, nil, ctx, d)
+	// Table ID is wrong, so dropping table is failed.
+	dbInfo := testSchemaInfo(c, d, "test")
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
+	job := doDDLJobErr(c, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
+
+	// Table ID or schema ID is wrong, so getting table is failed.
+	tblInfo := testViewInfo(c, d, "t", 3)
+	testCreateView(c, ctx, d, dbInfo, tblInfo)
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		job.SchemaID = -1
+		job.TableID = -1
+		t := meta.NewMeta(txn)
+		_, err1 := getTableInfo(t, job, job.SchemaID)
+		c.Assert(err1, NotNil)
+		job.SchemaID = dbInfo.ID
+		_, err1 = getTableInfo(t, job, job.SchemaID)
+		c.Assert(err1, NotNil)
+		return nil
+	})
+	c.Assert(err, IsNil)
+
+	// Args is wrong, so creating view is failed.
+	doDDLJobErr(c, 1, 1, model.ActionCreateView, []interface{}{1}, ctx, d)
+	// Schema ID is wrong and orReplace is false, so creating view is failed.
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
+	// View exists and orReplace is false, so creating view is failed.
+	tblInfo.ID = tblInfo.ID + 1
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
+
+}
+
 func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 	store := testCreateStore(c, "test_invalid_ddl_job_type_error")
 	defer store.Close()
