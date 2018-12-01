@@ -980,6 +980,67 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
+func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
+	ident := ast.Ident{Name: s.ViewName.Name, Schema: s.ViewName.Schema}
+	is := d.GetInformationSchema(ctx)
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+	if is.TableExists(ident.Schema, ident.Name) && !s.OrReplace {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+	}
+	if err = checkTooLongTable(ident.Name); err != nil {
+		return err
+	}
+	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
+
+	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, nil)
+	if err != nil {
+		return err
+	}
+	tbInfo.View = viewInfo
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo, s.OrReplace},
+	}
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return err
+	}
+	if tbInfo.AutoIncID > 1 {
+		// Default tableAutoIncID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		err = d.handleAutoIncID(tbInfo, schema.ID)
+	}
+	err = d.callHookOnChanged(err)
+	return err
+}
+
+func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
+	var tableColumns = make([]*table.Column, len(s.Cols))
+	for i, v := range s.Cols {
+		tableColumns[i] = table.ToColumn(&model.ColumnInfo{
+			Name:   v,
+			ID:     int64(i),
+			Offset: i,
+			State:  model.StatePublic,
+		})
+	}
+
+	viewInfo := &model.ViewInfo{Cols: s.Cols, Definer: s.Definer, Algorithm: s.Algorithm,
+		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
+
+	if s.Definer.CurrentUser {
+		viewInfo.Definer = ctx.GetSessionVars().User
+	}
+	return viewInfo, tableColumns
+}
+
 func checkPartitionByHash(pi *model.PartitionInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return errors.Trace(err)
