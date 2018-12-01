@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -169,6 +170,7 @@ type expressionRewriter struct {
 	insertPlan *Insert
 }
 
+// constructBinaryOpFunction converts binary operator functions
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( a0 NE b0, a0 op b0,
@@ -798,6 +800,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.isNullToExpression(v)
 	case *ast.IsTruthExpr:
 		er.isTrueToScalarFunc(v)
+	case *ast.DefaultExpr:
+		er.evalDefaultExpr(v)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -1275,4 +1279,48 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.b.curClause = orderByClause
 	}
 	er.err = ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[er.b.curClause])
+}
+
+func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
+	col, err := er.schema.FindColumn(v.Name)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
+
+	table, err := er.b.is.TableByName(col.DBName, col.OrigTblName)
+	if err != nil {
+		er.err = errors.Trace(err)
+		return
+	}
+
+	var val *expression.Constant
+	for _, col := range table.Cols() {
+		if col.Name.L == v.Name.Name.L {
+			// if column default value is 'current_timestamp', use NULL to be compatible with MySQL 5.7
+			if hasCurrentTimestampDefault(col) {
+				val = expression.Null
+			} else {
+				val, er.err = er.b.getDefaultValue(col)
+			}
+			break
+		}
+	}
+	if er.err != nil {
+		return
+	}
+	stkLen := len(er.ctxStack)
+	er.ctxStack = er.ctxStack[:stkLen-1]
+	er.ctxStack = append(er.ctxStack, val)
+}
+
+func hasCurrentTimestampDefault(col *table.Column) bool {
+	if col.Tp != mysql.TypeTimestamp && col.Tp != mysql.TypeDatetime {
+		return false
+	}
+	x, ok := col.DefaultValue.(string)
+	if !ok {
+		return false
+	}
+	return strings.ToUpper(x) == strings.ToUpper(ast.CurrentTimestamp)
 }
