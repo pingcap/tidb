@@ -31,11 +31,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"strconv"
-	"strings"
 )
 
-func onCreateTable(d *ddlCtx, w *worker, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	var withSelect bool   // if this is a 'create table ... select' job
@@ -59,8 +57,10 @@ func onCreateTable(d *ddlCtx, w *worker, t *meta.Meta, job *model.Job) (ver int6
 
 		if withSelect {
 			tbInfo.State = model.StateWriteReorganization
+			job.SchemaState = model.StateWriteReorganization
 		} else {
 			tbInfo.State = model.StatePublic
+			job.SchemaState = model.StatePublic
 		}
 
 		err = t.CreateTable(schemaID, tbInfo)
@@ -81,14 +81,11 @@ func onCreateTable(d *ddlCtx, w *worker, t *meta.Meta, job *model.Job) (ver int6
 		}
 
 		tbInfo.State = model.StatePublic
+		job.SchemaState = model.StatePublic
 	default:
 		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
 	}
 	tbInfo.UpdateTS = t.StartTS
-	if EnableSplitTableRegion {
-		// TODO: Add restrictions to this operation.
-		go splitTableRegion(d.store, tbInfo.ID)
-	}
 	ver, err = updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
 	if err != nil {
 		job.State = model.JobStateCancelled
