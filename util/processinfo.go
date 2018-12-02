@@ -27,7 +27,6 @@ type ProcessInfo struct {
 	Time    time.Time
 	State   uint16
 	Info    string
-	Mem     int64
 }
 
 // SessionManager is an interface for session manage. Show processlist and
