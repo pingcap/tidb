@@ -88,11 +88,24 @@ func (e *RuntimeStatsColl) Get(planID string) *RuntimeStats {
 	return runtimeStats
 }
 
+// Exists checks if the planID exists in the stats collection.
+func (e *RuntimeStatsColl) Exists(planID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, exists := e.stats[planID]
+	return exists
+}
+
 // Record records executor's execution.
 func (e *RuntimeStats) Record(d time.Duration, rowNum int) {
 	atomic.AddInt32(&e.loop, 1)
 	atomic.AddInt64(&e.consume, int64(d))
 	atomic.AddInt64(&e.rows, int64(rowNum))
+}
+
+// SetRowNum sets the row num.
+func (e *RuntimeStats) SetRowNum(rowNum int64) {
+	atomic.StoreInt64(&e.rows, rowNum)
 }
 
 func (e *RuntimeStats) String() string {

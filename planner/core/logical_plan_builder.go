@@ -680,7 +680,6 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		}
 		unionCols = append(unionCols, &expression.Column{
 			ColName:  col.ColName,
-			TblName:  col.TblName,
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
@@ -820,7 +819,11 @@ func (by *ByItems) Clone() *ByItems {
 }
 
 func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) (*LogicalSort, error) {
-	b.curClause = orderByClause
+	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+		b.curClause = globalOrderByClause
+	} else {
+		b.curClause = orderByClause
+	}
 	sort := LogicalSort{}.Init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
