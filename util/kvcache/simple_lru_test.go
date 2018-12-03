@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 func TestT(t *testing.T) {
@@ -52,7 +53,10 @@ func newMockHashKey(key int64) *mockCacheKey {
 }
 
 func (s *testLRUCacheSuite) TestPut(c *C) {
-	lru := NewSimpleLRUCache(3)
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 	c.Assert(lru.capacity, Equals, uint(3))
 
 	keys := make([]*mockCacheKey, 5)
@@ -104,8 +108,37 @@ func (s *testLRUCacheSuite) TestPut(c *C) {
 	c.Assert(root, IsNil)
 }
 
+func (s *testLRUCacheSuite) TestOOMGuard(c *C) {
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 1.0, maxMem)
+	c.Assert(lru.capacity, Equals, uint(3))
+
+	keys := make([]*mockCacheKey, 5)
+	vals := make([]int64, 5)
+
+	for i := 0; i < 5; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = int64(i)
+		lru.Put(keys[i], vals[i])
+	}
+	c.Assert(lru.size, Equals, uint(0))
+
+	// test for non-existent elements
+	for i := 0; i < 5; i++ {
+		hash := string(keys[i].Hash())
+		element, exists := lru.elements[hash]
+		c.Assert(exists, IsFalse)
+		c.Assert(element, IsNil)
+	}
+}
+
 func (s *testLRUCacheSuite) TestGet(c *C) {
-	lru := NewSimpleLRUCache(3)
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 
 	keys := make([]*mockCacheKey, 5)
 	vals := make([]int64, 5)
@@ -145,7 +178,10 @@ func (s *testLRUCacheSuite) TestGet(c *C) {
 }
 
 func (s *testLRUCacheSuite) TestDelete(c *C) {
-	lru := NewSimpleLRUCache(3)
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 0.1, maxMem)
 
 	keys := make([]*mockCacheKey, 3)
 	vals := make([]int64, 3)
@@ -168,4 +204,30 @@ func (s *testLRUCacheSuite) TestDelete(c *C) {
 
 	_, exists = lru.Get(keys[2])
 	c.Assert(exists, IsTrue)
+}
+
+func (s *testLRUCacheSuite) TestDeleteAll(c *C) {
+	maxMem, err := memory.MemTotal()
+	c.Assert(err, IsNil)
+
+	lru := NewSimpleLRUCache(3, 0.1, maxMem)
+
+	keys := make([]*mockCacheKey, 3)
+	vals := make([]int64, 3)
+
+	for i := 0; i < 3; i++ {
+		keys[i] = newMockHashKey(int64(i))
+		vals[i] = int64(i)
+		lru.Put(keys[i], vals[i])
+	}
+	c.Assert(int(lru.size), Equals, 3)
+
+	lru.DeleteAll()
+
+	for i := 0; i < 3; i++ {
+		value, exists := lru.Get(keys[i])
+		c.Assert(exists, IsFalse)
+		c.Assert(value, IsNil)
+		c.Assert(int(lru.size), Equals, 0)
+	}
 }

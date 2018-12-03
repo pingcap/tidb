@@ -190,6 +190,10 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 		return resetErrDataTooLong(colName.O, rowIdx+1, err)
 	}
 
+	if types.ErrOverflow.Equal(err) {
+		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
+	}
+
 	return errors.Trace(err)
 }
 

@@ -17,9 +17,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -31,12 +33,16 @@ func TestT(t *testing.T) {
 var _ = Suite(&testCascadesSuite{})
 
 type testCascadesSuite struct {
+	*parser.Parser
+	is   infoschema.InfoSchema
 	sctx sessionctx.Context
 }
 
 func (s *testCascadesSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	s.sctx = mock.NewContext()
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockTable()})
+	s.sctx = plannercore.MockContext()
+	s.Parser = parser.New()
 }
 
 func (s *testCascadesSuite) TearDownSuite(c *C) {
@@ -84,4 +90,22 @@ func (s *testCascadesSuite) TestGroupExists(c *C) {
 
 	g.Delete(expr)
 	c.Assert(g.Exists(expr), IsFalse)
+}
+
+func (s *testCascadesSuite) TestGroupGetFirstElem(c *C) {
+	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
+	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx))
+	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
+	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx))
+	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
+
+	g := NewGroup(expr0)
+	g.Insert(expr1)
+	g.Insert(expr2)
+	g.Insert(expr3)
+	g.Insert(expr4)
+
+	c.Assert(g.GetFirstElem(OperandProjection).Value.(*GroupExpr), Equals, expr0)
+	c.Assert(g.GetFirstElem(OperandLimit).Value.(*GroupExpr), Equals, expr1)
+	c.Assert(g.GetFirstElem(OperandAny).Value.(*GroupExpr), Equals, expr0)
 }
