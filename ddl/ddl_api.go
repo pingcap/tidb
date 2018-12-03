@@ -1354,10 +1354,8 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrUnsupportedAddPartition)
 	}
 
-	if t.Meta().Partition.Type == model.PartitionTypeRange {
-		if len(spec.PartDefinitions) == 0 {
-			return errors.Trace(ErrPartitionsMustBeDefined)
-		}
+	if t.Meta().Partition.Type == model.PartitionTypeRange && len(spec.PartDefinitions) == 0 {
+		return errors.Trace(ErrPartitionsMustBeDefined)
 	}
 	partInfo, err := buildPartitionInfo(meta, d, spec)
 	if err != nil {

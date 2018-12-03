@@ -2761,10 +2761,17 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 		partition p2 values less than maxvalue
 	);`
 	s.testErrorCode(c, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
-
-	sql2 := "alter table table1 add partition"
+	s.tk.MustExec(`create table table_MustBeDefined (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`)
+	sql2 := "alter table table_MustBeDefined add partition"
 	s.testErrorCode(c, sql2, tmysql.ErrPartitionsMustBeDefined)
-	
 	s.tk.MustExec("drop table if exists table2;")
 	s.tk.MustExec(`create table table2 (
 
