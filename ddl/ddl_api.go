@@ -1350,13 +1350,10 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 	// We don't support add hash type partition now.
-	if t.Meta().Partition.Type == model.PartitionTypeHash {
+	if meta.Partition.Type == model.PartitionTypeHash {
 		return errors.Trace(ErrUnsupportedAddPartition)
 	}
 
-	if t.Meta().Partition.Type == model.PartitionTypeRange && len(spec.PartDefinitions) == 0 {
-		return errors.Trace(ErrPartitionsMustBeDefined)
-	}
 	partInfo, err := buildPartitionInfo(meta, d, spec)
 	if err != nil {
 		return errors.Trace(err)
@@ -1408,12 +1405,12 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	// Coalesce partition can only be used on hash/key partitions.
-	if t.Meta().Partition.Type == model.PartitionTypeRange {
+	if meta.Partition.Type == model.PartitionTypeRange {
 		return errors.Trace(ErrCoalesceOnlyOnHashPartition)
 	}
 
 	// We don't support coalesce partitions hash type partition now.
-	if t.Meta().Partition.Type == model.PartitionTypeHash {
+	if meta.Partition.Type == model.PartitionTypeHash {
 		return errors.Trace(ErrUnsupportedCoalescePartition)
 	}
 
@@ -2208,6 +2205,9 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 }
 
 func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	if meta.Partition.Type == model.PartitionTypeRange && len(spec.PartDefinitions) == 0 {
+		return nil, errors.Trace(ErrPartitionsMustBeDefined)
+	}
 	part := &model.PartitionInfo{
 		Type:    meta.Partition.Type,
 		Expr:    meta.Partition.Expr,
