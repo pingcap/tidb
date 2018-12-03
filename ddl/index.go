@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util/schemautil"
 	"math"
 	"sync/atomic"
 	"time"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )

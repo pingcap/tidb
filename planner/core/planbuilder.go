@@ -15,7 +15,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/schemautil"
 	"strings"
 
 	"github.com/cznic/mathutil"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/schemautil"
 )
 
 type visitInfo struct {
