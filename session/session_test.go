@@ -2002,10 +2002,10 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 
 func (s *testSessionSuite) TestBatchCommit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_batch_commit = 1")
 	tk.MustExec("create table t (id int)")
 	saved := config.GetGlobalConfig().Performance
 	config.GetGlobalConfig().Performance.StmtCountLimit = 3
-	config.GetGlobalConfig().Performance.BatchCommit = true
 	defer func() {
 		config.GetGlobalConfig().Performance = saved
 	}()
