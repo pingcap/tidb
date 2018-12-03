@@ -354,11 +354,6 @@ type IndexLookUpExecutor struct {
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
-	log.Warnf("index look up, open ---------------------------------------------------------------------------- table %v, index %v", e.table.Meta().Name, e.index.Name)
-	if e.table.Meta().Name.L == "x" {
-		return nil
-	}
-
 	var err error
 	if e.corColInAccess {
 		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)

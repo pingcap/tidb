@@ -261,19 +261,17 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		wg.Add(1)
 		go func(num int, idx string, ch chan result) {
 			defer wg.Done()
-			startTime := time.Now()
 			sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 			idxCnt, err := getCount(ctx, sql)
 			if err != nil {
 				ch <- result{
 					greater: InvalidGreater,
 					offsert: i,
-					err:     err,
+					err:     errors.Trace(err),
 				}
 			}
-
+			log.Infof("check indices count, table %s cnt %d, index %s cnt %d", tableName, tblCnt, idx, idxCnt)
 			if tblCnt == idxCnt {
-				log.Warnf("count ............... no.%d name %v, sub %v", num, idx, time.Since(startTime))
 				return
 			}
 
@@ -292,11 +290,11 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	}
 	wg.Wait()
 
-	log.Warnf("finish count .................. sub %v", time.Since(startT))
 	if len(retCh) > 0 {
 		ret := <-retCh
-		return ret.greater, ret.offsert, err
+		return ret.greater, ret.offsert, errors.Trace(ret.err)
 	}
+	log.Warnf("finish count .................. sub %v", time.Since(startT))
 	return 0, 0, nil
 }
 

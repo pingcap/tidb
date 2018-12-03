@@ -439,15 +439,15 @@ func (e *CheckTableExec) Close() error {
 		return nil
 	}
 
+	close(e.exitCh)
 	var err error
 	for _, src := range e.srcs {
-		err = src.Close()
-		if err != nil {
-			return errors.Trace(err)
+		err1 := src.Close()
+		if err == nil && err1 != nil {
+			err = err1
 		}
 	}
-	close(e.exitCh)
-	return nil
+	return errors.Trace(err)
 }
 
 func (e *CheckTableExec) checkIndex(ctx context.Context, src *IndexLookUpExecutor) error {
@@ -457,13 +457,11 @@ func (e *CheckTableExec) checkIndex(ctx context.Context, src *IndexLookUpExecuto
 		retFieldTypes[i] = cols[i].RetType
 	}
 	chk := chunk.New(retFieldTypes, e.initCap, e.maxChunkSize)
-	// log.Warnf(".................. types %v, cols %v", retFieldTypes, cols)
 	for {
 		err := src.Next(ctx, chk)
 		if err != nil {
 			select {
 			case e.errCh <- errors.Trace(err):
-				log.Warnf(".................. err %v", err)
 				return errors.Trace(err)
 			default:
 			}
@@ -494,7 +492,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
 	if err != nil {
-		log.Warnf("check table, greater %v index %s error %v", greater, idxNames[idxOffset], errors.ErrorStack(err))
+		log.Warnf("check table %v, greater %v index %s error %v", e.tblInfo.Name, greater, idxNames[idxOffset], errors.ErrorStack(err))
 		t := e.srcs[idxOffset].table
 		txn := e.ctx.Txn(true)
 		switch greater {
