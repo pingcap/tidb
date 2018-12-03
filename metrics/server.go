@@ -48,6 +48,13 @@ var (
 			Help:      "Number of connections.",
 		})
 
+	PreparedStmtGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "server",
+		Name:      "prepared_stmts",
+		Help:      "number of prepared statements.",
+	})
+
 	ExecuteErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

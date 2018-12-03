@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
 )
 
@@ -155,14 +156,15 @@ func (e *ShowExec) fetchAll() error {
 }
 
 func (e *ShowExec) fetchShowEngines() error {
-	e.appendRow([]interface{}{
-		"InnoDB",
-		"DEFAULT",
-		"Supports transactions, row-level locking, and foreign keys",
-		"YES",
-		"YES",
-		"YES",
-	})
+	sql := `SELECT * FROM information_schema.engines`
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		e.result.AppendRow(row)
+	}
 	return nil
 }
 
@@ -241,10 +243,13 @@ func (e *ShowExec) fetchShowProcessList() error {
 }
 
 func (e *ShowExec) fetchShowTables() error {
-	if !e.is.SchemaExists(e.DBName) {
-		return errors.Errorf("Can not find DB: %s", e.DBName)
-	}
 	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(e.DBName.O) {
+		return e.dbAccessDenied()
+	}
+	if !e.is.SchemaExists(e.DBName) {
+		return ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
 	// sort for tables
 	var tableNames []string
 	for _, v := range e.is.SchemaTables(e.DBName) {
@@ -269,18 +274,34 @@ func (e *ShowExec) fetchShowTables() error {
 }
 
 func (e *ShowExec) fetchShowTableStatus() error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(e.DBName.O) {
+		return e.dbAccessDenied()
+	}
 	if !e.is.SchemaExists(e.DBName) {
-		return errors.Errorf("Can not find DB: %s", e.DBName)
+		return ErrBadDB.GenWithStackByArgs(e.DBName)
 	}
 
-	// sort for tables
-	tables := e.is.SchemaTables(e.DBName)
-	sort.Sort(table.Slice(tables))
+	sql := fmt.Sprintf(`SELECT
+               table_name, engine, version, row_format, table_rows,
+               avg_row_length, data_length, max_data_length, index_length,
+               data_free, auto_increment, create_time, update_time, check_time, 
+               table_collation, IFNULL(check_sum,''), create_options, table_comment
+               FROM information_schema.tables
+	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
-	for _, t := range tables {
-		now := types.CurrentTime(mysql.TypeDatetime)
-		e.appendRow([]interface{}{t.Meta().Name.O, "InnoDB", 10, "Compact", 100, 100, 100, 100, 100, 100, 100,
-			model.TSConvert2Time(t.Meta().UpdateTS).String(), now, now, "utf8_general_ci", "", createOptions(t.Meta()), t.Meta().Comment})
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, row := range rows {
+		if checker != nil && !checker.RequestVerification(e.DBName.O, row.GetString(0), "", mysql.AllPrivMask) {
+			continue
+		}
+		e.result.AppendRow(row)
+
 	}
 	return nil
 }
@@ -294,9 +315,15 @@ func createOptions(tb *model.TableInfo) string {
 
 func (e *ShowExec) fetchShowColumns() error {
 	tb, err := e.getTable()
+
 	if err != nil {
 		return errors.Trace(err)
 	}
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
+
 	cols := tb.Cols()
 	for _, col := range cols {
 		if e.Column != nil && e.Column.Name.L != col.Name.L {
@@ -344,13 +371,17 @@ func (e *ShowExec) fetchShowColumns() error {
 	return nil
 }
 
-// TODO: index collation can have values A (ascending) or NULL (not sorted).
-// see: https://dev.mysql.com/doc/refman/5.7/en/show-index.html
 func (e *ShowExec) fetchShowIndex() error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.RequestVerification(e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
+
 	if tb.Meta().PKIsHandle {
 		var pkCol *table.Column
 		for _, col := range tb.Cols() {
@@ -507,19 +538,35 @@ func getDefaultCollate(charsetName string) string {
 	return ""
 }
 
+// escape the identifier for pretty-printing.
+// For instance, the identifier "foo `bar`" will become "`foo ``bar```".
+// The sqlMode controls whether to escape with backquotes (`) or double quotes
+// (`"`) depending on whether mysql.ModeANSIQuotes is enabled.
+func escape(cis model.CIStr, sqlMode mysql.SQLMode) string {
+	var quote string
+	if sqlMode&mysql.ModeANSIQuotes != 0 {
+		quote = `"`
+	} else {
+		quote = "`"
+	}
+	return quote + strings.Replace(cis.O, quote, quote+quote, -1) + quote
+}
+
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	sqlMode := e.ctx.GetSessionVars().SQLMode
+
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
+	buf.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode)))
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
-		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
+		buf.WriteString(fmt.Sprintf("  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc()))
 		if col.IsGenerated() {
 			// It's a generated column.
 			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
@@ -576,7 +623,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
+		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode)))
 	}
 
 	if len(tb.Indices()) > 0 {
@@ -594,14 +641,14 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
-			buf.WriteString(fmt.Sprintf("  UNIQUE KEY `%s` ", idxInfo.Name.O))
+			buf.WriteString(fmt.Sprintf("  UNIQUE KEY %s ", escape(idxInfo.Name, sqlMode)))
 		} else {
-			buf.WriteString(fmt.Sprintf("  KEY `%s` ", idxInfo.Name.O))
+			buf.WriteString(fmt.Sprintf("  KEY %s ", escape(idxInfo.Name, sqlMode)))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
 		for _, c := range idxInfo.Columns {
-			colInfo := fmt.Sprintf("`%s`", c.Name.String())
+			colInfo := escape(c.Name, sqlMode)
 			if c.Length != types.UnspecifiedLength {
 				colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
 			}
@@ -698,13 +745,19 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker != nil && e.ctx.GetSessionVars().User != nil && !checker.DBIsVisible(fmt.Sprint(e.DBName)) {
+		return e.dbAccessDenied()
+	}
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
 	}
 
+	sqlMode := e.ctx.GetSessionVars().SQLMode
+
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "CREATE DATABASE `%s`", db.Name.O)
+	fmt.Fprintf(&buf, "CREATE DATABASE %s", escape(db.Name, sqlMode))
 	if s := db.Charset; len(s) > 0 {
 		fmt.Fprintf(&buf, " /* !40100 DEFAULT CHARACTER SET %s */", s)
 	}
@@ -823,6 +876,28 @@ func (e *ShowExec) getTable() (table.Table, error) {
 		return nil, errors.Errorf("table %s not found", e.Table.Name)
 	}
 	return tb, nil
+}
+
+func (e *ShowExec) dbAccessDenied() error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrDBaccessDenied.GenWithStackByArgs(u, h, e.DBName)
+}
+
+func (e *ShowExec) tableAccessDenied(access string, table string) error {
+	user := e.ctx.GetSessionVars().User
+	u := user.Username
+	h := user.Hostname
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		u = user.AuthUsername
+		h = user.AuthHostname
+	}
+	return ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {
