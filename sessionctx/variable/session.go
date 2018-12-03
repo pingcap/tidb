@@ -16,6 +16,7 @@ package variable
 import (
 	"crypto/tls"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -43,6 +45,8 @@ const (
 	codeCantSetToNull  terror.ErrCode = 2
 	codeSnapshotTooOld terror.ErrCode = 3
 )
+
+var preparedStmtCount int64
 
 // Error instances.
 var (
@@ -532,6 +536,46 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	default:
 		s.DDLReorgPriority = kv.PriorityLow
 	}
+}
+
+// AddPreparedStmt adds prepareStmt to current session and count in global.
+func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt *ast.Prepared) error {
+	if _, exists := s.PreparedStmts[stmtID]; !exists {
+		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
+		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)
+		if err != nil {
+			maxPreparedStmtCount = DefMaxPreparedStmtCount
+		}
+		newPreparedStmtCount := atomic.AddInt64(&preparedStmtCount, 1)
+		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
+			atomic.AddInt64(&preparedStmtCount, -1)
+			return ErrMaxPreparedStmtCountReached.GenWithStackByArgs(maxPreparedStmtCount)
+		}
+		metrics.PreparedStmtGauge.Set(float64(newPreparedStmtCount))
+	}
+	s.PreparedStmts[stmtID] = stmt
+	return nil
+}
+
+// RemovePreparedStmt removes preparedStmt from current session and decrease count in global.
+func (s *SessionVars) RemovePreparedStmt(stmtID uint32) {
+	_, exists := s.PreparedStmts[stmtID]
+	if !exists {
+		return
+	}
+	delete(s.PreparedStmts, stmtID)
+	afterMinus := atomic.AddInt64(&preparedStmtCount, -1)
+	metrics.PreparedStmtGauge.Set(float64(afterMinus))
+}
+
+// WithdrawAllPreparedStmt remove all preparedStmt in current session and decrease count in global.
+func (s *SessionVars) WithdrawAllPreparedStmt() {
+	psCount := len(s.PreparedStmts)
+	if psCount == 0 {
+		return
+	}
+	afterMinus := atomic.AddInt64(&preparedStmtCount, -int64(psCount))
+	metrics.PreparedStmtGauge.Set(float64(afterMinus))
 }
 
 // SetSystemVar sets the value of a system variable.

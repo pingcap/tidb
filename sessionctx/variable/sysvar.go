@@ -59,27 +59,29 @@ func GetSysVar(name string) *SysVar {
 
 // Variable error codes.
 const (
-	CodeUnknownStatusVar    terror.ErrCode = 1
-	CodeUnknownSystemVar    terror.ErrCode = mysql.ErrUnknownSystemVariable
-	CodeIncorrectScope      terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
-	CodeUnknownTimeZone     terror.ErrCode = mysql.ErrUnknownTimeZone
-	CodeReadOnly            terror.ErrCode = mysql.ErrVariableIsReadonly
-	CodeWrongValueForVar    terror.ErrCode = mysql.ErrWrongValueForVar
-	CodeWrongTypeForVar     terror.ErrCode = mysql.ErrWrongTypeForVar
-	CodeTruncatedWrongValue terror.ErrCode = mysql.ErrTruncatedWrongValue
+	CodeUnknownStatusVar            terror.ErrCode = 1
+	CodeUnknownSystemVar            terror.ErrCode = mysql.ErrUnknownSystemVariable
+	CodeIncorrectScope              terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
+	CodeUnknownTimeZone             terror.ErrCode = mysql.ErrUnknownTimeZone
+	CodeReadOnly                    terror.ErrCode = mysql.ErrVariableIsReadonly
+	CodeWrongValueForVar            terror.ErrCode = mysql.ErrWrongValueForVar
+	CodeWrongTypeForVar             terror.ErrCode = mysql.ErrWrongTypeForVar
+	CodeTruncatedWrongValue         terror.ErrCode = mysql.ErrTruncatedWrongValue
+	CodeMaxPreparedStmtCountReached terror.ErrCode = mysql.ErrMaxPreparedStmtCountReached
 )
 
 // Variable errors
 var (
-	UnknownStatusVar          = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar          = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
-	ErrIncorrectScope         = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
-	ErrUnknownTimeZone        = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
-	ErrReadOnly               = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
-	ErrWrongValueForVar       = terror.ClassVariable.New(CodeWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
-	ErrWrongTypeForVar        = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
-	ErrTruncatedWrongValue    = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
-	ErrUnsupportedValueForVar = terror.ClassVariable.New(CodeUnknownStatusVar, "variable '%s' does not yet support value: %s")
+	UnknownStatusVar               = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar               = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	ErrIncorrectScope              = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
+	ErrUnknownTimeZone             = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
+	ErrReadOnly                    = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
+	ErrWrongValueForVar            = terror.ClassVariable.New(CodeWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
+	ErrWrongTypeForVar             = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
+	ErrTruncatedWrongValue         = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	ErrMaxPreparedStmtCountReached = terror.ClassVariable.New(CodeMaxPreparedStmtCountReached, mysql.MySQLErrName[mysql.ErrMaxPreparedStmtCountReached])
+	ErrUnsupportedValueForVar      = terror.ClassVariable.New(CodeUnknownStatusVar, "variable '%s' does not yet support value: %s")
 )
 
 func init() {
@@ -91,13 +93,14 @@ func init() {
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownSystemVar:    mysql.ErrUnknownSystemVariable,
-		CodeIncorrectScope:      mysql.ErrIncorrectGlobalLocalVar,
-		CodeUnknownTimeZone:     mysql.ErrUnknownTimeZone,
-		CodeReadOnly:            mysql.ErrVariableIsReadonly,
-		CodeWrongValueForVar:    mysql.ErrWrongValueForVar,
-		CodeWrongTypeForVar:     mysql.ErrWrongTypeForVar,
-		CodeTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
+		CodeUnknownSystemVar:            mysql.ErrUnknownSystemVariable,
+		CodeIncorrectScope:              mysql.ErrIncorrectGlobalLocalVar,
+		CodeUnknownTimeZone:             mysql.ErrUnknownTimeZone,
+		CodeReadOnly:                    mysql.ErrVariableIsReadonly,
+		CodeWrongValueForVar:            mysql.ErrWrongValueForVar,
+		CodeWrongTypeForVar:             mysql.ErrWrongTypeForVar,
+		CodeTruncatedWrongValue:         mysql.ErrTruncatedWrongValue,
+		CodeMaxPreparedStmtCountReached: mysql.ErrMaxPreparedStmtCountReached,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
@@ -516,7 +519,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, "innodb_create_intrinsic", ""},
 	{ScopeGlobal, "gtid_executed_compression_period", ""},
 	{ScopeGlobal, "ndb_log_empty_epochs", ""},
-	{ScopeGlobal, "max_prepared_stmt_count", "16382"},
+	{ScopeGlobal, MaxPreparedStmtCount, strconv.FormatInt(DefMaxPreparedStmtCount, 10)},
 	{ScopeNone, "have_geometry", "YES"},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_max_mem_size", "16384"},
 	{ScopeGlobal | ScopeSession, "net_retry_count", "10"},
@@ -707,6 +710,8 @@ const (
 	GeneralLog = "general_log"
 	// AvoidTemporalUpgrade is the name for 'avoid_temporal_upgrade' system variable.
 	AvoidTemporalUpgrade = "avoid_temporal_upgrade"
+	// MaxPreparedStmtCount is the name for 'max_prepared_stmt_count' system variable.
+	MaxPreparedStmtCount = "max_prepared_stmt_count"
 	// BigTables is the name for 'big_tables' system variable.
 	BigTables = "big_tables"
 	// CheckProxyUsers is the name for 'check_proxy_users' system variable.
