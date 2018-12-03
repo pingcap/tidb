@@ -38,7 +38,8 @@ This proposal is prepared to implement the basic VIEW feature, which contains fo
 * `CREATE OR REPLACE VIEW`
 * `SELECT FROM VIEW`
 * `DROP VIEW`
-* `SHOW TABLE STATUS`
+* `SHOW TABLE STATUS`  
+
 All other unimplemented features will be listed for compatibility and discussed later. And we introduce `ViewInfo` to store the metadata for view and add an attribute `*ViewInfo` which named `View` to TableInfo. If `TableInfo.View` != nil, then this `TableInfo` is a view, otherwise this `TableInfo` is a base table:
 ```go
 type ViewInfo struct {
