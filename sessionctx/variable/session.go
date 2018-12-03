@@ -591,6 +591,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
 		s.BatchDelete = TiDBOptOn(val)
+	case TiDBBatchCommit:
+		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = tidbOptPositiveInt32(val, DefDMLBatchSize)
 	case TiDBCurrentTS, TiDBConfig:

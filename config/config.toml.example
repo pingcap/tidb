@@ -129,9 +129,6 @@ max-memory = 0
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
 
-# If true, the transaction will be committed when it reaches stmt-count-limit and starts a new transaction.
-batch-commit = false
-
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
 

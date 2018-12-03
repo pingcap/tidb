@@ -178,8 +178,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 		// So we limit the statement count in a transaction here.
 		history := GetHistory(sctx)
-		perfConfig := config.GetGlobalConfig().Performance
-		if history.Count() > int(perfConfig.StmtCountLimit) {
+		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 			if !perfConfig.BatchCommit {
 				err1 := se.RollbackTxn(ctx)
 				terror.Log(errors.Trace(err1))
