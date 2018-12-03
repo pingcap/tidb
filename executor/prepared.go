@@ -114,7 +114,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
 		p := parser.New()
-		p.SetWindowFunc(vars.EnableWindowFunction)
+		p.EnableWindowFunc(vars.EnableWindowFunction)
 		stmts, err = p.Parse(e.sqlText, charset, collation)
 	}
 	if err != nil {
