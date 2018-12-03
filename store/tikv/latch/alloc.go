@@ -14,6 +14,8 @@ package latch
 
 import (
 	"sync"
+
+	log "github.com/sirupsen/logrus"
 )
 
 const nodeBlockSize = 1024
@@ -53,6 +55,7 @@ func (a *nodeAlloc) New() nodePtr {
 			// nodePtr == 0 means IsNil, so don't use the data[0] node.
 			a.freeList++
 		}
+		log.Debug("nodeAlloc len(a.data) = ", len(a.data))
 	}
 	ret := a.freeList
 	n := ret.value(a)
