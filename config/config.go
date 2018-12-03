@@ -150,6 +150,7 @@ type Status struct {
 // Performance is the performance section of the config.
 type Performance struct {
 	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
+	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
@@ -184,8 +185,9 @@ type TxnLocalLatches struct {
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
-	Enabled  bool `toml:"enabled" json:"enabled"`
-	Capacity uint `toml:"capacity" json:"capacity"`
+	Enabled          bool    `toml:"enabled" json:"enabled"`
+	Capacity         uint    `toml:"capacity" json:"capacity"`
+	MemoryGuardRatio float64 `toml:"memory-guard-ratio" json:"memory-guard-ratio"`
 }
 
 // OpenTracing is the opentracing section of the config.
@@ -287,6 +289,7 @@ var defaultConf = Config{
 		MetricsInterval: 15,
 	},
 	Performance: Performance{
+		MaxMemory:           0,
 		TCPKeepAlive:        true,
 		CrossJoin:           true,
 		StatsLease:          "3s",
@@ -306,8 +309,9 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:  false,
-		Capacity: 100,
+		Enabled:          false,
+		Capacity:         100,
+		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
 		Enable: false,

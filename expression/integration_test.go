@@ -1831,6 +1831,19 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// for current_timestamp, current_timestamp()
 	result = tk.MustQuery(`select current_timestamp() = now(), current_timestamp = now()`)
 	result.Check(testkit.Rows("1 1"))
+
+	// for tidb_parse_tso
+	tk.MustExec("SET time_zone = '+00:00';")
+	result = tk.MustQuery(`select tidb_parse_tso(404411537129996288)`)
+	result.Check(testkit.Rows("2018-11-20 09:53:04.877000"))
+	result = tk.MustQuery(`select tidb_parse_tso("404411537129996288")`)
+	result.Check(testkit.Rows("2018-11-20 09:53:04.877000"))
+	result = tk.MustQuery(`select tidb_parse_tso(1)`)
+	result.Check(testkit.Rows("1970-01-01 00:00:00.000000"))
+	result = tk.MustQuery(`select tidb_parse_tso(0)`)
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery(`select tidb_parse_tso(-1)`)
+	result.Check(testkit.Rows("<nil>"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -3691,4 +3704,85 @@ func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
 	tk.MustExec(`insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");`)
 	res := tk.MustQuery(`select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;`)
 	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
+}
+
+func (s *testIntegrationSuite) TestForeignKeyVar(c *C) {
+
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("SET FOREIGN_KEY_CHECKS=1")
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1105 variable 'foreign_key_checks' does not yet support value: 1"))
+}
+
+func (s *testIntegrationSuite) TestUserVarMockWindFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a int, b varchar (20), c varchar (20));`)
+	tk.MustExec(`insert into t values
+					(1,'key1-value1','insert_order1'),
+    				(1,'key1-value2','insert_order2'),
+    				(1,'key1-value3','insert_order3'),
+    				(1,'key1-value4','insert_order4'),
+    				(1,'key1-value5','insert_order5'),
+    				(1,'key1-value6','insert_order6'),
+    				(2,'key2-value1','insert_order1'),
+    				(2,'key2-value2','insert_order2'),
+    				(2,'key2-value3','insert_order3'),
+    				(2,'key2-value4','insert_order4'),
+    				(2,'key2-value5','insert_order5'),
+    				(2,'key2-value6','insert_order6'),
+    				(3,'key3-value1','insert_order1'),
+    				(3,'key3-value2','insert_order2'),
+    				(3,'key3-value3','insert_order3'),
+    				(3,'key3-value4','insert_order4'),
+    				(3,'key3-value5','insert_order5'),
+    				(3,'key3-value6','insert_order6');
+					`)
+	tk.MustExec(`SET @LAST_VAL := NULL;`)
+	tk.MustExec(`SET @ROW_NUM := 0;`)
+
+	tk.MustQuery(`select * from (
+					SELECT a,
+    				       @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+    				       @LAST_VAL := a AS LAST_VAL,
+    				       b,
+    				       c
+    				FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+				) t2
+				where t2.ROW_NUM < 2;
+				`).Check(testkit.Rows(
+		`1 1 1 key1-value1 insert_order1`,
+		`2 1 2 key2-value1 insert_order1`,
+		`3 1 3 key3-value1 insert_order1`,
+	))
+
+	tk.MustQuery(`select * from (
+					SELECT a,
+    				       @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+    				       @LAST_VAL := a AS LAST_VAL,
+    				       b,
+    				       c
+    				FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+				) t2;
+				`).Check(testkit.Rows(
+		`1 1 1 key1-value1 insert_order1`,
+		`1 2 1 key1-value2 insert_order2`,
+		`1 3 1 key1-value3 insert_order3`,
+		`1 4 1 key1-value4 insert_order4`,
+		`1 5 1 key1-value5 insert_order5`,
+		`1 6 1 key1-value6 insert_order6`,
+		`2 1 2 key2-value1 insert_order1`,
+		`2 2 2 key2-value2 insert_order2`,
+		`2 3 2 key2-value3 insert_order3`,
+		`2 4 2 key2-value4 insert_order4`,
+		`2 5 2 key2-value5 insert_order5`,
+		`2 6 2 key2-value6 insert_order6`,
+		`3 1 3 key3-value1 insert_order1`,
+		`3 2 3 key3-value2 insert_order2`,
+		`3 3 3 key3-value3 insert_order3`,
+		`3 4 3 key3-value4 insert_order4`,
+		`3 5 3 key3-value5 insert_order5`,
+		`3 6 3 key3-value6 insert_order6`,
+	))
 }
