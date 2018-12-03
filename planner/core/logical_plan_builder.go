@@ -822,9 +822,9 @@ type itemTransformer struct {
 }
 
 func (t *itemTransformer) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch inNode.(type) {
+	switch n := inNode.(type) {
 	case *driver.ParamMarkerExpr:
-		newNode := expression.ConvertToByItemExpr(inNode)
+		newNode := expression.ConstructPositionExpr(n)
 		return newNode, true
 	}
 	return inNode, false
@@ -1200,11 +1200,11 @@ type gbyResolver struct {
 }
 
 func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch inNode.(type) {
+	switch n := inNode.(type) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
 	case *driver.ParamMarkerExpr:
-		newNode := expression.ConvertToByItemExpr(inNode)
+		newNode := expression.ConstructPositionExpr(n)
 		g.isParam = true
 		return newNode, true
 	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:

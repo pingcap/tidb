@@ -528,13 +528,9 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expr
 	return value, nil
 }
 
-// ConvertToByItemExpr rewrites ByItem.ExprNode to a proper ExprNode.
-func ConvertToByItemExpr(n ast.Node) ast.Node {
-	switch v := n.(type) {
-	case *driver.ParamMarkerExpr:
-		return &ast.PositionExpr{P: v}
-	}
-	return n
+// ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
+func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
+	return &ast.PositionExpr{P: p}
 }
 
 // PosFromPositionExpr generates a position value from PositionExpr.
