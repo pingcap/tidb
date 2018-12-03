@@ -16,9 +16,14 @@ Below is a visual depiction of a view:
   
 A view is created from a query using the "`CREATE OR REPLACE VIEW`" command. In the example below we are creating a PopularBooks view based on a query which selects all Books that have the IsPopular field checked. Following is the query:
 ```mysql
-CREATE OR REPLACE 
-  VIEW PopularBooks AS 
-    SELECT ISBN, Title, Author,PublishDate FROM Books WHERE IsPopular=1
+CREATE OR replace VIEW popularbooks 
+AS 
+  SELECT isbn, 
+         title, 
+         author, 
+         publishdate 
+  FROM   books 
+  WHERE  ispopular = 1 
 ```  
 
 Once a view is created, you can use it as you query any table in a `SELECT` statement. For example, to list all the popular book titles ordered by an author, you could write:  
@@ -29,8 +34,12 @@ SELECT Author, Title FROM PopularBooks ORDER BY Author
 In general you can use any of the SELECT clauses, such as GROUP BY, in a select statement containing a view.
 
 ## Proposal
-This proposal is prepared to implement the basic VIEW feature, which contains `CREATE OR REPLACE VIEW`, `SELECT FROM VIEW`, `DROP VIEW` and `SHOW TABLE STATUS`. All other unimplemented features will be listed for compatibility and discussed later.
-We introduce `ViewInfo` to store the metadata for view and add an attribute `*ViewInfo` which named `View` to TableInfo. If `TableInfo.ViewInfo` != nil, then this `TableInfo` is a base table, otherwise this `TableInfo` is a view:
+This proposal is prepared to implement the basic VIEW feature, which contains following ddl operations:
+* `CREATE OR REPLACE VIEW`
+* `SELECT FROM VIEW`
+* `DROP VIEW`
+* `SHOW TABLE STATUS`
+All other unimplemented features will be listed for compatibility and discussed later. And we introduce `ViewInfo` to store the metadata for view and add an attribute `*ViewInfo` which named `View` to TableInfo. If `TableInfo.View` != nil, then this `TableInfo` is a view, otherwise this `TableInfo` is a base table:
 ```go
 type ViewInfo struct {
 	Algorithm   ViewAlgorithm    `json:"view_algorithm"`
@@ -42,15 +51,15 @@ type ViewInfo struct {
 }
 ```
 * [Algorithm](https://dev.mysql.com/doc/refman/5.7/en/view-algorithms.html)  
-    The view SQL AlGORITHM characteristic. The value is one of UNDEFINED, MERGE OR TEMPTABLE. If no ALGORITHM clause is present, UNDEFINED is the default algorithm.
-    Currently, we will only implement Algorithm=MERGE.
+    The view SQL `AlGORITHM` characteristic. The value should be one of `UNDEFINED`, `MERGE` OR `TEMPTABLE`. If no `ALGORITHM` clause is present, `UNDEFINED` is the default algorithm.
+    Currently, we will only implement Algorithm=MERGE algorithm.
 * [Definer](https://dev.mysql.com/doc/refman/5.7/en/create-view.html)  
-    The account of the user who created the view, in 'user_name'@'host_name' format.
+    The account of the user who created the view, in `'user_name'@'host_name'` format.
 * [Security](https://dev.mysql.com/doc/refman/5.7/en/create-view.html)  
-    The view SQL SECURITY characteristic. The value is one of DEFINER or INVOKER.
+    The view SQL `SECURITY` characteristic. The value is one of `DEFINER` or `INVOKER`.
 * [CheckOption](https://dev.mysql.com/doc/refman/5.7/en/view-check-option.html)  
-    The WITH CHECK OPTION clause can be given to an updatable view to prevent inserts to rows for which the WHERE clause in the select_statement is not true. It also prevents updates to rows for which the WHERE clause is true but the update would cause it to be not true (in other words, it prevents visible rows from being updated to nonvisible rows).  
-    In a WITH CHECK OPTION clause for an updatable view, the LOCAL and CASCADED keywords determine the scope of check testing when the view is defined in terms of another view. When neither keyword is given, the default is CASCADED.
+    The `WITH CHECK OPTION` clause can be given to an updatable view to prevent inserts to rows for which the WHERE clause in the select_statement is not true. It also prevents updates to rows for which the WHERE clause is true but the update would cause it to be not true (in other words, it prevents visible rows from being updated to nonvisible rows).  
+    In a `WITH CHECK OPTION` clause for an updatable view, the `LOCAL` and `CASCADED` keywords determine the scope of check testing when the view is defined in terms of another view. When neither keyword is given, the default is CASCADED.
 * SelectStmt  
     This string is the origin `SELECT` SQL statement.
 * Cols  
@@ -61,7 +70,7 @@ type ViewInfo struct {
 ## Rationale
 1. Create VIEW  
    This proposal only supports the following grammar to create view:
-   ```
+   ```mysql
     CREATE
         [OR REPLACE]
         [ALGORITHM = {UNDEFINED | MERGE | TEMPTABLE}]
@@ -71,9 +80,9 @@ type ViewInfo struct {
         AS select_statement
         [WITH [CASCADED | LOCAL] CHECK OPTION]
     ```
-    1. Parse the create view statement and build a logical plan for select cause part. If any grammar error occurs, return errors to parser.   
-    2. Examine view definer's privileges. Definer should own both `CREATE_VIEW_PRIV` privilege and base table's `SELECT` privilege. We will resue `CREATE_PRIV` privilege when implement `CREATE VIEW` feature and will support `CREATE_VIEW_PRIV` check later.  
-    3. Examine create view statement. If the ViewFieldList cause part is empty, then we should generate view column names from SelectStmt cause. Otherwise check len(ViewFieldList) == len(Columns from SelectStmt). And then we save column names to `TableInfo.Columns`.
+    1. Parse the create view statement and build a logical plan for select clause part. If any grammar error occurs, return errors to parser.   
+    2. Examine view definer's privileges. Definer should own both `CREATE_VIEW_PRIV` privilege and base table's `SELECT` privilege. We will reuse `CREATE_PRIV` privilege when implement `CREATE VIEW` feature and will support `CREATE_VIEW_PRIV` check later.  
+    3. Examine create view statement. If the ViewFieldList clause part is empty, then we should generate view column names from SelectStmt clause. Otherwise check len(ViewFieldList) == len(Columns from SelectStmt). And then we save column names to `TableInfo.Columns`.
 2. DROP VIEW  
   Implement `DROP VIEW` grammar, and delete the existing view tableinfo object. This function should reuse `DROP TABLE` code logic.
 3. SELECT FROM VIEW  
@@ -93,7 +102,7 @@ type ViewInfo struct {
     In order to solve the problem described above, we must build a `Projection` at the top of original select's `LogicalPlan`, just like we rewrite view's `SelectStmt` from `select * from t` into **`select a as a,b as b from (select * from t)`**.  
     This is a temporary fix and we will implement TiDB to rewrite SQL with replacing all wildcard finally.  
 4. Show table status  
-  Modify `SHOW TABLE STATUS` function to support show view status, and we use this command to check if `CREATE VIEW` and `DROP VIEW` operation is successful. To reuse `SHOW TABLE STAUS` code logic is preferred.
+  Modify `SHOW TABLE STATUS` function to support show view status, and we use this command to check if `CREATE VIEW` and `DROP VIEW` operation is successful. To reuse `SHOW TABLE STATUS` code logical is preferred.
 
 ## Compatibility
 Add TiDB support for the basic VIEW feature without affecting other existing functions, and make TiDB more compatible with MySQL.
@@ -101,8 +110,9 @@ Add TiDB support for the basic VIEW feature without affecting other existing fun
 ## Implementation
 |Action  |Priority|Deadline|Notes|
 | ------ | ------ | ------ |-----|
-|CREATE [OR REPLACE] VIEW view_name [ALGORITHM = {UNDEFINED \| MERGE \| TEMPTABLE}] [(column_list)] AS select_statement|P1|2019/01/15|This task must be done before any other tasks.|
 |Extract ViewAlgorithm\ViewDefiner\ViewSQLSecurity\CheckOption to CreateViewStmt struct|P1|2019/01/15|--|
+|Add ViewInfo attribute to TableInfo and add ActionCreateView to ddl actionMap|P1|2019/01/15|--|
+|CREATE [OR REPLACE] VIEW view_name [ALGORITHM = {UNDEFINED \| MERGE \| TEMPTABLE}] [(column_list)] AS select_statement|P1|2019/01/15|This task must be done before any other tasks.|
 |SHOW TABLE STATUS|P1|2019/01/30|--|
 |DROP VIEW View|P1|2019/01/30|--|
 |SELECT … FROM VIEW|P1|2019/03/10|--|
