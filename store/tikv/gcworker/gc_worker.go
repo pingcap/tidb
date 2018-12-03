@@ -282,7 +282,6 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 }
 
 func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
-
 	enable, err := w.checkGCEnable()
 	if err != nil {
 		return false, 0, errors.Trace(err)
@@ -327,7 +326,7 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 func (w *GCWorker) checkGCEnable() (bool, error) {
 	str, err := w.loadValueFromSysTable(gcEnableKey)
 	if err != nil {
-		return gcDefaultEnableValue, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if str == "" {
 		// Save default value for gc enable key. The default value is always true.
