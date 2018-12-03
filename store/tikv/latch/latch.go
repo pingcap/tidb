@@ -228,9 +228,10 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 
 	// Try to recycle to limit the memory usage.
 	if latch.count >= latchListCount {
-		latch.recycle(lock.startTS)
+		latch.recycle(lock.startTS, &latches.nodeAlloc)
 	}
 
+	// Find the corresponding node of the key.
 	find := findNode(&latches.nodeAlloc, latch.queue, key)
 	if find == nil {
 		ptr := latches.nodeAlloc.New()
@@ -251,11 +252,13 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 		return acquireSuccess
 	}
 
+	// Acquire slot fail.
 	if find.maxCommitTS > lock.startTS {
 		lock.isStale = true
 		return acquireStale
 	}
 
+	// Acquire slot success.
 	if find.value == nil {
 		find.value = lock
 		lock.acquiredCount++
@@ -268,17 +271,23 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 }
 
 // recycle is not thread safe, the latch should acquire its lock before executing this function.
-func (l *latch) recycle(currentTS uint64) int {
+func (l *latch) recycle(currentTS uint64, alloc *nodeAlloc) int {
 	total := 0
 	fakeHead := node{next: l.queue}
 	prev := &fakeHead
-	for curr := prev.next; curr != nil; curr = curr.next {
-		if tsoSub(currentTS, curr.maxCommitTS) >= expireDuration && curr.value == nil {
+	for curr := prev.next; !curr.IsNil(); {
+		node := curr.Value(alloc)
+		if tsoSub(currentTS, node.maxCommitTS) >= expireDuration && node.value == nil {
+			// If the node haven't been used for a while, recycle it.
 			l.count--
-			prev.next = curr.next
+			prev.next = node.next
 			total++
+			tmp := curr
+			curr = curr.Next(alloc)
+			tmp.Free(alloc)
 		} else {
-			prev = curr
+			prev = curr.Value(alloc)
+			curr = curr.Next(alloc)
 		}
 	}
 	l.queue = fakeHead.next
@@ -290,7 +299,7 @@ func (latches *Latches) recycle(currentTS uint64) {
 	for i := 0; i < len(latches.slots); i++ {
 		latch := &latches.slots[i]
 		latch.Lock()
-		total += latch.recycle(currentTS)
+		total += latch.recycle(currentTS, &latches.nodeAlloc)
 		latch.Unlock()
 	}
 	log.Debugf("recycle run at %v, recycle count = %d...\n", time.Now(), total)
@@ -304,57 +313,4 @@ func findNode(alloc *nodeAlloc, list nodePtr, key []byte) *node {
 		}
 	}
 	return nil
-}
-
-const nodeBlockSize = 1024
-
-type nodeBlock [nodeBlockSize]node
-
-func (b *nodeBlock) init(start int) {
-	for i := 0; i < nodeBlockSize; i++ {
-		(*b)[i].next = nodePtr(start + i + 1)
-	}
-}
-
-type nodeAlloc struct {
-	// Note that physically, all nodeBlocks are not in a continuous memory,
-	// but logically they are conotinuous:
-	// data[0] contains node[0-1023]
-	// data[1] contains node[1024-2047] ...
-	data     []*nodeBlock
-	freeList nodePtr
-}
-
-func (a *nodeAlloc) New() nodePtr {
-	if a.freeList.IsNil() {
-		block := new(nodeBlock)
-		start := len(a.data) * nodeBlockSize
-		block.init(start)
-		a.data = append(a.data, block)
-		a.freeList = nodePtr(start)
-		if a.freeList == 0 {
-			// nodePtr == 0 means IsNil, so don't use the data[0] node.
-			a.freeList++
-		}
-	}
-	ret := a.freeList
-	n := ret.Value(a)
-	a.freeList = n.next
-	*n = node{}
-	return ret
-}
-
-type nodePtr int
-
-func (p nodePtr) IsNil() bool {
-	return p == 0
-}
-
-func (p nodePtr) Next(alloc *nodeAlloc) nodePtr {
-	return p.Value(alloc).next
-}
-
-func (p nodePtr) Value(alloc *nodeAlloc) *node {
-	b := alloc.data[p/nodeBlockSize]
-	return &(*b)[p%nodeBlockSize]
 }
