@@ -103,7 +103,7 @@ type ViewInfo struct {
     In order to solve the problem described above, we must build a `Projection` at the top of original select's `LogicalPlan`, just like we rewrite view's `SelectStmt` from `select * from t` into **`select a as a,b as b from (select * from t)`**.  
     This is a temporary fix and we will implement TiDB to rewrite SQL with replacing all wildcard finally.  
 4. Show table status  
-  Modify `SHOW TABLE STATUS` function to support show view status, and we use this command to check if `CREATE VIEW` and `DROP VIEW` operation is successful. To reuse `SHOW TABLE STATUS` code logical is preferred.
+  Modify `SHOW TABLE STATUS` function to support show view status, and we use this command to check if `CREATE VIEW` and `DROP VIEW` operation is successful. To reuse `SHOW TABLE STATUS` code logic is preferred.
 
 ## Compatibility
 Add TiDB support for the basic VIEW feature without affecting other existing functions, and make TiDB more compatible with MySQL.
@@ -129,6 +129,7 @@ Add TiDB support for the basic VIEW feature without affecting other existing fun
 |CREATE [OR REPLACE] VIEW [DEFINER = { user \| CURRENT_USER }] [SQL SECURITY { DEFINER \| INVOKER }] AS SELECT_STATEMENT|P3| | |
 |CREATE [OR REPLACE] VIEW [ALGORITHM = {TEMPTABLE}] AS select_statement|P3| | |
 |CREATE [OR REPLACE] VIEW AS select_statement [WITH [CASCADED \| LOCAL] CHECK OPTION]|P3| | |
+|Support global sql_mode system variable|P3| | |
 
 ## Open issues (if applicable)
 https://github.com/pingcap/tidb/issues/7974
