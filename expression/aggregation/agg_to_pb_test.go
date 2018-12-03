@@ -76,11 +76,11 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 	}
 	for i, funcName := range funcNames {
 		aggFunc := &AggFuncDesc{
-			Name:        funcName,
-			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
 			HasDistinct: true,
-			RetTp:       funcTypes[i],
 		}
+		aggFunc.Name = funcName
+		aggFunc.Args = []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+		aggFunc.RetTp = funcTypes[i]
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
@@ -98,11 +98,11 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 	}
 	for i, funcName := range funcNames {
 		aggFunc := &AggFuncDesc{
-			Name:        funcName,
-			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
 			HasDistinct: false,
-			RetTp:       funcTypes[i],
 		}
+		aggFunc.Name = funcName
+		aggFunc.Args = []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+		aggFunc.RetTp = funcTypes[i]
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
