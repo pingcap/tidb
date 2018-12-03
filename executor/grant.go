@@ -434,7 +434,7 @@ func composeColumnPrivUpdateForGrant(ctx sessionctx.Context, priv mysql.Privileg
 		}
 		newColumnPriv = addToSet(currColumnPriv, p)
 	}
-	return fmt.Sprintf(`Column_priv="%s"`, newColumnPriv), nil
+	return fmt.Sprintf(`Column_priv='%s'`, newColumnPriv), nil
 }
 
 func composeColumnPrivUpdateForRevoke(ctx sessionctx.Context, priv mysql.PrivilegeType, name string, host string, db string, tbl string, col string) (string, error) {
@@ -452,7 +452,7 @@ func composeColumnPrivUpdateForRevoke(ctx sessionctx.Context, priv mysql.Privile
 		}
 		newColumnPriv = deleteFromSet(currColumnPriv, p)
 	}
-	return fmt.Sprintf(`Column_priv="%s"`, newColumnPriv), nil
+	return fmt.Sprintf(`Column_priv='%s'`, newColumnPriv), nil
 }
 
 // recordExists is a helper function to check if the sql returns any row.
