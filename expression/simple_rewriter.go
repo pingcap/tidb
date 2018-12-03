@@ -156,9 +156,11 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			sr.inToExpression(len(v.List), v.Not, &v.Type)
 		}
 	case *driver.ParamMarkerExpr:
-		tp := types.NewFieldType(mysql.TypeUnspecified)
-		types.DefaultParamTypeForValue(v.GetValue(), tp)
-		value := &Constant{Value: v.ValueExpr.Datum, RetType: tp}
+		var value Expression
+		value, sr.err = GetParamExpression(sr.ctx, v)
+		if sr.err != nil {
+			return retNode, false
+		}
 		sr.push(value)
 	case *ast.RowExpr:
 		sr.rowToScalarFunc(v)

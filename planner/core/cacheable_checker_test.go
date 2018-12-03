@@ -87,4 +87,18 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 		Limit: limitStmt,
 	}
 	c.Assert(Cacheable(stmt), IsTrue)
+
+	paramExpr := &driver.ParamMarkerExpr{}
+	orderByClause := &ast.OrderByClause{Items: []*ast.ByItem{{Expr: paramExpr}}}
+	stmt = &ast.SelectStmt{
+		OrderBy: orderByClause,
+	}
+	c.Assert(Cacheable(stmt), IsFalse)
+
+	valExpr := &driver.ValueExpr{}
+	orderByClause = &ast.OrderByClause{Items: []*ast.ByItem{{Expr: valExpr}}}
+	stmt = &ast.SelectStmt{
+		OrderBy: orderByClause,
+	}
+	c.Assert(Cacheable(stmt), IsTrue)
 }

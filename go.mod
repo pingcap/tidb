@@ -84,3 +84,5 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 )
+
+replace github.com/pingcap/parser => github.com/zz-jason/parser v0.0.0-20191003033834-cce7a9500e2e
