@@ -1,7 +1,7 @@
 # Proposal: Implement View Feature
 
 - Author(s):     AndrewDi
-- Last updated:  2018-10-24
+- Last updated:  2018-12-03
 - Discussion at: https://github.com/pingcap/tidb/issues/7974
 
 ## Abstract
@@ -84,7 +84,6 @@ type ViewInfo struct {
     1. Parse the create view statement and build a logical plan for select clause part. If any grammar error occurs, return errors to parser.   
     2. Examine view definer's privileges. Definer should own both `CREATE_VIEW_PRIV` privilege and base table's `SELECT` privilege. We will reuse `CREATE_PRIV` privilege when implement `CREATE VIEW` feature and will support `CREATE_VIEW_PRIV` check later.  
     3. Examine create view statement. If the `ViewFieldList` clause part is empty, then we should generate view column names from SelectStmt clause. Otherwise check len(ViewFieldList) == len(Columns from SelectStmt). And then we save column names to `TableInfo.Columns`.
-    4. `TableInfo.UpdateTS` should update when store view's meta data.
 2. DROP VIEW  
   Implement `DROP VIEW` grammar, and delete the existing view tableinfo object. This function should reuse `DROP TABLE` code logic.
 3. SELECT FROM VIEW  
