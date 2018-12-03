@@ -203,6 +203,13 @@ func (s *testSuite) TestCreateUserWhenGrant(c *C) {
 		testkit.Rows("test"),
 	)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+
+	// Fix a bug that the GrantExec fails in ANSI_QUOTES sql mode
+	// The bug is caused by the improper usage of double quotes like:
+	// INSERT INTO mysql.user ... VALUES ("..", "..", "..")
+	tk.MustExec(`SET SQL_MODE='ANSI_QUOTES'`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON video_ulimit.* TO web@'%' IDENTIFIED BY 'eDrkrhZ>l2sV'`)
+	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
 }
 
 func (s *testSuite) TestIssue2654(c *C) {
