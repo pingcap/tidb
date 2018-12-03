@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package latch
 
 import (
@@ -22,9 +23,9 @@ var _ = Suite(&testNodeAlloc{})
 
 type testNodeAlloc struct{}
 
-func (_ *testNodeAlloc) SetUpTest(c *C) {}
+func (s *testNodeAlloc) SetUpTest(c *C) {}
 
-func (_ *testNodeAlloc) TestNodeAlloc(c *C) {
+func (s *testNodeAlloc) TestNodeAlloc(c *C) {
 	var alloc nodeAlloc
 	var ptrs []nodePtr
 	for i := 0; i < nodeBlockSize*3+1; i++ {
