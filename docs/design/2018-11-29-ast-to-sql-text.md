@@ -96,8 +96,8 @@ restoreSQL := sb.String()
 comment := Commentf("source %v \nrestore %v", t.src, restoreSQL)
 restoreStmt, err := parser.ParseOneStmt(restoreSQL, "", "")
 c.Assert(err, IsNil, comment)
-stmt.Accept(&cleaner)
-restoreStmt.Accept(&cleaner)
+ast.CleanNodeText(stmt)
+ast.CleanNodeText(restoreStmt)
 c.Assert(restoreStmt, DeepEquals, stmt, comment)
 ```
 
@@ -110,7 +110,6 @@ Some `ast.Node` can't be restored to a complete SQL text,
 to test them we can construct a complete SQL text.
 
 ```go
-var cleaner NodeTextCleaner
 parser := parser.New()
 testNodes := []string{"select ++1", "select -+1", "select --1", "select -1"}
 for _, node := range testNodes {
@@ -125,8 +124,8 @@ for _, node := range testNodes {
     comment = Commentf("source %v ; restore %v", node, restoreSql)
     stmt2, err := parser.ParseOneStmt(restoreSql, "", "")
     c.Assert(err, IsNil, comment)
-    stmt.Accept(&cleaner)
-    stmt2.Accept(&cleaner)
+    CleanNodeText(stmt)
+    CleanNodeText(stmt2)
     c.Assert(stmt2, DeepEquals, stmt, comment)
 }
 ```
