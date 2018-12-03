@@ -14,6 +14,7 @@
 package core_test
 
 import (
+	"math"
 	"strconv"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/prometheus/client_golang/prometheus"
@@ -56,7 +56,9 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
-	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -105,7 +107,9 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
-	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -138,7 +142,9 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
-	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	c.Assert(err, IsNil)
 
 	defer testleak.AfterTest(c)()
@@ -198,7 +204,9 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
-	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec(`prepare stmt1 from "select now(), sleep(1), now()"`)

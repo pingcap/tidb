@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/testkit"
 	dto "github.com/prometheus/client_model/go"
 	"golang.org/x/net/context"
@@ -47,7 +46,9 @@ func (s *testSuite) TestPrepared(c *C) {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -253,7 +254,9 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -296,7 +299,9 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -368,7 +373,9 @@ func (s *testSuite) TestPrepareWithAggregation(c *C) {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -413,7 +420,9 @@ func (s *testSuite) TestPreparedIssue7579(c *C) {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -467,7 +476,9 @@ func (s *testSuite) TestPreparedInsert(c *C) {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -549,7 +560,9 @@ func (s *testSuite) TestPreparedUpdate(c *C) {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -608,7 +621,9 @@ func (s *testSuite) TestPreparedDelete(c *C) {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -662,7 +677,9 @@ func (s *testSuite) TestPrepareDealloc(c *C) {
 	plannercore.SetPreparedPlanCache(true)
 	plannercore.PreparedPlanCacheCapacity = 3
 	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-	plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 	c.Assert(err, IsNil)
 
 	tk := testkit.NewTestKit(c, s.store)
