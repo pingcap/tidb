@@ -285,6 +285,9 @@ type SessionVars struct {
 	// BatchDelete indicates if we should split delete data into multiple batches.
 	BatchDelete bool
 
+	// BatchCommit indicates if we should split the transaction into multiple batches.
+	BatchCommit bool
+
 	// IDAllocator is provided by kvEncoder, if it is provided, we will use it to alloc auto id instead of using
 	// Table.alloc.
 	IDAllocator autoid.Allocator
