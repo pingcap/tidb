@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	_ "github.com/pingcap/tidb/types/parser_driver"
@@ -2239,7 +2240,31 @@ func (s *testParserSuite) TestView(c *C) {
 	c.Assert(err, IsNil)
 	v, ok := sms[0].(*ast.CreateViewStmt)
 	c.Assert(ok, IsTrue)
+	c.Assert(v.Algorithm, Equals, model.AlgorithmUndefined)
 	c.Assert(v.Select.Text(), Equals, "select * from t")
+	c.Assert(v.Security, Equals, model.SecurityDefiner)
+	c.Assert(v.CheckOption, Equals, model.CheckOptionCascaded)
+
+	src := `CREATE OR REPLACE ALGORITHM = UNDEFINED DEFINER = root@localhost
+                  SQL SECURITY DEFINER
+			      VIEW V(a,b,c) AS select c,d,e from t 
+                  WITH CASCADED CHECK OPTION;`
+
+	var st ast.StmtNode
+	st, err = p.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+	v, ok = st.(*ast.CreateViewStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(v.OrReplace, IsTrue)
+	c.Assert(v.Algorithm, Equals, model.AlgorithmUndefined)
+	c.Assert(v.Definer.Username, Equals, "root")
+	c.Assert(v.Definer.Hostname, Equals, "localhost")
+	c.Assert(v.Cols[0], Equals, model.CIStr{"a", "a"})
+	c.Assert(v.Cols[1], Equals, model.CIStr{"b", "b"})
+	c.Assert(v.Cols[2], Equals, model.CIStr{"c", "c"})
+	c.Assert(v.Select.Text(), Equals, "select c,d,e from t")
+	c.Assert(v.Security, Equals, model.SecurityDefiner)
+	c.Assert(v.CheckOption, Equals, model.CheckOptionCascaded)
 }
 
 func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
