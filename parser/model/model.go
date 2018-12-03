@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -169,6 +170,8 @@ type TableInfo struct {
 	Partition *PartitionInfo `json:"partition"`
 
 	Compression string `json:"compression"`
+
+	View *ViewInfo `json:"view"`
 }
 
 // GetPartitionInfo returns the partition information.
@@ -285,6 +288,84 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 		}
 	}
 	return false
+}
+
+// IsView checks if tableinfo is a view
+func (t *TableInfo) IsView() bool {
+	return t.View != nil
+}
+
+// ViewAlgorithm is VIEW's SQL AlGORITHM characteristic.
+// See https://dev.mysql.com/doc/refman/5.7/en/view-algorithms.html
+type ViewAlgorithm int
+
+const (
+	AlgorithmUndefined ViewAlgorithm = iota
+	AlgorithmMerge
+	AlgorithmTemptable
+)
+
+func (v *ViewAlgorithm) String() string {
+	switch *v {
+	case AlgorithmMerge:
+		return "MERGE"
+	case AlgorithmTemptable:
+		return "TEMPTABLE"
+	case AlgorithmUndefined:
+		return "UNDEFINED"
+	default:
+		return "UNDEFINED"
+	}
+}
+
+// ViewSecurity is VIEW's SQL SECURITY characteristic.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-view.html
+type ViewSecurity int
+
+const (
+	SecurityDefiner ViewSecurity = iota
+	SecurityInvoker
+)
+
+func (v *ViewSecurity) String() string {
+	switch *v {
+	case SecurityInvoker:
+		return "INVOKER"
+	case SecurityDefiner:
+		return "DEFINER"
+	default:
+		return "DEFINER"
+	}
+}
+
+// ViewCheckOption is VIEW's WITH CHECK OPTION clause part.
+// See https://dev.mysql.com/doc/refman/5.7/en/view-check-option.html
+type ViewCheckOption int
+
+const (
+	CheckOptionLocal ViewCheckOption = iota
+	CheckOptionCascaded
+)
+
+func (v *ViewCheckOption) String() string {
+	switch *v {
+	case CheckOptionLocal:
+		return "LOCAL"
+	case CheckOptionCascaded:
+		return "CASCADED"
+	default:
+		return "CASCADED"
+	}
+}
+
+// ViewInfo provides meta data describing a DB view.
+type ViewInfo struct {
+	Algorithm   ViewAlgorithm      `json:"view_algorithm"`
+	Definer     *auth.UserIdentity `json:"view_definer"`
+	Security    ViewSecurity       `json:"view_security"`
+	SelectStmt  string             `json:"view_select"`
+	CheckOption ViewCheckOption    `json:"view_checkoption"`
+	Cols        []CIStr            `json:"view_cols"`
 }
 
 // PartitionType is the type for PartitionInfo
