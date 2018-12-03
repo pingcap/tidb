@@ -293,7 +293,6 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		var err error
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
@@ -366,7 +365,6 @@ func (s *testSuite) TestPrepareWithAggregation(c *C) {
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		var err error
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
@@ -412,7 +410,6 @@ func (s *testSuite) TestPreparedIssue7579(c *C) {
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		var err error
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
@@ -467,7 +464,6 @@ func (s *testSuite) TestPreparedInsert(c *C) {
 	pb := &dto.Metric{}
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		var err error
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
@@ -550,7 +546,6 @@ func (s *testSuite) TestPreparedUpdate(c *C) {
 	pb := &dto.Metric{}
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		var err error
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
@@ -610,7 +605,6 @@ func (s *testSuite) TestPreparedDelete(c *C) {
 	pb := &dto.Metric{}
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		var err error
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
@@ -665,7 +659,6 @@ func (s *testSuite) TestPrepareDealloc(c *C) {
 		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
 		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
-	var err error
 	plannercore.SetPreparedPlanCache(true)
 	plannercore.PreparedPlanCacheCapacity = 3
 	plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
