@@ -544,7 +544,7 @@ func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool
 	}
 	value, err := GetParamExpression(ctx, v.P.(*driver.ParamMarkerExpr))
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 	pos, isNull, err := GetIntFromConstant(ctx, value)
 	if err != nil || isNull {
