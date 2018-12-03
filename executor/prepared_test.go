@@ -49,7 +49,6 @@ func (s *testSuite) TestPrepared(c *C) {
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
-		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -257,7 +256,6 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
-		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -302,7 +300,6 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
-		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -376,7 +373,6 @@ func (s *testSuite) TestPrepareWithAggregation(c *C) {
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
-		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -423,7 +419,6 @@ func (s *testSuite) TestPreparedIssue7579(c *C) {
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
-		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -479,7 +474,6 @@ func (s *testSuite) TestPreparedInsert(c *C) {
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
-		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -563,7 +557,6 @@ func (s *testSuite) TestPreparedUpdate(c *C) {
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
-		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -624,7 +617,6 @@ func (s *testSuite) TestPreparedDelete(c *C) {
 		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 		// behavior would not be effected by the uncertain memory utilization.
 		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
-		c.Assert(err, IsNil)
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -680,7 +672,6 @@ func (s *testSuite) TestPrepareDealloc(c *C) {
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
-	c.Assert(err, IsNil)
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

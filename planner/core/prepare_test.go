@@ -59,7 +59,6 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory = math.MaxUint64
-	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx1(b, a), index idx2(b))")
@@ -110,7 +109,6 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory = math.MaxUint64
-	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, primary key (a, b))")
@@ -145,7 +143,6 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory = math.MaxUint64
-	c.Assert(err, IsNil)
 
 	defer testleak.AfterTest(c)()
 
@@ -207,7 +204,6 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory = math.MaxUint64
-	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	tk.MustExec(`prepare stmt1 from "select now(), sleep(1), now()"`)
 	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
