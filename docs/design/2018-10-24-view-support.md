@@ -15,7 +15,7 @@ Below is a visual depiction of a view:
   reference from https://www.essentialsql.com/what-is-a-relational-database-view/
   
 A view is created from a query using the "`CREATE OR REPLACE VIEW`" command. In the example below we are creating a PopularBooks view based on a query which selects all Books that have the IsPopular field checked. Following is the query:
-```mysql
+```sql
 CREATE OR replace VIEW popularbooks 
 AS 
   SELECT isbn, 
@@ -27,7 +27,7 @@ AS
 ```  
 
 Once a view is created, you can use it as you query any table in a `SELECT` statement. For example, to list all the popular book titles ordered by an author, you could write:  
-```mysql
+```sql
 SELECT Author, Title FROM PopularBooks ORDER BY Author
 ```
 
@@ -41,7 +41,7 @@ This proposal is prepared to implement the basic VIEW feature, which contains fo
 * `SHOW TABLE STATUS`  
 
 All other unimplemented features will be listed for compatibility and discussed later. And we introduce `ViewInfo` to store the metadata for view and add an attribute `*ViewInfo` which named `View` to TableInfo. If `TableInfo.View` != nil, then this `TableInfo` is a view, otherwise this `TableInfo` is a base table:
-```go
+```
 type ViewInfo struct {
 	Algorithm   ViewAlgorithm    `json:"view_algorithm"`
 	Definer     UserIdentity     `json:"view_definer"`  
@@ -53,25 +53,25 @@ type ViewInfo struct {
 ```
 * [Algorithm](https://dev.mysql.com/doc/refman/5.7/en/view-algorithms.html)  
     The view SQL `AlGORITHM` characteristic. The value should be one of `UNDEFINED`, `MERGE` OR `TEMPTABLE`. If no `ALGORITHM` clause is present, `UNDEFINED` is the default algorithm.
-    Currently, we will only implement Algorithm=MERGE algorithm.
+    Currently, we will only implement the `MERGE` algorithm.
 * [Definer](https://dev.mysql.com/doc/refman/5.7/en/create-view.html)  
     The account of the user who created the view, in `'user_name'@'host_name'` format.
 * [Security](https://dev.mysql.com/doc/refman/5.7/en/create-view.html)  
     The view SQL `SECURITY` characteristic. The value is one of `DEFINER` or `INVOKER`.
 * [CheckOption](https://dev.mysql.com/doc/refman/5.7/en/view-check-option.html)  
-    The `WITH CHECK OPTION` clause can be given to an updatable view to prevent inserts to rows for which the WHERE clause in the select_statement is not true. It also prevents updates to rows for which the WHERE clause is true but the update would cause it to be not true (in other words, it prevents visible rows from being updated to nonvisible rows).  
-    In a `WITH CHECK OPTION` clause for an updatable view, the `LOCAL` and `CASCADED` keywords determine the scope of check testing when the view is defined in terms of another view. When neither keyword is given, the default is CASCADED.
+    The `WITH CHECK OPTION` clause can be given to an updatable view to prevent inserts to rows for which the `WHERE` clause in the select_statement is not true. It also prevents updates to rows for which the `WHERE` clause is true but the update would cause it to be not true (in other words, it prevents visible rows from being updated to nonvisible rows).  
+    In a `WITH CHECK OPTION` clause for an updatable view, the `LOCAL` and `CASCADED` keywords determine the scope of check testing when the view is defined in terms of another view. When neither keyword is given, the default is `CASCADED`.
 * SelectStmt  
     This string is the origin `SELECT` SQL statement.
 * Cols  
-    This model.CIStr array stores view's column alias names.
+    This `model.CIStr` array stores view's column alias names.
 * TableInfo.Columns  
     `TableInfo.Columns` only stores view's column origin names.
  
 ## Rationale
 1. Create VIEW  
    This proposal only supports the following grammar to create view:
-   ```mysql
+   ```sql
     CREATE
         [OR REPLACE]
         [ALGORITHM = {UNDEFINED | MERGE | TEMPTABLE}]
@@ -83,19 +83,19 @@ type ViewInfo struct {
     ```
     1. Parse the create view statement and build a logical plan for select clause part. If any grammar error occurs, return errors to parser.   
     2. Examine view definer's privileges. Definer should own both `CREATE_VIEW_PRIV` privilege and base table's `SELECT` privilege. We will reuse `CREATE_PRIV` privilege when implement `CREATE VIEW` feature and will support `CREATE_VIEW_PRIV` check later.  
-    3. Examine create view statement. If the ViewFieldList clause part is empty, then we should generate view column names from SelectStmt clause. Otherwise check len(ViewFieldList) == len(Columns from SelectStmt). And then we save column names to `TableInfo.Columns`.
+    3. Examine create view statement. If the `ViewFieldList` clause part is empty, then we should generate view column names from SelectStmt clause. Otherwise check len(ViewFieldList) == len(Columns from SelectStmt). And then we save column names to `TableInfo.Columns`.
 2. DROP VIEW  
   Implement `DROP VIEW` grammar, and delete the existing view tableinfo object. This function should reuse `DROP TABLE` code logic.
 3. SELECT FROM VIEW  
     In function `func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error)`, if `tn *ast.TableName` is a view, then we build a select `LogicalPlan` from view's `SelectStmt` string. But this solution meets a problem, and here is the example:  
-    ```mysql
+    ```sql
        create table t(a int,b int);
        create view v like select * from t;
        select * from t;
     ```
     Once we query from view `v`, database will rewrite view's `SelectStmt` from `select * from t` into **`select a as a,b as b from t`**.
     But, if we alter the schema of t like this:
-    ```mysql
+    ```sql
        drop table t;
        create table t(c int,d int);
     ```
@@ -106,9 +106,10 @@ type ViewInfo struct {
   Modify `SHOW TABLE STATUS` function to support show view status, and we use this command to check if `CREATE VIEW` and `DROP VIEW` operation is successful. To reuse `SHOW TABLE STATUS` code logic is preferred.
 
 ## Compatibility
-Add TiDB support for the basic VIEW feature without affecting other existing functions, and make TiDB more compatible with MySQL.
+Support the basic VIEW feature without affecting other existing functions, and make TiDB more compatible with MySQL.
 
 ## Implementation
+Here is the work items list:
 |Action  |Priority|Deadline|Notes|
 | ------ | ------ | ------ |-----|
 |Extract ViewAlgorithm\ViewDefiner\ViewSQLSecurity\CheckOption to CreateViewStmt struct|P1|2019/01/15|--|
