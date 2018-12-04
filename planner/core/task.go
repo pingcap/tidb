@@ -267,6 +267,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	return t
 }
 
+// GetCost computes the cost of in memory sort.
 func (p *PhysicalSort) GetCost(count float64) float64 {
 	if count < 2.0 {
 		count = 2.0
