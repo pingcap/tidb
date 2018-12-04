@@ -17,7 +17,6 @@ import (
 	"container/list"
 	"math"
 
-	"github.com/pingcap/errors"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
