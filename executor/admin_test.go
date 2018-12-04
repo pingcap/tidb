@@ -413,8 +413,8 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), key(c3), unique key(c2))")
-	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20)")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), key(c3), unique key(c2), key(c2, c3))")
+	tk.MustExec("insert admin_test (c1, c2, c3) values (1, 11, 21), (2, 12, 22), (5, 15, 23), (10, 20, 30), (20, 30, 40)")
 
 	// Make some corrupted index. Build the index information.
 	s.ctx = mock.NewContext()
@@ -428,18 +428,20 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 	idxInfo := findIndexByName("c2", tblInfo.Indices)
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
+	tk.Se.GetSessionVars().IndexLookupSize = 3
+	tk.Se.GetSessionVars().MaxChunkSize = 3
 
 	// Reduce one row of index.
 	// Table count > index count.
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(11), 1)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
 	c.Assert(err.Error(), Equals,
-		"[executor:8003]admin_test err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:1, b:[]uint8(nil), x:interface {}(nil)}}}")
+		"[executor:8003]admin_test err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:11, b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 5"))
@@ -449,21 +451,33 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 	// Table count < index count.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(11), 11)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(21), 1)
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(22), 22)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(13), 2)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "handle count 7 isn't equal to value count 5, missing handles [11 22] in a batch")
+	c.Assert(err.Error(), Equals, "admin check table admin_test, index c2 handle 2 more than one")
 
 	// Table count = index count.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(11), 11)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2)
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(22), 22)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), 2)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("admin check table admin_test")
+	c.Assert(err.Error(), Equals, "admin check table admin_test, index c2 handle 1 more than one")
+
+	// Recover records.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(21), 1)
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(12), 2)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)

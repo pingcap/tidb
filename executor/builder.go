@@ -289,7 +289,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 		is:           b.is,
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
-		errCh:        make(chan error, 1),
+		retCh:        make(chan error, len(v.Indices)),
 		genExprs:     v.GenExprs,
 	}
 	return e

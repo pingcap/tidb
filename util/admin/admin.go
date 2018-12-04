@@ -265,7 +265,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 			if err != nil {
 				ch <- result{
 					greater: InvalidGreater,
-					offset:  i,
+					offset:  num,
 					err:     errors.Trace(err),
 				}
 			}
@@ -282,7 +282,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 			}
 			ch <- result{
 				greater: ret,
-				offset:  i,
+				offset:  num,
 				err:     errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt),
 			}
 		}(i, idx, retCh)

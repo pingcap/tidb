@@ -414,7 +414,7 @@ type CheckTableExec struct {
 	done    bool
 	is      infoschema.InfoSchema
 	exitCh  chan struct{}
-	errCh   chan error
+	retCh   chan error
 
 	genExprs map[model.TableColumnID]expression.Expression
 }
@@ -450,24 +450,35 @@ func (e *CheckTableExec) Close() error {
 	return errors.Trace(err)
 }
 
-func (e *CheckTableExec) checkIndex(ctx context.Context, src *IndexLookUpExecutor) error {
+func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *IndexLookUpExecutor) error {
 	cols := src.schema.Columns
 	retFieldTypes := make([]*types.FieldType, len(cols))
 	for i := range cols {
 		retFieldTypes[i] = cols[i].RetType
 	}
 	chk := chunk.New(retFieldTypes, e.initCap, e.maxChunkSize)
+	iter := chunk.NewIterator4Chunk(chk)
+
+	var err error
+	handles := make(map[int64]struct{}, 1024)
 	for {
-		err := src.Next(ctx, chk)
+		err = src.Next(ctx, chk)
 		if err != nil {
-			select {
-			case e.errCh <- errors.Trace(err):
-				return errors.Trace(err)
-			default:
-			}
+			break
 		}
 		if chk.NumRows() == 0 {
 			break
+		}
+
+		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
+			datum := chunkRow.GetDatum(0, retFieldTypes[0])
+			h := datum.GetInt64()
+			if _, ok := handles[h]; ok {
+				err = errors.Errorf("admin check table %s, index %s handle %d more than one", e.tblInfo.Name, e.indices[num].Meta().Name, h)
+				e.retCh <- errors.Trace(err)
+				return errors.Trace(err)
+			}
+			handles[h] = struct{}{}
 		}
 
 		select {
@@ -476,7 +487,8 @@ func (e *CheckTableExec) checkIndex(ctx context.Context, src *IndexLookUpExecuto
 		default:
 		}
 	}
-	return nil
+	e.retCh <- errors.Trace(err)
+	return errors.Trace(err)
 }
 
 // Next implements the Executor Next interface.
@@ -492,49 +504,47 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
 	if err != nil {
-		log.Warnf("check table %v, greater %v index %s error %v", e.tblInfo.Name, greater, idxNames[idxOffset], errors.ErrorStack(err))
-		t := e.srcs[idxOffset].table
+		log.Warnf("check table %v, greater %v index %s err: %v", e.tblInfo.Name, greater, idxNames[idxOffset], errors.ErrorStack(err))
+		tbl := e.srcs[idxOffset].table
 		txn := e.ctx.Txn(true)
 		switch greater {
 		case admin.IdxCntGreater:
-			err = e.checkIndex(ctx, e.srcs[idxOffset])
+			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
 		case admin.TblCntGreater:
-			if t.Meta().GetPartitionInfo() != nil {
-				err = e.doCheckPartitionedTable(txn, t.(table.PartitionedTable), e.indices[idxOffset])
-			} else {
-				err = admin.CheckRecordAndIndex(e.ctx, txn, t, e.indices[idxOffset], e.genExprs)
-			}
+			err = e.checkTableRecord(txn, tbl, e.indices[idxOffset])
 		default:
 		}
 		if err != nil && admin.ErrDataInConsistent.Equal(err) {
-			return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Meta().Name, err)
+			return ErrAdminCheckTable.GenWithStack("%v err:%v", tbl.Meta().Name, err)
 		}
 		return errors.Trace(err)
 	}
 
 	// The number of table rows is equal to the number of index rows.
-	wg := sync.WaitGroup{}
-	for i, src := range e.srcs {
-		wg.Add(1)
+	for i, _ := range e.srcs {
 		go func(num int) {
-			defer wg.Done()
-			e.checkIndex(ctx, src)
+			e.checkIndexHandle(ctx, num, e.srcs[num])
 		}(i)
 	}
-	wg.Wait()
 
-	select {
-	case err = <-e.errCh:
-	default:
+	for i := 0; i < len(e.srcs); i++ {
+		err = <-e.retCh
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
-	return errors.Trace(err)
+	return nil
 }
 
-func (e *CheckTableExec) doCheckPartitionedTable(txn kv.Transaction, tbl table.PartitionedTable, idx table.Index) error {
+func (e *CheckTableExec) checkTableRecord(txn kv.Transaction, tbl table.Table, idx table.Index) error {
+	if tbl.Meta().GetPartitionInfo() == nil {
+		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, e.genExprs)
+	}
+
 	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
-		partition := tbl.GetPartition(pid)
+		partition := tbl.(table.PartitionedTable).GetPartition(pid)
 		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, e.genExprs); err != nil {
 			return errors.Trace(err)
 		}

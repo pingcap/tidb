@@ -552,20 +552,18 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildPhysicalIndexScan(dbName model.CIStr, tblInfo *model.TableInfo, idx *model.IndexInfo, id int) Plan {
-	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
-	for _, idxCol := range idx.Columns {
-		for _, col := range tblInfo.Columns {
-			if idxCol.Name.L == col.Name.L {
-				columns = append(columns, col)
-				schema.Append(&expression.Column{
-					ColName:  col.Name,
-					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  &col.FieldType,
-				})
-			}
-		}
+	columns := make([]*model.ColumnInfo, 0, 1)
+	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
+	columns = append(columns, model.NewExtraHandleColInfo())
+	handleCol := &expression.Column{
+		DBName:   dbName,
+		TblName:  tblInfo.Name,
+		ColName:  model.ExtraHandleName,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraHandleID,
 	}
+	schema.Append(handleCol)
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
 		TableAsName:      &tblInfo.Name,
