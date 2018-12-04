@@ -26,7 +26,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -113,7 +112,9 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
-		stmts, err = parser.New().Parse(e.sqlText, charset, collation)
+		p := parser.New()
+		p.EnableWindowFunc(vars.EnableWindowFunction)
+		stmts, err = p.Parse(e.sqlText, charset, collation)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -161,7 +162,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(0)
+		prepared.Params[i].(*driver.ParamMarkerExpr).Datum.SetNull()
 	}
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
