@@ -57,7 +57,11 @@ func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child Impl
 		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Cols)),
 	}
 	for _, col := range reqProp.Cols {
-		sort.ByItems = append(sort.ByItems, &plannercore.ByItems{col, reqProp.Desc})
+		item := &plannercore.ByItems{
+			Expr: col,
+			Desc: reqProp.Desc,
+		}
+		sort.ByItems = append(sort.ByItems, item)
 	}
 	sort.SetChildren(child.getPlan())
 	impl = &SortImpl{baseImplementation{plan: sort}}
