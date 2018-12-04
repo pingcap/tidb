@@ -1313,6 +1313,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
 	variable.TiDBOptInSubqUnFolding + quoteCommaQuote +
+	variable.TiDBDDLReorgBatchSize + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBRetryLimit + quoteCommaQuote +

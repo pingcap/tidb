@@ -193,6 +193,9 @@ const (
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 
+	// tidb_ddl_reorg_batch_size defines the transaction batch size of ddl reorg workers.
+	TiDBDDLReorgBatchSize = "tidb_ddl_reorg_batch_size"
+
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
@@ -239,6 +242,7 @@ const (
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
 	DefTiDBDDLReorgWorkerCount       = 16
+	DefTiDBDDLReorgBatchSize         = 1024
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
 	DefTiDBForcePriority             = mysql.NoPriority
@@ -247,9 +251,13 @@ const (
 // Process global variables.
 var (
 	ProcessGeneralLog      uint32
-	ddlReorgWorkerCounter  int32  = DefTiDBDDLReorgWorkerCount
-	maxDDLReorgWorkerCount int32  = 128
-	DDLSlowOprThreshold    uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	ForcePriority                 = int32(DefTiDBForcePriority)
-	ServerHostname, _             = os.Hostname()
+	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32 = 128
+	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
+	// Export for testing.
+	MaxDDLReorgBatchSize int32  = 10240
+	MinDDLReorgBatchSize int32  = 32
+	DDLSlowOprThreshold  uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	ForcePriority               = int32(DefTiDBForcePriority)
+	ServerHostname, _           = os.Hostname()
 )
