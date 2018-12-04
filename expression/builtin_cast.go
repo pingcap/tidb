@@ -1181,7 +1181,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
-	return res, false, err
+	return res, false, nil
 }
 
 type builtinCastStringAsDurationSig struct {
