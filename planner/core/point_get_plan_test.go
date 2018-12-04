@@ -14,10 +14,11 @@
 package core_test
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
@@ -48,8 +49,9 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
 	core.PreparedPlanCacheMemoryGuardRatio = 0.1
-	core.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
-	c.Assert(err, IsNil)
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, key idx_bc(b,c))")
