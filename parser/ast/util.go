@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,6 +12,8 @@
 // limitations under the License.
 
 package ast
+
+import "strings"
 
 // IsReadOnly checks whether the input ast is readOnly.
 func IsReadOnly(node Node) bool {
@@ -58,4 +60,16 @@ func (checker *readOnlyChecker) Enter(in Node) (out Node, skipChildren bool) {
 // Leave implements Visitor interface.
 func (checker *readOnlyChecker) Leave(in Node) (out Node, ok bool) {
 	return in, checker.readOnly
+}
+
+// WriteName append escaped `name` with back quote to `sb`.
+func WriteName(sb *strings.Builder, name string) {
+	sb.WriteString("`")
+	sb.WriteString(EscapeName(name))
+	sb.WriteString("`")
+}
+
+// EscapeName escape the `name`
+func EscapeName(name string) string {
+	return strings.Replace(name, "`", "``", -1)
 }
