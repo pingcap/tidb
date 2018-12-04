@@ -511,7 +511,8 @@ func DatumToConstant(d types.Datum, tp byte) *Constant {
 }
 
 // GetParamExpression generate a getparam function expression.
-func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, useCache bool) (Expression, error) {
+func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expression, error) {
+	useCache := ctx.GetSessionVars().StmtCtx.UseCache
 	tp := types.NewFieldType(mysql.TypeUnspecified)
 	types.DefaultParamTypeForValue(v.GetValue(), tp)
 	value := &Constant{Value: v.Datum, RetType: tp}
@@ -525,4 +526,52 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr, useCa
 		value.DeferredExpr = f
 	}
 	return value, nil
+}
+
+// ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
+func ConstructPositionExpr(p *driver.ParamMarkerExpr) *ast.PositionExpr {
+	return &ast.PositionExpr{P: p}
+}
+
+// PosFromPositionExpr generates a position value from PositionExpr.
+func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool, error) {
+	if v.P == nil {
+		return v.N, false, nil
+	}
+	value, err := GetParamExpression(ctx, v.P.(*driver.ParamMarkerExpr))
+	if err != nil {
+		return 0, true, err
+	}
+	pos, isNull, err := GetIntFromConstant(ctx, value)
+	if err != nil || isNull {
+		return 0, true, errors.Trace(err)
+	}
+	return pos, false, nil
+}
+
+// GetStringFromConstant gets a string value from the Constant expression.
+func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bool, error) {
+	con, ok := value.(*Constant)
+	if !ok {
+		err := errors.Errorf("Not a Constant expression %+v", value)
+		return "", true, errors.Trace(err)
+	}
+	str, isNull, err := con.EvalString(ctx, chunk.Row{})
+	if err != nil || isNull {
+		return "", true, errors.Trace(err)
+	}
+	return str, false, nil
+}
+
+// GetIntFromConstant gets an interger value from the Constant expression.
+func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, error) {
+	str, isNull, err := GetStringFromConstant(ctx, value)
+	if err != nil || isNull {
+		return 0, true, errors.Trace(err)
+	}
+	intNum, err := strconv.Atoi(str)
+	if err != nil {
+		return 0, true, nil
+	}
+	return intNum, false, nil
 }
