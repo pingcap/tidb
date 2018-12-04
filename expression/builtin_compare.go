@@ -1170,8 +1170,10 @@ func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Ex
 	if tp == types.ETJson {
 		// In compare, if we cast string to JSON, we shouldn't parse it.
 		for i := range args {
-			// If arg is a JSON column, we do not need to set the
-			// ParseToJSONFlag to it.
+			// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
+			// Moreover, Column.RetType refers to the infoschema, if we modify
+			// it, data race may happen if another goroutine read from the
+			// infoschema at the same time.
 			if _, isColumn := args[i].(*Column); isColumn {
 				continue
 			}

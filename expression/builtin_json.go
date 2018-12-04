@@ -174,7 +174,9 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
-	// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+	// ParseToJSONFlag is 0 for JSON column yet, so we can skip it. Moreover,
+	// Column.RetType refers to the infoschema, if we modify it, data race may
+	// happen if another goroutine read from the infoschema at the same time.
 	if _, ok := args[0].(*Column); !ok {
 		args[0].GetType().Flag &= ^mysql.ParseToJSONFlag
 	}
@@ -221,7 +223,10 @@ func (c *jsonSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 2; i < len(args); i += 2 {
-		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
+		// Moreover, Column.RetType refers to the infoschema, if we modify it,
+		// data race may happen if another goroutine read from the infoschema at
+		// the same time.
 		if _, ok := args[i].(*Column); !ok {
 			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
 		}
@@ -264,7 +269,10 @@ func (c *jsonInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 2; i < len(args); i += 2 {
-		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
+		// Moreover, Column.RetType refers to the infoschema, if we modify it,
+		// data race may happen if another goroutine read from the infoschema at
+		// the same time.
 		if _, ok := args[i].(*Column); !ok {
 			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
 		}
@@ -307,7 +315,10 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 2; i < len(args); i += 2 {
-		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
+		// Moreover, Column.RetType refers to the infoschema, if we modify it,
+		// data race may happen if another goroutine read from the infoschema at
+		// the same time.
 		if _, ok := args[i].(*Column); !ok {
 			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
 		}
@@ -446,7 +457,10 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 1; i < len(args); i += 2 {
-		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
+		// Moreover, Column.RetType refers to the infoschema, if we modify it,
+		// data race may happen if another goroutine read from the infoschema at
+		// the same time.
 		if _, ok := args[i].(*Column); !ok {
 			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
 		}
@@ -512,7 +526,10 @@ func (c *jsonArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := range args {
-		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
+		// Moreover, Column.RetType refers to the infoschema, if we modify it,
+		// data race may happen if another goroutine read from the infoschema at
+		// the same time.
 		if _, ok := args[i].(*Column); !ok {
 			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
 		}
