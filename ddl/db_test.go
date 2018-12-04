@@ -3758,7 +3758,7 @@ func (s *testDBSuite) TestAlterTableCharset(c *C) {
 		rs.Close()
 	}
 
-	c.Assert(err.Error(), Equals, "[ddl:208]unsupported modify charset from utf8mb4 to utf8")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8mb4 to utf8")
 }
 
 func (s *testDBSuite) TestAlterColumnCharset(c *C) {
@@ -3812,7 +3812,7 @@ func (s *testDBSuite) TestAlterColumnCharset(c *C) {
 	if rs != nil {
 		rs.Close()
 	}
-	c.Assert(err.Error(), Equals, "[ddl:208]unsupported modify charset from utf8mb4 to utf8")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8mb4 to utf8")
 }
 
 func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
