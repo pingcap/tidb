@@ -457,6 +457,17 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
 	c.Assert(err.Error(), Equals, "handle count 7 isn't equal to value count 5, missing handles [11 22] in a batch")
+
+	// Table count = index count.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(11), 11)
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(22), 22)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	tk.MustExec("admin check table admin_test")
 }
 
 func (s *testSuite) TestAdminCheckTable(c *C) {
