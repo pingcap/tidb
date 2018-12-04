@@ -484,6 +484,10 @@ const (
 	AggFuncBitXor = "bit_xor"
 	// AggFuncBitAnd is the name of bit_and function.
 	AggFuncBitAnd = "bit_and"
+	// AggFuncVarPop is the name of var_pop function
+	AggFuncVarPop = "var_pop"
+	// AggFuncVarSamp is the name of var_samp function
+	AggFuncVarSamp = "var_samp"
 	// AggFuncStddevPop is the name of stddev_pop function
 	AggFuncStddevPop = "stddev_pop"
 	// AggFuncStddevSamp is the name of stddev_samp function
