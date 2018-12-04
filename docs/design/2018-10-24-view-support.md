@@ -1,7 +1,7 @@
 # Proposal: Implement View Feature
 
 - Author(s):     AndrewDi
-- Last updated:  2018-10-24
+- Last updated:  2018-12-03
 - Discussion at: https://github.com/pingcap/tidb/issues/7974
 
 ## Abstract
@@ -109,7 +109,8 @@ type ViewInfo struct {
 Support the basic VIEW feature without affecting other existing functions, and make TiDB more compatible with MySQL.
 
 ## Implementation
-Here is the work items list:
+Here is the work items list:  
+
 |Action  |Priority|Deadline|Notes|
 | ------ | ------ | ------ |-----|
 |Extract ViewAlgorithm\ViewDefiner\ViewSQLSecurity\CheckOption to CreateViewStmt struct|P1|2019/01/15|--|
