@@ -74,13 +74,9 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
 	}
-	for i, funcName := range funcNames {
-		aggFunc := &AggFuncDesc{
-			HasDistinct: true,
-		}
-		aggFunc.Name = funcName
-		aggFunc.Args = []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
-		aggFunc.RetTp = funcTypes[i]
+	for _, funcName := range funcNames {
+		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+		aggFunc := NewAggFuncDesc(s.ctx, funcName, args, true)
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
@@ -97,11 +93,8 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
 	}
 	for i, funcName := range funcNames {
-		aggFunc := &AggFuncDesc{
-			HasDistinct: false,
-		}
-		aggFunc.Name = funcName
-		aggFunc.Args = []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+		aggFunc := NewAggFuncDesc(s.ctx, funcName, args, false)
 		aggFunc.RetTp = funcTypes[i]
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)

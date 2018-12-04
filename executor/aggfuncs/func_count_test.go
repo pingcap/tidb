@@ -30,13 +30,8 @@ func (s *testSuite) TestMergePartialResult4Count(c *C) {
 		srcChk.AppendInt64(0, i)
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
-
-	desc := &aggregation.AggFuncDesc{
-		Mode: aggregation.CompleteMode,
-	}
-	desc.Name = ast.AggFuncCount
-	desc.Args = []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLong), Index: 0}}
-	desc.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLong), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncCount, args, false)
 	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build count func for partial phase.
