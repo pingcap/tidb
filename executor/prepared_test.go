@@ -707,7 +707,9 @@ func (s *testSuite) TestPreparedIssue8153(c *C) {
 		plannercore.SetPreparedPlanCache(flag)
 		plannercore.PreparedPlanCacheCapacity = 100
 		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
-		plannercore.PreparedPlanCacheMaxMemory, err = memory.MemTotal()
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
