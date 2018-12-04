@@ -263,6 +263,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	ctx1, cancel := context.WithCancel(ctx)
 	resp, err := tikvrpc.CallRPC(ctx1, client, req)
 	if err != nil {
+		cancel() // This line stops the silly lint tool from complaining.
 		return nil, errors.Trace(err)
 	}
 

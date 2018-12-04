@@ -749,6 +749,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		ctx1, cancel := context.WithCancel(ctx)
 		copStream, err := handler.handleCopStream(ctx1, r)
 		if err != nil {
+			cancel()
 			return nil, errors.Trace(err)
 		}
 

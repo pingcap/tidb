@@ -171,8 +171,7 @@ func (m *ownerManager) CampaignOwner(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cancelCtx, _ := context.WithCancel(ctx)
-	go m.campaignLoop(cancelCtx, session)
+	go m.campaignLoop(ctx, session)
 	return nil
 }
 
@@ -204,7 +203,10 @@ func (m *ownerManager) RetireOwner() {
 }
 
 func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrency.Session) {
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithCancel(ctx)
 	defer func() {
+		cancel()
 		if r := recover(); r != nil {
 			buf := util.GetStack()
 			log.Errorf("[%s] recover panic:%v, %s", m.prompt, r, buf)
