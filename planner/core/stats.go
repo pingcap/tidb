@@ -25,6 +25,7 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 	return p.stats.RowCount
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (p *LogicalTableDual) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
@@ -40,6 +41,7 @@ func (p *LogicalTableDual) DeriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (p *baseLogicalPlan) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
@@ -90,6 +92,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.Stat
 	return profile.Scale(selectivity)
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (ds *DataSource) DeriveStats() (*property.StatsInfo, error) {
 	if ds.stats != nil {
 		return ds.stats, nil
@@ -127,6 +130,7 @@ func (ds *DataSource) DeriveStats() (*property.StatsInfo, error) {
 	return ds.stats, nil
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (p *LogicalSelection) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
@@ -139,6 +143,7 @@ func (p *LogicalSelection) DeriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (p *LogicalUnionAll) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
@@ -159,6 +164,7 @@ func (p *LogicalUnionAll) DeriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (p *LogicalLimit) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
@@ -177,6 +183,7 @@ func (p *LogicalLimit) DeriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (lt *LogicalTopN) DeriveStats() (*property.StatsInfo, error) {
 	if lt.stats != nil {
 		return lt.stats, nil
@@ -211,6 +218,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	return cardinality
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (p *LogicalProjection) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
@@ -230,6 +238,7 @@ func (p *LogicalProjection) DeriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (la *LogicalAggregation) DeriveStats() (*property.StatsInfo, error) {
 	if la.stats != nil {
 		return la.stats, nil
@@ -328,6 +337,7 @@ func (p *LogicalJoin) DeriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (la *LogicalApply) DeriveStats() (*property.StatsInfo, error) {
 	if la.stats != nil {
 		return la.stats, nil
@@ -367,6 +377,7 @@ func getSingletonStats(len int) *property.StatsInfo {
 	return ret
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (p *LogicalMaxOneRow) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil

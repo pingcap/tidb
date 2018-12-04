@@ -49,6 +49,7 @@ func (mj mockLogicalJoin) init(ctx sessionctx.Context) *mockLogicalJoin {
 	return &mj
 }
 
+// DeriveStats generates StatsInfo for current plan node.
 func (mj *mockLogicalJoin) DeriveStats() (*property.StatsInfo, error) {
 	if mj.stats == nil {
 		mj.stats = mj.statsMap[mj.involvedNodeSet]
