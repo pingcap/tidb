@@ -112,7 +112,9 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
-		stmts, err = parser.New().Parse(e.sqlText, charset, collation)
+		p := parser.New()
+		p.EnableWindowFunc(vars.EnableWindowFunction)
+		stmts, err = p.Parse(e.sqlText, charset, collation)
 	}
 	if err != nil {
 		return errors.Trace(err)
