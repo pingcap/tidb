@@ -15,11 +15,11 @@ package tikv
 
 import (
 	"bytes"
-	"github.com/pingcap/pd/client"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -307,6 +307,8 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 }
 
 // ReverseScan queries continuous kv pairs, starts from startKey, up to limit pairs.
+// Unlike Scan, reverse scan from startKey. In other words, specify startKey as UpperBound.
+// If you want to exclude the startKey, append a '\0' to the key
 func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() {

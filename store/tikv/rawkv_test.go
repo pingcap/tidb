@@ -112,8 +112,8 @@ func (s *testRawKVSuite) mustScan(c *C, startKey string, limit int, expect ...st
 	}
 }
 
-func (s *testRawKVSuite) mustReverseScan(c *C, startKey string, limit int, expect ...string) {
-	keys, values, err := s.client.ReverseScan([]byte(startKey), limit)
+func (s *testRawKVSuite) mustReverseScan(c *C, startKey []byte, limit int, expect ...string) {
+	keys, values, err := s.client.ReverseScan(startKey, limit)
 	c.Assert(err, IsNil)
 	c.Assert(len(keys)*2, Equals, len(expect))
 	for i := range keys {
@@ -233,12 +233,15 @@ func (s *testRawKVSuite) TestReverseScan(c *C) {
 	s.mustPut(c, []byte("k7"), []byte("v7"))
 
 	check := func() {
-		s.mustReverseScan(c, "", 10)
-		s.mustReverseScan(c, "z", 1, "k7", "v7")
-		s.mustReverseScan(c, "z", 2, "k7", "v7", "k5", "v5")
-		s.mustReverseScan(c, "z", 10, "k7", "v7", "k5", "v5", "k3", "v3", "k1", "v1")
-		s.mustReverseScan(c, "k6", 2, "k5", "v5", "k3", "v3")
-		s.mustReverseScan(c, "k6", 3, "k5", "v5", "k3", "v3", "k1", "v1")
+		s.mustReverseScan(c, []byte(""), 10)
+		s.mustReverseScan(c, []byte("z"), 1, "k7", "v7")
+		s.mustReverseScan(c, []byte("z"), 2, "k7", "v7", "k5", "v5")
+		s.mustReverseScan(c, []byte("z"), 10, "k7", "v7", "k5", "v5", "k3", "v3", "k1", "v1")
+		s.mustReverseScan(c, []byte("k2"), 10, "k1", "v1")
+		s.mustReverseScan(c, []byte("k6"), 2, "k5", "v5", "k3", "v3")
+		s.mustReverseScan(c, []byte("k5"), 1, "k3", "v3")
+		s.mustReverseScan(c, append([]byte("k5"), 0), 1, "k5", "v5")
+		s.mustReverseScan(c, []byte("k6"), 3, "k5", "v5", "k3", "v3", "k1", "v1")
 	}
 
 	check()

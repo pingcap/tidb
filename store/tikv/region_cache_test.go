@@ -136,7 +136,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store2))
 
-	r = s.getRegion(c, []byte("z"))
+	r = s.getRegionWithEndKey(c, []byte("z"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("z")), Equals, s.storeAddr(s.store2))
