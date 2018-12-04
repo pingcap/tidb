@@ -174,7 +174,10 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
-	args[0].GetType().Flag &= ^mysql.ParseToJSONFlag
+	// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+	if _, ok := args[0].(*Column); !ok {
+		args[0].GetType().Flag &= ^mysql.ParseToJSONFlag
+	}
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig, nil
@@ -218,7 +221,10 @@ func (c *jsonSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 2; i < len(args); i += 2 {
-		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		if _, ok := args[i].(*Column); !ok {
+			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		}
 	}
 	sig := &builtinJSONSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
@@ -258,7 +264,10 @@ func (c *jsonInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 2; i < len(args); i += 2 {
-		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		if _, ok := args[i].(*Column); !ok {
+			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		}
 	}
 	sig := &builtinJSONInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
@@ -298,7 +307,10 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 2; i < len(args); i += 2 {
-		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		if _, ok := args[i].(*Column); !ok {
+			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		}
 	}
 	sig := &builtinJSONReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
@@ -434,7 +446,10 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 1; i < len(args); i += 2 {
-		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		if _, ok := args[i].(*Column); !ok {
+			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		}
 	}
 	sig := &builtinJSONObjectSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
@@ -497,7 +512,10 @@ func (c *jsonArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := range args {
-		args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		// If arg is a JSON column, we do not need to set the ParseToJSONFlag to it.
+		if _, ok := args[i].(*Column); !ok {
+			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+		}
 	}
 	sig := &builtinJSONArraySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)
