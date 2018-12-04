@@ -195,6 +195,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from (select * from ( select 1 ) a join (select 2) b) b join (select 3) a;", false, nil},
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
+		// Test View
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
 	}
 
