@@ -1,7 +1,7 @@
 # Proposal: Support to restore SQL text from an AST tree.
 
 - Author(s):     [Yilin Zhao](https://github.com/leoppro)
-- Last updated:  2018-11-29
+- Last updated:  2018-12-04
 - Discussion at: https://github.com/pingcap/tidb/issues/8532
 
 ## Abstract
@@ -98,7 +98,7 @@ func (n *DropDatabaseStmt) Restore(sb *strings.Builder) error {
 }
 ```
 
-**There are another examples which include complete implement and test:
+**There are another examples which is including complete implement and test:
 [parser#62](https://github.com/pingcap/parser/pull/62) [parser#63](https://github.com/pingcap/parser/pull/63)**
 
 ### Test
