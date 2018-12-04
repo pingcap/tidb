@@ -16,6 +16,7 @@ package executor_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
@@ -1774,6 +1775,17 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	tk.MustExec("rollback;")
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+
+	tk.MustExec("drop table if exists com_batch_insert")
+	tk.MustExec("create table com_batch_insert (c int)")
+	sql := "insert into com_batch_insert values "
+	values := make([]string, 0, 200)
+	for i := 0; i < 200; i++ {
+		values = append(values, "(1)")
+	}
+	sql = sql + strings.Join(values, ",")
+	tk.MustExec(sql)
+	tk.MustQuery("select count(*) from com_batch_insert;").Check(testkit.Rows("200"))
 
 	// Test case for batch delete.
 	// This will meet txn too large error.

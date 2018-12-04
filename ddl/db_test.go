@@ -2761,10 +2761,17 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 		partition p2 values less than maxvalue
 	);`
 	s.testErrorCode(c, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
-
-	sql2 := "alter table table1 add partition"
+	s.tk.MustExec(`create table table_MustBeDefined (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`)
+	sql2 := "alter table table_MustBeDefined add partition"
 	s.testErrorCode(c, sql2, tmysql.ErrPartitionsMustBeDefined)
-
 	s.tk.MustExec("drop table if exists table2;")
 	s.tk.MustExec(`create table table2 (
 
@@ -3111,7 +3118,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	c.Assert(hasOldPartitionData, IsFalse)
 	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
 
-	// Test truncate table partition reassign a new partitionIDs.
+	// Test truncate table partition reassigns new partitionIDs.
 	s.tk.MustExec("drop table if exists t5;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t5(
@@ -3137,6 +3144,31 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	c.Assert(err, IsNil)
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
 	c.Assert(oldPID != newPID, IsTrue)
+
+	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1;")
+	s.tk.MustExec("drop table if exists clients;")
+	s.tk.MustExec(`create table clients (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by hash( month(signed) )
+	partitions 12;`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
+	c.Assert(err, IsNil)
+	oldDefs := oldTblInfo.Meta().Partition.Definitions
+
+	// Test truncate `hash partitioned table` reassigns new partitionIDs.
+	s.tk.MustExec("truncate table clients;")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
+	c.Assert(err, IsNil)
+	newDefs := newTblInfo.Meta().Partition.Definitions
+	for i := 0; i < len(oldDefs); i++ {
+		c.Assert(oldDefs[i].ID != newDefs[i].ID, IsTrue)
+	}
 }
 
 func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
@@ -3751,4 +3783,46 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 		c.Assert(err, IsNil)
 	}
 	return num
+}
+
+func (s *testDBSuite) TestPartitionErrorCode(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	// add partition
+	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	s.tk.MustExec("drop database if exists test_db_with_partition")
+	s.tk.MustExec("create database test_db_with_partition")
+	s.tk.MustExec("use test_db_with_partition")
+	s.tk.MustExec(`create table employees (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date not null default '9999-12-31',
+		job_code int,
+		store_id int
+	)
+	partition by hash(store_id)
+	partitions 4;`)
+	_, err := s.tk.Exec("alter table employees add partition partitions 8;")
+	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
+
+	// coalesce partition
+	s.tk.MustExec(`create table clients (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by hash( month(signed) )
+	partitions 12;`)
+	_, err = s.tk.Exec("alter table clients coalesce partition 4;")
+	c.Assert(ddl.ErrUnsupportedCoalescePartition.Equal(err), IsTrue)
+
+	s.tk.MustExec(`create table t_part (a int key)
+		partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+		);`)
+	_, err = s.tk.Exec("alter table t_part coalesce partition 4;")
+	c.Assert(ddl.ErrCoalesceOnlyOnHashPartition.Equal(err), IsTrue)
 }
