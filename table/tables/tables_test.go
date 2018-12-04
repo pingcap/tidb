@@ -405,7 +405,7 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition = 'on';")
+	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition = '1';")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
 	c.Assert(err, IsNil)

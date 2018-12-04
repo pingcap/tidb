@@ -3365,7 +3365,7 @@ func (s *testSuite) TestSelectHashPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists th`)
-	tk.MustExec("set @@session.tidb_enable_table_partition = 'on';")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
 	defer tk.MustExec(`drop table if exists th`)
 	tk.MustExec(`insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);`)

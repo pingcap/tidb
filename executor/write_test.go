@@ -923,7 +923,7 @@ func (s *testSuite) TestPartitionedTableReplace(c *C) {
 func (s *testSuite) TestHashPartitionedTableReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 'on';")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec("drop table if exists replace_test;")
 	testSQL := `create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
 			partition by hash(id) partitions 4;`

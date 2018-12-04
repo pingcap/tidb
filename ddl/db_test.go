@@ -622,7 +622,7 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
 	if testPartition {
-		s.tk.MustExec("set @@session.tidb_enable_table_partition = 'on';")
+		s.tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	}
 	s.tk.MustExec("drop table if exists test_add_index")
 	s.tk.MustExec(createTableSQL)
@@ -3672,7 +3672,7 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	testPartitionAddIndex(tk, c)
 
 	// test hash partition table.
-	tk.MustExec("set @@session.tidb_enable_table_partition = 'on';")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec("drop table if exists partition_add_idx")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
