@@ -195,9 +195,9 @@ func (s *Scanner) GetSQLMode() mysql.SQLMode {
 	return s.sqlMode
 }
 
-// EnableWindowFunc enables the scanner to recognize the keywords of window function.
-func (s *Scanner) EnableWindowFunc() {
-	s.supportWindowFunc = true
+// EnableWindowFunc controls whether the scanner recognize the keywords of window function.
+func (s *Scanner) EnableWindowFunc(val bool) {
+	s.supportWindowFunc = val
 }
 
 // NewScanner returns a new scanner object.
