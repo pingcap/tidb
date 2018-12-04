@@ -119,10 +119,23 @@ func (tc *testExpressionsSuite) createTestCase4UnaryOperationExpr() []exprTestCa
 	}
 }
 
+func (tc *testExpressionsSuite) createTestCase4ColumnNameExpr() []exprTestCase {
+	return []exprTestCase{
+		{"select abc", "SELECT `abc`"},
+		{"select `abc`", "SELECT `abc`"},
+		{"select `ab``c`", "SELECT `ab``c`"},
+		{"select sabc.tABC", "SELECT `sabc`.`tABC`"},
+		{"select dabc.sabc.tabc", "SELECT `dabc`.`sabc`.`tabc`"},
+		{"select dabc.`sabc`.tabc", "SELECT `dabc`.`sabc`.`tabc`"},
+		{"select `dABC`.`sabc`.tabc", "SELECT `dABC`.`sabc`.`tabc`"},
+	}
+}
+
 func (tc *testExpressionsSuite) TestExpresionsRestore(c *C) {
 	parser := parser.New()
 	var testNodes []exprTestCase
 	testNodes = append(testNodes, tc.createTestCase4UnaryOperationExpr()...)
+	testNodes = append(testNodes, tc.createTestCase4ColumnNameExpr()...)
 
 	for _, node := range testNodes {
 		stmt, err := parser.ParseOneStmt(node.sourceSQL, "", "")
