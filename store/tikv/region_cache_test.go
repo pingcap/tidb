@@ -59,21 +59,21 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	c.Assert(s.cache.mu.regions, HasLen, len)
 	c.Assert(s.cache.mu.sorted.Len(), Equals, len)
 	for _, r := range s.cache.mu.regions {
-		c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey(), false))
+		c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey(), true))
 	}
 }
 
 func (s *testRegionCacheSuite) getRegion(c *C, key []byte) *Region {
 	_, err := s.cache.LocateKey(s.bo, key)
 	c.Assert(err, IsNil)
-	r := s.cache.searchCachedRegion(key, false)
+	r := s.cache.searchCachedRegion(key, true)
 	c.Assert(r, NotNil)
 	return r
 }
 func (s *testRegionCacheSuite) getRegionWithEndKey(c *C, key []byte) *Region {
 	_, err := s.cache.LocateEndKey(s.bo, key)
 	c.Assert(err, IsNil)
-	r := s.cache.searchCachedRegion(key, true)
+	r := s.cache.searchCachedRegion(key, false)
 	c.Assert(r, NotNil)
 	return r
 }
