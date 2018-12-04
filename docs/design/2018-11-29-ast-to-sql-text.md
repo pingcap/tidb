@@ -141,8 +141,8 @@ and [RunRestoreTest](https://github.com/pingcap/parser/blob/ce4d755a8937ee6bc0e8
 
 #### For other `ast.Node`:
 
-Some `ast.Node` can't be restored to a complete SQL text, such as an `ast.ExprNode`
-to test them we can construct a complete SQL text.
+Some `ast.Node` can't be restored to a complete SQL text, such as an `ast.ExprNode`.  
+To test them, we can construct a complete SQL text.
 
 ```go
 func (tc *testExpressionsSuite) createTestCase4UnaryOperationExpr() []exprTestCase {
