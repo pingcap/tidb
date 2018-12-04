@@ -462,6 +462,9 @@ import (
 	timestampDiff		"TIMESTAMPDIFF"
 	top			"TOP"
 	trim			"TRIM"
+	variance		"VARIANCE"
+	varPop			"VAR_POP"
+	varSamp			"VAR_SAMP"
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
@@ -2983,7 +2986,8 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" | "INTERNAL" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" 
+| "INPLACE" | "INTERNAL" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM"
+| "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" | "VARIANCE" | "VAR_POP" | "VAR_SAMP"
 | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM" | "NEXT_ROW_ID"
 
 /************************************************************************************
@@ -4019,6 +4023,14 @@ SumExpr:
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 		}
+	}
+|	builtinVarPop '(' BuggyDefaultFalseDistinctOpt Expression ')'  OptWindowingClause
+	{
+		$$ = &ast.AggregateFuncExpr{F: ast.AggFuncVarPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+	}
+|	builtinVarSamp '(' BuggyDefaultFalseDistinctOpt Expression ')'  OptWindowingClause
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
 
 OptGConcatSeparator:
