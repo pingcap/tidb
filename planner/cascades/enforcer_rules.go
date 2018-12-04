@@ -14,6 +14,7 @@
 package cascades
 
 import (
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 )
 
@@ -24,6 +25,8 @@ type Enforcer interface {
 	// OnEnforce adds physical operators on top of child implementation to satisfy
 	// required physical property.
 	OnEnforce(reqProp *property.PhysicalProperty, child Implementation) (impl Implementation)
+	// GetEnforceCost calculates cost of enforcing required physical property.
+	GetEnforceCost(inputCount float64) float64
 }
 
 // GetEnforcerRules gets all candidate enforcer rules based
@@ -50,5 +53,20 @@ func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *p
 
 // OnEnforce adds sort operator to satisfy required order property.
 func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child Implementation) (impl Implementation) {
-	return nil
+	sort := &plannercore.PhysicalSort{
+		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Cols)),
+	}
+	for _, col := range reqProp.Cols {
+		sort.ByItems = append(sort.ByItems, &plannercore.ByItems{col, reqProp.Desc})
+	}
+	sort.SetChildren(child.getPlan())
+	impl = &SortImpl{baseImplementation{plan: sort}}
+	return
+}
+
+// GetEnforceCost calculates cost of sort operator.
+func (e *OrderEnforcer) GetEnforceCost(inputCount float64) float64 {
+	sort := &plannercore.PhysicalSort{}
+	cost := sort.GetCost(inputCount)
+	return cost
 }
