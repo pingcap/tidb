@@ -409,6 +409,56 @@ func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
+func (s *testSuite) TestAdminCheckTableFailed(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), key(c3), unique key(c2))")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20)")
+
+	// Make some corrupted index. Build the index information.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	idxInfo := findIndexByName("c2", tblInfo.Indices)
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	sc := s.ctx.GetSessionVars().StmtCtx
+
+	// Reduce one row of index.
+	// Table count > index count.
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("admin check table admin_test")
+	c.Assert(err.Error(), Equals,
+		"[executor:8003]admin_test err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:1, b:[]uint8(nil), x:interface {}(nil)}}}")
+	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+	r := tk.MustQuery("admin recover index admin_test c2")
+	r.Check(testkit.Rows("1 5"))
+	tk.MustExec("admin check table admin_test")
+
+	// Add one row of index.
+	// Table count < index count.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(11), 11)
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(22), 22)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("admin check table admin_test")
+	c.Assert(err.Error(), Equals, "handle count 7 isn't equal to value count 5, missing handles [11 22] in a batch")
+}
+
 func (s *testSuite) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)

@@ -252,11 +252,10 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	wg := sync.WaitGroup{}
 	type result struct {
 		greater byte
-		offsert int
+		offset  int
 		err     error
 	}
 	retCh := make(chan result, len(indices))
-	startT := time.Now()
 	for i, idx := range indices {
 		wg.Add(1)
 		go func(num int, idx string, ch chan result) {
@@ -266,7 +265,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 			if err != nil {
 				ch <- result{
 					greater: InvalidGreater,
-					offsert: i,
+					offset:  i,
 					err:     errors.Trace(err),
 				}
 			}
@@ -283,7 +282,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 			}
 			ch <- result{
 				greater: ret,
-				offsert: i,
+				offset:  i,
 				err:     errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt),
 			}
 		}(i, idx, retCh)
@@ -292,9 +291,8 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 
 	if len(retCh) > 0 {
 		ret := <-retCh
-		return ret.greater, ret.offsert, errors.Trace(ret.err)
+		return ret.greater, ret.offset, errors.Trace(ret.err)
 	}
-	log.Warnf("finish count .................. sub %v", time.Since(startT))
 	return 0, 0, nil
 }
 

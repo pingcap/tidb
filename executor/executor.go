@@ -512,15 +512,13 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
+	// The number of table rows is equal to the number of index rows.
 	wg := sync.WaitGroup{}
-	startT := time.Now()
 	for i, src := range e.srcs {
 		wg.Add(1)
 		go func(num int) {
 			defer wg.Done()
-			startTime := time.Now()
 			e.checkIndex(ctx, src)
-			log.Warnf(".................. no.%d index look up, sub %v", num, time.Since(startTime))
 		}(i)
 	}
 	wg.Wait()
@@ -529,7 +527,6 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	case err = <-e.errCh:
 	default:
 	}
-	log.Warnf("finish .................. sub %v", time.Since(startT))
 	return errors.Trace(err)
 }
 

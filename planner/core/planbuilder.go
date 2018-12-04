@@ -583,21 +583,15 @@ func (b *PlanBuilder) buildPhysicalIndexScan(dbName model.CIStr, tblInfo *model.
 	return rootT.p
 }
 
-func (b *PlanBuilder) buildPhysicalIndexScans(dbName model.CIStr, as *ast.AdminStmt) ([]Plan, []table.Index, error) {
-	tblName := as.Tables[0]
-	tbl, err := b.is.TableByName(dbName, tblName.Name)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
+func (b *PlanBuilder) buildPhysicalIndexScans(dbName model.CIStr, tbl table.Table) ([]Plan, []table.Index, error) {
 	tblInfo := tbl.Meta()
-
 	// get index information
 	indices := make([]table.Index, 0, len(tblInfo.Indices))
 	indexLookUpReaders := make([]Plan, 0, len(tblInfo.Indices))
 	for i, idx := range tbl.Indices() {
 		idxInfo := idx.Meta()
 		if idxInfo.State != model.StatePublic {
-			log.Warnf("index %s state %s isn't public", idxInfo.Name.O, idxInfo.State)
+			log.Warnf("index %s state %s isn't public in table %s", idxInfo.Name, idxInfo.State, tblInfo.Name)
 		} else {
 			indices = append(indices, idx)
 			reader := b.buildPhysicalIndexScan(dbName, tblInfo, idxInfo, i)
@@ -651,7 +645,7 @@ func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, erro
 		p.GenExprs[genColumnID] = expr
 	}
 
-	readerPlans, indices, err := b.buildPhysicalIndexScans(tbl.Schema, as)
+	readerPlans, indices, err := b.buildPhysicalIndexScans(tbl.Schema, table)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
