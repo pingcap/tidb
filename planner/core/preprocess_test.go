@@ -196,7 +196,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
-		{"CREATE VIEW V (a,b,c) AS SELECT 1,1;", false, errors.New("View's SELECT and view's field list have different column counts")},
 	}
 
 	store, dom, err := newStoreWithBootstrap()
