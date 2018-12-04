@@ -24,7 +24,7 @@ type ImplementationRule interface {
 	Match(expr *GroupExpr, prop *property.PhysicalProperty) (matched bool)
 	// OnImplement generates physical plan using this rule for current GroupExpr. Note that
 	// childrenReqProps of generated physical plan should be set correspondingly in this function.
-	OnImplement(expr *GroupExpr) (impl Implementation, err error)
+	OnImplement(expr *GroupExpr, reqProp *property.PhysicalProperty) (impl Implementation, err error)
 }
 
 // GetImplementationRules gets the all the candidate implementation rules based
