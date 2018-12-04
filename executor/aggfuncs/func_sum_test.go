@@ -31,16 +31,12 @@ func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncSum,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
-	}
-	finalDesc := desc.Split([]int{0})
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncSum, args, false)
+	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build sum func for partial phase.
-	partialSumFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialSumFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialSumFunc.AllocPartialResult()
 	partialPr2 := partialSumFunc.AllocPartialResult()
 
@@ -87,16 +83,12 @@ func (s *testSuite) TestMergePartialResult4SumFloat(c *C) {
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncSum,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeDouble),
-	}
-	finalDesc := desc.Split([]int{0})
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncSum, args, false)
+	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build sum func for partial phase.
-	partialSumFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialSumFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialSumFunc.AllocPartialResult()
 	partialPr2 := partialSumFunc.AllocPartialResult()
 

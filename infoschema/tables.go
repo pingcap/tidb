@@ -660,9 +660,9 @@ func dataForEngines() (records [][]types.Datum) {
 
 var filesCols = []columnInfo{
 	{"FILE_ID", mysql.TypeLonglong, 4, 0, nil, nil},
-	{"FILE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"FILE_NAME", mysql.TypeVarchar, 4000, 0, nil, nil},
 	{"FILE_TYPE", mysql.TypeVarchar, 20, 0, nil, nil},
-	{"TABLESPACE_NAME", mysql.TypeVarchar, 20, 0, nil, nil},
+	{"TABLESPACE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_CATALOG", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -684,9 +684,12 @@ var filesCols = []columnInfo{
 	{"RECOVER_TIME", mysql.TypeLonglong, 4, 0, nil, nil},
 	{"TRANSACTION_COUNTER", mysql.TypeLonglong, 4, 0, nil, nil},
 	{"VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"ROW_FORMAT", mysql.TypeVarchar, 21, 0, nil, nil},
+	{"ROW_FORMAT", mysql.TypeVarchar, 10, 0, nil, nil},
 	{"TABLE_ROWS", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"AVG_ROW_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"MAX_DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"DATA_FREE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
 	{"UPDATE_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
@@ -888,6 +891,11 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				Type: createTimeTp,
 			}
 
+			createOptions := ""
+			if table.GetPartitionInfo() != nil {
+				createOptions = "partitioned"
+			}
+
 			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
@@ -922,7 +930,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				nil,           // CHECK_TIME
 				collation,     // TABLE_COLLATION
 				nil,           // CHECKSUM
-				"",            // CREATE_OPTIONS
+				createOptions, // CREATE_OPTIONS
 				table.Comment, // TABLE_COMMENT
 			)
 			rows = append(rows, record)

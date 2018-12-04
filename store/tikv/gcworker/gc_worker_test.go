@@ -144,6 +144,19 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMaxConcurrency)
+
+	// Change GC enable status.
+	s.oracle.AddOffset(time.Minute * 40)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, gcDisableValue)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, gcEnableValue)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
 }
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {

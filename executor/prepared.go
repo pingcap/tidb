@@ -26,7 +26,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -113,7 +112,9 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
-		stmts, err = parser.New().Parse(e.sqlText, charset, collation)
+		p := parser.New()
+		p.EnableWindowFunc(vars.EnableWindowFunction)
+		stmts, err = p.Parse(e.sqlText, charset, collation)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -161,7 +162,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(0)
+		prepared.Params[i].(*driver.ParamMarkerExpr).Datum.SetNull()
 	}
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
@@ -177,8 +178,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.name != "" {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
-	vars.PreparedStmts[e.ID] = prepared
-	return nil
+	return vars.AddPreparedStmt(e.ID, prepared)
 }
 
 // ExecuteExec represents an EXECUTE executor.
@@ -207,8 +207,6 @@ func (e *ExecuteExec) Build() error {
 	var err error
 	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan) {
 		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
-	} else {
-		err = e.ctx.ActivePendingTxn()
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -239,7 +237,12 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
-	delete(vars.PreparedStmts, id)
+	if plannercore.PreparedPlanCacheEnabled() {
+		e.ctx.PreparedPlanCache().Delete(plannercore.NewPSTMTPlanCacheKey(
+			vars, id, vars.PreparedStmts[id].SchemaVersion,
+		))
+	}
+	vars.RemovePreparedStmt(id)
 	return nil
 }
 

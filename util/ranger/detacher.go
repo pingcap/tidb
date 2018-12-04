@@ -16,7 +16,6 @@ package ranger
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -169,7 +168,7 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		return ranges, accessConds, filterConds, eqCount, nil
 	}
 	checker := &conditionChecker{
-		colName:       cols[eqOrInCount].ColName,
+		colUniqueID:   cols[eqOrInCount].UniqueID,
 		length:        lengths[eqOrInCount],
 		shouldReserve: lengths[eqOrInCount] != types.UnspecifiedLength,
 	}
@@ -248,7 +247,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 	cols []*expression.Column, newTpSlice []*types.FieldType, lengths []int) ([]*Range, []expression.Expression, bool, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	firstColumnChecker := &conditionChecker{
-		colName:       cols[0].ColName,
+		colUniqueID:   cols[0].UniqueID,
 		shouldReserve: lengths[0] != types.UnspecifiedLength,
 		length:        lengths[0],
 	}
@@ -346,13 +345,10 @@ func removeAccessConditions(conditions, accessConds []expression.Expression) []e
 }
 
 // ExtractAccessConditionsForColumn detaches the access conditions used for range calculation.
-func ExtractAccessConditionsForColumn(conds []expression.Expression, colName model.CIStr) []expression.Expression {
-	if colName.L == "" {
-		return nil
-	}
+func ExtractAccessConditionsForColumn(conds []expression.Expression, uniqueID int64) []expression.Expression {
 	checker := conditionChecker{
-		colName: colName,
-		length:  types.UnspecifiedLength,
+		colUniqueID: uniqueID,
+		length:      types.UnspecifiedLength,
 	}
 	accessConds := make([]expression.Expression, 0, 8)
 	return expression.Filter(accessConds, conds, checker.check)
@@ -362,8 +358,8 @@ func ExtractAccessConditionsForColumn(conds []expression.Expression, colName mod
 // calculating the table range.
 func DetachCondsForTableRange(sctx sessionctx.Context, conds []expression.Expression, col *expression.Column) (accessContditions, otherConditions []expression.Expression) {
 	checker := &conditionChecker{
-		colName: col.ColName,
-		length:  types.UnspecifiedLength,
+		colUniqueID: col.UniqueID,
+		length:      types.UnspecifiedLength,
 	}
 	return detachColumnCNFConditions(sctx, conds, checker)
 }

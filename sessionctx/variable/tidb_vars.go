@@ -215,10 +215,14 @@ const (
 	// tidb_constraint_check_in_place indicates to check the constraint when the SQL executing.
 	// It could hurt the performance of bulking insert when it is ON.
 	TiDBConstraintCheckInPlace = "tidb_constraint_check_in_place"
+
+	// tidb_enable_window_function is used to control whether to enable the window function.
+	TiDBEnableWindowFunction = "tidb_enable_window_function"
 )
 
 // Default TiDB system variable values.
 const (
+	DefHostname                      = "localhost"
 	DefIndexLookupConcurrency        = 4
 	DefIndexLookupJoinConcurrency    = 4
 	DefIndexSerialScanConcurrency    = 1
@@ -239,6 +243,8 @@ const (
 	DefCurretTS                      = 0
 	DefMaxChunkSize                  = 32
 	DefDMLBatchSize                  = 20000
+	DefMaxPreparedStmtCount          = -1
+	DefWaitTimeout                   = 28800
 	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
@@ -258,6 +264,7 @@ const (
 	DefTiDBHashAggFinalConcurrency   = 4
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
+	DefEnableWindowFunction          = false
 )
 
 // Process global variables.
