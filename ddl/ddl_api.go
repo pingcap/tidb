@@ -1103,6 +1103,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AddColumn(ctx, ident, spec)
 		case ast.AlterTableAddPartitions:
 			err = d.AddTablePartitions(ctx, ident, spec)
+		case ast.AlterTableCoalescePartitions:
+			err = d.CoalescePartitions(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
@@ -1333,10 +1335,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if len(spec.PartDefinitions) == 0 {
-		return errors.Trace(ErrPartitionsMustBeDefined)
-	}
-
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1351,6 +1349,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if meta.GetPartitionInfo() == nil {
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
+	// We don't support add hash type partition now.
+	if meta.Partition.Type == model.PartitionTypeHash {
+		return errors.Trace(ErrUnsupportedAddPartition)
+	}
+
 	partInfo, err := buildPartitionInfo(meta, d, spec)
 	if err != nil {
 		return errors.Trace(err)
@@ -1381,6 +1384,36 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
+func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta()
+	if meta.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	// Coalesce partition can only be used on hash/key partitions.
+	if meta.Partition.Type == model.PartitionTypeRange {
+		return errors.Trace(ErrCoalesceOnlyOnHashPartition)
+	}
+
+	// We don't support coalesce partitions hash type partition now.
+	if meta.Partition.Type == model.PartitionTypeHash {
+		return errors.Trace(ErrUnsupportedCoalescePartition)
+	}
+
 	return errors.Trace(err)
 }
 
@@ -2172,6 +2205,9 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 }
 
 func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	if meta.Partition.Type == model.PartitionTypeRange && len(spec.PartDefinitions) == 0 {
+		return nil, errors.Trace(ErrPartitionsMustBeDefined)
+	}
 	part := &model.PartitionInfo{
 		Type:    meta.Partition.Type,
 		Expr:    meta.Partition.Expr,
