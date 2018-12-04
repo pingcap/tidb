@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -97,6 +98,11 @@ type TraceStmt struct {
 	Format string
 }
 
+// Restore implements Recoverable interface.
+func (n *TraceStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *TraceStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -121,6 +127,11 @@ type ExplainStmt struct {
 	Stmt    StmtNode
 	Format  string
 	Analyze bool
+}
+
+// Restore implements Recoverable interface.
+func (n *ExplainStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -149,6 +160,11 @@ type PrepareStmt struct {
 	SQLVar  *VariableExpr
 }
 
+// Restore implements Recoverable interface.
+func (n *PrepareStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *PrepareStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -172,6 +188,11 @@ type DeallocateStmt struct {
 	stmtNode
 
 	Name string
+}
+
+// Restore implements Recoverable interface.
+func (n *DeallocateStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -202,6 +223,11 @@ type ExecuteStmt struct {
 	ExecID    uint32
 }
 
+// Restore implements Recoverable interface.
+func (n *ExecuteStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *ExecuteStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -225,6 +251,11 @@ type BeginStmt struct {
 	stmtNode
 }
 
+// Restore implements Recoverable interface.
+func (n *BeginStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *BeginStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -243,6 +274,11 @@ type BinlogStmt struct {
 	Str string
 }
 
+// Restore implements Recoverable interface.
+func (n *BinlogStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *BinlogStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -257,6 +293,11 @@ func (n *BinlogStmt) Accept(v Visitor) (Node, bool) {
 // See https://dev.mysql.com/doc/refman/5.7/en/commit.html
 type CommitStmt struct {
 	stmtNode
+}
+
+// Restore implements Recoverable interface.
+func (n *CommitStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -275,6 +316,11 @@ type RollbackStmt struct {
 	stmtNode
 }
 
+// Restore implements Recoverable interface.
+func (n *RollbackStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *RollbackStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -291,6 +337,11 @@ type UseStmt struct {
 	stmtNode
 
 	DBName string
+}
+
+// Restore implements Recoverable interface.
+func (n *UseStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -322,6 +373,11 @@ type VariableAssignment struct {
 	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
 	// TODO: Use SetStmt to implement set password statement.
 	ExtendValue ValueExpr
+}
+
+// Restore implements Recoverable interface.
+func (n *VariableAssignment) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node interface.
@@ -360,6 +416,11 @@ type FlushStmt struct {
 	ReadLock        bool
 }
 
+// Restore implements Recoverable interface.
+func (n *FlushStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *FlushStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -390,6 +451,11 @@ type KillStmt struct {
 	TiDBExtension bool
 }
 
+// Restore implements Recoverable interface.
+func (n *KillStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *KillStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -405,6 +471,11 @@ type SetStmt struct {
 	stmtNode
 	// Variables is the list of variable assignment.
 	Variables []*VariableAssignment
+}
+
+// Restore implements Recoverable interface.
+func (n *SetStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -452,6 +523,11 @@ type SetPwdStmt struct {
 
 	User     *auth.UserIdentity
 	Password string
+}
+
+// Restore implements Recoverable interface.
+func (n *SetPwdStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // SecureText implements SensitiveStatement interface.
@@ -517,6 +593,11 @@ type CreateUserStmt struct {
 	Specs       []*UserSpec
 }
 
+// Restore implements Recoverable interface.
+func (n *CreateUserStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *CreateUserStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -546,6 +627,11 @@ type AlterUserStmt struct {
 	IfExists    bool
 	CurrentAuth *AuthOption
 	Specs       []*UserSpec
+}
+
+// Restore implements Recoverable interface.
+func (n *AlterUserStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // SecureText implements SensitiveStatement interface.
@@ -578,6 +664,11 @@ type DropUserStmt struct {
 	UserList []*auth.UserIdentity
 }
 
+// Restore implements Recoverable interface.
+func (n *DropUserStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *DropUserStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -593,6 +684,11 @@ type DoStmt struct {
 	stmtNode
 
 	Exprs []ExprNode
+}
+
+// Restore implements Recoverable interface.
+func (n *DoStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -682,6 +778,11 @@ type AdminStmt struct {
 	ShowSlow     *ShowSlow
 }
 
+// Restore implements Recoverable interface.
+func (n *AdminStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -707,6 +808,11 @@ type PrivElem struct {
 
 	Priv mysql.PrivilegeType
 	Cols []*ColumnName
+}
+
+// Restore implements Recoverable interface.
+func (n *PrivElem) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -767,6 +873,11 @@ type RevokeStmt struct {
 	Users      []*UserSpec
 }
 
+// Restore implements Recoverable interface.
+func (n *RevokeStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *RevokeStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -793,6 +904,11 @@ type GrantStmt struct {
 	Level      *GrantLevel
 	Users      []*UserSpec
 	WithGrant  bool
+}
+
+// Restore implements Recoverable interface.
+func (n *GrantStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // SecureText implements SensitiveStatement interface.
@@ -858,6 +974,11 @@ type TableOptimizerHint struct {
 	// Statement Execution Time Optimizer Hints
 	// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html#optimizer-hints-execution-time
 	MaxExecutionTime uint64
+}
+
+// Restore implements Recoverable interface.
+func (n *TableOptimizerHint) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.

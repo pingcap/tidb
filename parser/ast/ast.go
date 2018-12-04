@@ -17,6 +17,7 @@ package ast
 
 import (
 	"io"
+	"strings"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/types"
@@ -25,6 +26,8 @@ import (
 // Node is the basic element of the AST.
 // Interfaces embed Node should have 'Node' name suffix.
 type Node interface {
+	// Restore returns the sql text from ast tree
+	Restore(sb *strings.Builder) error
 	// Accept accepts Visitor to visit itself.
 	// The returned node should replace original node.
 	// ok returns false to stop visiting.

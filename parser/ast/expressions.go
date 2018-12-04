@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/opcode"
 )
@@ -78,6 +79,11 @@ type BetweenExpr struct {
 	Not bool
 }
 
+// Restore implements Recoverable interface.
+func (n *BetweenExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *BetweenExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
@@ -131,6 +137,11 @@ type BinaryOperationExpr struct {
 	R ExprNode
 }
 
+// Restore implements Recoverable interface.
+func (n *BinaryOperationExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *BinaryOperationExpr) Format(w io.Writer) {
 	n.L.Format(w)
@@ -172,6 +183,11 @@ type WhenClause struct {
 	Result ExprNode
 }
 
+// Restore implements Recoverable interface.
+func (n *WhenClause) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *WhenClause) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -203,6 +219,11 @@ type CaseExpr struct {
 	WhenClauses []*WhenClause
 	// ElseClause is the else result expression.
 	ElseClause ExprNode
+}
+
+// Restore implements Recoverable interface.
+func (n *CaseExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Format the ExprNode into a Writer.
@@ -269,6 +290,11 @@ type SubqueryExpr struct {
 	Exists     bool
 }
 
+// Restore implements Recoverable interface.
+func (n *SubqueryExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *SubqueryExpr) Format(w io.Writer) {
 	panic("Not implemented")
@@ -305,6 +331,11 @@ type CompareSubqueryExpr struct {
 	All bool
 }
 
+// Restore implements Recoverable interface.
+func (n *CompareSubqueryExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *CompareSubqueryExpr) Format(w io.Writer) {
 	panic("Not implemented")
@@ -336,6 +367,11 @@ type ColumnName struct {
 	Schema model.CIStr
 	Table  model.CIStr
 	Name   model.CIStr
+}
+
+// Restore implements Recoverable interface.
+func (n *ColumnName) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -386,6 +422,11 @@ type ColumnNameExpr struct {
 	Refer *ResultField
 }
 
+// Restore implements Recoverable interface.
+func (n *ColumnNameExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *ColumnNameExpr) Format(w io.Writer) {
 	name := strings.Replace(n.Name.String(), ".", "`.`", -1)
@@ -412,6 +453,11 @@ type DefaultExpr struct {
 	exprNode
 	// Name is the column name.
 	Name *ColumnName
+}
+
+// Restore implements Recoverable interface.
+func (n *DefaultExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Format the ExprNode into a Writer.
@@ -446,6 +492,11 @@ type ExistsSubqueryExpr struct {
 	Not bool
 }
 
+// Restore implements Recoverable interface.
+func (n *ExistsSubqueryExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *ExistsSubqueryExpr) Format(w io.Writer) {
 	panic("Not implemented")
@@ -477,6 +528,11 @@ type PatternInExpr struct {
 	Not bool
 	// Sel is the subquery, may be rewritten to other type of expression.
 	Sel ExprNode
+}
+
+// Restore implements Recoverable interface.
+func (n *PatternInExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Format the ExprNode into a Writer.
@@ -534,6 +590,11 @@ type IsNullExpr struct {
 	Not bool
 }
 
+// Restore implements Recoverable interface.
+func (n *IsNullExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *IsNullExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
@@ -568,6 +629,11 @@ type IsTruthExpr struct {
 	Not bool
 	// True indicates checking true or false.
 	True int64
+}
+
+// Restore implements Recoverable interface.
+func (n *IsTruthExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Format the ExprNode into a Writer.
@@ -614,6 +680,11 @@ type PatternLikeExpr struct {
 
 	PatChars []byte
 	PatTypes []byte
+}
+
+// Restore implements Recoverable interface.
+func (n *PatternLikeExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Format the ExprNode into a Writer.
@@ -669,6 +740,11 @@ type ParenthesesExpr struct {
 	Expr ExprNode
 }
 
+// Restore implements Recoverable interface.
+func (n *ParenthesesExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *ParenthesesExpr) Format(w io.Writer) {
 	fmt.Fprint(w, "(")
@@ -704,6 +780,11 @@ type PositionExpr struct {
 	P ExprNode
 	// Refer is the result field the position refers to.
 	Refer *ResultField
+}
+
+// Restore implements Recoverable interface.
+func (n *PositionExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Format the ExprNode into a Writer.
@@ -742,6 +823,11 @@ type PatternRegexpExpr struct {
 	Re *regexp.Regexp
 	// Sexpr is the string for Expr expression.
 	Sexpr *string
+}
+
+// Restore implements Recoverable interface.
+func (n *PatternRegexpExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Format the ExprNode into a Writer.
@@ -783,6 +869,11 @@ type RowExpr struct {
 	Values []ExprNode
 }
 
+// Restore implements Recoverable interface.
+func (n *RowExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *RowExpr) Format(w io.Writer) {
 	panic("Not implemented")
@@ -814,6 +905,12 @@ type UnaryOperationExpr struct {
 	V ExprNode
 }
 
+// Restore implements Recoverable interface.
+func (n *UnaryOperationExpr) Restore(sb *strings.Builder) error {
+	n.Format(sb)
+	return nil
+}
+
 // Format the ExprNode into a Writer.
 func (n *UnaryOperationExpr) Format(w io.Writer) {
 	n.Op.Format(w)
@@ -840,6 +937,11 @@ type ValuesExpr struct {
 	exprNode
 	// Column is column name.
 	Column *ColumnNameExpr
+}
+
+// Restore implements Recoverable interface.
+func (n *ValuesExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Format the ExprNode into a Writer.
@@ -879,6 +981,11 @@ type VariableExpr struct {
 	Value ExprNode
 }
 
+// Restore implements Recoverable interface.
+func (n *VariableExpr) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Format the ExprNode into a Writer.
 func (n *VariableExpr) Format(w io.Writer) {
 	panic("Not implemented")
@@ -906,6 +1013,11 @@ func (n *VariableExpr) Accept(v Visitor) (Node, bool) {
 // MaxValueExpr is the expression for "maxvalue" used in partition.
 type MaxValueExpr struct {
 	exprNode
+}
+
+// Restore implements Recoverable interface.
+func (n *MaxValueExpr) Restore(sb *strings.Builder) error {
+	panic("Not implemented")
 }
 
 // Format the ExprNode into a Writer.

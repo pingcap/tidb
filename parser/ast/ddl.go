@@ -14,6 +14,9 @@
 package ast
 
 import (
+	"strings"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/types"
@@ -62,6 +65,21 @@ type DatabaseOption struct {
 	Value string
 }
 
+// Restore implements Recoverable interface.
+func (n *DatabaseOption) Restore(sb *strings.Builder) error {
+	switch n.Tp {
+	case DatabaseOptionCharset:
+		sb.WriteString("CHARACTER SET = ")
+		sb.WriteString(n.Value)
+	case DatabaseOptionCollate:
+		sb.WriteString("COLLATE = ")
+		sb.WriteString(n.Value)
+	default:
+		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
+	}
+	return nil
+}
+
 // CreateDatabaseStmt is a statement to create a database.
 // See https://dev.mysql.com/doc/refman/5.7/en/create-database.html
 type CreateDatabaseStmt struct {
@@ -70,6 +88,23 @@ type CreateDatabaseStmt struct {
 	IfNotExists bool
 	Name        string
 	Options     []*DatabaseOption
+}
+
+// Restore implements Recoverable interface.
+func (n *CreateDatabaseStmt) Restore(sb *strings.Builder) error {
+	sb.WriteString("CREATE DATABASE ")
+	if n.IfNotExists {
+		sb.WriteString("IF NOT EXISTS ")
+	}
+	WriteName(sb, n.Name)
+	for _, option := range n.Options {
+		sb.WriteString(" ")
+		err := option.Restore(sb)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -91,6 +126,16 @@ type DropDatabaseStmt struct {
 	Name     string
 }
 
+// Restore implements Recoverable interface.
+func (n *DropDatabaseStmt) Restore(sb *strings.Builder) error {
+	sb.WriteString("DROP DATABASE ")
+	if n.IfExists {
+		sb.WriteString("IF EXISTS ")
+	}
+	WriteName(sb, n.Name)
+	return nil
+}
+
 // Accept implements Node Accept interface.
 func (n *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -107,6 +152,11 @@ type IndexColName struct {
 
 	Column *ColumnName
 	Length int
+}
+
+// Restore implements Recoverable interface.
+func (n *IndexColName) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -133,6 +183,11 @@ type ReferenceDef struct {
 	IndexColNames []*IndexColName
 	OnDelete      *OnDeleteOpt
 	OnUpdate      *OnUpdateOpt
+}
+
+// Restore implements Recoverable interface.
+func (n *ReferenceDef) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -200,6 +255,11 @@ type OnDeleteOpt struct {
 	ReferOpt ReferOptionType
 }
 
+// Restore implements Recoverable interface.
+func (n *OnDeleteOpt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *OnDeleteOpt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -214,6 +274,11 @@ func (n *OnDeleteOpt) Accept(v Visitor) (Node, bool) {
 type OnUpdateOpt struct {
 	node
 	ReferOpt ReferOptionType
+}
+
+// Restore implements Recoverable interface.
+func (n *OnUpdateOpt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -260,6 +325,11 @@ type ColumnOption struct {
 	Refer *ReferenceDef
 }
 
+// Restore implements Recoverable interface.
+func (n *ColumnOption) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *ColumnOption) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -289,6 +359,11 @@ type IndexOption struct {
 	KeyBlockSize uint64
 	Tp           model.IndexType
 	Comment      string
+}
+
+// Restore implements Recoverable interface.
+func (n *IndexOption) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -331,6 +406,11 @@ type Constraint struct {
 	Option *IndexOption // Index Options
 }
 
+// Restore implements Recoverable interface.
+func (n *Constraint) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *Constraint) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -371,6 +451,11 @@ type ColumnDef struct {
 	Options []*ColumnOption
 }
 
+// Restore implements Recoverable interface.
+func (n *ColumnDef) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *ColumnDef) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -407,6 +492,11 @@ type CreateTableStmt struct {
 	Partition   *PartitionOptions
 	OnDuplicate OnDuplicateCreateTableSelectType
 	Select      ResultSetNode
+}
+
+// Restore implements Recoverable interface.
+func (n *CreateTableStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -462,6 +552,11 @@ type DropTableStmt struct {
 	Tables   []*TableName
 }
 
+// Restore implements Recoverable interface.
+func (n *DropTableStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *DropTableStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -490,6 +585,11 @@ type RenameTableStmt struct {
 	// TableToTables is only useful for syncer which depends heavily on tidb parser to do some dirty work for now.
 	// TODO: Refactor this when you are going to add full support for multiple schema changes.
 	TableToTables []*TableToTable
+}
+
+// Restore implements Recoverable interface.
+func (n *RenameTableStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -528,6 +628,11 @@ type TableToTable struct {
 	NewTable *TableName
 }
 
+// Restore implements Recoverable interface.
+func (n *TableToTable) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *TableToTable) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -563,6 +668,11 @@ type CreateViewStmt struct {
 	CheckOption model.ViewCheckOption
 }
 
+// Restore implements Recoverable interface.
+func (n *CreateViewStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -593,6 +703,11 @@ type CreateIndexStmt struct {
 	Unique        bool
 	IndexColNames []*IndexColName
 	IndexOption   *IndexOption
+}
+
+// Restore implements Recoverable interface.
+func (n *CreateIndexStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -632,6 +747,11 @@ type DropIndexStmt struct {
 	IfExists  bool
 	IndexName string
 	Table     *TableName
+}
+
+// Restore implements Recoverable interface.
+func (n *DropIndexStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -722,6 +842,11 @@ type ColumnPosition struct {
 	RelativeColumn *ColumnName
 }
 
+// Restore implements Recoverable interface.
+func (n *ColumnPosition) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *ColumnPosition) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -763,7 +888,7 @@ const (
 	AlterTableCoalescePartitions
 	AlterTableDropPartition
 
-// TODO: Add more actions
+	// TODO: Add more actions
 )
 
 // LockType is the type for AlterTableSpec.
@@ -796,6 +921,11 @@ type AlterTableSpec struct {
 	ToKey           model.CIStr
 	PartDefinitions []*PartitionDefinition
 	Num             uint64
+}
+
+// Restore implements Recoverable interface.
+func (n *AlterTableSpec) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -852,6 +982,11 @@ type AlterTableStmt struct {
 	Specs []*AlterTableSpec
 }
 
+// Restore implements Recoverable interface.
+func (n *AlterTableStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *AlterTableStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -880,6 +1015,11 @@ type TruncateTableStmt struct {
 	ddlNode
 
 	Table *TableName
+}
+
+// Restore implements Recoverable interface.
+func (n *TruncateTableStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.

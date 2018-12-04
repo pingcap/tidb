@@ -13,7 +13,12 @@
 
 package ast
 
-import "github.com/pingcap/parser/model"
+import (
+	"strings"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+)
 
 var (
 	_ StmtNode = &AnalyzeTableStmt{}
@@ -32,6 +37,11 @@ type AnalyzeTableStmt struct {
 
 	// IndexFlag is true when we only analyze indices for a table.
 	IndexFlag bool
+}
+
+// Restore implements Recoverable interface.
+func (n *AnalyzeTableStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
@@ -58,6 +68,11 @@ type DropStatsStmt struct {
 	Table *TableName
 }
 
+// Restore implements Recoverable interface.
+func (n *DropStatsStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
+}
+
 // Accept implements Node Accept interface.
 func (n *DropStatsStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -78,6 +93,11 @@ type LoadStatsStmt struct {
 	stmtNode
 
 	Path string
+}
+
+// Restore implements Recoverable interface.
+func (n *LoadStatsStmt) Restore(sb *strings.Builder) error {
+	return errors.New("Not implemented")
 }
 
 // Accept implements Node Accept interface.
