@@ -311,6 +311,9 @@ type SessionVars struct {
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 
+	// EnableWindowFunction enables the window function.
+	EnableWindowFunction bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -692,6 +695,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
 	case TiDBEnableRadixJoin:
 		s.EnableRadixJoin = TiDBOptOn(val)
+	case TiDBEnableWindowFunction:
+		s.EnableWindowFunction = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
