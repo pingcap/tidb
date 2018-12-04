@@ -588,6 +588,7 @@ const (
 	codeUnsupportedShardRowIDBits    = 207
 	codeUnsupportedAddPartition      = 208
 	codeUnsupportedCoalescePartition = 209
+	codeUnsupportedModifyCharset     = 210
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025
