@@ -18,11 +18,11 @@ import (
 	"runtime"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 type testLockSuite struct {

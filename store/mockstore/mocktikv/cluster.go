@@ -18,11 +18,11 @@ import (
 	"math"
 	"sync"
 
+	"context"
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/tablecodec"
-	"golang.org/x/net/context"
 )
 
 // Cluster simulates a TiKV cluster. It focuses on management and the change of

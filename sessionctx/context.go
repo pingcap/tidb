@@ -16,6 +16,7 @@ package sessionctx
 import (
 	"fmt"
 
+	"context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 )
 
 // Context is an interface for transaction and executive args environment.

@@ -19,12 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var smallCount = 100

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // LoadDataExec represents a load data executor.

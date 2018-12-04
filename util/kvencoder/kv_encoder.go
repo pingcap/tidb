@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var _ KvEncoder = &kvEncoder{}

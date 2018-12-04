@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
@@ -45,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 

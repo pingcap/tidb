@@ -20,6 +20,7 @@ import (
 	"time"
 	"unsafe"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
-	"golang.org/x/net/context"
 )
 
 var (

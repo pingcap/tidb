@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
-	"golang.org/x/net/context"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.

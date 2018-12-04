@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
@@ -26,7 +27,6 @@ import (
 	. "github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(new(testSQLSuite))

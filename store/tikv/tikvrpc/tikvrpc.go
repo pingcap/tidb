@@ -18,13 +18,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"golang.org/x/net/context"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.

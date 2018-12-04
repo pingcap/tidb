@@ -18,10 +18,10 @@ import (
 
 	. "github.com/pingcap/check"
 
+	"context"
 	basictracer "github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/util/tracing"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testTraceSuite{})

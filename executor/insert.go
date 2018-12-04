@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // InsertExec represents an insert executor.

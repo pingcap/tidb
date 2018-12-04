@@ -17,9 +17,9 @@ import (
 	"fmt"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"golang.org/x/net/context"
 )
 
 type testScanSuite struct {

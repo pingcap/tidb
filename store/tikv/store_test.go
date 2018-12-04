@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 var errStopped = errors.New("stopped")

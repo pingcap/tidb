@@ -18,10 +18,10 @@ import (
 	"math/rand"
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // ContextKey is the type of context's key

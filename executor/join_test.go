@@ -16,11 +16,11 @@ package executor_test
 import (
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestJoinPanic(c *C) {

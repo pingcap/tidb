@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"context"
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (

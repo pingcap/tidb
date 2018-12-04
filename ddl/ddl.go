@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -43,7 +44,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
-	"golang.org/x/net/context"
 )
 
 const (

@@ -16,12 +16,12 @@ package executor
 import (
 	"encoding/json"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 var _ Executor = &LoadStatsExec{}

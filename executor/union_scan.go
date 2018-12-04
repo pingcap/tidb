@@ -17,13 +17,13 @@ import (
 	"sort"
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.

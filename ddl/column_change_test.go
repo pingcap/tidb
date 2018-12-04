@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testColumnChangeSuite{})

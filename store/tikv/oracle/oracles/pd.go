@@ -17,12 +17,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var _ oracle.Oracle = &pdOracle{}

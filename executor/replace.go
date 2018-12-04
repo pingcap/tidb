@@ -14,13 +14,13 @@
 package executor
 
 import (
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // ReplaceExec represents a replace executor.

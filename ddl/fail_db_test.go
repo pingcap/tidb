@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"time"
 
+	"context"
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testFailDBSuite{})

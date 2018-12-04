@@ -14,10 +14,10 @@
 package tikv
 
 import (
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"golang.org/x/net/context"
 )
 
 type testSplitSuite struct {

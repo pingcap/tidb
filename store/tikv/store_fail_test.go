@@ -17,9 +17,9 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
-	"golang.org/x/net/context"
 )
 
 func (s *testStoreSuite) TestFailBusyServerKV(c *C) {

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
-	"golang.org/x/net/context"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult

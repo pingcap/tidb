@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type DDLForTest interface {

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestShow(c *C) {

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
-	"golang.org/x/net/context"
 )
 
 type testDDLTableSplitSuite struct{}

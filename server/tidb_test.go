@@ -26,6 +26,7 @@ import (
 	"os"
 	"time"
 
+	"context"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"golang.org/x/net/context"
 )
 
 type TidbTestSuite struct {

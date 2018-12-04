@@ -16,6 +16,7 @@ package executor
 import (
 	"time"
 
+	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.

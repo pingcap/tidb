@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

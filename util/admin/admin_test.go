@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

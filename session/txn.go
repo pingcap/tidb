@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 
+	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.

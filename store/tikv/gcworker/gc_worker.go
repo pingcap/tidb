@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tidbutil "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // GCWorker periodically triggers GC process on tikv server.

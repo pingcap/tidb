@@ -21,6 +21,7 @@ import (
 	"time"
 	"unsafe"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var _ Executor = &IndexLookUpJoin{}

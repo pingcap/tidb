@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -42,7 +43,6 @@ import (
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
-	"golang.org/x/net/context"
 )
 
 // tableCommon is shared by both Table and partition.

@@ -16,6 +16,7 @@ package executor
 import (
 	"fmt"
 
+	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -26,7 +27,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.

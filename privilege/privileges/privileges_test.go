@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestSelectNormal(c *C) {

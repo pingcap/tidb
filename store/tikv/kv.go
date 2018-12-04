@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 

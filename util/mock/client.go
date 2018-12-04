@@ -14,9 +14,9 @@
 package mock
 
 import (
+	"context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 // Client implement kv.Client interface, mocked from "CopClient" defined in

@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type twoPhaseCommitAction int

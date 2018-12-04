@@ -16,12 +16,12 @@ package executor
 import (
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
-	"golang.org/x/net/context"
 )
 
 // MergeJoinExec implements the merge join algorithm.

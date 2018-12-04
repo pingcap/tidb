@@ -17,11 +17,11 @@ import (
 	"fmt"
 	"time"
 
+	"context"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that

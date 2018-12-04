@@ -17,11 +17,11 @@ import (
 	"fmt"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"golang.org/x/net/context"
 )
 
 type testSafePointSuite struct {

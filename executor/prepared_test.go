@@ -17,6 +17,7 @@ import (
 	"math"
 	"strings"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -25,7 +26,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	dto "github.com/prometheus/client_model/go"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestPrepared(c *C) {

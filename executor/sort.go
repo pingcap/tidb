@@ -18,6 +18,7 @@ import (
 	"sort"
 	"time"
 
+	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
-	"golang.org/x/net/context"
 )
 
 // SortExec represents sorting executor.

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 

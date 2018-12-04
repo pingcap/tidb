@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testClusterSuite{})

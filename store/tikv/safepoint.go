@@ -19,10 +19,10 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // Safe point constants.

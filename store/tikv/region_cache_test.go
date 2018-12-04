@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"golang.org/x/net/context"
 )
 
 type testRegionCacheSuite struct {

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/client"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // ResolvedCacheSize is max number of cached txn status.

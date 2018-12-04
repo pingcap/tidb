@@ -16,12 +16,12 @@ package structure_test
 import (
 	"testing"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestTxStructure(t *testing.T) {

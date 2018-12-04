@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 )
 
 var _ sessionctx.Context = (*Context)(nil)

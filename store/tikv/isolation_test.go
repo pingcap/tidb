@@ -21,10 +21,10 @@ import (
 	"sync"
 	"time"
 
+	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"golang.org/x/net/context"
 )
 
 // The test suite takes too long under the race detector.

@@ -18,11 +18,11 @@ import (
 	"fmt"
 	"time"
 
+	"context"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // IDriver opens IContext.
