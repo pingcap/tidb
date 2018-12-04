@@ -16,6 +16,8 @@ package cascades
 import (
 	"container/list"
 	"fmt"
+
+	"github.com/pingcap/tidb/planner/property"
 )
 
 // Group is short for expression group, which is used to store all the
@@ -28,6 +30,8 @@ type Group struct {
 
 	explored        bool
 	selfFingerprint string
+
+	prop *property.LogicalProperty
 }
 
 // NewGroup creates a new Group.

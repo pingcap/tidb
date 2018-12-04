@@ -30,7 +30,7 @@ type statsInfo struct {
 }
 ```
 
-This struct will be maintained when we call `deriveStats`.
+This struct will be maintained when we call `DeriveStats`.
 
 ### How to maintain it.
 

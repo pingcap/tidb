@@ -82,8 +82,8 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
-	// deriveStats derives statistic info between plans.
-	deriveStats() (*property.StatsInfo, error)
+	// DeriveStats derives statistic info between plans.
+	DeriveStats() (*property.StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.

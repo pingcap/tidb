@@ -16,15 +16,19 @@ package cascades
 import (
 	"github.com/pingcap/errors"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
 // FindBestPlan is the optimization entrance of the cascades planner. The
 // optimization is composed of 2 phases: exploration and implementation.
 func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (plannercore.Plan, error) {
-	rootGroup := convert2Group(logical)
+	rootGroup, err := convert2Group(logical)
+	if err != nil {
+		return nil, err
+	}
 
-	err := onPhaseExploration(sctx, rootGroup)
+	err = onPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, err
 	}
@@ -34,14 +38,24 @@ func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (pla
 }
 
 // convert2Group converts a logical plan to expression groups.
-func convert2Group(node plannercore.LogicalPlan) *Group {
+func convert2Group(node plannercore.LogicalPlan) (*Group, error) {
 	e := NewGroupExpr(node)
 	e.children = make([]*Group, 0, len(node.Children()))
 	for _, child := range node.Children() {
-		childGroup := convert2Group(child)
+		childGroup, err := convert2Group(child)
+		if err != nil {
+			return nil, err
+		}
 		e.children = append(e.children, childGroup)
 	}
-	return NewGroup(e)
+	g := NewGroup(e)
+	stats, err := node.DeriveStats()
+	if err != nil {
+		return nil, err
+	}
+	prop := &property.LogicalProperty{Stats: stats, Schema: node.Schema()}
+	g.prop = prop
+	return g, nil
 }
 
 func onPhaseExploration(sctx sessionctx.Context, g *Group) error {

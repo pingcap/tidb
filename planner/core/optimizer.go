@@ -125,7 +125,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
-	if _, err := logic.deriveStats(); err != nil {
+	if _, err := logic.DeriveStats(); err != nil {
 		return nil, errors.Trace(err)
 	}
 

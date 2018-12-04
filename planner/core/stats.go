@@ -25,7 +25,7 @@ func (p *basePhysicalPlan) StatsCount() float64 {
 	return p.stats.RowCount
 }
 
-func (p *LogicalTableDual) deriveStats() (*property.StatsInfo, error) {
+func (p *LogicalTableDual) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -40,17 +40,17 @@ func (p *LogicalTableDual) deriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
-func (p *baseLogicalPlan) deriveStats() (*property.StatsInfo, error) {
+func (p *baseLogicalPlan) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
 	if len(p.children) > 1 {
-		panic("LogicalPlans with more than one child should implement their own deriveStats().")
+		panic("LogicalPlans with more than one child should implement their own DeriveStats().")
 	}
 
 	if len(p.children) == 1 {
 		var err error
-		p.stats, err = p.children[0].deriveStats()
+		p.stats, err = p.children[0].DeriveStats()
 		return p.stats, err
 	}
 
@@ -90,7 +90,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.Stat
 	return profile.Scale(selectivity)
 }
 
-func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
+func (ds *DataSource) DeriveStats() (*property.StatsInfo, error) {
 	if ds.stats != nil {
 		return ds.stats, nil
 	}
@@ -127,11 +127,11 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 	return ds.stats, nil
 }
 
-func (p *LogicalSelection) deriveStats() (*property.StatsInfo, error) {
+func (p *LogicalSelection) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
-	childProfile, err := p.children[0].deriveStats()
+	childProfile, err := p.children[0].DeriveStats()
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (p *LogicalSelection) deriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
-func (p *LogicalUnionAll) deriveStats() (*property.StatsInfo, error) {
+func (p *LogicalUnionAll) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
@@ -147,7 +147,7 @@ func (p *LogicalUnionAll) deriveStats() (*property.StatsInfo, error) {
 		Cardinality: make([]float64, p.Schema().Len()),
 	}
 	for _, child := range p.children {
-		childProfile, err := child.deriveStats()
+		childProfile, err := child.DeriveStats()
 		if err != nil {
 			return nil, err
 		}
@@ -159,11 +159,11 @@ func (p *LogicalUnionAll) deriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
-func (p *LogicalLimit) deriveStats() (*property.StatsInfo, error) {
+func (p *LogicalLimit) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
-	childProfile, err := p.children[0].deriveStats()
+	childProfile, err := p.children[0].DeriveStats()
 	if err != nil {
 		return nil, err
 	}
@@ -177,11 +177,11 @@ func (p *LogicalLimit) deriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
-func (lt *LogicalTopN) deriveStats() (*property.StatsInfo, error) {
+func (lt *LogicalTopN) DeriveStats() (*property.StatsInfo, error) {
 	if lt.stats != nil {
 		return lt.stats, nil
 	}
-	childProfile, err := lt.children[0].deriveStats()
+	childProfile, err := lt.children[0].DeriveStats()
 	if err != nil {
 		return nil, err
 	}
@@ -211,11 +211,11 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	return cardinality
 }
 
-func (p *LogicalProjection) deriveStats() (*property.StatsInfo, error) {
+func (p *LogicalProjection) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
-	childProfile, err := p.children[0].deriveStats()
+	childProfile, err := p.children[0].DeriveStats()
 	if err != nil {
 		return nil, err
 	}
@@ -230,11 +230,11 @@ func (p *LogicalProjection) deriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
-func (la *LogicalAggregation) deriveStats() (*property.StatsInfo, error) {
+func (la *LogicalAggregation) DeriveStats() (*property.StatsInfo, error) {
 	if la.stats != nil {
 		return la.stats, nil
 	}
-	childProfile, err := la.children[0].deriveStats()
+	childProfile, err := la.children[0].DeriveStats()
 	if err != nil {
 		return nil, err
 	}
@@ -256,22 +256,22 @@ func (la *LogicalAggregation) deriveStats() (*property.StatsInfo, error) {
 	return la.stats, nil
 }
 
-// deriveStats prepares property.StatsInfo.
+// DeriveStats prepares property.StatsInfo.
 // If the type of join is SemiJoin, the selectivity of it will be same as selection's.
 // If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose Cardinality should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
 // N(s) stands for the number of rows in relation s. V(s.key) means the Cardinality of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) deriveStats() (*property.StatsInfo, error) {
+func (p *LogicalJoin) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
-	leftProfile, err := p.children[0].deriveStats()
+	leftProfile, err := p.children[0].DeriveStats()
 	if err != nil {
 		return nil, err
 	}
-	rightProfile, err := p.children[1].deriveStats()
+	rightProfile, err := p.children[1].DeriveStats()
 	if err != nil {
 		return nil, err
 	}
@@ -328,15 +328,15 @@ func (p *LogicalJoin) deriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
-func (la *LogicalApply) deriveStats() (*property.StatsInfo, error) {
+func (la *LogicalApply) DeriveStats() (*property.StatsInfo, error) {
 	if la.stats != nil {
 		return la.stats, nil
 	}
-	leftProfile, err := la.children[0].deriveStats()
+	leftProfile, err := la.children[0].DeriveStats()
 	if err != nil {
 		return nil, err
 	}
-	_, err = la.children[1].deriveStats()
+	_, err = la.children[1].DeriveStats()
 	if err != nil {
 		return nil, err
 	}
@@ -367,11 +367,11 @@ func getSingletonStats(len int) *property.StatsInfo {
 	return ret
 }
 
-func (p *LogicalMaxOneRow) deriveStats() (*property.StatsInfo, error) {
+func (p *LogicalMaxOneRow) DeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
-	_, err := p.children[0].deriveStats()
+	_, err := p.children[0].DeriveStats()
 	if err != nil {
 		return nil, err
 	}

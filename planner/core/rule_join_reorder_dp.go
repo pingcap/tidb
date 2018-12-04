@@ -160,7 +160,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan LogicalPlan, e
 		}
 	}
 	join := s.newJoin(leftPlan, rightPlan, eqConds)
-	_, err := join.deriveStats()
+	_, err := join.DeriveStats()
 	return join, err
 }
 
