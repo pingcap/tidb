@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -659,6 +658,9 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
+		resultTp.Flen = mysql.MaxIntWidth
+	}
 	resultTp.Charset = a.Charset
 	resultTp.Collate = a.Collate
 	expression.SetBinFlagOrBinStr(b, resultTp)
@@ -677,7 +679,6 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		}
 		unionCols = append(unionCols, &expression.Column{
 			ColName:  col.ColName,
-			TblName:  col.TblName,
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
@@ -816,11 +817,35 @@ func (by *ByItems) Clone() *ByItems {
 	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
 }
 
+// itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
+type itemTransformer struct {
+}
+
+func (t *itemTransformer) Enter(inNode ast.Node) (ast.Node, bool) {
+	switch n := inNode.(type) {
+	case *driver.ParamMarkerExpr:
+		newNode := expression.ConstructPositionExpr(n)
+		return newNode, true
+	}
+	return inNode, false
+}
+
+func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
+	return inNode, false
+}
+
 func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) (*LogicalSort, error) {
-	b.curClause = orderByClause
+	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+		b.curClause = globalOrderByClause
+	} else {
+		b.curClause = orderByClause
+	}
 	sort := LogicalSort{}.Init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
+	transformer := &itemTransformer{}
 	for _, item := range byItems {
+		newExpr, _ := item.Expr.Accept(transformer)
+		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -837,7 +862,27 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 // getUintForLimitOffset gets uint64 value for limit/offset.
 // For ordinary statement, limit/offset should be uint64 constant value.
 // For prepared statement, limit/offset is string. We should convert it to uint64.
-func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint64, error) {
+func getUintForLimitOffset(ctx sessionctx.Context, n ast.Node) (uint64, error) {
+	var val interface{}
+	switch v := n.(type) {
+	case *driver.ValueExpr:
+		val = v.GetValue()
+	case *driver.ParamMarkerExpr:
+		param, err := expression.GetParamExpression(ctx, v)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		str, isNull, err := expression.GetStringFromConstant(ctx, param)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if isNull {
+			return 0, nil
+		}
+		val = str
+	default:
+		return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", v)
+	}
 	switch v := val.(type) {
 	case uint64:
 		return v, nil
@@ -846,22 +891,23 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 			return uint64(v), nil
 		}
 	case string:
+		sc := ctx.GetSessionVars().StmtCtx
 		uVal, err := types.StrToUint(sc, v)
 		return uVal, errors.Trace(err)
 	}
 	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
-func extractLimitCountOffset(sc *stmtctx.StatementContext, limit *ast.Limit) (count uint64,
+func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count uint64,
 	offset uint64, err error) {
 	if limit.Count != nil {
-		count, err = getUintForLimitOffset(sc, limit.Count.(ast.ValueExpr).GetValue())
+		count, err = getUintForLimitOffset(ctx, limit.Count)
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
 	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(sc, limit.Offset.(ast.ValueExpr).GetValue())
+		offset, err = getUintForLimitOffset(ctx, limit.Offset)
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
@@ -875,8 +921,7 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		offset, count uint64
 		err           error
 	)
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if count, offset, err = extractLimitCountOffset(sc, limit); err != nil {
+	if count, offset, err = extractLimitCountOffset(b.ctx, limit); err != nil {
 		return nil, err
 	}
 
@@ -1146,16 +1191,22 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
-	fields []*ast.SelectField
-	schema *expression.Schema
-	err    error
-	inExpr bool
+	ctx     sessionctx.Context
+	fields  []*ast.SelectField
+	schema  *expression.Schema
+	err     error
+	inExpr  bool
+	isParam bool
 }
 
 func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch inNode.(type) {
+	switch n := inNode.(type) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
+	case *driver.ParamMarkerExpr:
+		newNode := expression.ConstructPositionExpr(n)
+		g.isParam = true
+		return newNode, true
 	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
 	default:
 		g.inExpr = true
@@ -1190,14 +1241,21 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 	case *ast.PositionExpr:
-		if v.N < 1 || v.N > len(g.fields) {
-			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", v.N)
+		pos, isNull, err := expression.PosFromPositionExpr(g.ctx, v)
+		if err != nil {
+			g.err = ErrUnknown.GenWithStackByArgs()
+		}
+		if err != nil || isNull {
 			return inNode, false
 		}
-		ret := g.fields[v.N-1].Expr
+		if pos < 1 || pos > len(g.fields) {
+			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", pos)
+			return inNode, false
+		}
+		ret := g.fields[pos-1].Expr
 		ret.Accept(extractor)
 		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[v.N-1].Text())
+			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
 			return inNode, false
 		}
 		return ret, true
@@ -1555,6 +1613,7 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{
+		ctx:    b.ctx,
 		fields: fields,
 		schema: p.Schema(),
 	}
@@ -1564,9 +1623,12 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		if resolver.err != nil {
 			return nil, nil, errors.Trace(resolver.err)
 		}
+		if !resolver.isParam {
+			item.Expr = retExpr.(ast.ExprNode)
+		}
 
-		item.Expr = retExpr.(ast.ExprNode)
-		expr, np, err := b.rewrite(item.Expr, p, nil, true)
+		itemExpr := retExpr.(ast.ExprNode)
+		expr, np, err := b.rewrite(itemExpr, p, nil, true)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

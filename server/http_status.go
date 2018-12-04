@@ -17,8 +17,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
@@ -28,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
+	"github.com/tiancaiamao/appdash/traceapp"
+	static "sourcegraph.com/sourcegraph/appdash-data"
 )
 
 const defaultStatusAddr = ":10080"
@@ -81,6 +86,23 @@ func (s *Server) startHTTPServer() {
 		addr = defaultStatusAddr
 	}
 
+	// HTTP path for web UI.
+	if host, port, err := net.SplitHostPort(addr); err == nil {
+		if host == "" {
+			host = "localhost"
+		}
+		baseURL := &url.URL{
+			Scheme: "http",
+			Host:   fmt.Sprintf("%s:%s", host, port),
+		}
+		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
+		sr := router.PathPrefix("/web/trace/").Subrouter()
+		if _, err := traceapp.New(traceapp.NewRouter(sr), baseURL); err != nil {
+			log.Error(err)
+		}
+		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
+	}
+
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 
@@ -101,8 +123,10 @@ func (s *Server) startHTTPServer() {
 		if err != nil {
 			log.Error("Get http router path error ", err)
 		}
-		name := route.GetName() //If the name attribute is not set, GetName returns ""
-		if name != "" && err == nil {
+		name := route.GetName()
+		// If the name attribute is not set, GetName returns "".
+		// "traceapp.xxx" are introduced by the traceapp package and are also ignored.
+		if name != "" && !strings.HasPrefix(name, "traceapp") && err == nil {
 			httpRouterPage.WriteString("<tr><td><a href='" + pathTemplate + "'>" + name + "</a><td></tr>")
 		}
 		return nil

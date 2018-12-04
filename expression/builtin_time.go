@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -4540,7 +4541,20 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	default:
 		flen, decimal = 17, 6
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, types.ETInt, types.ETInt, types.ETReal)
+	arg0Type, arg1Type := args[0].GetType().EvalType(), args[1].GetType().EvalType()
+	// For ETString type, arg must be evaluated rounding down to int64
+	// For other types, arg is evaluated rounding to int64
+	if arg0Type == types.ETString {
+		arg0Type = types.ETReal
+	} else {
+		arg0Type = types.ETInt
+	}
+	if arg1Type == types.ETString {
+		arg1Type = types.ETReal
+	} else {
+		arg1Type = types.ETInt
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, arg0Type, arg1Type, types.ETReal)
 	bf.tp.Flen, bf.tp.Decimal = flen, decimal
 	sig := &builtinMakeTimeSig{bf}
 	return sig, nil
@@ -4556,18 +4570,28 @@ func (b *builtinMakeTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
+// calculate for hour and minute
+func (b *builtinMakeTimeSig) getIntParam(arg Expression, row chunk.Row) (int64, bool, error) {
+	if arg.GetType().EvalType() == types.ETReal {
+		fRes, isNull, err := arg.EvalReal(b.ctx, row)
+		return int64(fRes), isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+	iRes, isNull, err := arg.EvalInt(b.ctx, row)
+	return iRes, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+}
+
 // evalDuration evals a builtinMakeTimeIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_maketime
 func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	dur := types.ZeroDuration
 	dur.Fsp = types.MaxFsp
-	hour, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	hour, isNull, err := b.getIntParam(b.args[0], row)
 	if isNull || err != nil {
-		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		return dur, isNull, err
 	}
-	minute, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	minute, isNull, err := b.getIntParam(b.args[1], row)
 	if isNull || err != nil {
-		return dur, isNull, errors.Trace(handleInvalidTimeError(b.ctx, err))
+		return dur, isNull, err
 	}
 	if minute < 0 || minute >= 60 {
 		return dur, true, nil
@@ -5628,4 +5652,51 @@ func getExpressionFsp(ctx sessionctx.Context, expression Expression) (int, error
 		return types.GetFsp(str), nil
 	}
 	return mathutil.Min(expression.GetType().Decimal, types.MaxFsp), nil
+}
+
+//tidbParseTsoFunction extracts physical time from a tso
+type tidbParseTsoFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbParseTsoFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTp := args[0].GetType().EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, types.ETInt)
+
+	bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeDate, mysql.MaxDateWidth, types.DefaultFsp
+	sig := &builtinTidbParseTsoSig{bf}
+	return sig, nil
+}
+
+type builtinTidbParseTsoSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTidbParseTsoSig) Clone() builtinFunc {
+	newSig := &builtinTidbParseTsoSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals a builtinTidbParseTsoSig.
+func (b *builtinTidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	arg, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil || arg <= 0 {
+		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
+	}
+
+	t := oracle.GetTimeFromTS(uint64(arg))
+	result := types.Time{
+		Time: types.FromGoTime(t),
+		Type: mysql.TypeDatetime,
+		Fsp:  types.MaxFsp,
+	}
+	err = result.ConvertTimeZone(time.Local, b.ctx.GetSessionVars().Location())
+	if err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+	return result, false, nil
 }
