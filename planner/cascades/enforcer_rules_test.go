@@ -38,8 +38,6 @@ func (s *testCascadesSuite) TestNewProperties(c *C) {
 	prop.Cols = append(prop.Cols, col)
 	enforcers := GetEnforcerRules(prop)
 	orderEnforcer, _ := enforcers[0].(*OrderEnforcer)
-	newProps := orderEnforcer.NewProperties(prop)
-	c.Assert(len(newProps), Equals, 1)
-	c.Assert(len(newProps[0].Cols), Equals, 0)
-	c.Assert(len(orderEnforcer.reqProp.Cols), Equals, 1)
+	newProp := orderEnforcer.NewProperty(prop)
+	c.Assert(newProp.Cols, IsNil)
 }

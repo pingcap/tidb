@@ -14,6 +14,8 @@
 package cascades
 
 import (
+	"math"
+
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
@@ -45,4 +47,16 @@ func (impl *baseImplementation) getCost() float64 {
 
 func (impl *baseImplementation) getPlan() plannercore.PhysicalPlan {
 	return impl.plan
+}
+
+// SortImpl implementation of PhysicalSort.
+type SortImpl struct {
+	baseImplementation
+}
+
+func (impl *SortImpl) calcCost(outCount float64, childCosts []float64, children ...*Group) float64 {
+	cnt := math.Min(children[0].prop.Stats.RowCount, impl.plan.GetChildReqProps(0).ExpectedCnt)
+	sort := impl.plan.(*plannercore.PhysicalSort)
+	impl.cost = sort.GetCost(cnt) + childCosts[0]
+	return impl.cost
 }
