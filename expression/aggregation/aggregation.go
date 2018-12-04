@@ -126,11 +126,10 @@ type aggFunction struct {
 }
 
 func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool) aggFunction {
-	return aggFunction{AggFuncDesc: &AggFuncDesc{
-		Name:        funcName,
-		Args:        args,
-		HasDistinct: hasDistinct,
-	}}
+	agg := &AggFuncDesc{HasDistinct: hasDistinct}
+	agg.Name = funcName
+	agg.Args = args
+	return aggFunction{AggFuncDesc: agg}
 }
 
 // CreateContext implements Aggregation interface.
