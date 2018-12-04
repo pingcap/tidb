@@ -1527,7 +1527,7 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, fl
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 	}
-	iv := int64(fv + 0.5)
+	iv := int64(math.Round(fv))
 
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":
