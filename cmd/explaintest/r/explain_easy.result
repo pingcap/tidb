@@ -159,7 +159,7 @@ TableReader_5	10000.00	root	data:TableScan_4
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 id	count	task	operator info
 Union_17	26000.00	root	
-├─HashAgg_21	16000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
+├─HashAgg_21	16000.00	root	group by:c1, funcs:firstrow(join_agg_0)
 │ └─Union_22	16000.00	root	
 │   ├─StreamAgg_35	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
 │   │ └─IndexReader_36	8000.00	root	index:StreamAgg_26
@@ -173,7 +173,7 @@ Union_17	26000.00	root
   └─TableScan_58	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	count	task	operator info
-HashAgg_18	24000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
+HashAgg_18	24000.00	root	group by:c1, funcs:firstrow(join_agg_0)
 └─Union_19	24000.00	root	
   ├─StreamAgg_32	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
   │ └─IndexReader_33	8000.00	root	index:StreamAgg_23
