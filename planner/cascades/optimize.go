@@ -150,7 +150,7 @@ func implGroupExpr(cur *GroupExpr, reqPhysProp *property.PhysicalProperty) (impl
 		if !rule.Match(cur, reqPhysProp) {
 			continue
 		}
-		impl, err := rule.OnImplement(cur)
+		impl, err := rule.OnImplement(cur, reqPhysProp)
 		if err != nil {
 			return nil, err
 		}
