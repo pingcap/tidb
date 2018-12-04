@@ -86,7 +86,7 @@ func getExpectKvPairs(tkExpect *testkit.TestKit, sql string) []KvPair {
 	tkExpect.MustExec("begin")
 	tkExpect.MustExec(sql)
 	kvPairsExpect := make([]KvPair, 0)
-	kv.WalkMemBuffer(tkExpect.Se.Txn().GetMemBuffer(), func(k kv.Key, v []byte) error {
+	kv.WalkMemBuffer(tkExpect.Se.Txn(true).GetMemBuffer(), func(k kv.Key, v []byte) error {
 		kvPairsExpect = append(kvPairsExpect, KvPair{Key: k, Val: v})
 		return nil
 	})
