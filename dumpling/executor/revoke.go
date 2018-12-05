@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 /***

@@ -14,6 +14,7 @@
 package binloginfo_test
 
 import (
+	"context"
 	"net"
 	"os"
 	"strconv"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 

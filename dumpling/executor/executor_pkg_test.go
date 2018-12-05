@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testExecSuite{})

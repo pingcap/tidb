@@ -18,6 +18,7 @@
 package session
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -60,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // Session context
