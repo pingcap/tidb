@@ -15,10 +15,10 @@ package executor
 
 import (
 	"container/heap"
+	"context"
 	"sort"
 	"time"
 
-	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"

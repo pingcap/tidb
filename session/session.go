@@ -18,6 +18,7 @@
 package session
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -28,7 +29,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"

@@ -15,11 +15,11 @@ package mocktikv_test
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"strconv"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"

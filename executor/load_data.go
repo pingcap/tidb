@@ -15,10 +15,10 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"

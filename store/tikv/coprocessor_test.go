@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"

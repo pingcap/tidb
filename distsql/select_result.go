@@ -14,9 +14,9 @@
 package distsql
 
 import (
+	"context"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"

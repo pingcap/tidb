@@ -18,6 +18,7 @@
 package session
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"runtime/debug"
@@ -25,7 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"

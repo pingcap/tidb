@@ -14,6 +14,7 @@
 package domain
 
 import (
+	"context"
 	"crypto/tls"
 	"os"
 	"sync"
@@ -21,7 +22,6 @@ import (
 	"time"
 	"unsafe"
 
-	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"

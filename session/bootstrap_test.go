@@ -14,9 +14,9 @@
 package session
 
 import (
+	"context"
 	"fmt"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"

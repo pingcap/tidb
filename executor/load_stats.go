@@ -14,9 +14,9 @@
 package executor
 
 import (
+	"context"
 	"encoding/json"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx"

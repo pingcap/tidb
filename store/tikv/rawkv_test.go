@@ -15,9 +15,9 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )

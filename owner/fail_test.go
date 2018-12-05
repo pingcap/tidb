@@ -14,13 +14,13 @@
 package owner
 
 import (
+	"context"
 	"math"
 	"net"
 	"os"
 	"testing"
 	"time"
 
-	"context"
 	"github.com/coreos/etcd/clientv3"
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"

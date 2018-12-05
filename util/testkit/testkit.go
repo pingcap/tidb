@@ -15,11 +15,11 @@ package testkit
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"sync/atomic"
 
-	"context"
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"

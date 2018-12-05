@@ -14,12 +14,12 @@
 package tikv
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"sync"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"

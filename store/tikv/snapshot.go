@@ -15,12 +15,12 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sync"
 	"time"
 	"unsafe"
 
-	"context"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"

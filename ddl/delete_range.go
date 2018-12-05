@@ -14,12 +14,12 @@
 package ddl
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"math"
 	"sync"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"

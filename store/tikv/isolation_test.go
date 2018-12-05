@@ -16,12 +16,12 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"

@@ -14,9 +14,8 @@
 package kv
 
 import (
-	"sync"
-
 	"context"
+	"sync"
 )
 
 // InjectionConfig is used for fault injections for KV components.

@@ -14,10 +14,10 @@
 package tikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"

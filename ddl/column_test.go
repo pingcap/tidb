@@ -14,10 +14,10 @@
 package ddl
 
 import (
+	"context"
 	"reflect"
 	"sync"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"

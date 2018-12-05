@@ -14,9 +14,9 @@
 package owner
 
 import (
+	"context"
 	"sync/atomic"
 
-	"context"
 	"github.com/pingcap/errors"
 )
 

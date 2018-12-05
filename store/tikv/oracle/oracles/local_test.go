@@ -14,10 +14,9 @@
 package oracles
 
 import (
+	"context"
 	"testing"
 	"time"
-
-	"context"
 )
 
 func TestLocalOracle(t *testing.T) {

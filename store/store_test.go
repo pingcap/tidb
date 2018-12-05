@@ -14,6 +14,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -21,7 +22,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"

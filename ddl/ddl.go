@@ -18,11 +18,11 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
-	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"

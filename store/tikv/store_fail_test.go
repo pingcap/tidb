@@ -14,10 +14,10 @@
 package tikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
-	"context"
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 )

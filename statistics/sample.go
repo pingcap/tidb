@@ -14,10 +14,10 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"

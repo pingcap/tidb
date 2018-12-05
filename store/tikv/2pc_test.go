@@ -14,12 +14,12 @@
 package tikv
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"strings"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"

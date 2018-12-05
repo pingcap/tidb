@@ -14,12 +14,12 @@
 package gcworker
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"testing"
 	"time"
 
-	"context"
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/errorpb"

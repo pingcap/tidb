@@ -15,10 +15,10 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"time"
 
-	"context"
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"

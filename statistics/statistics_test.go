@@ -14,11 +14,11 @@
 package statistics
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"

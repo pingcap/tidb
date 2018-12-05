@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -22,7 +23,6 @@ import (
 	"time"
 	"unsafe"
 
-	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pingcap/errors"

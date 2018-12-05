@@ -15,12 +15,12 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"

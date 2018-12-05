@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"sort"
@@ -23,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"

@@ -14,6 +14,7 @@
 package owner
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -22,7 +23,6 @@ import (
 	"time"
 	"unsafe"
 
-	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes"

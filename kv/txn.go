@@ -14,11 +14,11 @@
 package kv
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	log "github.com/sirupsen/logrus"

@@ -14,11 +14,11 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"

@@ -14,9 +14,9 @@
 package executor
 
 import (
+	"context"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"

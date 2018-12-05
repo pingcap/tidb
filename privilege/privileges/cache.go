@@ -14,13 +14,13 @@
 package privileges
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"

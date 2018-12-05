@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -21,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"

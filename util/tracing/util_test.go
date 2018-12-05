@@ -14,13 +14,12 @@
 package tracing_test
 
 import (
+	"context"
 	"testing"
 
-	. "github.com/pingcap/check"
-
-	"context"
 	basictracer "github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/tracing"
 )
 

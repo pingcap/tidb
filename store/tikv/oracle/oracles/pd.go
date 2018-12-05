@@ -14,10 +14,10 @@
 package oracles
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"

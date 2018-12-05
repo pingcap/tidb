@@ -15,9 +15,9 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/client"

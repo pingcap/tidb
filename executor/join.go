@@ -14,13 +14,13 @@
 package executor
 
 import (
+	"context"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"

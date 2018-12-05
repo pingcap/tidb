@@ -14,9 +14,9 @@
 package executor_test
 
 import (
+	"context"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"

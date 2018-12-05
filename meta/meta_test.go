@@ -14,11 +14,11 @@
 package meta_test
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/meta"

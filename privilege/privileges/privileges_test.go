@@ -14,11 +14,11 @@
 package privileges_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"

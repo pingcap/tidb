@@ -14,10 +14,10 @@
 package util
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"

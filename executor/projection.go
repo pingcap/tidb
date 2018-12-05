@@ -14,9 +14,9 @@
 package executor
 
 import (
+	"context"
 	"time"
 
-	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"

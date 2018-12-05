@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"

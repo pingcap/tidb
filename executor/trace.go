@@ -14,10 +14,10 @@
 package executor
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
-	"context"
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"

@@ -14,9 +14,9 @@
 package sessionctx
 
 import (
+	"context"
 	"fmt"
 
-	"context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"

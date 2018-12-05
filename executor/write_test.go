@@ -14,12 +14,12 @@
 package executor_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"

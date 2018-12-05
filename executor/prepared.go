@@ -14,10 +14,10 @@
 package executor
 
 import (
+	"context"
 	"math"
 	"sort"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"

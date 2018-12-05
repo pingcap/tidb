@@ -14,11 +14,11 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"

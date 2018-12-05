@@ -14,10 +14,10 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"

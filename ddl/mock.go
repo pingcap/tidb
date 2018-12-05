@@ -14,10 +14,10 @@
 package ddl
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"

@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math"
@@ -25,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"context"
 	gofail "github.com/etcd-io/gofail/runtime"
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"

@@ -14,13 +14,13 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"

@@ -15,11 +15,11 @@ package tikv
 
 import (
 	"container/list"
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/client"

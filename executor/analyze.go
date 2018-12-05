@@ -14,10 +14,10 @@
 package executor
 
 import (
+	"context"
 	"runtime"
 	"strconv"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"

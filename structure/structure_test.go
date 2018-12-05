@@ -14,9 +14,9 @@
 package structure_test
 
 import (
+	"context"
 	"testing"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"

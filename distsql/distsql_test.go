@@ -14,11 +14,11 @@
 package distsql
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"

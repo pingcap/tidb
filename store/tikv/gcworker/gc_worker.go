@@ -15,6 +15,7 @@ package gcworker
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -23,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"

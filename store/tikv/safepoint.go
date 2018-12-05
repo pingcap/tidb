@@ -14,12 +14,12 @@
 package tikv
 
 import (
+	"context"
 	"crypto/tls"
 	"strconv"
 	"sync"
 	"time"
 
-	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
 	log "github.com/sirupsen/logrus"

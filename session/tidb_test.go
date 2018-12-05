@@ -14,6 +14,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -21,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"

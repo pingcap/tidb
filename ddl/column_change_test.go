@@ -14,11 +14,11 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"

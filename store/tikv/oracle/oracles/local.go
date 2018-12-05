@@ -14,10 +14,10 @@
 package oracles
 
 import (
+	"context"
 	"sync"
 	"time"
 
-	"context"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 

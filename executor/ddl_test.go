@@ -14,12 +14,12 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"

@@ -14,11 +14,11 @@
 package domain
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
 
-	"context"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pingcap/errors"

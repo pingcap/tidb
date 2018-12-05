@@ -14,10 +14,10 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"

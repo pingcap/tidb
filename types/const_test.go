@@ -14,10 +14,10 @@
 package types_test
 
 import (
+	"context"
 	"flag"
 	"testing"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"

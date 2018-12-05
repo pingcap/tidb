@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -21,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"context"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/tikv"

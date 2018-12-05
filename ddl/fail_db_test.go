@@ -14,11 +14,11 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"time"
 
-	"context"
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"

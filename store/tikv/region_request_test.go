@@ -14,12 +14,12 @@
 package tikv
 
 import (
+	"context"
 	"net"
 	"strings"
 	"sync"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"

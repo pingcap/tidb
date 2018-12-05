@@ -15,6 +15,7 @@ package tracing
 
 import (
 	"context"
+
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
 )

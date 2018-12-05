@@ -15,13 +15,13 @@ package executor_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"runtime/pprof"
 	"strings"
 	"sync/atomic"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"

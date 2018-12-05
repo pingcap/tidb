@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"math"
 	"runtime"
 	"sort"
@@ -22,7 +23,6 @@ import (
 	"time"
 	"unsafe"
 
-	"context"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"

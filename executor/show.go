@@ -15,13 +15,13 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"context"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"

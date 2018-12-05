@@ -15,10 +15,10 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"sort"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"

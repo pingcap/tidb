@@ -14,10 +14,10 @@
 package mocktikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
-	"context"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"

@@ -14,9 +14,8 @@
 package oracle
 
 import (
-	"time"
-
 	"context"
+	"time"
 )
 
 // Oracle is the interface that provides strictly ascending timestamps.

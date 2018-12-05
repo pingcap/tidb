@@ -15,13 +15,13 @@
 package tikv
 
 import (
+	"context"
 	"io"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"

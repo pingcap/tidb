@@ -14,10 +14,10 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"time"
 
-	"context"
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"

@@ -15,9 +15,9 @@ package ddl_test
 
 import (
 	"bytes"
+	"context"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"

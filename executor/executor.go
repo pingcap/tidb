@@ -14,13 +14,13 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"context"
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"

@@ -14,10 +14,10 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"time"
 
-	"context"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"

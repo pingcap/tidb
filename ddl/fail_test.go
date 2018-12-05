@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"

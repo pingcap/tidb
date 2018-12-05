@@ -14,10 +14,10 @@
 package executor_test
 
 import (
+	"context"
 	"math"
 	"strings"
 
-	"context"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
