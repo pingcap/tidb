@@ -80,7 +80,7 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 		f datetime default current_timestamp);`)
 	tk.MustExec("insert into t1(a, b, c, d) values ('1', '1', 1, 1)")
 	tk.MustQuery(`select
-		default(a) as defa, 
+		default(a) as defa,
 		default(b) as defb,
 		default(c) as defc,
 		default(d) as defd,
@@ -93,6 +93,19 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 	_, err = tk.Exec("select default(a) from t1, t2")
 	c.Assert(err, NotNil)
 	tk.MustQuery("select default(t1.a) from t1, t2").Check(testkit.Rows("def"))
+
+	tk.MustExec(`create table t3(
+		a datetime default current_timestamp,
+		b timestamp default current_timestamp,
+		c timestamp(6) default current_timestamp(6),
+		d varchar(20) default 'current_timestamp')`)
+	tk.MustExec("insert into t3 values ()")
+	tk.MustQuery(`select
+		default(a) as defa,
+		default(b) as defb,
+		default(c) as defc,
+		default(d) as defd
+		from t3`).Check(testutil.RowsWithSep("|", "<nil>|0000-00-00 00:00:00|0000-00-00 00:00:00.000000|current_timestamp"))
 
 	tk.MustExec("prepare stmt from 'select default(a) from t1';")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("def"))
