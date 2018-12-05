@@ -1,7 +1,7 @@
 # Proposal: Support to restore SQL text from an AST tree.
 
 - Author(s):     [Yilin Zhao](https://github.com/leoppro)
-- Last updated:  2018-12-04
+- Last updated:  2018-12-05
 - Discussion at: https://github.com/pingcap/tidb/issues/8532
 
 ## Abstract
@@ -10,59 +10,55 @@ This proposal aims to support to restore SQL text from any `ast.Node`.
 
 ## Background
 
+Some new features in TiDB need all the `ast.Node` to be restorable to SQL text, 
+for example, we parse this sql `create view v as select * from t;` to an AST, 
+then expand the `select` of the AST to `select test.t.col0, test.t.col1 from test.t;`.
+
+The structure of an `ast.Node` as the picture shows(Take `ast.CreateUserStmt` as an example).
+
+![create-user-stmt](./imgs/create-user-stmt.png)
+
 We know there is a `Text()` method of `ast.Node`, 
 the parser calls the `SetText()` method during the parsing process, 
 then we can call `Text()` to get original input sql. 
 But the `Text()` method is incomplete, only the `Text()` of root nodes can work well. 
-
-Now some features(eg. Database name and table name mapping) need all the `ast.Node` to be restorable to SQL text.
+We should not use it when implementing this proposal.
 
 ## Proposal
 
+I recommend adding a `Restore()` method to ast.Node, this is the function defined:
+
+```go
+type Node interface {
+	// Restore AST to SQL text and append them to `sb`.
+	// return error when the AST is invalid.
+	Restore(sb *strings.Builder) error
+	
+	...
+}
+```
+
+## Rationale
+
 We know the AST is a kind of tree whose child node is correspond to SQL text. 
-So we can walk through AST tree layer by layer and splice SQL text according to AST node. 
+So we can walk through the AST layer by layer, recursive `Restore()` of each child node and 
+splice SQL text according to AST node. 
 There is the AST parsed from `SELECT column0 FROM table0 UNION SELECT column1 FROM table1 WHERE a = 1`, 
 we can splice SQL text as the picture shows.
 
 ![ast tree](./imgs/ast-tree.png)
 
-## Rationale
-
-None
-
 ## Compatibility
 
-None
+The AST and SQL text are one-to-many relationships, so we can't restore completely equal SQL text, 
+we only need to ensure that the ASTs parsed by input SQL and restored SQL are equal.
 
 ## Implementation
 
-### Code
+### Stage
 
-We add a `Restore` method to [ast.Node](https://github.com/pingcap/parser/blob/ce4d755a8937ee6bc0e851fafdcd042ab5b1a1c1/ast/ast.go#L28)
-
-```go
-// Node is the basic element of the AST.
-// Interfaces embed Node should have 'Node' name suffix.
-type Node interface {
-	// Restore returns the sql text from ast tree
-	Restore(sb *strings.Builder) error
-	// Accept accepts Visitor to visit itself.
-	// The returned node should replace original node.
-	// ok returns false to stop visiting.
-	//
-	// Implementation of this method should first call visitor.Enter,
-	// assign the returned node to its method receiver, if skipChildren returns true,
-	// children should be skipped. Otherwise, call its children in particular order that
-	// later elements depends on former elements. Finally, return visitor.Leave.
-	Accept(v Visitor) (node Node, ok bool)
-	// Text returns the original text of the element.
-	Text() string
-	// SetText sets original text to the Node.
-	SetText(text string)
-}
-```
-
-We need implement it for all `ast.Node()`.
+Considering that some ast.Node depend on another ast.Node, we divide sub-tasks into four stages.  
+Detailed list at [pingcap/tidb#8532](https://github.com/pingcap/tidb/issues/8532).
 
 ### Example
 
