@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -96,9 +96,9 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			got := result.Rows()[0][1]
 			var expected string
 			if job.Type == model.ActionAddIndex {
-				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 			} else if job.Type == model.ActionAddColumn {
-				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`),\n  KEY `idx1` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`),\n  KEY `idx1` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 			}
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
@@ -376,7 +376,7 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column the number of enum column's elements is less than the original: 2")
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column charset binary not match origin utf8")
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column charset binary not match origin utf8mb4")
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -587,7 +587,8 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	result, err = s.execQuery(tk, "show index from tr;")
 	c.Assert(err, IsNil)
-	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
+	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE  "))
+	c.Assert(err, IsNil)
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
@@ -731,12 +732,14 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 
 func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 
 	se1, err1 := session.CreateSession(s.store)
-	_, err = se1.Execute(context.Background(), "use test_db_state")
 	c.Assert(err1, IsNil)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
 
 	var err2, err3 error
 	wg := sync.WaitGroup{}

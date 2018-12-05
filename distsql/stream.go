@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

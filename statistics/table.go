@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -177,17 +177,11 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{
-					ID:                histID,
-					NDV:               distinct,
-					NullCount:         nullCount,
-					tp:                &colInfo.FieldType,
-					LastUpdateVersion: histVer,
-					TotColSize:        totColSize,
-				},
+				Histogram: *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
 				Info:      colInfo,
 				Count:     count + nullCount,
 				ErrorRate: errorRate,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			break
 		}
@@ -206,6 +200,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 				CMSketch:  cms,
 				Count:     int64(hg.totalRowCount()),
 				ErrorRate: errorRate,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			break
 		}
@@ -610,7 +605,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
-			t.Columns[col.ID] = &Column{Info: col}
+			t.Columns[col.ID] = &Column{Info: col, isHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag)}
 		}
 	}
 	for _, idx := range tblInfo.Indices {

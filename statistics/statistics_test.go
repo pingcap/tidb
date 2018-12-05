@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

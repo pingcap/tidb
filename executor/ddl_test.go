@@ -242,7 +242,7 @@ func (s *testSuite) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("alter table mc modify column c2 text")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 }
 
@@ -460,4 +460,33 @@ func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
+}
+
+func (s *testSuite) TestSetDDLReorgBatchSize(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.DefTiDBDDLReorgBatchSize))
+
+	tk.MustExec("set tidb_ddl_reorg_batch_size = 1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MinDDLReorgBatchSize))
+	tk.MustExec(fmt.Sprintf("set tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MaxDDLReorgBatchSize))
+	_, err := tk.Exec("set tidb_ddl_reorg_batch_size = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set tidb_ddl_reorg_batch_size = 100")
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
+	tk.MustExec("set tidb_ddl_reorg_batch_size = -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
+
+	tk.MustExec("set tidb_ddl_reorg_batch_size = 100")
+	res := tk.MustQuery("select @@tidb_ddl_reorg_batch_size")
+	res.Check(testkit.Rows("100"))
+
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgBatchSize)))
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	res.Check(testkit.Rows("1000"))
 }

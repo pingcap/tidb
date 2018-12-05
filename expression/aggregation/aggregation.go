@@ -16,6 +16,7 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 )
 
 // Aggregation stands for aggregate functions.
@@ -126,11 +126,10 @@ type aggFunction struct {
 }
 
 func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool) aggFunction {
-	return aggFunction{AggFuncDesc: &AggFuncDesc{
-		Name:        funcName,
-		Args:        args,
-		HasDistinct: hasDistinct,
-	}}
+	agg := &AggFuncDesc{HasDistinct: hasDistinct}
+	agg.Name = funcName
+	agg.Args = args
+	return aggFunction{AggFuncDesc: agg}
 }
 
 // CreateContext implements Aggregation interface.

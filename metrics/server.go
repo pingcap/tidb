@@ -16,8 +16,8 @@ package metrics
 import (
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -47,6 +47,13 @@ var (
 			Name:      "connections",
 			Help:      "Number of connections.",
 		})
+
+	PreparedStmtGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "server",
+		Name:      "prepared_stmts",
+		Help:      "number of prepared statements.",
+	})
 
 	ExecuteErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{

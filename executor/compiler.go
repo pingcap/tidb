@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -36,8 +36,8 @@ type Compiler struct {
 
 // Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 

@@ -170,8 +170,9 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 type PhysicalProjection struct {
 	physicalSchemaProducer
 
-	Exprs            []expression.Expression
-	CalculateNoDelay bool
+	Exprs                []expression.Expression
+	CalculateNoDelay     bool
+	AvoidColumnEvaluator bool
 }
 
 // PhysicalTopN is the physical operator of topN.

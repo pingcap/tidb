@@ -78,6 +78,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
 	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
 	c.Assert(vars.EnableRadixJoin, Equals, DefTiDBUseRadixJoin)
+	c.Assert(vars.AllowWriteRowID, Equals, DefOptWriteRowID)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.Concurrency))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
@@ -101,6 +102,16 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(SetSessionSystemVar(v, "autocommit", types.Datum{}), NotNil)
+
+	// 0 converts to OFF
+	SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("0"))
+	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(val, Equals, "OFF")
+
+	// 1/ON is not supported (generates a warning and sets to OFF)
+	SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(val, Equals, "OFF")
 
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
 	val, err = GetSessionSystemVar(v, "sql_mode")

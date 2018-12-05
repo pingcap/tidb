@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -304,7 +304,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 	startHandle = math.MinInt64
 	endHandle = math.MaxInt64
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, math.MinInt64,
+	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, math.MinInt64, math.MaxInt64, true,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandle = h
 			return false, nil

@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -35,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -123,6 +124,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
+	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	stmts, err := p.Parse(src, charset, collation)
 	if err != nil {
@@ -141,6 +143,12 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
+		span1.LogKV("sql", s.OriginText())
+		defer span1.Finish()
+	}
+
 	var err error
 	var rs sqlexec.RecordSet
 	se := sctx.(*session)
@@ -151,7 +159,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
-		if sctx.Txn() != nil {
+		if sctx.Txn(false).Valid() {
 			if err != nil {
 				sctx.StmtRollback()
 			} else {
@@ -177,6 +185,17 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sctx.GetSessionVars().IsAutocommit())
 		}
+	}
+	if se.txn.pending() {
+		// After run statement finish, txn state is still pending means the
+		// statement never need a Txn(), such as:
+		//
+		// set @@tidb_general_log = 1
+		// set @@autocommit = 0
+		// select 1
+		//
+		// Reset txn state to invalid to dispose the pending start ts.
+		se.txn.changeToInvalid()
 	}
 	return rs, errors.Trace(err)
 }

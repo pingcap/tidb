@@ -24,6 +24,7 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
 	"golang.org/x/net/context"
@@ -122,6 +122,10 @@ var (
 	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
 	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
 	errTooLongIndexComment = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
+	// ErrUnsupportedAddPartition returns for does not support add partitions.
+	ErrUnsupportedAddPartition = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
+	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
+	ErrUnsupportedCoalescePartition = terror.ClassDDL.New(codeUnsupportedCoalescePartition, "unsupported coalesce partitions")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
@@ -193,6 +197,8 @@ var (
 	errWrongExprInPartitionFunc   = terror.ClassDDL.New(codeWrongExprInPartitionFunc, mysql.MySQLErrName[mysql.ErrWrongExprInPartitionFunc])
 	// ErrWarnDataTruncated returns data truncated error.
 	ErrWarnDataTruncated = terror.ClassDDL.New(codeWarnDataTruncated, mysql.MySQLErrName[mysql.WarnDataTruncated])
+	// ErrCoalesceOnlyOnHashPartition returns coalesce partition can only be used on hash/key partitions.
+	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -315,7 +321,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	var syncer SchemaSyncer
 	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
-		// So we use mockOwnerManager and mockSchemaSyncer.
+		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(id, cancelFunc)
 		syncer = NewMockSchemaSyncer()
 	} else {
@@ -431,6 +437,12 @@ func (d *ddl) genGlobalID() (int64, error) {
 	var globalID int64
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
+
+		// gofail: var mockGenGlobalIDFail bool
+		// if mockGenGlobalIDFail {
+		//	 return errors.New("gofail genGlobalID error")
+		// }
+
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
 	})
@@ -566,13 +578,15 @@ const (
 	codeInvalidIndexState      = 103
 	codeInvalidForeignKeyState = 104
 
-	codeCantDropColWithIndex        = 201
-	codeUnsupportedAddColumn        = 202
-	codeUnsupportedModifyColumn     = 203
-	codeUnsupportedDropPKHandle     = 204
-	codeUnsupportedCharset          = 205
-	codeUnsupportedModifyPrimaryKey = 206
-	codeUnsupportedShardRowIDBits   = 207
+	codeCantDropColWithIndex         = 201
+	codeUnsupportedAddColumn         = 202
+	codeUnsupportedModifyColumn      = 203
+	codeUnsupportedDropPKHandle      = 204
+	codeUnsupportedCharset           = 205
+	codeUnsupportedModifyPrimaryKey  = 206
+	codeUnsupportedShardRowIDBits    = 207
+	codeUnsupportedAddPartition      = 208
+	codeUnsupportedCoalescePartition = 209
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025
@@ -619,6 +633,7 @@ const (
 	codePrimaryCantHaveNull                    = terror.ErrCode(mysql.ErrPrimaryCantHaveNull)
 	codeWrongExprInPartitionFunc               = terror.ErrCode(mysql.ErrWrongExprInPartitionFunc)
 	codeWarnDataTruncated                      = terror.ErrCode(mysql.WarnDataTruncated)
+	codeCoalesceOnlyOnHashPartition            = terror.ErrCode(mysql.ErrCoalesceOnlyOnHashPartition)
 )
 
 func init() {
@@ -667,6 +682,7 @@ func init() {
 		codePrimaryCantHaveNull:                    mysql.ErrPrimaryCantHaveNull,
 		codeWrongExprInPartitionFunc:               mysql.ErrWrongExprInPartitionFunc,
 		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
+		codeCoalesceOnlyOnHashPartition:            mysql.ErrCoalesceOnlyOnHashPartition,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

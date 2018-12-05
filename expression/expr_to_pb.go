@@ -16,6 +16,7 @@ package expression
 import (
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

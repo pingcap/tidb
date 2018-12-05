@@ -22,6 +22,7 @@ import (
 	"unicode"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -33,13 +34,11 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
 )
 
 const (
@@ -77,6 +76,7 @@ func (b *PlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	// when we eliminate the max and min we may add `is not null` filter.
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagEliminateAgg
+	b.optFlag = b.optFlag | flagEliminateProjection
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx)
 	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
@@ -107,10 +107,10 @@ func (b *PlanBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			aggIndexMap[i] = position
 			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 			schema4Agg.Append(&expression.Column{
-				ColName:     model.NewCIStr(fmt.Sprintf("%d_col_%d", plan4Agg.id, position)),
-				UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
-				IsAggOrSubq: true,
-				RetType:     newFunc.RetTp,
+				ColName:      model.NewCIStr(fmt.Sprintf("%d_col_%d", plan4Agg.id, position)),
+				UniqueID:     b.ctx.GetSessionVars().AllocPlanColumnID(),
+				IsReferenced: true,
+				RetType:      newFunc.RetTp,
 			})
 		}
 	}
@@ -257,18 +257,28 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
 		p.preferJoinType |= preferHashJoin
 	}
 	if hintInfo.ifPreferINLJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsIndexOuter
+		p.preferJoinType |= preferLeftAsIndexInner
 	}
 	if hintInfo.ifPreferINLJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsIndexOuter
+		p.preferJoinType |= preferRightAsIndexInner
 	}
 
 	// If there're multiple join types and one of them is not index join hint,
 	// then there is a conflict of join types.
-	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexOuter^preferLeftAsIndexOuter) > 0 {
+	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexInner^preferLeftAsIndexInner) > 0 {
 		return errors.New("Join hints are conflict, you can only specify one type of join")
 	}
 	return nil
+}
+
+func resetNotNullFlag(schema *expression.Schema, start, end int) {
+	for i := start; i < end; i++ {
+		col := *schema.Columns[i]
+		newFieldType := *col.RetType
+		newFieldType.Flag &= ^mysql.NotNullFlag
+		col.RetType = &newFieldType
+		schema.Columns[i] = &col
+	}
 }
 
 func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
@@ -298,9 +308,15 @@ func (b *PlanBuilder) buildJoin(joinNode *ast.Join) (LogicalPlan, error) {
 	// Set join type.
 	switch joinNode.Tp {
 	case ast.LeftJoin:
+		// left outer join need to be checked elimination
+		b.optFlag = b.optFlag | flagEliminateOuterJoin
 		joinPlan.JoinType = LeftOuterJoin
+		resetNotNullFlag(joinPlan.schema, leftPlan.Schema().Len(), joinPlan.schema.Len())
 	case ast.RightJoin:
+		// right outer join need to be checked elimination
+		b.optFlag = b.optFlag | flagEliminateOuterJoin
 		joinPlan.JoinType = RightOuterJoin
+		resetNotNullFlag(joinPlan.schema, 0, leftPlan.Schema().Len())
 	default:
 		joinPlan.JoinType = InnerJoin
 	}
@@ -458,6 +474,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 	if b.curClause != havingClause {
 		b.curClause = whereClause
 	}
+
 	conditions := splitWhere(where)
 	expressions := make([]expression.Expression, 0, len(conditions))
 	selection := LogicalSelection{}.Init(b.ctx)
@@ -556,7 +573,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
-	if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
+	if c, ok := expr.(*expression.Column); ok && !c.IsReferenced {
 		// Field is a column reference.
 		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, c)
 	} else if field.AsName.L != "" {
@@ -577,37 +594,6 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 	}
 }
 
-func eliminateIfNullOnNotNullCol(p LogicalPlan, expr expression.Expression) expression.Expression {
-	ds, isDs := p.(*DataSource)
-	if !isDs {
-		return expr
-	}
-
-	scalarExpr, isScalarFunc := expr.(*expression.ScalarFunction)
-	if !isScalarFunc {
-		return expr
-	}
-	exprChildren := scalarExpr.GetArgs()
-	for i := 0; i < len(exprChildren); i++ {
-		exprChildren[i] = eliminateIfNullOnNotNullCol(p, exprChildren[i])
-	}
-
-	if scalarExpr.FuncName.L != ast.Ifnull {
-		return expr
-	}
-	colRef, isColRef := exprChildren[0].(*expression.Column)
-	if !isColRef {
-		return expr
-	}
-
-	colInfo := model.FindColumnInfo(ds.Columns, colRef.ColName.L)
-	if !mysql.HasNotNullFlag(colInfo.Flag) {
-		return expr
-	}
-
-	return colRef
-}
-
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
@@ -617,7 +603,6 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	oldLen := 0
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
-		newExpr = eliminateIfNullOnNotNullCol(p, newExpr)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
@@ -673,6 +658,9 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
+		resultTp.Flen = mysql.MaxIntWidth
+	}
 	resultTp.Charset = a.Charset
 	resultTp.Collate = a.Collate
 	expression.SetBinFlagOrBinStr(b, resultTp)
@@ -691,7 +679,6 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		}
 		unionCols = append(unionCols, &expression.Column{
 			ColName:  col.ColName,
-			TblName:  col.TblName,
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
@@ -711,7 +698,7 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			}
 		}
 		b.optFlag |= flagEliminateProjection
-		proj := LogicalProjection{Exprs: exprs}.Init(b.ctx)
+		proj := LogicalProjection{Exprs: exprs, avoidColumnEvaluator: true}.Init(b.ctx)
 		proj.SetSchema(u.schema.Clone())
 		proj.SetChildren(child)
 		u.children[childID] = proj
@@ -728,7 +715,8 @@ func (b *PlanBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 	if unionDistinctPlan != nil {
 		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
 		if len(allSelectPlans) > 0 {
-			allSelectPlans = append(allSelectPlans, unionDistinctPlan)
+			// Can't change the statements order in order to get the correct column info.
+			allSelectPlans = append([]LogicalPlan{unionDistinctPlan}, allSelectPlans...)
 		}
 	}
 
@@ -737,6 +725,8 @@ func (b *PlanBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 	if unionAllPlan != nil {
 		unionPlan = unionAllPlan
 	}
+
+	oldLen := unionPlan.Schema().Len()
 
 	if union.OrderBy != nil {
 		unionPlan, err = b.buildSort(unionPlan, union.OrderBy.Items, nil)
@@ -751,6 +741,20 @@ func (b *PlanBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 			return nil, errors.Trace(err)
 		}
 	}
+
+	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
+	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
+	if oldLen != unionPlan.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(unionPlan.Schema().Columns[:oldLen])}.Init(b.ctx)
+		proj.SetChildren(unionPlan)
+		schema := expression.NewSchema(unionPlan.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		}
+		proj.SetSchema(schema)
+		return proj, nil
+	}
+
 	return unionPlan, nil
 }
 
@@ -813,11 +817,35 @@ func (by *ByItems) Clone() *ByItems {
 	return &ByItems{Expr: by.Expr.Clone(), Desc: by.Desc}
 }
 
+// itemTransformer transforms ParamMarkerExpr to PositionExpr in the context of ByItem
+type itemTransformer struct {
+}
+
+func (t *itemTransformer) Enter(inNode ast.Node) (ast.Node, bool) {
+	switch n := inNode.(type) {
+	case *driver.ParamMarkerExpr:
+		newNode := expression.ConstructPositionExpr(n)
+		return newNode, true
+	}
+	return inNode, false
+}
+
+func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
+	return inNode, false
+}
+
 func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) (*LogicalSort, error) {
-	b.curClause = orderByClause
+	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+		b.curClause = globalOrderByClause
+	} else {
+		b.curClause = orderByClause
+	}
 	sort := LogicalSort{}.Init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
+	transformer := &itemTransformer{}
 	for _, item := range byItems {
+		newExpr, _ := item.Expr.Accept(transformer)
+		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewrite(item.Expr, p, aggMapper, true)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -834,7 +862,27 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 // getUintForLimitOffset gets uint64 value for limit/offset.
 // For ordinary statement, limit/offset should be uint64 constant value.
 // For prepared statement, limit/offset is string. We should convert it to uint64.
-func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint64, error) {
+func getUintForLimitOffset(ctx sessionctx.Context, n ast.Node) (uint64, error) {
+	var val interface{}
+	switch v := n.(type) {
+	case *driver.ValueExpr:
+		val = v.GetValue()
+	case *driver.ParamMarkerExpr:
+		param, err := expression.GetParamExpression(ctx, v)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		str, isNull, err := expression.GetStringFromConstant(ctx, param)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if isNull {
+			return 0, nil
+		}
+		val = str
+	default:
+		return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", v)
+	}
 	switch v := val.(type) {
 	case uint64:
 		return v, nil
@@ -843,22 +891,23 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 			return uint64(v), nil
 		}
 	case string:
+		sc := ctx.GetSessionVars().StmtCtx
 		uVal, err := types.StrToUint(sc, v)
 		return uVal, errors.Trace(err)
 	}
 	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
-func extractLimitCountOffset(sc *stmtctx.StatementContext, limit *ast.Limit) (count uint64,
+func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count uint64,
 	offset uint64, err error) {
 	if limit.Count != nil {
-		count, err = getUintForLimitOffset(sc, limit.Count.(ast.ValueExpr).GetValue())
+		count, err = getUintForLimitOffset(ctx, limit.Count)
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
 	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(sc, limit.Offset.(ast.ValueExpr).GetValue())
+		offset, err = getUintForLimitOffset(ctx, limit.Offset)
 		if err != nil {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
@@ -872,8 +921,7 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		offset, count uint64
 		err           error
 	)
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if count, offset, err = extractLimitCountOffset(sc, limit); err != nil {
+	if count, offset, err = extractLimitCountOffset(b.ctx, limit); err != nil {
 		return nil, err
 	}
 
@@ -893,7 +941,7 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 	return li, nil
 }
 
-// colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
+// colMatch means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
 // Because column a want column from database test exactly.
 func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
 	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
@@ -950,7 +998,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 	return
 }
 
-// AggregateFuncExtractor visits Expr tree.
+// havingAndOrderbyExprResolver visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type havingAndOrderbyExprResolver struct {
 	inAggFunc    bool
@@ -1143,16 +1191,22 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
-	fields []*ast.SelectField
-	schema *expression.Schema
-	err    error
-	inExpr bool
+	ctx     sessionctx.Context
+	fields  []*ast.SelectField
+	schema  *expression.Schema
+	err     error
+	inExpr  bool
+	isParam bool
 }
 
 func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
-	switch inNode.(type) {
+	switch n := inNode.(type) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
+	case *driver.ParamMarkerExpr:
+		newNode := expression.ConstructPositionExpr(n)
+		g.isParam = true
+		return newNode, true
 	case *driver.ValueExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.ColumnName:
 	default:
 		g.inExpr = true
@@ -1187,14 +1241,21 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 	case *ast.PositionExpr:
-		if v.N < 1 || v.N > len(g.fields) {
-			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", v.N)
+		pos, isNull, err := expression.PosFromPositionExpr(g.ctx, v)
+		if err != nil {
+			g.err = ErrUnknown.GenWithStackByArgs()
+		}
+		if err != nil || isNull {
 			return inNode, false
 		}
-		ret := g.fields[v.N-1].Expr
+		if pos < 1 || pos > len(g.fields) {
+			g.err = errors.Errorf("Unknown column '%d' in 'group statement'", pos)
+			return inNode, false
+		}
+		ret := g.fields[pos-1].Expr
 		ret.Accept(extractor)
 		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[v.N-1].Text())
+			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
 			return inNode, false
 		}
 		return ret, true
@@ -1552,6 +1613,7 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{
+		ctx:    b.ctx,
 		fields: fields,
 		schema: p.Schema(),
 	}
@@ -1561,9 +1623,12 @@ func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		if resolver.err != nil {
 			return nil, nil, errors.Trace(resolver.err)
 		}
+		if !resolver.isParam {
+			item.Expr = retExpr.(ast.ExprNode)
+		}
 
-		item.Expr = retExpr.(ast.ExprNode)
-		expr, np, err := b.rewrite(item.Expr, p, nil, true)
+		itemExpr := retExpr.(ast.ExprNode)
+		expr, np, err := b.rewrite(itemExpr, p, nil, true)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -1904,7 +1969,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	// If this SQL is executed in a non-readonly transaction, we need a
 	// "UnionScan" operator to read the modifications of former SQLs, which is
 	// buffered in tidb-server memory.
-	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {
+	if b.ctx.Txn(false).Valid() && !b.ctx.Txn(false).IsReadOnly() {
 		us := LogicalUnionScan{}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
@@ -1977,7 +2042,7 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
-		ap.schema.Columns[i].IsAggOrSubq = true
+		ap.schema.Columns[i].IsReferenced = true
 	}
 	return ap
 }
@@ -2015,10 +2080,10 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	if asScalar {
 		newSchema := outerPlan.Schema().Clone()
 		newSchema.Append(&expression.Column{
-			ColName:     model.NewCIStr(fmt.Sprintf("%d_aux_0", joinPlan.id)),
-			RetType:     types.NewFieldType(mysql.TypeTiny),
-			IsAggOrSubq: true,
-			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ColName:      model.NewCIStr(fmt.Sprintf("%d_aux_0", joinPlan.id)),
+			RetType:      types.NewFieldType(mysql.TypeTiny),
+			IsReferenced: true,
+			UniqueID:     b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
 		joinPlan.SetSchema(newSchema)
 		if not {
@@ -2044,9 +2109,8 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 		if b.TableHints().ifPreferHashJoin(outerAlias, innerAlias) {
 			joinPlan.preferJoinType |= preferHashJoin
 		}
-		// semi join's outer is always the left side.
-		if b.TableHints().ifPreferINLJ(outerAlias) {
-			joinPlan.preferJoinType = preferLeftAsIndexOuter
+		if b.TableHints().ifPreferINLJ(innerAlias) {
+			joinPlan.preferJoinType = preferLeftAsIndexInner
 		}
 		// If there're multiple join hints, they're conflict.
 		if bits.OnesCount(joinPlan.preferJoinType) > 1 {
@@ -2094,7 +2158,7 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, t.Name.L, "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "")
 	}
 
 	if sel.Where != nil {
@@ -2205,6 +2269,10 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
+	}
+	for _, assign := range newList {
+		col := assign.Col
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, col.DBName.L, col.TblName.L, "")
 	}
 	return newList, p, nil
 }

@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -21,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disjointset"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -292,10 +292,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
-	solver := &propConstSolver{}
-	solver.colMapper = make(map[int64]int)
-	solver.ctx = ctx
-	return solver.solve(conditions)
+	return newPropConstSolver().PropagateConstant(ctx, conditions)
 }
 
 type propOuterJoinConstSolver struct {
@@ -372,7 +369,7 @@ func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Const
 	retMapper := make(map[int]*Constant)
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, true)
 	if retMapper == nil {
-		// Filter is constant false or error occured, enforce early termination.
+		// Filter is constant false or error occurred, enforce early termination.
 		return nil
 	}
 	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, false)
@@ -550,4 +547,22 @@ func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Exp
 	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx
 	return solver.solve(joinConds, filterConds)
+}
+
+// PropagateConstantSolver is a constant propagate solver.
+type PropagateConstantSolver interface {
+	PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression
+}
+
+// newPropConstSolver returns a PropagateConstantSolver.
+func newPropConstSolver() PropagateConstantSolver {
+	solver := &propConstSolver{}
+	solver.colMapper = make(map[int64]int)
+	return solver
+}
+
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
+func (s *propConstSolver) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+	s.ctx = ctx
+	return s.solve(conditions)
 }

@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -43,14 +43,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-
-	if tbInfo.Partition != nil {
-		err = checkAddPartitionTooManyPartitions(len(tbInfo.Partition.Definitions))
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -218,7 +210,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
 		// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
-		err = truncateTableByReassignPartitionIDs(job, t, tblInfo)
+		err = truncateTableByReassignPartitionIDs(t, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -440,7 +432,7 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = checkAddPartitionTooManyPartitions(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions))
+	err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

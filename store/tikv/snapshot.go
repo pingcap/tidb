@@ -20,12 +20,12 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -73,7 +73,8 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.
 	bytesKeys := *(*[][]byte)(unsafe.Pointer(&keys))
-	bo := NewBackoffer(context.Background(), batchGetMaxBackoff).WithVars(s.vars)
+	ctx := context.WithValue(context.Background(), txnStartKey, s.version.Ver)
+	bo := NewBackoffer(ctx, batchGetMaxBackoff).WithVars(s.vars)
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
@@ -208,7 +209,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
-	val, err := s.get(NewBackoffer(context.Background(), getMaxBackoff), k)
+	ctx := context.WithValue(context.Background(), txnStartKey, s.version.Ver)
+	val, err := s.get(NewBackoffer(ctx, getMaxBackoff), k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -278,14 +280,14 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	}
 }
 
-// Seek return a list of key-value pair after `k`.
-func (s *tikvSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, scanBatchSize)
+// Iter return a list of key-value pair after `k`.
+func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	scanner, err := newScanner(s, k, upperBound, scanBatchSize)
 	return scanner, errors.Trace(err)
 }
 
-// SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (s *tikvSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	return nil, kv.ErrNotImplemented
 }
 

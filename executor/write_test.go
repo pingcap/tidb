@@ -16,6 +16,7 @@ package executor_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
@@ -1075,6 +1076,19 @@ func (s *testSuite) TestUpdate(c *C) {
 	_, err = tk.Exec("update t, (select * from t) as b set b.k = t.k")
 	c.Assert(err.Error(), Equals, "[planner:1288]The target table b of the UPDATE is not updatable")
 	tk.MustExec("update t, (select * from t) as b set t.k = b.k")
+
+	// issue 8045
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`CREATE TABLE t1 (c1 float)`)
+	tk.MustExec("INSERT INTO t1 SET c1 = 1")
+	tk.MustExec("UPDATE t1 SET c1 = 1.2 WHERE c1=1;")
+
+	// issue 8119
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 float(1,1));")
+	tk.MustExec("insert into t values (0.0);")
+	_, err = tk.Exec("update t set c1 = 2.0;")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {
@@ -1762,6 +1776,17 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
+	tk.MustExec("drop table if exists com_batch_insert")
+	tk.MustExec("create table com_batch_insert (c int)")
+	sql := "insert into com_batch_insert values "
+	values := make([]string, 0, 200)
+	for i := 0; i < 200; i++ {
+		values = append(values, "(1)")
+	}
+	sql = sql + strings.Join(values, ",")
+	tk.MustExec(sql)
+	tk.MustQuery("select count(*) from com_batch_insert;").Check(testkit.Rows("200"))
+
 	// Test case for batch delete.
 	// This will meet txn too large error.
 	_, err = tk.Exec("delete from batch_insert;")
@@ -2074,7 +2099,7 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
 
 	tk.MustExec(`update t set b = 3 where a = 30001;`)
 	tk.MustExec(`insert into t (b) values (4);`)
@@ -2101,4 +2126,12 @@ func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec(`update t set i = 2 where i = 1;`)
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
+}
+
+func (s *testSuite) TestDefEnumInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
+	tk.MustExec("insert into test (id)  values (1)")
+	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
 }

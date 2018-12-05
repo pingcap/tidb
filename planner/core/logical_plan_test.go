@@ -24,12 +24,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -49,238 +46,8 @@ type testPlanSuite struct {
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
-	s.ctx = mockContext()
+	s.ctx = MockContext()
 	s.Parser = parser.New()
-}
-
-func newLongType() types.FieldType {
-	return *(types.NewFieldType(mysql.TypeLong))
-}
-
-func newStringType() types.FieldType {
-	ft := types.NewFieldType(mysql.TypeVarchar)
-	ft.Charset, ft.Collate = types.DefaultCharsetForType(mysql.TypeVarchar)
-	return *ft
-}
-
-func MockTable() *model.TableInfo {
-	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
-	// PK: a
-	// indeices: c_d_e, e, f, g, f_g, c_d_e_str, c_d_e_str_prefix
-	indices := []*model.IndexInfo{
-		{
-			Name: model.NewCIStr("c_d_e"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("c"),
-					Length: types.UnspecifiedLength,
-					Offset: 2,
-				},
-				{
-					Name:   model.NewCIStr("d"),
-					Length: types.UnspecifiedLength,
-					Offset: 3,
-				},
-				{
-					Name:   model.NewCIStr("e"),
-					Length: types.UnspecifiedLength,
-					Offset: 4,
-				},
-			},
-			State:  model.StatePublic,
-			Unique: true,
-		},
-		{
-			Name: model.NewCIStr("e"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("e"),
-					Length: types.UnspecifiedLength,
-					Offset: 4,
-				},
-			},
-			State:  model.StateWriteOnly,
-			Unique: true,
-		},
-		{
-			Name: model.NewCIStr("f"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("f"),
-					Length: types.UnspecifiedLength,
-					Offset: 8,
-				},
-			},
-			State:  model.StatePublic,
-			Unique: true,
-		},
-		{
-			Name: model.NewCIStr("g"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("g"),
-					Length: types.UnspecifiedLength,
-					Offset: 9,
-				},
-			},
-			State: model.StatePublic,
-		},
-		{
-			Name: model.NewCIStr("f_g"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("f"),
-					Length: types.UnspecifiedLength,
-					Offset: 8,
-				},
-				{
-					Name:   model.NewCIStr("g"),
-					Length: types.UnspecifiedLength,
-					Offset: 9,
-				},
-			},
-			State:  model.StatePublic,
-			Unique: true,
-		},
-		{
-			Name: model.NewCIStr("c_d_e_str"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("c_str"),
-					Length: types.UnspecifiedLength,
-					Offset: 5,
-				},
-				{
-					Name:   model.NewCIStr("d_str"),
-					Length: types.UnspecifiedLength,
-					Offset: 6,
-				},
-				{
-					Name:   model.NewCIStr("e_str"),
-					Length: types.UnspecifiedLength,
-					Offset: 7,
-				},
-			},
-			State: model.StatePublic,
-		},
-		{
-			Name: model.NewCIStr("e_d_c_str_prefix"),
-			Columns: []*model.IndexColumn{
-				{
-					Name:   model.NewCIStr("e_str"),
-					Length: types.UnspecifiedLength,
-					Offset: 7,
-				},
-				{
-					Name:   model.NewCIStr("d_str"),
-					Length: types.UnspecifiedLength,
-					Offset: 6,
-				},
-				{
-					Name:   model.NewCIStr("c_str"),
-					Length: 10,
-					Offset: 5,
-				},
-			},
-			State: model.StatePublic,
-		},
-	}
-	pkColumn := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    0,
-		Name:      model.NewCIStr("a"),
-		FieldType: newLongType(),
-		ID:        1,
-	}
-	col0 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    1,
-		Name:      model.NewCIStr("b"),
-		FieldType: newLongType(),
-		ID:        2,
-	}
-	col1 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    2,
-		Name:      model.NewCIStr("c"),
-		FieldType: newLongType(),
-		ID:        3,
-	}
-	col2 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    3,
-		Name:      model.NewCIStr("d"),
-		FieldType: newLongType(),
-		ID:        4,
-	}
-	col3 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    4,
-		Name:      model.NewCIStr("e"),
-		FieldType: newLongType(),
-		ID:        5,
-	}
-	colStr1 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    5,
-		Name:      model.NewCIStr("c_str"),
-		FieldType: newStringType(),
-		ID:        6,
-	}
-	colStr2 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    6,
-		Name:      model.NewCIStr("d_str"),
-		FieldType: newStringType(),
-		ID:        7,
-	}
-	colStr3 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    7,
-		Name:      model.NewCIStr("e_str"),
-		FieldType: newStringType(),
-		ID:        8,
-	}
-	col4 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    8,
-		Name:      model.NewCIStr("f"),
-		FieldType: newLongType(),
-		ID:        9,
-	}
-	col5 := &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    9,
-		Name:      model.NewCIStr("g"),
-		FieldType: newLongType(),
-		ID:        10,
-	}
-	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
-	// Column 'b', 'c', 'd', 'f', 'g' is not null.
-	col0.Flag = mysql.NotNullFlag
-	col1.Flag = mysql.NotNullFlag
-	col2.Flag = mysql.NotNullFlag
-	col4.Flag = mysql.NotNullFlag
-	col5.Flag = mysql.NotNullFlag
-	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5},
-		Indices:    indices,
-		Name:       model.NewCIStr("t"),
-		PKIsHandle: true,
-	}
-	return table
-}
-
-func mockContext() sessionctx.Context {
-	ctx := mock.NewContext()
-	ctx.Store = &mock.Store{
-		Client: &mock.Client{},
-	}
-	ctx.GetSessionVars().CurrentDB = "test"
-	do := &domain.Domain{}
-	do.CreateStatsHandle(ctx)
-	domain.BindDomain(ctx, do)
-	return ctx
 }
 
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
@@ -366,8 +133,8 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			best: "Join{DataScan(ta)->Join{DataScan(tb)->DataScan(tc)}(tb.b,tc.b)}(ta.a,tb.a)(ta.c,tc.c)->Sel([or(gt(tc.d, 0), gt(ta.d, 0))])->Projection",
 		},
 		{
-			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ifnull(tb.d, null) or tb.d is null",
-			best: "Join{DataScan(ta)->DataScan(tb)}(ta.d,tb.d)->Sel([or(ifnull(tb.d, <nil>), isnull(tb.d))])->Projection",
+			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ifnull(tb.d, 1) or tb.d is null",
+			best: "Join{DataScan(ta)->DataScan(tb)}(ta.d,tb.d)->Sel([or(ifnull(tb.d, 1), isnull(tb.d))])->Projection",
 		},
 		{
 			sql:  "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
@@ -1246,7 +1013,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
-	ctx := mockContext()
+	ctx := MockContext()
 	pA := DataSource{}.Init(ctx)
 	pB := DataSource{}.Init(ctx)
 	c.Assert(pA.id+1, Equals, pB.id)
@@ -1701,9 +1468,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		},
 		{
 			sql: `set password for 'root'@'%' = 'xxxxx'`,
-			ans: []visitInfo{
-				{mysql.SuperPriv, "", "", ""},
-			},
+			ans: []visitInfo{},
 		},
 		{
 			sql: `show create table test.ttt`,
@@ -1720,7 +1485,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		Preprocess(s.ctx, stmt, s.is, false)
 		builder := &PlanBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
-			ctx:       mockContext(),
+			ctx:       MockContext(),
 			is:        s.is,
 		}
 		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
@@ -1793,7 +1558,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 	}{
 		{
 			sql:  "select a from t union select a from t",
-			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(a))",
 			err:  false,
 		},
 		{
@@ -1803,18 +1568,28 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		},
 		{
 			sql:  "select a from t union select a from t union all select a from t",
-			best: "UnionAll{DataScan(t)->Projection->UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))->Projection}",
+			best: "UnionAll{UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(a))->Projection->DataScan(t)->Projection}",
 			err:  false,
 		},
 		{
 			sql:  "select a from t union select a from t union all select a from t union select a from t union select a from t",
-			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(a))",
 			err:  false,
 		},
 		{
 			sql:  "select a from t union select a, b from t",
 			best: "",
 			err:  true,
+		},
+		{
+			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by a",
+			best: "UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Projection->Sort",
+			err:  false,
+		},
+		{
+			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by (select a)",
+			best: "Apply{UnionAll{UnionAll{Dual->Projection->Projection->Dual->Projection->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
+			err:  false,
 		},
 	}
 	for i, tt := range tests {
@@ -1823,14 +1598,14 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is, false)
 		builder := &PlanBuilder{
-			ctx:       mockContext(),
+			ctx:       MockContext(),
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
 		plan, err := builder.Build(stmt)
 		if tt.err {
 			c.Assert(err, NotNil)
-			return
+			continue
 		}
 		c.Assert(err, IsNil)
 		p := plan.(LogicalPlan)
@@ -1926,12 +1701,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
-			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([s.a s.b],0,5)->Projection}->TopN([t.a t.b],0,5)",
+			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([s.a s.b],0,5)->Projection}->TopN([a b],0,5)",
 		},
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5, 5",
-			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([s.a s.b],0,10)->Projection}->TopN([t.a t.b],5,5)",
+			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([s.a s.b],0,10)->Projection}->TopN([a b],5,5)",
 		},
 		// Test Limit + UA + Proj + Sort.
 		{
@@ -1941,7 +1716,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test `ByItem` containing column from both sides.
 		{
 			sql:  "select ifnull(t1.b, t2.a) from t t1 left join t t2 on t1.e=t2.e order by ifnull(t1.b, t2.a) limit 5",
-			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->TopN([ifnull(t1.b, t2.a)],0,5)->Projection->Projection",
+			best: "Join{DataScan(t1)->TopN([t1.b],0,5)->DataScan(t2)}(t1.e,t2.e)->TopN([t1.b],0,5)->Projection",
+		},
+		// Test ifnull cannot be eliminated
+		{
+			sql:  "select ifnull(t1.h, t2.b) from t t1 left join t t2 on t1.e=t2.e order by ifnull(t1.h, t2.b) limit 5",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->TopN([ifnull(t1.h, t2.b)],0,5)->Projection->Projection",
 		},
 	}
 	for i, tt := range tests {
@@ -1950,7 +1730,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is, false)
 		builder := &PlanBuilder{
-			ctx:       mockContext(),
+			ctx:       MockContext(),
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
@@ -2006,5 +1786,69 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		} else {
 			c.Assert(err.Error(), Equals, t.err)
 		}
+	}
+}
+
+func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Test left outer join + distinct
+		{
+			sql:  "select distinct t1.a, t1.b from t t1 left outer join t t2 on t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(firstrow(t1.a),firstrow(t1.b))",
+		},
+		// Test right outer join + distinct
+		{
+			sql:  "select distinct t2.a, t2.b from t t1 right outer join t t2 on t1.b = t2.b",
+			best: "DataScan(t2)->Aggr(firstrow(t2.a),firstrow(t2.b))",
+		},
+		// Test duplicate agnostic agg functions on join
+		{
+			sql:  "select max(t1.a), min(t1.b) from t t1 left join t t2 on t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(max(t1.a),min(t1.b))->Projection",
+		},
+		{
+			sql:  "select sum(distinct t1.a) from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(sum(t1.a))->Projection",
+		},
+		{
+			sql:  "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(count(t1.a, t1.b))->Projection",
+		},
+		// Test left outer join
+		{
+			sql:  "select t1.b from t t1 left outer join t t2 on t1.a = t2.a",
+			best: "DataScan(t1)->Projection",
+		},
+		// Test right outer join
+		{
+			sql:  "select t2.b from t t1 right outer join t t2 on t1.a = t2.a",
+			best: "DataScan(t2)->Projection",
+		},
+		// For complex join query
+		{
+			sql:  "select max(t3.b) from (t t1 left join t t2 on t1.a = t2.a) right join t t3 on t1.b = t3.b",
+			best: "DataScan(t3)->TopN([t3.b true],0,1)->Aggr(max(t3.b))->Projection",
+		},
+	}
+
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }

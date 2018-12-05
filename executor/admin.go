@@ -16,6 +16,7 @@ package executor
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -125,7 +125,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 
 func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = e.ctx.Txn().StartTS()
+	dagReq.StartTs = e.ctx.Txn(true).StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)

@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -92,6 +92,9 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
 	ret, err := txn.us.Get(k)
+	if kv.IsErrNotFound(err) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -115,23 +118,23 @@ func (txn *tikvTxn) String() string {
 	return fmt.Sprintf("%d", txn.StartTS())
 }
 
-func (txn *tikvTxn) Seek(k kv.Key) (kv.Iterator, error) {
+func (txn *tikvTxn) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek").Inc()
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("seek").Observe(time.Since(start).Seconds()) }()
 
-	return txn.us.Seek(k)
+	return txn.us.Iter(k, upperBound)
 }
 
-// SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (txn *tikvTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse").Inc()
 	start := time.Now()
 	defer func() {
 		metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse").Observe(time.Since(start).Seconds())
 	}()
 
-	return txn.us.SeekReverse(k)
+	return txn.us.IterReverse(k)
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
