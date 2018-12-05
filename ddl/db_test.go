@@ -2118,27 +2118,24 @@ func (s *testDBSuite) TestIssue2858And2717(c *C) {
 
 func (s *testDBSuite) TestIssue4432(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("create database db_issue_4432")
+	s.tk.MustExec("use db_issue_4432")
 
 	s.tk.MustExec("create table tx (col bit(10) default 'a')")
 	s.tk.MustExec("insert into tx value ()")
 	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
-	s.tk.MustExec("drop table tx")
 
-	s.tk.MustExec("create table tx (col bit(10) default 0x61)")
-	s.tk.MustExec("insert into tx value ()")
-	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
-	s.tk.MustExec("drop table tx")
+	s.tk.MustExec("create table tx1 (col bit(10) default 0x61)")
+	s.tk.MustExec("insert into tx1 value ()")
+	s.tk.MustQuery("select * from tx1").Check(testkit.Rows("\x00a"))
 
-	s.tk.MustExec("create table tx (col bit(10) default 97)")
-	s.tk.MustExec("insert into tx value ()")
-	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
-	s.tk.MustExec("drop table tx")
+	s.tk.MustExec("create table tx2 (col bit(10) default 97)")
+	s.tk.MustExec("insert into tx2 value ()")
+	s.tk.MustQuery("select * from tx2").Check(testkit.Rows("\x00a"))
 
-	s.tk.MustExec("create table tx (col bit(10) default 0b1100001)")
-	s.tk.MustExec("insert into tx value ()")
-	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
-	s.tk.MustExec("drop table tx")
+	s.tk.MustExec("create table tx3 (col bit(10) default 0b1100001)")
+	s.tk.MustExec("insert into tx3 value ()")
+	s.tk.MustQuery("select * from tx3").Check(testkit.Rows("\x00a"))
 }
 
 func (s *testDBSuite) TestChangeColumnPosition(c *C) {
@@ -2371,7 +2368,6 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	s.testErrorCode(c, "create table text_default_blob(c1 blob not null default 'scds54');", tmysql.ErrBlobCantHaveDefault)
 
 	s.tk.MustExec("set sql_mode='';")
-	s.tk.MustExec("drop table if exists text_default_text;")
 	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
 	s.tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
 		"text_default_text CREATE TABLE `text_default_text` (\n"+
@@ -2384,7 +2380,6 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
-	s.tk.MustExec("drop table if exists text_default_blob;")
 	s.tk.MustExec("create table text_default_blob(c1 blob not null default '');")
 	s.tk.MustQuery(`show create table text_default_blob`).Check(testutil.RowsWithSep("|",
 		"text_default_blob CREATE TABLE `text_default_blob` (\n"+
@@ -2396,7 +2391,6 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
-	s.tk.MustExec("drop table if exists text_default_json;")
 	s.tk.MustExec("create table text_default_json(c1 json not null default '');")
 	s.tk.MustQuery(`show create table text_default_json`).Check(testutil.RowsWithSep("|",
 		"text_default_json CREATE TABLE `text_default_json` (\n"+
@@ -2411,35 +2405,24 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 
 func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("drop database if exists varchar_test;")
 	s.tk.MustExec("create database varchar_test;")
+	defer s.tk.MustExec("drop database varchar_test;")
 	s.tk.MustExec("use varchar_test")
-	s.tk.MustExec("drop table if exists t")
 	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8mb4'").Check(testkit.Rows("0"))
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8mb4'").Check(testkit.Rows("2"))
 
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=UTF8;")
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=BINARY;")
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=LATIN1;")
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=ASCII;")
-	s.tk.MustExec("drop table if exists t5")
+	s.tk.MustExec("create table t1(id int) charset=UTF8;")
+	s.tk.MustExec("create table t2(id int) charset=BINARY;")
+	s.tk.MustExec("create table t3(id int) charset=LATIN1;")
+	s.tk.MustExec("create table t4(id int) charset=ASCII;")
 	s.tk.MustExec("create table t5(id int) charset=UTF8MB4;")
 
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=utf8;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=binary;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=latin1;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=ascii;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=utf8mb4;")
+	s.tk.MustExec("create table t11(id int) charset=utf8;")
+	s.tk.MustExec("create table t12(id int) charset=binary;")
+	s.tk.MustExec("create table t13(id int) charset=latin1;")
+	s.tk.MustExec("create table t14(id int) charset=ascii;")
+	s.tk.MustExec("create table t15(id int) charset=utf8mb4;")
 }
 
 func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
@@ -3166,8 +3149,9 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 
 func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test;")
-	s.tk.MustExec("drop table if exists part1;")
+	s.tk.MustExec("create database partition_uniq_key;")
+	s.tk.MustExec("use partition_uniq_key;")
+	defer s.tk.MustExec("drop database partition_uniq_key;")
 	s.tk.MustExec(`create table part1 (
 		col1 int not null,
 		col2 date not null,
@@ -3180,7 +3164,6 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`)
 
-	s.tk.MustExec("drop table if exists part2;")
 	s.tk.MustExec(`create table part2 (
 		col1 int not null,
 		col2 date not null,
@@ -3194,7 +3177,6 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`)
 
-	s.tk.MustExec("drop table if exists part3;")
 	s.tk.MustExec(`create table part3 (
 		col1 int not null,
 		col2 date not null,
@@ -3207,7 +3189,6 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`)
 
-	s.tk.MustExec("drop table if exists part4;")
 	s.tk.MustExec(`create table part4 (
 		col1 int not null,
 		col2 date not null,
@@ -3221,7 +3202,6 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`)
 
-	s.tk.MustExec("drop table if exists part5;")
 	s.tk.MustExec(`create table part5 (
 		col1 int not null,
 		col2 date not null,
@@ -3235,8 +3215,7 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`)
 
-	s.tk.MustExec("drop table if exists Part1;")
-	sql1 := `create table Part1 (
+	sql1 := `create table Part6 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -3249,8 +3228,7 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	);`
 	s.testErrorCode(c, sql1, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
-	s.tk.MustExec("drop table if exists Part1;")
-	sql2 := `create table Part1 (
+	sql2 := `create table Part6 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -3264,8 +3242,7 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	);`
 	s.testErrorCode(c, sql2, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
-	s.tk.MustExec("drop table if exists Part1;")
-	sql3 := `create table Part1 (
+	sql3 := `create table Part7 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -3279,8 +3256,7 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	);`
 	s.testErrorCode(c, sql3, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
-	s.tk.MustExec("drop table if exists Part1;")
-	sql4 := `create table Part1 (
+	sql4 := `create table Part8 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -3294,8 +3270,7 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	);`
 	s.testErrorCode(c, sql4, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
-	s.tk.MustExec("drop table if exists Part1;")
-	sql5 := `create table Part1 (
+	sql5 := `create table Part9 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -3308,8 +3283,7 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	);`
 	s.testErrorCode(c, sql5, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
-	s.tk.MustExec("drop table if exists Part1;")
-	sql6 := `create table Part1 (
+	sql6 := `create table Part10 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -3323,8 +3297,7 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	);`
 	s.testErrorCode(c, sql6, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
-	s.tk.MustExec("drop table if exists Part1;")
-	sql7 := `create table Part1 (
+	sql7 := `create table Part11 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -3338,8 +3311,7 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	);`
 	s.testErrorCode(c, sql7, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
-	s.tk.MustExec("drop table if exists part6;")
-	sql8 := `create table part6 (
+	sql8 := `create table part12 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
