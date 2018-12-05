@@ -239,6 +239,9 @@ type ddl struct {
 
 	*ddlCtx
 	workers map[workerType]*worker
+
+	// testCheckJobMaxInterval is only used for testing.
+	testCheckJobMaxInterval time.Duration
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -459,7 +462,12 @@ func (d *ddl) GetID() string {
 	return d.uuid
 }
 
-func checkJobMaxInterval(job *model.Job) time.Duration {
+func (d *ddl) checkJobMaxInterval(job *model.Job) time.Duration {
+	// testCheckJobMaxInterval's value may not be 0 only in tests.
+	if d.testCheckJobMaxInterval != 0 {
+		return d.testCheckJobMaxInterval
+	}
+
 	// The job of adding index takes more time to process.
 	// So it uses the longer time.
 	if job.Type == model.ActionAddIndex {
@@ -501,7 +509,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, d.checkJobMaxInterval(job)))
 	startTime := time.Now()
 	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {

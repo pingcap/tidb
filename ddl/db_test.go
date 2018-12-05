@@ -128,6 +128,8 @@ func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
 func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
+	s.dom.DDL().(ddl.DDLForTest).SetCheckJobMaxInterval(1 * time.Millisecond)
+	defer s.dom.DDL().(ddl.DDLForTest).SetCheckJobMaxInterval(0)
 
 	// create database
 	sql := "create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -946,6 +948,8 @@ func (s *testDBSuite) TestCreateIndexType(c *C) {
 
 func (s *testDBSuite) TestIssue3833(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
+	s.dom.DDL().(ddl.DDLForTest).SetCheckJobMaxInterval(1 * time.Millisecond)
+	defer s.dom.DDL().(ddl.DDLForTest).SetCheckJobMaxInterval(0)
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table issue3833 (b char(0))")
 	s.testErrorCode(c, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)

@@ -27,7 +27,7 @@ import (
 
 var _ SchemaSyncer = &MockSchemaSyncer{}
 
-const mockCheckVersInterval = 2 * time.Millisecond
+const mockCheckVersInterval = 1 * time.Millisecond
 
 // MockSchemaSyncer is a mock schema syncer, it is exported for tesing.
 type MockSchemaSyncer struct {
