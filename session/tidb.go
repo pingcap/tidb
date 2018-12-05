@@ -18,6 +18,7 @@
 package session
 
 import (
+	"context"
 	"net/url"
 	"strings"
 	"sync"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type domainMap struct {

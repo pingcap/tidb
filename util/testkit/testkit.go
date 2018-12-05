@@ -15,6 +15,7 @@ package testkit
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"sync/atomic"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 // TestKit is a utility to run sql test.
