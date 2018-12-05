@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
@@ -657,10 +658,44 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 	tbl, err := is.TableByName(schemaName, tableName)
 	c.Assert(err, IsNil)
 
+	splitCount := 100
 	if !testPartition {
 		// Split table to multi region.
-		s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
+		s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, splitCount)
 	}
+
+	// set hook for check add index worker num
+	hook := &ddl.TestDDLCallback{}
+	oringDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
+	lastSetWorkerCnt := int(oringDDLAddIndexWorkerCnt)
+	defer variable.SetDDLReorgWorkerCounter(oringDDLAddIndexWorkerCnt)
+	// firstCheck is use to check split table range is take effect.
+	firstCheck := !testPartition
+	var checkErr error
+	changeWorkerNumEnable := false
+	hook.OnIndexWorkerReorgBeforeExported = func(workerNum, rangesNum int) {
+		if checkErr != nil {
+			return
+		}
+		// Check split table range is successful.
+		if firstCheck {
+			firstCheck = false
+			if rangesNum != splitCount {
+				checkErr = errors.Errorf("first check rangeNum, expect: %v, but got: %v", 100, rangesNum)
+			}
+		}
+		setNum := int(variable.GetDDLReorgWorkerCounter())
+		if rangesNum < setNum {
+			if workerNum != rangesNum {
+				checkErr = errors.Errorf("rangeNum is %v, expect workerNum is: %v, but got: %v", rangesNum, rangesNum, workerNum)
+			}
+		} else if workerNum != setNum {
+			checkErr = errors.Errorf("rangeNum is %v, expect workerNum is: %v, but got: %v", rangesNum, setNum, workerNum)
+		}
+		changeWorkerNumEnable = true
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
 
 	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
@@ -709,12 +744,15 @@ LOOP:
 					}
 				}
 			}
-			if startReorganization {
-				workerCnt := rand.Intn(8) + 8
-				s.mustExec(c, fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", workerCnt))
+			if startReorganization && changeWorkerNumEnable {
+				lastSetWorkerCnt = rand.Intn(8) + 8
+				s.mustExec(c, fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
+				c.Assert(checkErr, IsNil)
+				changeWorkerNumEnable = false
 			}
 		}
 	}
+	c.Assert(checkErr, IsNil)
 
 	// get exists keys
 	keys := make([]int, 0, num)
