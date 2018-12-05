@@ -677,7 +677,7 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 	if b.ctx.GetSessionVars().CreateTableInsertingID != 0 {
 		// in a 'inserting data from select' state of creating table.
-		return b.buildCreateTableInsert(v, b.ctx.GetSessionVars().CreateTableInsertingID)
+		return b.buildTableInserter(v, b.ctx.GetSessionVars().CreateTableInsertingID)
 	}
 	return &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -686,8 +686,8 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 	}
 }
 
-// buildCreateTableInsert builds a CreateTableInsertExec to insert data when creating table by 'create table ... select'
-func (b *executorBuilder) buildCreateTableInsert(v *plannercore.DDL, tableID int64) Executor {
+// buildTableInserter builds a CreateTableInsertExec to insert data when creating table by 'create table ... select'
+func (b *executorBuilder) buildTableInserter(v *plannercore.DDL, tableID int64) Executor {
 	stmt, ok := v.Statement.(*ast.CreateTableStmt)
 	if !ok || v.InsertPlan.SelectPlan == nil {
 		b.err = errors.Errorf("Unexpected plan: %s", v.Statement.Text())
@@ -736,11 +736,13 @@ func (b *executorBuilder) buildCreateTableInsert(v *plannercore.DDL, tableID int
 		return nil
 	}
 
-	return &CreateTableInsertExec{
-		InsertValues: insertVal,
-		onDuplicate:  stmt.OnDuplicate,
-		finished:     false,
+	switch stmt.OnDuplicate {
+	case ast.OnDuplicateCreateTableSelectReplace:
+		return &CreateTableInsertExec{insert: &ReplaceExec{InsertValues: insertVal}}
+	default:
+		return &CreateTableInsertExec{insert: &InsertExec{InsertValues: insertVal}}
 	}
+
 }
 
 // buildTrace builds a TraceExec for future executing. This method will be called
