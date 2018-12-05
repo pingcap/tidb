@@ -89,8 +89,7 @@ func rollbackDropTable(t *meta.Meta, job *model.Job, schemaID int64, tblInfo *mo
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	job.State = model.JobStateRollbackDone
-	job.SchemaState = tblInfo.State
+	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
 

@@ -108,8 +108,7 @@ func rollbackDropSchema(t *meta.Meta, job *model.Job, dbInfo *model.DBInfo) (ver
 			return ver, errors.Trace(err)
 		}
 	}
-	job.State = model.JobStateRollbackDone
-	job.SchemaState = dbInfo.State
+	job.FinishDBJob(model.JobStateRollbackDone, model.StatePublic, ver, dbInfo)
 	return ver, nil
 }
 
