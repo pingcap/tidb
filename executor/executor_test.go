@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math"
@@ -63,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
