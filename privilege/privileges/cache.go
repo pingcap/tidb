@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (

@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -21,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/types"
-	"golang.org/x/net/context"
 )
 
 type testCtxKeyType int

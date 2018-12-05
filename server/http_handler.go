@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (

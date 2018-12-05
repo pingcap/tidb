@@ -14,6 +14,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
@@ -174,6 +174,9 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 	val, err := st.buf.Get(k)
 	if kv.IsErrNotFound(err) {
 		val, err = st.Transaction.Get(k)
+		if kv.IsErrNotFound(err) {
+			return nil, err
+		}
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
