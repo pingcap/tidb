@@ -100,9 +100,33 @@ func (iter *ExprIter) Matched() bool {
 
 // Reset resets the iterator to the first matched group expression.
 func (iter *ExprIter) Reset() (findMatch bool) {
-	iter.element = iter.group.GetFirstElem(iter.operand)
-	iter.matched = iter.element != nil
-	return iter.matched
+	defer func() { iter.matched = findMatch }()
+
+	for elem := iter.group.GetFirstElem(iter.operand); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*GroupExpr)
+		exprOperand := GetOperand(expr.exprNode)
+		if !iter.operand.match(exprOperand) {
+			break
+		}
+
+		if len(expr.children) != len(iter.children) {
+			continue
+		}
+
+		allMatched := true
+		for i := range iter.children {
+			iter.children[i].group = expr.children[i]
+			if !iter.children[i].Reset() {
+				allMatched = false
+				break
+			}
+		}
+		if allMatched {
+			iter.element = elem
+			return true
+		}
+	}
+	return false
 }
 
 // NewExprIterFromGroupElem creates the iterator on the group element.
