@@ -14,6 +14,7 @@
 package session_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -45,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
