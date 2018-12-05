@@ -510,7 +510,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 	nh := GetHistory(s)
 	var err error
 	var schemaVersion int64
-	orgStartTS := s.GetSessionVars().TxnCtx.StartTS
+	sessVars := s.GetSessionVars()
+	orgStartTS := sessVars.TxnCtx.StartTS
 	label := s.getSQLLabel()
 	for {
 		s.PrepareTxnCtx(ctx)
@@ -528,7 +529,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d sql:%s", connID, schemaVersion, retryCnt, i, sqlForLog(st.OriginText()))
+				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d sql:%s%s", connID, schemaVersion, retryCnt,
+					i, sqlForLog(st.OriginText()), sessVars.GetExecuteArgumentsInfo())
 			} else {
 				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d", connID, schemaVersion, retryCnt, i)
 			}
@@ -801,6 +803,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 		defer span1.Finish()
 	}
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
+	s.parser.EnableWindowFunc(s.sessionVars.EnableWindowFunction)
 	return s.parser.Parse(sql, charset, collation)
 }
 
@@ -1399,12 +1402,14 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBConstraintCheckInPlace + quoteCommaQuote +
 	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
+	variable.TiDBDDLReorgBatchSize + quoteCommaQuote +
 	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBEnableCascadesPlanner + quoteCommaQuote +
 	variable.TiDBRetryLimit + quoteCommaQuote +
-	variable.TiDBDisableTxnAutoRetry + "')"
+	variable.TiDBDisableTxnAutoRetry + quoteCommaQuote +
+	variable.TiDBEnableWindowFunction + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
@@ -1504,7 +1509,6 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	tmp := s.processInfo.Load()
 	if tmp != nil {
 		pi = tmp.(util.ProcessInfo)
-		pi.Mem = s.GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
 	}
 	return pi
 }
