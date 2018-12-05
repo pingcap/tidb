@@ -33,7 +33,7 @@ import (
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
 // 1. It holds all statement related modification in the buffer before flush to the txn,
 // so if execute statement meets error, the txn won't be made dirty.
-// 2. It's a lazy transaction, that means it's a txnFuture befort StartTS() is really need.
+// 2. It's a lazy transaction, that means it's a txnFuture before StartTS() is really need.
 type TxnState struct {
 	// States of a TxnState should be one of the followings:
 	// Invalid: kv.Transaction == nil && txnFuture == nil
