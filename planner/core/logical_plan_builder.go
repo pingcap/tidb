@@ -185,16 +185,34 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 	rightCond []expression.Expression, otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
-		if ok && binop.FuncName.L == ast.EQ {
-			ln, lOK := binop.GetArgs()[0].(*expression.Column)
-			rn, rOK := binop.GetArgs()[1].(*expression.Column)
+		if ok && len(binop.GetArgs()) == 2 {
+			ctx := binop.GetCtx()
+			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
+			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
-				if left.Schema().Contains(ln) && right.Schema().Contains(rn) {
-					eqCond = append(eqCond, binop)
-					continue
+				var leftCol, rightCol *expression.Column
+				if left.Schema().Contains(arg0) && right.Schema().Contains(arg1) {
+					leftCol, rightCol = arg0, arg1
 				}
-				if left.Schema().Contains(rn) && right.Schema().Contains(ln) {
-					cond := expression.NewFunctionInternal(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+				if leftCol != nil && left.Schema().Contains(arg1) && right.Schema().Contains(arg0) {
+					leftCol, rightCol = arg1, arg0
+				}
+				if leftCol != nil {
+					if deriveLeft {
+						if isNullRejected(ctx, left.Schema(), expr) {
+							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
+							leftCond = append(leftCond, notNullExpr)
+						}
+					}
+					if deriveRight {
+						if isNullRejected(ctx, right.Schema(), expr) {
+							notNullExpr := expression.BuildNotNullExpr(ctx, rightCol)
+							rightCond = append(rightCond, notNullExpr)
+						}
+					}
+				}
+				if leftCol != nil && binop.FuncName.L == ast.EQ {
+					cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
 				}

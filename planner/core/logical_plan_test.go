@@ -449,6 +449,88 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql   string
+		plan  string
+		left  string
+		right string
+	}{
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.b = t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			left:  "[not(isnull(t1.b))]",
+			right: "[not(isnull(t2.b))]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.b > t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[not(isnull(t1.b))]",
+			right: "[not(isnull(t2.b))]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.b = t2.b and t1.b is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			left:  "[not(isnull(t1.b))]",
+			right: "[not(isnull(t2.b))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.b = t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.b))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.b > t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.b))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.b = t2.b and t2.b is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.b))]",
+		},
+		{
+			sql:   "select * from t t1 right join t t2 on t1.b = t2.b and t1.b is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			left:  "[not(isnull(t1.b))]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.b <=> t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.b <=> t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(p), Equals, ca.plan, comment)
+		join := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		left := join.Children()[0].(*DataSource)
+		right := join.Children()[1].(*DataSource)
+		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
+		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
+		c.Assert(leftConds, Equals, ca.left, comment)
+		c.Assert(rightConds, Equals, ca.right, comment)
+	}
+}
+
 func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
 	tableInfo := *MockTable()
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))

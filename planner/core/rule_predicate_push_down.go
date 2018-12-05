@@ -126,10 +126,11 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		// Only derive left where condition, because right where condition cannot be pushed down
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan, true, false)
-		leftCond = leftPushCond
+		leftCond = expression.RemoveDupExprs(leftPushCond)
 		// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
 		_, derivedRightJoinCond := deriveOtherConditions(p, false, true)
 		rightCond = append(p.RightConditions, derivedRightJoinCond...)
+		rightCond = expression.RemoveDupExprs(rightCond)
 		p.RightConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
@@ -143,10 +144,11 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		// Only derive right where condition, because left where condition cannot be pushed down
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan, false, true)
-		rightCond = rightPushCond
+		rightCond = expression.RemoveDupExprs(rightPushCond)
 		// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
 		derivedLeftJoinCond, _ := deriveOtherConditions(p, true, false)
 		leftCond = append(p.LeftConditions, derivedLeftJoinCond...)
+		leftCond = expression.RemoveDupExprs(leftCond)
 		p.LeftConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
@@ -172,8 +174,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
 		p.OtherConditions = otherCond
-		leftCond = leftPushCond
-		rightCond = rightPushCond
+		leftCond = expression.RemoveDupExprs(leftPushCond)
+		rightCond = expression.RemoveDupExprs(rightPushCond)
 	}
 	leftRet, lCh := leftPlan.PredicatePushDown(leftCond)
 	rightRet, rCh := rightPlan.PredicatePushDown(rightCond)
@@ -413,15 +415,50 @@ func deriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (l
 			if leftRelaxedCond != nil {
 				leftCond = append(leftCond, leftRelaxedCond)
 			}
+			notNullExpr := deriveNotNullExpr(expr, leftPlan.Schema())
+			if notNullExpr != nil {
+				leftCond = append(leftCond, notNullExpr)
+			}
 		}
 		if deriveRight {
 			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, rightPlan.Schema())
 			if rightRelaxedCond != nil {
 				rightCond = append(rightCond, rightRelaxedCond)
 			}
+			notNullExpr := deriveNotNullExpr(expr, rightPlan.Schema())
+			if notNullExpr != nil {
+				rightCond = append(rightCond, notNullExpr)
+			}
 		}
 	}
 	return
+}
+
+// deriveNotNullExpr generates a new expression `not(isnull(col))` given `col1 op col2`,
+// in which `col` is in specified schema. Caller guarantees that only one of `col1` or
+// `col2` is in schema.
+func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) expression.Expression {
+	binop, ok := expr.(*expression.ScalarFunction)
+	if !ok || len(binop.GetArgs()) != 2 {
+		return nil
+	}
+	ctx := binop.GetCtx()
+	arg0, lOK := binop.GetArgs()[0].(*expression.Column)
+	arg1, rOK := binop.GetArgs()[1].(*expression.Column)
+	if !lOK || !rOK {
+		return nil
+	}
+	var col *expression.Column
+	if schema.Contains(arg0) {
+		col = arg0
+	}
+	if schema.Contains(arg1) {
+		col = arg1
+	}
+	if isNullRejected(ctx, schema, expr) {
+		return expression.BuildNotNullExpr(ctx, col)
+	}
+	return nil
 }
 
 // conds2TableDual builds a LogicalTableDual if cond is constant false or null.

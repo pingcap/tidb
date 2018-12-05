@@ -461,7 +461,7 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 // 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
 // Derived new expressions must be appended into join condition, not filter condition.
 func (s *propOuterJoinConstSolver) propagateColumnEQ() {
-	visited := make([]bool, len(s.joinConds)+len(s.filterConds))
+	visited := make([]bool, 2*len(s.joinConds)+len(s.filterConds))
 	s.unionSet = disjointset.NewIntSet(len(s.columns))
 	var outerCol, innerCol *Column
 	// Only consider column equal condition in joinConds.
@@ -473,6 +473,10 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			innerID := s.getColID(innerCol)
 			s.unionSet.Union(outerID, innerID)
 			visited[i] = true
+			// Generate `innerCol is not null` from `outerCol = innerCol`. Note that `outerCol is not null`
+			// does not hold since we are in outer join.
+			notNullExpr := BuildNotNullExpr(s.ctx, innerCol)
+			s.joinConds = append(s.joinConds, notNullExpr)
 		}
 	}
 	lenJoinConds := len(s.joinConds)

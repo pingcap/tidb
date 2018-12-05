@@ -164,3 +164,8 @@ func ruleColumnEQConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 		}
 	}
 }
+
+func RemoveDupExprs(exprs []Expression) []Expression {
+	set := newExprSet(exprs)
+	return set.data
+}
