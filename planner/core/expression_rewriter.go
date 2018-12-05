@@ -1298,10 +1298,13 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 }
 
 func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
-	col, err := er.schema.FindColumn(v.Name)
-	if err != nil {
-		er.err = errors.Trace(err)
-		return
+	stkLen := len(er.ctxStack)
+	col, ok := er.ctxStack[stkLen-1].(*expression.Column)
+	if !ok {
+		col, er.err = er.schema.FindColumn(v.Name)
+		if er.err != nil {
+			return
+		}
 	}
 
 	table, err := er.b.is.TableByName(col.DBName, col.OrigTblName)
@@ -1312,31 +1315,45 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 
 	var val *expression.Constant
 	for _, col := range table.Cols() {
-		if col.Name.L == v.Name.Name.L {
-			// if column default value is 'current_timestamp', use NULL to be compatible with MySQL 5.7
-			if hasCurrentTimestampDefault(col) {
+		if col.Name.L != v.Name.Name.L {
+			continue
+		}
+		if hasCurrentDatetimeDefault(col) {
+			if col.Tp == mysql.TypeDatetime {
+				// for DATETIME column with current_timestamp, use NULL to be compatible with MySQL 5.7
 				val = expression.Null
+			} else if col.Tp == mysql.TypeTimestamp {
+				// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
+				zero := types.Time{
+					Time: types.ZeroTime,
+					Type: mysql.TypeTimestamp,
+					Fsp:  col.Decimal,
+				}
+				val = &expression.Constant{
+					Value:   types.NewDatum(zero),
+					RetType: types.NewFieldType(mysql.TypeTimestamp),
+				}
 			} else {
+				// for other columns, just use what it is
 				val, er.err = er.b.getDefaultValue(col)
 			}
-			break
+		} else {
+			val, er.err = er.b.getDefaultValue(col)
 		}
+		break
 	}
 	if er.err != nil {
 		return
 	}
-	stkLen := len(er.ctxStack)
 	er.ctxStack = er.ctxStack[:stkLen-1]
 	er.ctxStack = append(er.ctxStack, val)
 }
 
-func hasCurrentTimestampDefault(col *table.Column) bool {
-	if col.Tp != mysql.TypeTimestamp && col.Tp != mysql.TypeDatetime {
-		return false
-	}
+// hasCurrentDatetimeDefault checks if column has current_timestamp default value
+func hasCurrentDatetimeDefault(col *table.Column) bool {
 	x, ok := col.DefaultValue.(string)
 	if !ok {
 		return false
 	}
-	return strings.ToUpper(x) == strings.ToUpper(ast.CurrentTimestamp)
+	return strings.ToLower(x) == ast.CurrentTimestamp
 }
