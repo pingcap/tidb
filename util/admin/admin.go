@@ -232,10 +232,13 @@ func getCount(ctx sessionctx.Context, sql string) (int64, error) {
 	return rows[0].GetInt64(0), nil
 }
 
+// Count greater Types
 const (
 	InvalidGreater byte = 0
-	TblCntGreater  byte = 1
-	IdxCntGreater  byte = 2
+	// TblCntGreater means that the number of table rows is more than the number of index rows.
+	TblCntGreater byte = 1
+	// IdxCntGreater means that the number of index rows is more than the number of table rows.
+	IdxCntGreater byte = 2
 )
 
 // CheckIndicesCount compares indices count with table count.
