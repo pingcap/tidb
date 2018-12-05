@@ -179,6 +179,9 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 	if err = e.processSetList(); err != nil {
 		return errors.Trace(err)
 	}
+	sessVars := e.ctx.GetSessionVars()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchSize := sessVars.DMLBatchSize
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	for i, list := range e.Lists {
@@ -188,6 +191,17 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 			return errors.Trace(err)
 		}
 		rows = append(rows, row)
+		if e.rowCount%uint64(batchSize) == 0 {
+			if err = exec(rows); err != nil {
+				return err
+			}
+			rows = rows[:0]
+			if batchInsert {
+				if err = e.doBatchInsert(); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	return errors.Trace(exec(rows))
 }
@@ -306,24 +320,34 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 				return errors.Trace(err)
 			}
 			rows = append(rows, row)
-			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-				if err := exec(rows); err != nil {
+			if e.rowCount%uint64(batchSize) == 0 {
+				if err = exec(rows); err != nil {
 					return errors.Trace(err)
 				}
-				e.ctx.StmtCommit()
 				rows = rows[:0]
-				if err := e.ctx.NewTxn(); err != nil {
-					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
-				}
-				if !sessVars.LightningMode {
-					sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
+				if batchInsert {
+					if err = e.doBatchInsert(); err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
 	if err := exec(rows); err != nil {
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (e *InsertValues) doBatchInsert() error {
+	sessVars := e.ctx.GetSessionVars()
+	e.ctx.StmtCommit()
+	if err := e.ctx.NewTxn(); err != nil {
+		// We should return a special error for batch insert.
+		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+	}
+	if !sessVars.LightningMode {
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
 	}
 	return nil
 }
