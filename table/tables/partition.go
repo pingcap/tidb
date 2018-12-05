@@ -63,30 +63,30 @@ type partitionedTable struct {
 }
 
 func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
-	partitionExpr, err := generatePartitionExpr(tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
+	ret := &partitionedTable{Table: *tbl}
+	pi := tblInfo.GetPartitionInfo()
+	if pi.Type == model.PartitionTypeRange {
+		partitionExpr, err := generatePartitionExpr(tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ret.partitionExpr = partitionExpr
 	}
 
-	if err = initTableIndices(&tbl.tableCommon); err != nil {
+	if err := initTableIndices(&ret.tableCommon); err != nil {
 		return nil, errors.Trace(err)
 	}
 	partitions := make(map[int64]*partition)
-	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
 		var t partition
-		err = initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
+		err := initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		partitions[p.ID] = &t
 	}
-
-	return &partitionedTable{
-		Table:         *tbl,
-		partitionExpr: partitionExpr,
-		partitions:    partitions,
-	}, nil
+	ret.partitions = partitions
+	return ret, nil
 }
 
 // PartitionExpr is the partition definition expressions.

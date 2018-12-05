@@ -324,3 +324,23 @@ func (s *testJSONSuite) TestBinaryJSONContains(c *C) {
 		c.Assert(ContainsBinary(obj, target), Equals, tt.expected)
 	}
 }
+
+func (s *testJSONSuite) TestBinaryJSONDepth(c *C) {
+	var tests = []struct {
+		input    string
+		expected int
+	}{
+		{`{}`, 1},
+		{`[]`, 1},
+		{`true`, 1},
+		{`[10, 20]`, 2},
+		{`[[], {}]`, 2},
+		{`[10, {"a": 20}]`, 3},
+		{`{"Person": {"Name": "Homer", "Age": 39, "Hobbies": ["Eating", "Sleeping"]} }`, 4},
+	}
+
+	for _, tt := range tests {
+		obj := mustParseBinaryFromString(c, tt.input)
+		c.Assert(obj.GetElemDepth(), Equals, tt.expected)
+	}
+}

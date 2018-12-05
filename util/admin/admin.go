@@ -106,7 +106,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			found = true
 			// These states can't be cancelled.
 			if job.IsDone() || job.IsSynced() {
-				errs[i] = errors.New("This job is finished, so can't be cancelled")
+				errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(id)
 				continue
 			}
 			// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
@@ -130,7 +130,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			}
 		}
 		if !found {
-			errs[i] = errors.New("Can't find this job")
+			errs[i] = ErrDDLJobNotFound.GenWithStackByArgs(id)
 		}
 	}
 	return errs, nil
@@ -221,7 +221,7 @@ type RecordData struct {
 }
 
 func getCount(ctx sessionctx.Context, sql string) (int64, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithSnapshot(ctx, sql)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -699,6 +699,8 @@ const (
 	codeDataNotEqual       terror.ErrCode = 1
 	codeRepeatHandle                      = 2
 	codeInvalidColumnState                = 3
+	codeDDLJobNotFound                    = 4
+	codeCancelFinishedJob                 = 5
 )
 
 var (
@@ -706,4 +708,8 @@ var (
 	ErrDataInConsistent   = terror.ClassAdmin.New(codeDataNotEqual, "data isn't equal")
 	errRepeatHandle       = terror.ClassAdmin.New(codeRepeatHandle, "handle is repeated")
 	errInvalidColumnState = terror.ClassAdmin.New(codeInvalidColumnState, "invalid column state")
+	// ErrDDLJobNotFound indicates the job id was not found.
+	ErrDDLJobNotFound = terror.ClassAdmin.New(codeDDLJobNotFound, "DDL Job:%v not found")
+	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
+	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(codeCancelFinishedJob, "This job:%v is finished, so can't be cancelled")
 )

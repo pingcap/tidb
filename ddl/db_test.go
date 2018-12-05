@@ -14,6 +14,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -404,7 +404,6 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
 	}
 
-	var checkErr error
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
@@ -412,7 +411,8 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	hook.OnJobUpdatedExported, c3IdxInfo = backgroundExecOnJobUpdatedExported(c, s, hook, checkErr)
+	var checkErr error
+	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s, hook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "create unique index c3_index on t1 (c3)", done)
@@ -457,6 +457,65 @@ LOOP:
 	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 	callback := &ddl.TestDDLCallback{}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
+}
+
+// TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
+func (s *testDBSuite) TestCancelAddIndex1(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+
+	for i := 0; i < 50; i++ {
+		s.mustExec(c, "insert into t values (?, ?)", i, i)
+	}
+
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
+	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn()
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+
+			checkErr = hookCtx.Txn(true).Commit(context.Background())
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	rs, err := s.tk.Exec("alter table t add index idx_c2(c2)")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(checkErr, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+
+	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
+	t := s.testGetTable(c, "t")
+	for _, idx := range t.Indices() {
+		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
+	}
+	s.mustExec(c, "alter table t add index idx_c2(c2)")
+	s.mustExec(c, "alter table t drop index idx_c2")
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
@@ -1842,6 +1901,7 @@ func (s *testDBSuite) TestCreateTableWithHashPartition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
 	s.tk.MustExec("drop table if exists employees;")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	s.tk.MustExec(`
 	create table employees (
 		id int not null,
@@ -2730,10 +2790,17 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 		partition p2 values less than maxvalue
 	);`
 	s.testErrorCode(c, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
-
-	sql2 := "alter table table1 add partition"
+	s.tk.MustExec(`create table table_MustBeDefined (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`)
+	sql2 := "alter table table_MustBeDefined add partition"
 	s.testErrorCode(c, sql2, tmysql.ErrPartitionsMustBeDefined)
-
 	s.tk.MustExec("drop table if exists table2;")
 	s.tk.MustExec(`create table table2 (
 
@@ -3080,7 +3147,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	c.Assert(hasOldPartitionData, IsFalse)
 	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
 
-	// Test truncate table partition reassign a new partitionIDs.
+	// Test truncate table partition reassigns new partitionIDs.
 	s.tk.MustExec("drop table if exists t5;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t5(
@@ -3106,6 +3173,31 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	c.Assert(err, IsNil)
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
 	c.Assert(oldPID != newPID, IsTrue)
+
+	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1;")
+	s.tk.MustExec("drop table if exists clients;")
+	s.tk.MustExec(`create table clients (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by hash( month(signed) )
+	partitions 12;`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
+	c.Assert(err, IsNil)
+	oldDefs := oldTblInfo.Meta().Partition.Definitions
+
+	// Test truncate `hash partitioned table` reassigns new partitionIDs.
+	s.tk.MustExec("truncate table clients;")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
+	c.Assert(err, IsNil)
+	newDefs := newTblInfo.Meta().Partition.Definitions
+	for i := 0; i < len(oldDefs); i++ {
+		c.Assert(oldDefs[i].ID != newDefs[i].ID, IsTrue)
+	}
 }
 
 func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
@@ -3405,7 +3497,7 @@ func (s *testDBSuite) TestPartitionCancelAddIndex(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
-	hook.OnJobUpdatedExported, c3IdxInfo = backgroundExecOnJobUpdatedExported(c, s, hook, checkErr)
+	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s, hook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "create index c3_index on t1 (c3)", done)
@@ -3455,7 +3547,8 @@ LOOP:
 	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
 }
 
-func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLCallback, checkErr error) (func(*model.Job), *model.IndexInfo) {
+func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLCallback) (func(*model.Job), *model.IndexInfo, error) {
+	var checkErr error
 	first := true
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	c3IdxInfo := &model.IndexInfo{}
@@ -3508,7 +3601,7 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 			checkErr = errors.Trace(err)
 		}
 	}
-	return hook.OnJobUpdatedExported, c3IdxInfo
+	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
 func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
@@ -3638,7 +3731,7 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
-	ctx := s.tk.Se.(sessionctx.Context)
+	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
 	c.Assert(err, IsNil)
@@ -3719,4 +3812,46 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 		c.Assert(err, IsNil)
 	}
 	return num
+}
+
+func (s *testDBSuite) TestPartitionErrorCode(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	// add partition
+	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	s.tk.MustExec("drop database if exists test_db_with_partition")
+	s.tk.MustExec("create database test_db_with_partition")
+	s.tk.MustExec("use test_db_with_partition")
+	s.tk.MustExec(`create table employees (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date not null default '9999-12-31',
+		job_code int,
+		store_id int
+	)
+	partition by hash(store_id)
+	partitions 4;`)
+	_, err := s.tk.Exec("alter table employees add partition partitions 8;")
+	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
+
+	// coalesce partition
+	s.tk.MustExec(`create table clients (
+		id int,
+		fname varchar(30),
+		lname varchar(30),
+		signed date
+	)
+	partition by hash( month(signed) )
+	partitions 12;`)
+	_, err = s.tk.Exec("alter table clients coalesce partition 4;")
+	c.Assert(ddl.ErrUnsupportedCoalescePartition.Equal(err), IsTrue)
+
+	s.tk.MustExec(`create table t_part (a int key)
+		partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+		);`)
+	_, err = s.tk.Exec("alter table t_part coalesce partition 4;")
+	c.Assert(ddl.ErrCoalesceOnlyOnHashPartition.Equal(err), IsTrue)
 }

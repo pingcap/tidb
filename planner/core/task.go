@@ -401,7 +401,8 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	partialCursor := 0
 	finalAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
-		finalAggFunc := &aggregation.AggFuncDesc{Name: aggFun.Name, HasDistinct: false}
+		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
+		finalAggFunc.Name = aggFun.Name
 		args := make([]expression.Expression, 0, len(aggFun.Args))
 		if aggregation.NeedCount(finalAggFunc.Name) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
