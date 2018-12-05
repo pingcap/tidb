@@ -14,6 +14,7 @@
 package tables_test
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

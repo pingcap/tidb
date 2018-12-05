@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -57,9 +57,9 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
 	// Compose schema.
-	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
+	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
+		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	schema := buildSchema(names, ftypes)
 
 	// Compose a mocked session manager.
