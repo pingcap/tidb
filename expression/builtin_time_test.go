@@ -1615,27 +1615,37 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	fcAdd := funcs[ast.DateAdd]
 	fcSub := funcs[ast.DateSub]
 
-	args := types.MakeDatums(date[0], 1, "DAY")
+	tests := []struct {
+		inputDate    string
+		fc           functionClass
+		inputDecimal float64
+		expect       string
+	}{
+		{date[0], fcAdd, 1, date[1]},
+		{date[1], fcAdd, -1, date[0]},
+		{date[1], fcAdd, -0.5, date[0]},
+		{date[1], fcAdd, -1.4, date[0]},
+
+		{date[1], fcSub, 1, date[0]},
+		{date[0], fcSub, -1, date[1]},
+		{date[0], fcSub, -0.5, date[1]},
+		{date[0], fcSub, -1.4, date[1]},
+	}
+	for _, test := range tests {
+		args := types.MakeDatums(test.inputDate, test.inputDecimal, "DAY")
+		f, err := test.fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v.GetMysqlTime().String(), Equals, test.expect)
+	}
+
+	args := types.MakeDatums(date[0], nil, "DAY")
 	f, err := fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
 	c.Assert(err, IsNil)
 	c.Assert(f, NotNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime().String(), Equals, date[1])
-
-	args = types.MakeDatums(date[1], 1, "DAY")
-	f, err = fcSub.getFunction(s.ctx, s.datumsToConstants(args))
-	c.Assert(err, IsNil)
-	c.Assert(f, NotNil)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime().String(), Equals, date[0])
-
-	args = types.MakeDatums(date[0], nil, "DAY")
-	f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
-	c.Assert(err, IsNil)
-	c.Assert(f, NotNil)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 
