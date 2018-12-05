@@ -705,7 +705,6 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 	defer ticker.Stop()
 	ticker2 := time.NewTicker(10 * time.Millisecond)
 	defer ticker2.Stop()
-	startReorganization := false
 
 LOOP:
 	for {
@@ -734,17 +733,7 @@ LOOP:
 			}
 			num += step
 		case <-ticker2.C:
-			if !startReorganization {
-				is = s.dom.InfoSchema()
-				tbl, err = is.TableByName(schemaName, tableName)
-				c.Assert(err, IsNil)
-				for _, idx := range tbl.Meta().Indices {
-					if idx.Name.L == "c3_index" && idx.State == model.StateWriteReorganization {
-						startReorganization = true
-					}
-				}
-			}
-			if startReorganization && changeWorkerNumEnable {
+			if changeWorkerNumEnable {
 				lastSetWorkerCnt = rand.Intn(8) + 8
 				s.mustExec(c, fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
 				c.Assert(checkErr, IsNil)
