@@ -109,7 +109,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 }
 
-func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	// Check this table's database.

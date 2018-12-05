@@ -142,6 +142,7 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
 	//test create a exist view
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
+	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
 	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
 	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
 	//create view on nonexistent table
@@ -169,13 +170,15 @@ func (s *testSuite3) TestCreateView(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
-	tk.MustExec("drop table v1,v2,v3,v4,v5,v6")
+	_, err = tk.Exec("drop view v1,v2,v3,v4,v5,v6")
+	//drop multiple views in a statement
+	c.Assert(err, IsNil)
 	//view with variable
 	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
 	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
-	tk.MustExec("drop table v1")
+	tk.MustExec("drop view v1")
 	//view with different col counts
 	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
@@ -209,6 +212,24 @@ func (s *testSuite3) TestCreateDropTable(c *C) {
 
 	_, err := tk.Exec("drop table mysql.gc_delete_range")
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite3) TestCreateDropView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create or replace view drop_test as select 1,2")
+	_, err := tk.Exec("drop view if exists drop_test")
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec("drop view mysql.gc_delete_range")
+	c.Assert(err.Error(), Equals, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
+
+	_, err = tk.Exec("drop view drop_test")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+
+	tk.MustExec("create table t_v(a int)")
+	_, err = tk.Exec("drop view t_v")
+	c.Assert(err.Error(), Equals, "[schema:1347]'test.t_v' is not VIEW")
 }
 
 func (s *testSuite3) TestCreateDropIndex(c *C) {
