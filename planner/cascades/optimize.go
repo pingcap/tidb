@@ -14,6 +14,8 @@
 package cascades
 
 import (
+	"container/list"
+
 	"github.com/pingcap/errors"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -45,7 +47,82 @@ func convert2Group(node plannercore.LogicalPlan) *Group {
 }
 
 func onPhaseExploration(sctx sessionctx.Context, g *Group) error {
-	return errors.New("the onPhaseExploration() of the cascades planner is not implemented")
+	for !g.explored {
+		err := exploreGroup(g)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func exploreGroup(g *Group) error {
+	if g.explored {
+		return nil
+	}
+
+	g.explored = true
+	for elem := g.equivalents.Front(); elem != nil; elem.Next() {
+		curExpr := elem.Value.(*GroupExpr)
+		if curExpr.explored {
+			continue
+		}
+
+		// Explore child groups firstly.
+		curExpr.explored = true
+		for _, childGroup := range curExpr.children {
+			exploreGroup(childGroup)
+			curExpr.explored = curExpr.explored && childGroup.explored
+		}
+
+		eraseCur, err := findMoreEquiv(g, elem)
+		if err != nil {
+			return err
+		}
+		if eraseCur {
+			g.Delete(curExpr)
+		}
+
+		g.explored = g.explored && curExpr.explored
+	}
+	return nil
+}
+
+// findMoreEquiv finds and applies the matched transformation rules.
+func findMoreEquiv(g *Group, elem *list.Element) (eraseCur bool, err error) {
+	expr := elem.Value.(*GroupExpr)
+	for _, rule := range GetTransformationRules(expr.exprNode) {
+		pattern := rule.GetPattern()
+		if !pattern.operand.match(GetOperand(expr.exprNode)) {
+			continue
+		}
+		// Create a binding of the current group expression and the pattern of
+		// the transformation rule to enumerate all the possible expressions.
+		iter := NewExprIterFromGroupElem(elem, pattern)
+		for ; iter != nil && iter.Matched(); iter.Next() {
+			if !rule.Match(iter) {
+				continue
+			}
+
+			newExpr, erase, err := rule.OnTransform(iter)
+			if err != nil {
+				return false, err
+			}
+
+			eraseCur = eraseCur || erase
+			if !g.Insert(newExpr) {
+				continue
+			}
+
+			// If the new group expression is successfully inserted into the
+			// current group, we mark the group expression and the group as
+			// unexplored to enable the exploration on the new group expression
+			// and all the antecedent groups.
+			newExpr.explored = false
+			g.explored = false
+		}
+	}
+	return eraseCur, nil
 }
 
 func onPhaseImplementation(sctx sessionctx.Context, g *Group) (plannercore.Plan, error) {
