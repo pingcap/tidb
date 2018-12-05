@@ -236,7 +236,6 @@ func (e *ShowExec) fetchShowProcessList() error {
 			uint64(time.Since(pi.Time) / time.Second),
 			fmt.Sprintf("%d", pi.State),
 			info,
-			pi.Mem,
 		})
 	}
 	return nil
