@@ -475,8 +475,11 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			visited[i] = true
 			// Generate `innerCol is not null` from `outerCol = innerCol`. Note that `outerCol is not null`
 			// does not hold since we are in outer join.
-			notNullExpr := BuildNotNullExpr(s.ctx, innerCol)
-			s.joinConds = append(s.joinConds, notNullExpr)
+			childCol := s.innerSchema.RetrieveColumn(innerCol)
+			if !mysql.HasNotNullFlag(childCol.RetType.Flag) {
+				notNullExpr := BuildNotNullExpr(s.ctx, childCol)
+				s.joinConds = append(s.joinConds, notNullExpr)
+			}
 		}
 	}
 	lenJoinConds := len(s.joinConds)

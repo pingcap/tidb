@@ -448,15 +448,12 @@ func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) ex
 	if !lOK || !rOK {
 		return nil
 	}
-	var col *expression.Column
-	if schema.Contains(arg0) {
-		col = arg0
+	childCol := schema.RetrieveColumn(arg0)
+	if childCol == nil {
+		childCol = schema.RetrieveColumn(arg1)
 	}
-	if schema.Contains(arg1) {
-		col = arg1
-	}
-	if isNullRejected(ctx, schema, expr) {
-		return expression.BuildNotNullExpr(ctx, col)
+	if isNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.Flag) {
+		return expression.BuildNotNullExpr(ctx, childCol)
 	}
 	return nil
 }

@@ -458,55 +458,74 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 		right string
 	}{
 		{
+			sql:   "select * from t t1 inner join t t2 on t1.e = t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e > t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e = t2.e and t1.e is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e = t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e > t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e = t2.e and t2.e is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 right join t t2 on t1.e = t2.e and t1.e is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e <=> t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e <=> t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		// Not deriving if column has NotNull flag already.
+		{
 			sql:   "select * from t t1 inner join t t2 on t1.b = t2.b",
 			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
-			left:  "[not(isnull(t1.b))]",
-			right: "[not(isnull(t2.b))]",
-		},
-		{
-			sql:   "select * from t t1 inner join t t2 on t1.b > t2.b",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
-			left:  "[not(isnull(t1.b))]",
-			right: "[not(isnull(t2.b))]",
-		},
-		{
-			sql:   "select * from t t1 inner join t t2 on t1.b = t2.b and t1.b is not null",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
-			left:  "[not(isnull(t1.b))]",
-			right: "[not(isnull(t2.b))]",
+			left:  "[]",
+			right: "[]",
 		},
 		{
 			sql:   "select * from t t1 left join t t2 on t1.b = t2.b",
 			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
 			left:  "[]",
-			right: "[not(isnull(t2.b))]",
+			right: "[]",
 		},
 		{
 			sql:   "select * from t t1 left join t t2 on t1.b > t2.b",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
-			left:  "[]",
-			right: "[not(isnull(t2.b))]",
-		},
-		{
-			sql:   "select * from t t1 left join t t2 on t1.b = t2.b and t2.b is not null",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
-			left:  "[]",
-			right: "[not(isnull(t2.b))]",
-		},
-		{
-			sql:   "select * from t t1 right join t t2 on t1.b = t2.b and t1.b is not null",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
-			left:  "[not(isnull(t1.b))]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t t1 inner join t t2 on t1.b <=> t2.b",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
-			left:  "[]",
-			right: "[]",
-		},
-		{
-			sql:   "select * from t t1 left join t t2 on t1.b <=> t2.b",
 			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
 			left:  "[]",
 			right: "[]",

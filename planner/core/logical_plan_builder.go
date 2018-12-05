@@ -194,18 +194,18 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 				if left.Schema().Contains(arg0) && right.Schema().Contains(arg1) {
 					leftCol, rightCol = arg0, arg1
 				}
-				if leftCol != nil && left.Schema().Contains(arg1) && right.Schema().Contains(arg0) {
+				if leftCol == nil && left.Schema().Contains(arg1) && right.Schema().Contains(arg0) {
 					leftCol, rightCol = arg1, arg0
 				}
 				if leftCol != nil {
 					if deriveLeft {
-						if isNullRejected(ctx, left.Schema(), expr) {
+						if isNullRejected(ctx, left.Schema(), expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
 					if deriveRight {
-						if isNullRejected(ctx, right.Schema(), expr) {
+						if isNullRejected(ctx, right.Schema(), expr) && !mysql.HasNotNullFlag(rightCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
