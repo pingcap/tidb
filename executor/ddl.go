@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // DDLExec represents a DDL executor.

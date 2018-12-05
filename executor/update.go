@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"context"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // UpdateExec represents a new update executor.

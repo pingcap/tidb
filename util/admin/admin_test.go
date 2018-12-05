@@ -14,6 +14,7 @@
 package admin_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math"
@@ -63,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -3359,4 +3359,16 @@ func (s *testSuite) TestDoSubquery(c *C) {
 	r, err := tk.Exec(`do 1 in (select * from t)`)
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
+}
+
+func (s *testSuite) TestTSOFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int)`)
+
+	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail")
+	_, err := tk.Exec(`select * from t`)
+	c.Assert(err, NotNil)
 }

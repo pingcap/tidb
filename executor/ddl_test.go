@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {

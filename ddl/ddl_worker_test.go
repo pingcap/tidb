@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testDDLSuite{})

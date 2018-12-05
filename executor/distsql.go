@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"math"
 	"runtime"
 	"sort"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (

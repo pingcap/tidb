@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
