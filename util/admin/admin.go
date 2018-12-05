@@ -86,6 +86,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 func isJobRollbackable(job *model.Job, id int64) error {
 	switch job.Type {
 	case model.ActionDropIndex:
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
 		if job.SchemaState == model.StateDeleteOnly ||
 			job.SchemaState == model.StateDeleteReorganization {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
