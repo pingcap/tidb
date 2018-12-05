@@ -828,11 +828,11 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	if isIndex {
 		idx := t.Indices[id]
 		expected, err = idx.getRowCount(sc, ranges, t.ModifyCount)
-		expected *= idx.getIncreaseFactor(t.Count)
+		expected *= idx.GetIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
 		expected, err = c.getColumnRowCount(sc, ranges, t.ModifyCount)
-		expected *= c.getIncreaseFactor(t.Count)
+		expected *= c.GetIncreaseFactor(t.Count)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -977,13 +977,13 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 		if idx == nil || idx.Histogram.Len() == 0 {
 			return
 		}
-		logForIndex(logPrefix, t, idx, ranges, actual, idx.getIncreaseFactor(t.Count))
+		logForIndex(logPrefix, t, idx, ranges, actual, idx.GetIncreaseFactor(t.Count))
 	} else {
 		c := t.Columns[q.hist.ID]
 		if c == nil || c.Histogram.Len() == 0 {
 			return
 		}
-		logForPK(logPrefix, c, ranges, actual, c.getIncreaseFactor(t.Count))
+		logForPK(logPrefix, c, ranges, actual, c.GetIncreaseFactor(t.Count))
 	}
 }
 
@@ -1026,7 +1026,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 			log.Debug("encode keys failed: err", err)
 			continue
 		}
-		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.getIncreaseFactor(t.Count)
+		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
 		rang := ranger.Range{
 			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},

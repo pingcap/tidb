@@ -490,8 +490,8 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	return
 }
 
-// getIncreaseFactor will return a factor of data increasing after the last analysis.
-func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
+// GetIncreaseFactor will return a factor of data increasing after the last analysis.
+func (hg *Histogram) GetIncreaseFactor(totalCount int64) float64 {
 	columnCount := hg.totalRowCount()
 	if columnCount == 0 {
 		// avoid dividing by 0
@@ -675,7 +675,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 
 // AvgCountPerValue gets the average row count per value by the data of histogram.
 func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
-	curNDV := float64(hg.NDV) * hg.getIncreaseFactor(totalCount)
+	curNDV := float64(hg.NDV) * hg.GetIncreaseFactor(totalCount)
 	if curNDV == 0 {
 		curNDV = 1
 	}

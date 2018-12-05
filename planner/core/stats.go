@@ -326,7 +326,17 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 			newHist := statistics.MergeHistogramForInnerJoin(&leftHist.Histogram, &rightHist.Histogram, leftKeys[i].RetType)
 			leftCol := &statistics.Column{Info: leftHist.Info, Histogram: *newHist}
 			rightCol := &statistics.Column{Info: rightHist.Info, Histogram: *newHist}
-			ndv *= float64(newHist.NDV)
+			lIncreaseFactor := leftHist.GetIncreaseFactor(leftChild.statsInfo().HistColl.Count)
+			// The factor is used to scale the NDV. When it's higher than one. NDV doesn't need to be changed.
+			if lIncreaseFactor > 1 {
+				lIncreaseFactor = 1
+			}
+			rIncreaseFactor := rightHist.GetIncreaseFactor(rightChild.statsInfo().HistColl.Count)
+			if rIncreaseFactor > 1 {
+				rIncreaseFactor = 1
+			}
+			log.Warnf("left factor: %v, right factor: %v", lIncreaseFactor, rIncreaseFactor)
+			ndv *= float64(newHist.NDV) * lIncreaseFactor * rIncreaseFactor
 			lPosNew := p.schema.ColumnIndex(leftKeys[i])
 			rPosNew := p.schema.ColumnIndex(rightKeys[i])
 			cardinality[lPosNew] = float64(newHist.NDV)

@@ -369,7 +369,7 @@ func (t *Table) ColumnGreaterRowCount(sc *stmtctx.StatementContext, value types.
 		return float64(t.Count) / pseudoLessRate
 	}
 	c := t.Columns[colID]
-	return c.greaterRowCount(value) * c.getIncreaseFactor(t.Count)
+	return c.greaterRowCount(value) * c.GetIncreaseFactor(t.Count)
 }
 
 // ColumnLessRowCount estimates the row count where the column less than value.
@@ -378,7 +378,7 @@ func (t *Table) ColumnLessRowCount(sc *stmtctx.StatementContext, value types.Dat
 		return float64(t.Count) / pseudoLessRate
 	}
 	c := t.Columns[colID]
-	return c.lessRowCount(value) * c.getIncreaseFactor(t.Count)
+	return c.lessRowCount(value) * c.GetIncreaseFactor(t.Count)
 }
 
 // ColumnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
@@ -387,7 +387,7 @@ func (t *Table) ColumnBetweenRowCount(sc *stmtctx.StatementContext, a, b types.D
 		return float64(t.Count) / pseudoBetweenRate
 	}
 	c := t.Columns[colID]
-	return c.betweenRowCount(a, b) * c.getIncreaseFactor(t.Count)
+	return c.betweenRowCount(a, b) * c.GetIncreaseFactor(t.Count)
 }
 
 // ColumnEqualRowCount estimates the row count where the column equals to value.
@@ -397,7 +397,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 	}
 	c := t.Columns[colID]
 	result, err := c.equalRowCount(sc, value, t.ModifyCount)
-	result *= c.getIncreaseFactor(t.Count)
+	result *= c.GetIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
 
@@ -414,7 +414,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 	}
 	c := coll.Columns[colID]
 	result, err := c.getColumnRowCount(sc, intRanges, coll.ModifyCount)
-	result *= c.getIncreaseFactor(coll.Count)
+	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
 
@@ -426,7 +426,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 	}
 	c := coll.Columns[colID]
 	result, err := c.getColumnRowCount(sc, colRanges, coll.ModifyCount)
-	result *= c.getIncreaseFactor(coll.Count)
+	result *= c.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
 
@@ -447,7 +447,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	} else {
 		result, err = idx.getRowCount(sc, indexRanges, coll.ModifyCount)
 	}
-	result *= idx.getIncreaseFactor(coll.Count)
+	result *= idx.GetIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
 

@@ -109,6 +109,7 @@ func (s *testStatsSuite) TestInnerJoinStats(c *C) {
 	join.schema = expression.MergeSchema(t1Child.schema, t2Child.schema)
 	finalStats, err := join.deriveInnerJoinStatsWithHist([]*expression.Column{t1Child.schema.Columns[0]}, []*expression.Column{t2Child.schema.Columns[0]})
 	c.Assert(err, IsNil)
+	c.Assert(finalStats.RowCount, Equals, float64(2))
 	c.Assert(len(finalStats.HistColl.Columns), Equals, 4)
 	ans1 := `column:0 ndv:2 totColSize:0
 num: 1 lower_bound: 8 upper_bound: 8 repeats: 1
@@ -136,4 +137,12 @@ num: 1 lower_bound: 13 upper_bound: 13 repeats: 1
 num: 1 lower_bound: 14 upper_bound: 14 repeats: 1
 num: 1 lower_bound: 15 upper_bound: 15 repeats: 1`
 	c.Assert(finalStats.HistColl.Columns[4].String(), Equals, ans4)
+	t2StatsInfo.RowCount /= 2
+	t2StatsInfo.HistColl.Count /= 2
+	for i := range t2StatsInfo.Cardinality {
+		t2StatsInfo.Cardinality[i] /= 2
+	}
+	finalStats, err = join.deriveInnerJoinStatsWithHist([]*expression.Column{t1Child.schema.Columns[0]}, []*expression.Column{t2Child.schema.Columns[0]})
+	c.Assert(err, IsNil)
+	c.Assert(finalStats.RowCount, Equals, float64(1))
 }
