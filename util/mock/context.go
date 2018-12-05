@@ -15,6 +15,7 @@
 package mock
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 )
 
 var _ sessionctx.Context = (*Context)(nil)

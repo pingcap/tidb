@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"math"
 	"strings"
 
@@ -25,7 +26,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	dto "github.com/prometheus/client_model/go"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestPrepared(c *C) {

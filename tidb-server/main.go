@@ -380,6 +380,11 @@ func validateConfig() {
 		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
 		os.Exit(-1)
 	}
+
+	if cfg.TxnLocalLatches.Enabled && cfg.TxnLocalLatches.Capacity == 0 {
+		log.Errorf("txn-local-latches.capacity can not be 0")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
