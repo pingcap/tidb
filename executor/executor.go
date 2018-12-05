@@ -521,7 +521,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	// The number of table rows is equal to the number of index rows.
-	for i, _ := range e.srcs {
+	for i := range e.srcs {
 		go func(num int) {
 			e.checkIndexHandle(ctx, num, e.srcs[num])
 		}(i)
