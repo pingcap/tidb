@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
