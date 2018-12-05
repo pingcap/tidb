@@ -93,6 +93,9 @@ type connArray struct {
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
+
+	// For gc.
+	gcTokenBucket chan int
 }
 
 type batchCommandsClient struct {
@@ -183,6 +186,8 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 		batchCommandsCh:        make(chan *batchCommandsEntry, cfg.TiKVClient.MaxBatchSize),
 		batchCommandsClients:   make([]*batchCommandsClient, 0, maxSize),
 		tikvTransportLayerLoad: 0,
+
+		gcTokenBucket: make(chan int, 2),
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err
@@ -481,7 +486,10 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		return nil, errors.Trace(err)
 	}
 
-	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
+	if req.Type == tikvrpc.CmdGC {
+		// Deal with GC command without batch.
+		connArray.gcTokenBucket <- 0
+	} else if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
 		if batchCommandsReq := req.ToBatchCommandsRequest(); batchCommandsReq != nil {
 			entry := &batchCommandsEntry{
 				req:     batchCommandsReq,
@@ -511,7 +519,11 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if req.Type != tikvrpc.CmdCopStream {
 		ctx1, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
-		return tikvrpc.CallRPC(ctx1, client, req)
+		result, err := tikvrpc.CallRPC(ctx1, client, req)
+		if req.Type == tikvrpc.CmdGC {
+			<-connArray.gcTokenBucket
+		}
+		return result, err
 	}
 
 	// Coprocessor streaming request.
