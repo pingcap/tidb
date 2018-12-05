@@ -14,13 +14,13 @@
 package executor_test
 
 import (
+	"context"
 	"time"
 
 	. "github.com/pingcap/check"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestJoinPanic(c *C) {
@@ -863,6 +863,23 @@ func (s *testSuite) TestIndexLookupJoin(c *C) {
 		`1 4 <nil> <nil>`,
 		`1 5 1 1`,
 		`1 6 1 2`,
+	))
+
+	tk.MustExec(`drop table if exists t1, t2, t3;`)
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("insert into t1 values(1, 0), (2, null)")
+	tk.MustExec("create table t2(a int primary key)")
+	tk.MustExec("insert into t2 values(0)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t2)*/ * from t1 left join t2 on t1.b = t2.a;").Check(testkit.Rows(
+		`1 0 0`,
+		`2 <nil> <nil>`,
+	))
+
+	tk.MustExec("create table t3(a int, key(a))")
+	tk.MustExec("insert into t3 values(0)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t3)*/ * from t1 left join t3 on t1.b = t3.a;").Check(testkit.Rows(
+		`1 0 0`,
+		`2 <nil> <nil>`,
 	))
 }
 

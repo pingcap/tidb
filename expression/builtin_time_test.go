@@ -1637,27 +1637,37 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	fcAdd := funcs[ast.DateAdd]
 	fcSub := funcs[ast.DateSub]
 
-	args := types.MakeDatums(date[0], 1, "DAY")
+	tests := []struct {
+		inputDate    string
+		fc           functionClass
+		inputDecimal float64
+		expect       string
+	}{
+		{date[0], fcAdd, 1, date[1]},
+		{date[1], fcAdd, -1, date[0]},
+		{date[1], fcAdd, -0.5, date[0]},
+		{date[1], fcAdd, -1.4, date[0]},
+
+		{date[1], fcSub, 1, date[0]},
+		{date[0], fcSub, -1, date[1]},
+		{date[0], fcSub, -0.5, date[1]},
+		{date[0], fcSub, -1.4, date[1]},
+	}
+	for _, test := range tests {
+		args := types.MakeDatums(test.inputDate, test.inputDecimal, "DAY")
+		f, err := test.fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v.GetMysqlTime().String(), Equals, test.expect)
+	}
+
+	args := types.MakeDatums(date[0], nil, "DAY")
 	f, err := fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
 	c.Assert(err, IsNil)
 	c.Assert(f, NotNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime().String(), Equals, date[1])
-
-	args = types.MakeDatums(date[1], 1, "DAY")
-	f, err = fcSub.getFunction(s.ctx, s.datumsToConstants(args))
-	c.Assert(err, IsNil)
-	c.Assert(f, NotNil)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime().String(), Equals, date[0])
-
-	args = types.MakeDatums(date[0], nil, "DAY")
-	f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
-	c.Assert(err, IsNil)
-	c.Assert(f, NotNil)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 
@@ -2387,5 +2397,42 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 		c.Assert(err, IsNil)
 		result := t.convertToTime(d, sv.TimeZone)
 		c.Assert(result.Sub(now), LessEqual, 2*time.Second)
+	}
+}
+
+func (s *testEvaluatorSuite) TestTidbParseTso(c *C) {
+	s.ctx.GetSessionVars().TimeZone = time.UTC
+	tests := []struct {
+		param  interface{}
+		expect string
+	}{
+		{404411537129996288, "2018-11-20 09:53:04.877000"},
+		{"404411537129996288", "2018-11-20 09:53:04.877000"},
+		{1, "1970-01-01 00:00:00.000000"},
+	}
+
+	fc := funcs[ast.TiDBParseTso]
+	for _, test := range tests {
+		t := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		result, _ := d.ToString()
+		c.Assert(result, Equals, test.expect)
+	}
+
+	testsNull := []interface{}{
+		0,
+		-1,
+		"-1"}
+
+	for _, i := range testsNull {
+		t := []types.Datum{types.NewDatum(i)}
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.IsNull(), IsTrue)
 	}
 }

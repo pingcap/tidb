@@ -14,6 +14,10 @@
 package session
 
 import (
+	"context"
+	"fmt"
+	"strings"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor"
@@ -25,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
@@ -75,6 +78,33 @@ func (st *TxnState) String() string {
 		return "txnFuture"
 	}
 	return "invalid transaction"
+}
+
+// GoString implements the "%#v" format for fmt.Printf.
+func (st *TxnState) GoString() string {
+	var s strings.Builder
+	s.WriteString("Txn{")
+	if st.pending() {
+		s.WriteString("state=pending")
+	} else if st.Valid() {
+		s.WriteString("state=valid")
+		fmt.Fprintf(&s, ", startTS=%d", st.Transaction.StartTS())
+		if len(st.dirtyTableOP) > 0 {
+			fmt.Fprintf(&s, ", len(dirtyTable)=%d", len(st.dirtyTableOP))
+		}
+		if len(st.mutations) > 0 {
+			fmt.Fprintf(&s, ", len(mutations)=%d", len(st.mutations))
+		}
+	} else {
+		s.WriteString("state=invalid")
+	}
+
+	if st.fail != nil {
+		s.WriteString(", fail=")
+		s.WriteString(st.fail.Error())
+	}
+	s.WriteString("}")
+	return s.String()
 }
 
 func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
@@ -144,6 +174,9 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 	val, err := st.buf.Get(k)
 	if kv.IsErrNotFound(err) {
 		val, err = st.Transaction.Get(k)
+		if kv.IsErrNotFound(err) {
+			return nil, err
+		}
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -196,6 +229,10 @@ func (st *TxnState) cleanup() {
 		delete(st.mutations, key)
 	}
 	if st.dirtyTableOP != nil {
+		empty := dirtyTableOperation{}
+		for i := 0; i < len(st.dirtyTableOP); i++ {
+			st.dirtyTableOP[i] = empty
+		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
 }

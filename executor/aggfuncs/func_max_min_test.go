@@ -30,13 +30,8 @@ func (s *testSuite) TestMergePartialResult4MaxDecimal(c *C) {
 		srcChk.AppendMyDecimal(0, types.NewDecFromInt(i))
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
-
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncMax,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
-	}
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncMax, args, false)
 	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build max func for partial phase.
@@ -84,12 +79,8 @@ func (s *testSuite) TestMergePartialResult4MaxFloat(c *C) {
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncMax,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeDouble),
-	}
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncMax, args, false)
 	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build max func for partial phase.
@@ -137,12 +128,8 @@ func (s *testSuite) TestMergePartialResult4MinDecimal(c *C) {
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncMin,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
-	}
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncMin, args, false)
 	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build min func for partial phase.
@@ -192,12 +179,8 @@ func (s *testSuite) TestMergePartialResult4MinFloat(c *C) {
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncMin,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeDouble),
-	}
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncMin, args, false)
 	partialDesc, finalDesc := desc.Split([]int{0})
 
 	// build min func for partial phase.

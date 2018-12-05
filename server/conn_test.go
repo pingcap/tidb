@@ -20,9 +20,16 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
 )
 
-type ConnTestSuite struct{}
+type ConnTestSuite struct {
+	dom   *domain.Domain
+	store kv.Storage
+}
 
 var _ = Suite(ConnTestSuite{})
 
@@ -147,6 +154,29 @@ func (ts ConnTestSuite) TestInitialHandshake(c *C) {
 	expected.WriteString("mysql_native_password")                                                        // Authentication Plugin
 	expected.WriteByte(0x00)                                                                             // NULL
 	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
+}
+
+func (ts ConnTestSuite) testGetSessionVarsWaitTimeout(c *C) {
+	c.Parallel()
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	ts.dom, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+	tc := &TiDBContext{
+		session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: 1,
+		server: &Server{
+			capability: defaultCapability,
+		},
+		ctx: tc,
+	}
+	c.Assert(cc.getSessionVarsWaitTimeout(), Equals, 28800)
 }
 
 func mapIdentical(m1, m2 map[string]string) bool {
