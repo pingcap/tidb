@@ -1403,8 +1403,9 @@ func (s *testParserSuite) TestIdentifier(c *C) {
 		// reserved keyword can't be used as identifier directly, but A.B pattern is an exception
 		{`select COUNT from DESC`, false, ""},
 		{`select COUNT from SELECT.DESC`, true, ""},
-		{"use `select`", true, ""},
-		{"use select", false, ""},
+		{"use `select`", true, "USE `select`"},
+		{"use `sel``ect`", true, "USE `sel``ect`"},
+		{"use select", false, "USE `select`"},
 		{`select * from t as a`, true, ""},
 		{"select 1 full, 1 row, 1 abs", false, ""},
 		{"select 1 full, 1 `row`, 1 abs", true, ""},

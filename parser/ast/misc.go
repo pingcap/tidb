@@ -341,7 +341,9 @@ type UseStmt struct {
 
 // Restore implements Recoverable interface.
 func (n *UseStmt) Restore(sb *strings.Builder) error {
-	return errors.New("Not implemented")
+	sb.WriteString("USE ")
+	WriteName(sb, n.DBName)
+	return nil
 }
 
 // Accept implements Node Accept interface.
