@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testForeighKeySuite{})
