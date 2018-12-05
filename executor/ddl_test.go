@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite3) TestTruncateTable(c *C) {
@@ -163,7 +162,22 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	r = tk.MustQuery("select * from create_target;")
 	r.Check(testkit.Rows("5 aa 1", "6 bb 2", "7 bb 3"))
 
-	// test duplicate keys
+	// test 'ignore' and 'replace' keywords
+	tk.MustExec("drop table if exists create_target;")
+	_, err = tk.Exec("create table create_target(a int not null) select null as a")
+	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
+	tk.MustExec("create table create_target(a int not null) ignore select null as a")
+
+	tk.MustExec("drop table if exists create_target;")
+	_, err = tk.Exec("create table create_target(a varchar(1)) select 'abcd' as a;")
+	c.Assert(err.Error(), Equals, "[types:1406]Data Too Long, field len 1, data len 4")
+	tk.MustExec("create table create_target(a varchar(1)) ignore select 'abcd' as a")
+
+	tk.MustExec("drop table if exists create_target;")
+	_, err = tk.Exec("create table create_target(a datetime) select '20180001' as a;")
+	c.Assert(err.Error(), Equals, "[types:1292]Incorrect datetime value: '2018-00-01'")
+	tk.MustExec("create table create_target(a datetime) ignore select '20180001' as a")
+
 	tk.MustExec("drop table if exists create_source;")
 	tk.MustExec("create table create_source(ord int, a int, b int);")
 	tk.MustExec("insert into create_source values (1, 1, 1);")

@@ -1316,15 +1316,19 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
-	case *ast.CreateTableStmt, *ast.AlterTableStmt:
+	case *ast.CreateTableStmt:
 		if ctx.GetSessionVars().CreateTableInsertingID != 0 {
 			// in a 'inserting data from select' state of creating table.
+			ignoreError := stmt.OnDuplicate == ast.OnDuplicateCreateTableSelectIgnore
 			sc.InInsertStmt = true
-			sc.BadNullAsWarning = !vars.StrictSQLMode
-			sc.TruncateAsWarning = !vars.StrictSQLMode
-			sc.DividedByZeroAsWarning = !vars.StrictSQLMode
-			sc.IgnoreZeroInDate = !vars.StrictSQLMode
+			sc.DupKeyAsWarning = ignoreError
+			sc.BadNullAsWarning = !vars.StrictSQLMode || ignoreError
+			sc.TruncateAsWarning = !vars.StrictSQLMode || ignoreError
+			sc.DividedByZeroAsWarning = !vars.StrictSQLMode || ignoreError
+			sc.IgnoreZeroInDate = !vars.StrictSQLMode || ignoreError
 		}
+		// Make sure the sql_mode is strict when checking column default value.
+	case *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
