@@ -16,6 +16,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
