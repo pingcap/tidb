@@ -41,7 +41,7 @@ type Node interface {
 ## Rationale
 
 We know the AST is a kind of tree whose child node is corresponding to SQL text. 
-So we can walk through the AST layer by layer, recursive `Restore()` of each child node and 
+So we can walk through the AST layer by layer, call `Restore()` of each child node recursively and 
 splice SQL text according to AST node. 
 There is the AST parsed from `SELECT column0 FROM table0 UNION SELECT column1 FROM table1 WHERE a = 1`. 
 We can splice SQL text as the picture shows.
