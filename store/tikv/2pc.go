@@ -81,16 +81,18 @@ type twoPhaseCommitter struct {
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
 	maxTxnTimeUse uint64
+	primaryKey    []byte
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	var (
-		keys    [][]byte
-		size    int
-		putCnt  int
-		delCnt  int
-		lockCnt int
+		keys       [][]byte
+		size       int
+		putCnt     int
+		delCnt     int
+		lockCnt    int
+		primaryKey []byte
 	)
 	mutations := make(map[string]*pb.Mutation)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
@@ -107,6 +109,9 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 				Key: k,
 			}
 			delCnt++
+		}
+		if bytes.Equal(txn.primaryKey, k) {
+			primaryKey = txn.primaryKey
 		}
 		keys = append(keys, k)
 		entrySize := len(k) + len(v)
@@ -125,6 +130,9 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 				Op:  pb.Op_Lock,
 				Key: lockKey,
 			}
+			if bytes.Equal(txn.primaryKey, lockKey) {
+				primaryKey = txn.primaryKey
+			}
 			lockCnt++
 			keys = append(keys, lockKey)
 			size += len(lockKey)
@@ -132,6 +140,13 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	}
 	if len(keys) == 0 {
 		return nil, nil
+	}
+	// If primaryKey is not set or not in the mutations, use the first key as the primary key
+	if primaryKey == nil {
+		if txn.primaryKey != nil {
+			log.Warnf("[BIG_TXN] primary key is set but not used, primaryKey:%s", txn.primaryKey)
+		}
+		primaryKey = keys[0]
 	}
 	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	if len(keys) > int(entrylimit) || size > kv.TxnTotalSizeLimit {
@@ -161,11 +176,12 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		syncLog:       getTxnSyncLog(txn),
 		connID:        connID,
 		maxTxnTimeUse: maxTxnTimeUse,
+		primaryKey:    primaryKey,
 	}, nil
 }
 
 func (c *twoPhaseCommitter) primary() []byte {
-	return c.keys[0]
+	return c.primaryKey
 }
 
 const bytesPerMiB = 1024 * 1024
@@ -201,7 +217,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if len(keys) == 0 {
 		return nil
 	}
-	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
+	groups, primaryRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys, c.primary())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -214,14 +230,13 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		sizeFunc = c.keyValueSize
 	}
 	// Make sure the group that contains primary key goes first.
-	batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFunc, txnCommitBatchSize)
-	delete(groups, firstRegion)
+	batches = appendBatchBySize(batches, primaryRegion, groups[primaryRegion], sizeFunc, txnCommitBatchSize)
+	delete(groups, primaryRegion)
 	for id, g := range groups {
 		batches = appendBatchBySize(batches, id, g, sizeFunc, txnCommitBatchSize)
 	}
 
-	firstIsPrimary := bytes.Equal(keys[0], c.primary())
-	if firstIsPrimary && (action == actionCommit || action == actionCleanup) {
+	if action == actionCommit || action == actionCleanup {
 		// primary should be committed/cleanup first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
