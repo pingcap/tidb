@@ -159,4 +159,13 @@ timezone.*
     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
     
+1. Get TiDB all ddl job history information.
+	```shell
+	curl http://{TiDBIP}:10080/ddl/history
+	```
+
+1. Get TiDB all ddl job history information can limit the number of displays.
+	```shell
+	curl http://{TiDBIP}:10080/ddl/history?limit={number}
+	```
     **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
