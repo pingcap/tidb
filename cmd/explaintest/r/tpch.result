@@ -201,7 +201,7 @@ Projection_36	100.00	root	tpch.supplier.s_acctbal, tpch.supplier.s_name, tpch.na
     │ └─TableReader_70	155496.00	root	data:Selection_69
     │   └─Selection_69	155496.00	cop	eq(tpch.part.p_size, 30), like(tpch.part.p_type, "%STEEL", 92)
     │     └─TableScan_68	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
-    └─HashAgg_73	8000000.00	root	group by:tpch.partsupp.ps_partkey, funcs:min(tpch.partsupp.ps_supplycost), firstrow(tpch.partsupp.ps_partkey)
+    └─HashAgg_73	8155010.44	root	group by:tpch.partsupp.ps_partkey, funcs:min(tpch.partsupp.ps_supplycost), firstrow(tpch.partsupp.ps_partkey)
       └─HashRightJoin_77	8155010.44	root	inner join, inner:HashRightJoin_79, equal:[eq(tpch.supplier.s_suppkey, tpch.partsupp.ps_suppkey)]
         ├─HashRightJoin_79	100000.00	root	inner join, inner:HashRightJoin_85, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
         │ ├─HashRightJoin_85	5.00	root	inner join, inner:TableReader_90, equal:[eq(tpch.region.r_regionkey, tpch.nation.n_regionkey)]
@@ -362,7 +362,7 @@ Sort_23	5.00	root	revenue:desc
       │   └─Selection_36	11822812.50	cop	ge(tpch.orders.o_orderdate, 1994-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-01-01)
       │     └─TableScan_35	1.00	cop	table:orders, range: decided by [tpch.lineitem.l_orderkey], keep order:false
       └─TableReader_30	1.00	root	data:TableScan_29
-        └─TableScan_29	1.00	cop	table:customer, range: decided by [tpch.orders.o_custkey tpch.supplier.s_nationkey], keep order:false
+        └─TableScan_29	1.00	cop	table:customer, range: decided by [tpch.supplier.s_nationkey tpch.orders.o_custkey], keep order:false
 /*
 Q6 Forecasting Revenue Change Query
 This query quantifies the amount of revenue increase that would have resulted from eliminating certain companywide
@@ -1147,10 +1147,10 @@ Sort_28	20000.00	root	tpch.supplier.s_name:asc
     │ │   └─TableScan_41	25.00	cop	table:nation, range:[-inf,+inf], keep order:false
     │ └─TableReader_40	500000.00	root	data:TableScan_39
     │   └─TableScan_39	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
-    └─HashAgg_46	257492.04	root	group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)
-      └─Projection_47	257492.04	root	tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, tpch.partsupp.ps_availqty, tpch.part.p_partkey, mul(0.5, 14_col_0)
-        └─Selection_48	257492.04	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, 14_col_0))
-          └─HashAgg_51	321865.05	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_partkey), firstrow(tpch.partsupp.ps_suppkey), firstrow(tpch.partsupp.ps_availqty), firstrow(tpch.part.p_partkey), sum(tpch.lineitem.l_quantity)
+    └─HashAgg_46	64006.34	root	group by:tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)
+      └─Projection_47	64006.34	root	tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, tpch.partsupp.ps_availqty, tpch.part.p_partkey, mul(0.5, 14_col_0)
+        └─Selection_48	64006.34	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, 14_col_0))
+          └─HashAgg_51	80007.93	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_partkey), firstrow(tpch.partsupp.ps_suppkey), firstrow(tpch.partsupp.ps_availqty), firstrow(tpch.part.p_partkey), sum(tpch.lineitem.l_quantity)
             └─HashLeftJoin_54	9711455.06	root	left outer join, inner:TableReader_80, equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
               ├─IndexJoin_59	321865.05	root	inner join, inner:IndexLookUp_58, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
               │ ├─TableReader_75	80007.93	root	data:Selection_74
