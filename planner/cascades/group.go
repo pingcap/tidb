@@ -16,6 +16,8 @@ package cascades
 import (
 	"container/list"
 	"fmt"
+
+	"github.com/pingcap/tidb/planner/property"
 )
 
 // Group is short for expression group, which is used to store all the
@@ -28,6 +30,9 @@ type Group struct {
 
 	explored        bool
 	selfFingerprint string
+
+	implMap map[string]Implementation
+	prop    *property.LogicalProperty
 }
 
 // NewGroup creates a new Group.
@@ -36,6 +41,7 @@ func NewGroup(e *GroupExpr) *Group {
 		equivalents:  list.New(),
 		fingerprints: make(map[string]*list.Element),
 		firstExpr:    make(map[Operand]*list.Element),
+		implMap:      make(map[string]Implementation),
 	}
 	g.Insert(e)
 	return g
@@ -105,4 +111,14 @@ func (g *Group) GetFirstElem(operand Operand) *list.Element {
 		return g.equivalents.Front()
 	}
 	return g.firstExpr[operand]
+}
+
+func (g *Group) getImpl(prop *property.PhysicalProperty) Implementation {
+	key := prop.HashCode()
+	return g.implMap[string(key)]
+}
+
+func (g *Group) insertImpl(prop *property.PhysicalProperty, impl Implementation) {
+	key := prop.HashCode()
+	g.implMap[string(key)] = impl
 }
