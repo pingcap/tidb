@@ -335,7 +335,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	origin := ld.IgnoreLines
 	for _, tt := range tests {
 		ld.IgnoreLines = origin
-		c.Assert(ctx.NewTxn(), IsNil)
+		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
@@ -1763,8 +1763,8 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	// With the existence of global variable cache, it have to sleep a while here.
-	time.Sleep(3 * time.Second)
+	// Disable global variable cache, so load global session variable take effect immediate.
+	s.domain.GetGlobalVarsCache().Disable()
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("create table t2 (a varchar(3))")
@@ -2863,7 +2863,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20)
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
-	c.Assert(s.ctx.NewTxn(), IsNil)
+	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	_, err = tb.AddRecord(s.ctx, recordVal1, false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(s.ctx, recordVal2, false)
@@ -3371,4 +3371,36 @@ func (s *testSuite) TestTSOFail(c *C) {
 	defer gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail")
 	_, err := tk.Exec(`select * from t`)
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestSelectHashPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists th`)
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
+	defer tk.MustExec(`drop table if exists th`)
+	tk.MustExec(`insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);`)
+	tk.MustExec("insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);")
+	tk.MustQuery("select b from th order by a").Check(testkit.Rows("-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"))
+	tk.MustQuery(" select * from th where a=-2;").Check(testkit.Rows("-2 -2"))
+	tk.MustQuery(" select * from th where a=5;").Check(testkit.Rows("5 5"))
+	// Test for select prune partitions.
+	result := tk.MustQuery("desc select * from th where a=-2;")
+	result.Check(testkit.Rows(
+		"TableReader_8 10.00 root data:Selection_7",
+		"└─Selection_7 10.00 cop eq(test.th.a, -2)",
+		"  └─TableScan_6 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	// Test select union all partition.
+	result = tk.MustQuery("desc select * from th;")
+	result.Check(testkit.Rows(
+		"Union_8 30000.00 root ",
+		"├─TableReader_10 10000.00 root data:TableScan_9",
+		"│ └─TableScan_9 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"├─TableReader_12 10000.00 root data:TableScan_11",
+		"│ └─TableScan_11 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_14 10000.00 root data:TableScan_13",
+		"  └─TableScan_13 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
 }
