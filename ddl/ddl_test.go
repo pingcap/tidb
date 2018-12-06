@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type DDLForTest interface {

@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

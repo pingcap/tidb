@@ -15,6 +15,7 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"strconv"
@@ -39,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 // ShowExec represents a show executor.
@@ -236,7 +236,6 @@ func (e *ShowExec) fetchShowProcessList() error {
 			uint64(time.Since(pi.Time) / time.Second),
 			fmt.Sprintf("%d", pi.State),
 			info,
-			pi.Mem,
 		})
 	}
 	return nil
@@ -562,14 +561,14 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode)))
+	fmt.Fprintf(&buf, "CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode))
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
-		buf.WriteString(fmt.Sprintf("  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc()))
+		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.IsGenerated() {
 			// It's a generated column.
-			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
+			fmt.Fprintf(&buf, " GENERATED ALWAYS AS (%s)", col.GeneratedExprString)
 			if col.GeneratedStored {
 				buf.WriteString(" STORED")
 			} else {
@@ -599,9 +598,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
-						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))
+						fmt.Fprintf(&buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
 					} else {
-						buf.WriteString(fmt.Sprintf(" DEFAULT '%s'", format.OutputFormat(defaultValStr)))
+						fmt.Fprintf(&buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
 					}
 				}
 			}
@@ -610,7 +609,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 		}
 		if len(col.Comment) > 0 {
-			buf.WriteString(fmt.Sprintf(" COMMENT '%s'", format.OutputFormat(col.Comment)))
+			fmt.Fprintf(&buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
 		}
 		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
@@ -623,7 +622,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if pkCol != nil {
 		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
 		buf.WriteString(",\n")
-		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode)))
+		fmt.Fprintf(&buf, "  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode))
 	}
 
 	if len(tb.Indices()) > 0 {
@@ -641,9 +640,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
-			buf.WriteString(fmt.Sprintf("  UNIQUE KEY %s ", escape(idxInfo.Name, sqlMode)))
+			fmt.Fprintf(&buf, "  UNIQUE KEY %s ", escape(idxInfo.Name, sqlMode))
 		} else {
-			buf.WriteString(fmt.Sprintf("  KEY %s ", escape(idxInfo.Name, sqlMode)))
+			fmt.Fprintf(&buf, "  KEY %s ", escape(idxInfo.Name, sqlMode))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
@@ -654,7 +653,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			}
 			cols = append(cols, colInfo)
 		}
-		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(cols, ",")))
+		fmt.Fprintf(&buf, "(%s)", strings.Join(cols, ","))
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
@@ -677,48 +676,18 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if len(collate) == 0 {
 		// If we can not find default collate for the given charset,
 		// do not show the collate part.
-		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", charsetName))
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", charsetName)
 	} else {
-		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
 	}
 
 	// Displayed if the compression typed is set.
 	if len(tb.Meta().Compression) != 0 {
-		buf.WriteString(fmt.Sprintf(" COMPRESSION='%s'", tb.Meta().Compression))
+		fmt.Fprintf(&buf, " COMPRESSION='%s'", tb.Meta().Compression)
 	}
 
 	// add partition info here.
-	partitionInfo := tb.Meta().Partition
-	if partitionInfo != nil {
-		// this if statement takes care of range columns case
-		if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
-			buf.WriteString(fmt.Sprintf("\nPARTITION BY RANGE COLUMNS("))
-			for i, col := range partitionInfo.Columns {
-				buf.WriteString(col.L)
-				if i < len(partitionInfo.Columns)-1 {
-					buf.WriteString(",")
-				}
-			}
-			buf.WriteString(") (\n")
-		} else {
-			buf.WriteString(fmt.Sprintf("\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr))
-		}
-		for i, def := range partitionInfo.Definitions {
-			lessThans := ""
-			lessThans = strings.Join(def.LessThan, ",")
-
-			var parDef string
-			parDef = fmt.Sprintf("  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(parDef)
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString(parDef)
-				buf.WriteString("\n")
-			}
-		}
-		buf.WriteString(")")
-	}
+	appendPartitionInfo(tb.Meta().Partition, &buf)
 
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
@@ -727,20 +696,54 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		}
 		// It's campatible with MySQL.
 		if autoIncID > 1 {
-			buf.WriteString(fmt.Sprintf(" AUTO_INCREMENT=%d", autoIncID))
+			fmt.Fprintf(&buf, " AUTO_INCREMENT=%d", autoIncID)
 		}
 	}
 
 	if tb.Meta().ShardRowIDBits > 0 {
-		buf.WriteString(fmt.Sprintf("/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits))
+		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits)
 	}
 
 	if len(tb.Meta().Comment) > 0 {
-		buf.WriteString(fmt.Sprintf(" COMMENT='%s'", format.OutputFormat(tb.Meta().Comment)))
+		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 	}
 
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 	return nil
+}
+
+func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
+	if partitionInfo == nil {
+		return
+	}
+	if partitionInfo.Type == model.PartitionTypeHash {
+		fmt.Fprintf(buf, "\nPARTITION BY HASH( %s )", partitionInfo.Expr)
+		fmt.Fprintf(buf, "\nPARTITIONS %d", partitionInfo.Num)
+		return
+	}
+	// this if statement takes care of range columns case
+	if partitionInfo.Columns != nil && partitionInfo.Type == model.PartitionTypeRange {
+		buf.WriteString("\nPARTITION BY RANGE COLUMNS(")
+		for i, col := range partitionInfo.Columns {
+			buf.WriteString(col.L)
+			if i < len(partitionInfo.Columns)-1 {
+				buf.WriteString(",")
+			}
+		}
+		buf.WriteString(") (\n")
+	} else {
+		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+	}
+	for i, def := range partitionInfo.Definitions {
+		lessThans := strings.Join(def.LessThan, ",")
+		fmt.Fprintf(buf, "  PARTITION %s VALUES LESS THAN (%s)", def.Name, lessThans)
+		if i < len(partitionInfo.Definitions)-1 {
+			buf.WriteString(",\n")
+		} else {
+			buf.WriteString("\n")
+		}
+	}
+	buf.WriteString(")")
 }
 
 // fetchShowCreateDatabase composes show create database result.
