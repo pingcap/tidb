@@ -196,27 +196,27 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 }
 
 // GroupKeysByRegion separates keys into groups by their belonging Regions.
-// Specially it also returns the first key's region which may be used as the
+// Specially it also returns the primary key's region which may be used as the
 // 'PrimaryLockKey' and should be committed ahead of others.
-func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
+func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, primaryKey []byte) (map[RegionVerID][][]byte, RegionVerID, error) {
 	groups := make(map[RegionVerID][][]byte)
-	var first RegionVerID
+	var primary RegionVerID
 	var lastLoc *KeyLocation
-	for i, k := range keys {
+	for _, k := range keys {
 		if lastLoc == nil || !lastLoc.Contains(k) {
 			var err error
 			lastLoc, err = c.LocateKey(bo, k)
 			if err != nil {
-				return nil, first, errors.Trace(err)
+				return nil, primary, errors.Trace(err)
 			}
 		}
 		id := lastLoc.Region
-		if i == 0 {
-			first = id
+		if bytes.Equal(k, primaryKey) {
+			primary = id
 		}
 		groups[id] = append(groups[id], k)
 	}
-	return groups, first, nil
+	return groups, primary, nil
 }
 
 // ListRegionIDsInKeyRange lists ids of regions in [start_key,end_key].

@@ -33,18 +33,19 @@ var (
 
 // tikvTxn implements kv.Transaction.
 type tikvTxn struct {
-	snapshot  *tikvSnapshot
-	us        kv.UnionStore
-	store     *tikvStore // for connection to region.
-	startTS   uint64
-	startTime time.Time // Monotonic timestamp for recording txn time consuming.
-	commitTS  uint64
-	valid     bool
-	lockKeys  [][]byte
-	mu        sync.Mutex // For thread-safe LockKeys function.
-	dirty     bool
-	setCnt    int64
-	vars      *kv.Variables
+	snapshot   *tikvSnapshot
+	us         kv.UnionStore
+	store      *tikvStore // for connection to region.
+	startTS    uint64
+	startTime  time.Time // Monotonic timestamp for recording txn time consuming.
+	commitTS   uint64
+	valid      bool
+	lockKeys   [][]byte
+	mu         sync.Mutex // For thread-safe LockKeys function.
+	dirty      bool
+	setCnt     int64
+	vars       *kv.Variables
+	primaryKey []byte
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -156,6 +157,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.syncLog = val.(bool)
 	case kv.KeyOnly:
 		txn.snapshot.keyOnly = val.(bool)
+	case kv.PrimaryKey:
+		txn.primaryKey = val.([]byte)
 	}
 }
 
