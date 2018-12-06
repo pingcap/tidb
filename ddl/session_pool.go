@@ -44,6 +44,13 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 		return mock.NewContext(), nil
 	}
 
+	sg.mu.Lock()
+	if sg.mu.closed {
+		sg.mu.Unlock()
+		return nil, errors.Errorf("sessionPool is closed.")
+	}
+	sg.mu.Unlock()
+
 	// no need to protect sg.resPool
 	resource, err := sg.resPool.Get()
 	if err != nil {
