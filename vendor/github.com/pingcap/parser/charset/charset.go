@@ -115,6 +115,11 @@ func GetDefaultCollation(charset string) (string, error) {
 	return c.DefaultCollation, nil
 }
 
+// GetDefaultCharsetAndCollate returns the default charset and collation.
+func GetDefaultCharsetAndCollate() (string, string) {
+	return mysql.DefaultCharset, mysql.DefaultCollationName
+}
+
 // GetCharsetInfo returns charset and collation for cs as name.
 func GetCharsetInfo(cs string) (string, string, error) {
 	c, ok := charsets[strings.ToLower(cs)]

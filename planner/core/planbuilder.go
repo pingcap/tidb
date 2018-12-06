@@ -20,6 +20,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
@@ -805,8 +806,8 @@ func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
 	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
-		cs = mysql.DefaultCharset
-		cl = mysql.DefaultCollationName
+		cs = charset.CharsetUTF8MB4
+		cl = charset.CollationUTF8MB4
 		flag = 0
 	}
 
