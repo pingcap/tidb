@@ -757,7 +757,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxStack = append(er.ctxStack, value)
 	case *driver.ParamMarkerExpr:
 		var value expression.Expression
-		value, er.err = expression.GetParamExpression(er.ctx, v, er.useCache())
+		value, er.err = expression.GetParamExpression(er.ctx, v)
 		if er.err != nil {
 			return retNode, false
 		}
@@ -942,10 +942,26 @@ func (er *expressionRewriter) isNullToExpression(v *ast.IsNullExpr) {
 }
 
 func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
-	if v.N > 0 && v.N <= er.schema.Len() {
-		er.ctxStack = append(er.ctxStack, er.schema.Columns[v.N-1])
+	pos := v.N
+	str := strconv.Itoa(pos)
+	if v.P != nil {
+		stkLen := len(er.ctxStack)
+		val := er.ctxStack[stkLen-1]
+		intNum, isNull, err := expression.GetIntFromConstant(er.ctx, val)
+		str = "?"
+		if err == nil {
+			if isNull {
+				return
+			}
+			pos = intNum
+			er.ctxStack = er.ctxStack[:stkLen-1]
+		}
+		er.err = err
+	}
+	if er.err == nil && pos > 0 && pos <= er.schema.Len() {
+		er.ctxStack = append(er.ctxStack, er.schema.Columns[pos-1])
 	} else {
-		er.err = ErrUnknownColumn.GenWithStackByArgs(strconv.Itoa(v.N), clauseMsg[er.b.curClause])
+		er.err = ErrUnknownColumn.GenWithStackByArgs(str, clauseMsg[er.b.curClause])
 	}
 }
 
@@ -1267,6 +1283,13 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.ctxStack = append(er.ctxStack, column)
 			return
 		}
+	}
+	if _, ok := er.p.(*LogicalUnionAll); ok && v.Table.O != "" {
+		er.err = ErrTablenameNotAllowedHere.GenWithStackByArgs(v.Table.O, "SELECT", clauseMsg[er.b.curClause])
+		return
+	}
+	if er.b.curClause == globalOrderByClause {
+		er.b.curClause = orderByClause
 	}
 	er.err = ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[er.b.curClause])
 }

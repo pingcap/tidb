@@ -16,6 +16,7 @@ package variable
 import (
 	"crypto/tls"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -43,6 +45,8 @@ const (
 	codeCantSetToNull  terror.ErrCode = 2
 	codeSnapshotTooOld terror.ErrCode = 3
 )
+
+var preparedStmtCount int64
 
 // Error instances.
 var (
@@ -123,6 +127,15 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 		item.ColSize[key] += val
 	}
 	tc.TableDeltaMap[tableID] = item
+}
+
+// Cleanup clears up transaction info that no longer use.
+func (tc *TransactionContext) Cleanup() {
+	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	tc.DirtyDB = nil
+	tc.Binlog = nil
+	tc.Histroy = nil
+	tc.TableDeltaMap = nil
 }
 
 // ClearDelta clears the delta map.
@@ -297,6 +310,9 @@ type SessionVars struct {
 
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
+
+	// EnableWindowFunction enables the window function.
+	EnableWindowFunction bool
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
@@ -522,6 +538,46 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 	}
 }
 
+// AddPreparedStmt adds prepareStmt to current session and count in global.
+func (s *SessionVars) AddPreparedStmt(stmtID uint32, stmt *ast.Prepared) error {
+	if _, exists := s.PreparedStmts[stmtID]; !exists {
+		valStr, _ := s.GetSystemVar(MaxPreparedStmtCount)
+		maxPreparedStmtCount, err := strconv.ParseInt(valStr, 10, 64)
+		if err != nil {
+			maxPreparedStmtCount = DefMaxPreparedStmtCount
+		}
+		newPreparedStmtCount := atomic.AddInt64(&preparedStmtCount, 1)
+		if maxPreparedStmtCount >= 0 && newPreparedStmtCount > maxPreparedStmtCount {
+			atomic.AddInt64(&preparedStmtCount, -1)
+			return ErrMaxPreparedStmtCountReached.GenWithStackByArgs(maxPreparedStmtCount)
+		}
+		metrics.PreparedStmtGauge.Set(float64(newPreparedStmtCount))
+	}
+	s.PreparedStmts[stmtID] = stmt
+	return nil
+}
+
+// RemovePreparedStmt removes preparedStmt from current session and decrease count in global.
+func (s *SessionVars) RemovePreparedStmt(stmtID uint32) {
+	_, exists := s.PreparedStmts[stmtID]
+	if !exists {
+		return
+	}
+	delete(s.PreparedStmts, stmtID)
+	afterMinus := atomic.AddInt64(&preparedStmtCount, -1)
+	metrics.PreparedStmtGauge.Set(float64(afterMinus))
+}
+
+// WithdrawAllPreparedStmt remove all preparedStmt in current session and decrease count in global.
+func (s *SessionVars) WithdrawAllPreparedStmt() {
+	psCount := len(s.PreparedStmts)
+	if psCount == 0 {
+		return
+	}
+	afterMinus := atomic.AddInt64(&preparedStmtCount, -int64(psCount))
+	metrics.PreparedStmtGauge.Set(float64(afterMinus))
+}
+
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
@@ -633,12 +689,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableTablePartition = val
 	case TiDBDDLReorgWorkerCount:
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+	case TiDBDDLReorgBatchSize:
+		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
 	case TiDBEnableRadixJoin:
 		s.EnableRadixJoin = TiDBOptOn(val)
+	case TiDBEnableWindowFunction:
+		s.EnableWindowFunction = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

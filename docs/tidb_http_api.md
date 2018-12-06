@@ -52,6 +52,12 @@
     curl http://{TiDBIP}:10080/schema?table_id={tableID}
     ```
 
+1. Get database information, table information and tidb info schema version by tableID.
+
+    ```shell
+    curl http://{TiDBIP}:10080/db-table/{tableID}
+    ```
+
 1. Get disk-usage info about db.table
 
     ```shell
@@ -83,6 +89,20 @@
     ```
     *Hint: For the index column which column type is timezone dependent, e.g. `timestamp`, convert its value to UTC
 timezone.*
+
+1. Scatter regions of the specified table, add a `scatter-range` scheduler for the PD and the range is same as the table range.
+
+    ```shell
+    curl -X POST http://{TiDBIP}:10080/tables/{db}/{table}/scatter
+    ```
+    
+    **Note**: The `scatter-range` scheduler may conflict with the global scheduler, do not use it for long periods on the larger table.
+
+1. Stop scatter the regions, disable the `scatter-range` scheduler for the specified table.
+
+    ```shell
+    curl -X POST http://{TiDBIP}:10080/tables/{db}/{table}/stop-scatter
+    ```
 
 1. Get TiDB server settings
 
@@ -139,4 +159,13 @@ timezone.*
     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
     
+1. Get all TiDB DDL job history information.
+	```shell
+	curl http://{TiDBIP}:10080/ddl/history
+	```
+
+1. Get count {number} TiDB DDL job history information.
+	```shell
+	curl http://{TiDBIP}:10080/ddl/history?limit={number}
+	```
     **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`

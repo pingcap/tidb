@@ -59,7 +59,8 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	for _, row := range rs.Rows() {
 		c.Assert(len(row), Equals, 5)
 		taskType := row[2].(string)
-		if taskType != "cop" {
+		id := row[0].(string)
+		if taskType == "root" || strings.Contains(id, "Scan") {
 			execInfo := row[4].(string)
 			c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 			c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
