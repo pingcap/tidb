@@ -236,7 +236,9 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 	// Make sure the group that contains primary key goes first.
 	batches = appendBatchBySize(batches, primaryRegion, groups[primaryRegion], sizeFunc, txnCommitBatchSize)
-	batches[0].primary = true
+	if len(batches) == 1 {
+		batches[0].primary = true
+	}
 	delete(groups, primaryRegion)
 	for id, g := range groups {
 		batches = appendBatchBySize(batches, id, g, sizeFunc, txnCommitBatchSize)
