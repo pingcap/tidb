@@ -14,7 +14,10 @@
 package core_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -36,6 +39,25 @@ import (
 var _ = Suite(&testAnalyzeSuite{})
 
 type testAnalyzeSuite struct {
+}
+
+func (s *testAnalyzeSuite) loadTableStats(fileName string, dom *domain.Domain) error {
+	statsPath := filepath.Join("testdata", fileName)
+	bytes, err := ioutil.ReadFile(statsPath)
+	if err != nil {
+		return err
+	}
+	statsTbl := &statistics.JSONTable{}
+	err = json.Unmarshal(bytes, statsTbl)
+	if err != nil {
+		return err
+	}
+	statsHandle := dom.StatsHandle()
+	err = statsHandle.LoadStatsFromJSON(dom.InfoSchema(), statsTbl)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
@@ -246,14 +268,12 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	testKit.MustExec("create index e on t (e)")
 	testKit.MustExec("create index b_c on t (b,c)")
 	testKit.MustExec("create index ts on t (ts)")
-	for i := 0; i < 100; i++ {
-		testKit.MustExec(constructInsertSQL(i, 100))
-	}
 	testKit.MustExec("create table t1 (a int, b int, index idx(a), index idxx(b))")
+	err = s.loadTableStats("analyzesSuiteTestIndexReadT.json", dom)
+	c.Assert(err, IsNil)
 	for i := 1; i < 16; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
 	}
-	testKit.MustExec("analyze table t")
 	testKit.MustExec("analyze table t1")
 	tests := []struct {
 		sql  string
