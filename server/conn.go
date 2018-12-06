@@ -817,7 +817,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	var prevData, curData []byte
 	// TODO: Make the loadDataRowCnt settable.
 	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
-	err = loadDataInfo.Ctx.NewTxn()
+	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
