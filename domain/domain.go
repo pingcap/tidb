@@ -14,6 +14,7 @@
 package domain
 
 import (
+	"context"
 	"crypto/tls"
 	"os"
 	"sync"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )

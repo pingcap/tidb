@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/tracing"
-	"golang.org/x/net/context"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )

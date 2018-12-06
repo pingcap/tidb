@@ -18,6 +18,7 @@
 package tables
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -42,7 +43,6 @@ import (
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
-	"golang.org/x/net/context"
 )
 
 // tableCommon is shared by both Table and partition.
