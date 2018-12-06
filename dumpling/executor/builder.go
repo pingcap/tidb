@@ -1015,6 +1015,7 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 
 	return &ProjectionExec{
 		baseExecutor:  newBaseExecutor(b.ctx, expression.NewSchema(projSchemaCols...), projFromID, src),
+		numWorkers:    b.ctx.GetSessionVars().ProjectionConcurrency,
 		evaluatorSuit: expression.NewEvaluatorSuite(projExprs, false),
 	}
 }
