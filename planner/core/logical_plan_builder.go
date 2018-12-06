@@ -199,7 +199,16 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 					leftCol, rightCol = arg1, arg0
 				}
 				if leftCol != nil {
-					if deriveLeft {
+					// If the join is AntiSemiJoin, deriveLeft is set true, but we cannot generate `is not null`
+					// for outer plan. An example is:
+					// `select * from t t1 where not exists (select * from t t2 where t1.a > t2.a)`
+					// all rows with `t1.a is null` should be in the result set.
+					// This check prevents us from generating `t1.a is not null` for cases like:
+					// `select * from t t1 where t1.a not in (select t2.a from t2)`
+					// that should be the price for the correctness of all cases, unless we differentiate and mark
+					// AntiSemiJoins built from `not in` and `not exists`.
+					// TODO relax this check after we know whether the AntiSemiJoin is from `not in` or `not exists`.
+					if deriveLeft && p.JoinType != AntiSemiJoin {
 						if isNullRejected(ctx, left.Schema(), expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
 							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
 							leftCond = append(leftCond, notNullExpr)

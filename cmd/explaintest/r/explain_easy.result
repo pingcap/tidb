@@ -373,13 +373,12 @@ Projection_7	0.00	root	t1.a, t1.b, t2.a, t2.b
       └─TableScan_13	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t t1 where not exists (select * from t t2 where t1.b = t2.b);
 id	count	task	operator info
-HashLeftJoin_9	7992.00	root	anti semi join, inner:TableReader_15, equal:[eq(t1.b, t2.b)]
-├─TableReader_12	9990.00	root	data:Selection_11
-│ └─Selection_11	9990.00	cop	not(isnull(t1.b))
-│   └─TableScan_10	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_15	9990.00	root	data:Selection_14
-  └─Selection_14	9990.00	cop	not(isnull(t2.b))
-    └─TableScan_13	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+HashLeftJoin_9	8000.00	root	anti semi join, inner:TableReader_14, equal:[eq(t1.b, t2.b)]
+├─TableReader_11	10000.00	root	data:TableScan_10
+│ └─TableScan_10	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	9990.00	root	data:Selection_13
+  └─Selection_13	9990.00	cop	not(isnull(t2.b))
+    └─TableScan_12	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
