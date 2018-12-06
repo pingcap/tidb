@@ -306,9 +306,8 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 	return
 }
 
-// ReverseScan queries continuous kv pairs, starts from startKey, up to limit pairs.
-// Unlike Scan, reverse scan from startKey. In other words, specify startKey as UpperBound.
-// If you want to exclude the startKey, append a '\0' to the key
+// ReverseScan queries continuous kv pairs, starts from startKey and goes backwards, up to limit pairs.
+// startKey is the exclusive upper bound. If you want to include the startKey, append a '\0' to the key
 func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() {

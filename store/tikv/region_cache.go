@@ -137,7 +137,7 @@ func (l *KeyLocation) Contains(key []byte) bool {
 // LocateKey searches for the region and range that the key is located.
 func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
 	c.mu.RLock()
-	r := c.searchCachedRegion(key, true)
+	r := c.searchCachedRegion(key, false)
 	if r != nil {
 		loc := &KeyLocation{
 			Region:   r.VerID(),
@@ -149,7 +149,7 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 	}
 	c.mu.RUnlock()
 
-	r, err := c.loadRegion(bo, key, true)
+	r, err := c.loadRegion(bo, key, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -169,7 +169,7 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 // Unlike LocateKey, start key of a region is exclusive and end key is inclusive.
 func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
 	c.mu.RLock()
-	r := c.searchCachedRegion(key, false)
+	r := c.searchCachedRegion(key, true)
 	if r != nil {
 		loc := &KeyLocation{
 			Region:   r.VerID(),
@@ -181,7 +181,7 @@ func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, err
 	}
 	c.mu.RUnlock()
 
-	r, err := c.loadRegion(bo, key, false)
+	r, err := c.loadRegion(bo, key, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -324,17 +324,17 @@ func (c *RegionCache) getCachedRegion(id RegionVerID) *Region {
 // it should be called with c.mu.RLock(), and the returned Region should not be
 // used after c.mu is RUnlock().
 // If the given key is the end key of the region that you want, you may set the second argument to false. This is useful when processing in reverse order.
-func (c *RegionCache) searchCachedRegion(key []byte, startKey bool) *Region {
+func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 	var r *Region
 	c.mu.sorted.DescendLessOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
 		r = item.(*btreeItem).region
-		if !startKey && bytes.Compare(r.StartKey(), key) == 0 {
+		if isEndKey && bytes.Compare(r.StartKey(), key) == 0 {
 			r = nil     // clear result
 			return true // iterate next item
 		}
 		return false
 	})
-	if r != nil && (startKey && r.Contains(key) || !startKey && r.ContainsByEnd(key)) {
+	if r != nil && (!isEndKey && r.Contains(key) || isEndKey && r.ContainsByEnd(key)) {
 		return c.getCachedRegion(r.VerID())
 	}
 	return nil
@@ -364,7 +364,7 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
 // If the given key is the end key of the region that you want, you may set the second argument to false. This is useful when processing in reverse order.
-func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, startKey bool) (*Region, error) {
+func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
 	var backoffErr error
 	searchPrev := false
 	for {
@@ -394,7 +394,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, startKey bool) (*Reg
 		if len(meta.Peers) == 0 {
 			return nil, errors.New("receive Region with no peer")
 		}
-		if !startKey && !searchPrev && bytes.Compare(meta.StartKey, key) == 0 && len(meta.StartKey) != 0 {
+		if isEndKey && !searchPrev && bytes.Compare(meta.StartKey, key) == 0 && len(meta.StartKey) != 0 {
 			searchPrev = true
 			continue
 		}
