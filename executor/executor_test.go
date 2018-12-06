@@ -1763,8 +1763,8 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	// With the existence of global variable cache, it have to sleep a while here.
-	time.Sleep(3 * time.Second)
+	// Disable global variable cache, so load global session variable take effect immediate.
+	s.domain.GetGlobalVarsCache().Disable()
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("create table t2 (a varchar(3))")
