@@ -143,7 +143,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	case *plannercore.PhysicalMergeJoin:
 		return b.buildMergeJoin(v)
 	case *plannercore.PhysicalIndexJoin:
-		return b.buildIndexLookUpJoin(v)
+		return b.buildIndexJoin(v)
 	case *plannercore.PhysicalSelection:
 		return b.buildSelection(v)
 	case *plannercore.PhysicalHashAgg:
@@ -1572,8 +1572,85 @@ func (b *executorBuilder) corColInAccess(p plannercore.PhysicalPlan) bool {
 	}
 	return false
 }
+func (b *executorBuilder) buildIndexJoin(v *plannercore.PhysicalIndexJoin) Executor {
+	outerExec := b.build(v.Children()[v.OuterIndex])
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+	outerTypes := outerExec.retTypes()
+	innerPlan := v.Children()[1-v.OuterIndex]
+	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
+	for i, col := range innerPlan.Schema().Columns {
+		innerTypes[i] = col.RetType
+	}
 
-func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) Executor {
+	var (
+		outerFilter           []expression.Expression
+		leftTypes, rightTypes []*types.FieldType
+	)
+
+	if v.OuterIndex == 1 {
+		leftTypes, rightTypes = innerTypes, outerTypes
+		outerFilter = v.RightConditions
+		if len(v.LeftConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	} else {
+		leftTypes, rightTypes = outerTypes, innerTypes
+		outerFilter = v.LeftConditions
+		if len(v.RightConditions) > 0 {
+			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			return nil
+		}
+	}
+	defaultValues := v.DefaultValues
+	if defaultValues == nil {
+		defaultValues = make([]types.Datum, len(innerTypes))
+	}
+
+	e := &IndexJoin{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
+		outerCtx: outerCtx{
+			rowTypes: outerTypes,
+			filter:   outerFilter,
+			keepOrder: v.KeepOuterOrder,
+		},
+		innerCtx: innerCtx{
+			readerBuilder: &dataReaderBuilder{innerPlan, b},
+			rowTypes:      innerTypes,
+		},
+		workerWg:      new(sync.WaitGroup),
+		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		indexRanges:   v.Ranges,
+		keyOff2IdxOff: v.KeyOff2IdxOff,
+	}
+	outerKeyCols := make([]int, len(v.OuterJoinKeys))
+	for i := 0; i < len(v.OuterJoinKeys); i++ {
+		outerKeyCols[i] = v.OuterJoinKeys[i].Index
+	}
+	e.outerCtx.keyCols = outerKeyCols
+	innerKeyCols := make([]int, len(v.InnerJoinKeys))
+	for i := 0; i < len(v.InnerJoinKeys); i++ {
+		innerKeyCols[i] = v.InnerJoinKeys[i].Index
+	}
+	e.innerCtx.keyCols = innerKeyCols
+	e.joinResult = e.newFirstChunk()
+	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
+	if v.KeepOuterOrder {
+		ex := &IndexMergeJoin{
+			IndexJoin: *e,
+		}
+		return ex
+	}
+	ex := &IndexHashJoin {
+		IndexJoin: *e,
+	}
+	return ex
+}
+
+/*func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) Executor {
 	outerExec := b.build(v.Children()[v.OuterIndex])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -1638,7 +1715,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.joinResult = e.newFirstChunk()
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
 	return e
-}
+}*/
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
 // so the feedback may not be accurate.
