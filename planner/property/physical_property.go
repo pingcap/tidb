@@ -101,3 +101,14 @@ func (p *PhysicalProperty) HashCode() []byte {
 func (p *PhysicalProperty) String() string {
 	return fmt.Sprintf("Prop{cols: %v, desc: %v, TaskTp: %s, expectedCount: %v}", p.Cols, p.Desc, p.TaskTp, p.ExpectedCnt)
 }
+
+// Clone returns a copy of PhysicalProperty.
+func (p *PhysicalProperty) Clone() *PhysicalProperty {
+	prop := &PhysicalProperty{
+		Cols:        p.Cols,
+		Desc:        p.Desc,
+		TaskTp:      p.TaskTp,
+		ExpectedCnt: p.ExpectedCnt,
+	}
+	return prop
+}
