@@ -11,30 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package property
 
 import (
-	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/expression"
 )
 
-// OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
-type OneByOneSuite struct {
+// LogicalProperty stands for logical properties such as schema of expression,
+// or statistics of columns in schema for output of Group.
+// All group expressions in a group share same logical property.
+type LogicalProperty struct {
+	Stats  *StatsInfo
+	Schema *expression.Schema
 }
-
-func (s OneByOneSuite) SetUpSuite(c *C) {
-	if *withTiKV {
-		withTiKVGlobalLock.Lock()
-	}
-}
-
-func (s OneByOneSuite) TearDownSuite(c *C) {
-	if *withTiKV {
-		withTiKVGlobalLock.Unlock()
-	}
-}
-
-type testTiKVSuite struct {
-	OneByOneSuite
-}
-
-var _ = Suite(&testTiKVSuite{})
