@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestShow(c *C) {

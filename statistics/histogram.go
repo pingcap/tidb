@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 // Histogram represents statistics for a column or index.

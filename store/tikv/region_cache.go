@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/metrics"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (

@@ -14,8 +14,9 @@
 package kv
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(testMockSuite{})

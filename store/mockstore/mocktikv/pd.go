@@ -14,12 +14,13 @@
 package mocktikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
-	"golang.org/x/net/context"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -46,6 +47,11 @@ func (c *pdClient) GetClusterID(ctx context.Context) uint64 {
 }
 
 func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
+	// gofail: var mockGetTSFail bool
+	// if mockGetTSFail {
+	// 	return 0, 0, errors.New("mock get timestamp fail")
+	// }
+
 	tsMu.Lock()
 	defer tsMu.Unlock()
 
@@ -98,7 +104,7 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 }
 
 func (c *pdClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
-	panic("unimplemented")
+	panic(errors.New("unimplemented"))
 }
 
 func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
