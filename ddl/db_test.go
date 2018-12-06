@@ -14,6 +14,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -481,7 +481,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 			jobIDs := []int64{job.ID}
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
-			err := hookCtx.NewTxn()
+			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -614,11 +614,16 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 			      partition p2 values less than (122880),
 			      partition p3 values less than (204800),
 			      partition p4 values less than maxvalue)`)
+	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by hash (c1) partitions 4;`)
 }
 
 func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL string) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
+	if testPartition {
+		s.tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	}
 	s.tk.MustExec("drop table if exists test_add_index")
 	s.tk.MustExec(createTableSQL)
 
@@ -724,7 +729,7 @@ LOOP:
 
 	// get all row handles
 	ctx := s.s.(sessionctx.Context)
-	c.Assert(ctx.NewTxn(), IsNil)
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := s.testGetTable(c, "test_add_index")
 	handles := make(map[int64]struct{})
 	startKey := t.RecordKey(math.MinInt64)
@@ -748,7 +753,7 @@ LOOP:
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
 	ctx.Txn(true).Rollback()
 
-	c.Assert(ctx.NewTxn(), IsNil)
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	defer ctx.Txn(true).Rollback()
 
 	it, err := nidx.SeekFirst(ctx.Txn(true))
@@ -846,7 +851,7 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	f := func() map[int64]struct{} {
 		handles := make(map[int64]struct{})
 
-		c.Assert(ctx.NewTxn(), IsNil)
+		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		defer ctx.Txn(true).Rollback()
 
 		it, err := idx.SeekFirst(ctx.Txn(true))
@@ -1088,7 +1093,7 @@ LOOP:
 	t := s.testGetTable(c, "t2")
 	i := 0
 	j := 0
-	ctx.NewTxn()
+	ctx.NewTxn(context.Background())
 	defer ctx.Txn(true).Rollback()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -3551,7 +3556,7 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		var err error
-		err = hookCtx.NewTxn()
+		err = hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -3629,7 +3634,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		var err error
-		err = hookCtx.NewTxn()
+		err = hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -3696,6 +3701,19 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	partition p6 values less than (2012),
 	partition p7 values less than (2018)
 	);`)
+	testPartitionAddIndex(tk, c)
+
+	// test hash partition table.
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec("drop table if exists partition_add_idx")
+	tk.MustExec(`create table partition_add_idx (
+	id int not null,
+	hired date not null
+	) partition by hash( year(hired) ) partitions 4;`)
+	testPartitionAddIndex(tk, c)
+}
+
+func testPartitionAddIndex(tk *testkit.TestKit, c *C) {
 	for i := 0; i < 500; i++ {
 		tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
 	}
@@ -3774,7 +3792,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 		pid := def.ID
 		partition := tbl.(table.PartitionedTable).GetPartition(pid)
 		startKey := partition.RecordKey(math.MinInt64)
-		c.Assert(ctx.NewTxn(), IsNil)
+		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := partition.IterRecords(ctx, startKey, partition.Cols(),
 			func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 				num++

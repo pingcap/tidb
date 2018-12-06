@@ -15,6 +15,7 @@ package gcworker
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tidbutil "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // GCWorker periodically triggers GC process on tikv server.

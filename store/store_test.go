@@ -14,6 +14,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 const (

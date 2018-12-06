@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
@@ -385,7 +385,7 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	c.Assert(err, IsNil)
 	var hasShardedID bool
 	var count int
-	c.Assert(tk.Se.NewTxn(), IsNil)
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
 	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
 		c.Assert(h, GreaterEqual, int64(0))
 		first8bits := h >> 56

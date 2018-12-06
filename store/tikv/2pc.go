@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type twoPhaseCommitAction int
