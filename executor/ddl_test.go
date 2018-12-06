@@ -385,7 +385,7 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	c.Assert(err, IsNil)
 	var hasShardedID bool
 	var count int
-	c.Assert(tk.Se.NewTxn(), IsNil)
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
 	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
 		c.Assert(h, GreaterEqual, int64(0))
 		first8bits := h >> 56
