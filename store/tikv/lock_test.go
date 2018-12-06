@@ -58,6 +58,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	tpc, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
 	tpc.keys = [][]byte{primaryKey, key}
+	tpc.primaryKey = tpc.keys[0]
 
 	ctx := context.Background()
 	err = tpc.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), tpc.keys)
