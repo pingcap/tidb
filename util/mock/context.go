@@ -125,7 +125,7 @@ func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
 }
 
 // NewTxn implements the sessionctx.Context interface.
-func (c *Context) NewTxn() error {
+func (c *Context) NewTxn(context.Context) error {
 	if c.Store == nil {
 		return errors.New("store is not set")
 	}
@@ -146,7 +146,7 @@ func (c *Context) NewTxn() error {
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
-	return errors.Trace(c.NewTxn())
+	return errors.Trace(c.NewTxn(ctx))
 }
 
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
