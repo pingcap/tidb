@@ -292,29 +292,32 @@ Projection_12	10000.00	root	9_aux_0
             └─TableScan_43	10.00	cop	table:t1, range: decided by [s.a], keep order:false, stats:pseudo
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	count	task	operator info
-Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
-  ├─TableReader_15	10000.00	root	data:TableScan_14
-  │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─IndexJoin_32	10000.00	root	inner join, inner:TableReader_31, outer key:s.a, inner key:t1.a
-      ├─IndexReader_36	10000.00	root	index:IndexScan_35
-      │ └─IndexScan_35	10000.00	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false, stats:pseudo
-      └─TableReader_31	10.00	root	data:TableScan_30
-        └─TableScan_30	10.00	cop	table:t1, range: decided by [s.a], keep order:false, stats:pseudo
+Projection_12	10000.00	root	9_aux_0
+└─Apply_14	10000.00	root	left outer semi join, inner:Selection_17, equal:[eq(test.t.c, 7_col_0)]
+  ├─TableReader_16	10000.00	root	data:TableScan_15
+  │ └─TableScan_15	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─Selection_17	0.80	root	not(isnull(7_col_0))
+    └─StreamAgg_22	1.00	root	funcs:count(1)
+      └─IndexJoin_34	10000.00	root	inner join, inner:TableReader_33, outer key:s.a, inner key:t1.a
+        ├─IndexReader_38	10000.00	root	index:IndexScan_37
+        │ └─IndexScan_37	10000.00	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false, stats:pseudo
+        └─TableReader_33	10.00	root	data:TableScan_32
+          └─TableScan_32	10.00	cop	table:t1, range: decided by [s.a], keep order:false, stats:pseudo
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	count	task	operator info
-Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
-  ├─TableReader_15	10000.00	root	data:TableScan_14
-  │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─IndexJoin_33	10000.00	root	inner join, inner:TableReader_32, outer key:s.c, inner key:t1.a
-      ├─IndexLookUp_38	10000.00	root	
-      │ ├─IndexScan_36	10000.00	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false, stats:pseudo
-      │ └─TableScan_37	10000.00	cop	table:t, keep order:false, stats:pseudo
-      └─TableReader_32	10.00	root	data:TableScan_31
-        └─TableScan_31	10.00	cop	table:t1, range: decided by [s.c], keep order:false, stats:pseudo
+Projection_12	10000.00	root	9_aux_0
+└─Apply_14	10000.00	root	left outer semi join, inner:Selection_17, equal:[eq(test.t.c, 7_col_0)]
+  ├─TableReader_16	10000.00	root	data:TableScan_15
+  │ └─TableScan_15	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─Selection_17	0.80	root	not(isnull(7_col_0))
+    └─StreamAgg_22	1.00	root	funcs:count(1)
+      └─IndexJoin_36	9990.00	root	inner join, inner:TableReader_35, outer key:s.c, inner key:t1.a
+        ├─IndexLookUp_42	7992.00	root	
+        │ ├─IndexScan_39	9990.00	cop	table:s, index:b, range: decided by [eq(s.b, test.t.a)], keep order:false, stats:pseudo
+        │ └─Selection_41	7992.00	cop	not(isnull(s.c))
+        │   └─TableScan_40	9990.00	cop	table:t, keep order:false, stats:pseudo
+        └─TableReader_35	10.00	root	data:TableScan_34
+          └─TableScan_34	10.00	cop	table:t1, range: decided by [s.c], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int unsigned);
 explain select t.a = '123455' from t;
@@ -360,13 +363,14 @@ id	count	task	operator info
 TableDual_5	0.00	root	rows:0
 explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
 id	count	task	operator info
-Projection_7	12.50	root	t1.a, t1.b, t2.a, t2.b
-└─HashRightJoin_9	12.50	root	inner join, inner:TableReader_12, equal:[eq(t2.b, t1.b)]
-  ├─TableReader_12	10.00	root	data:Selection_11
-  │ └─Selection_11	10.00	cop	isnull(t2.b)
+Projection_7	0.00	root	t1.a, t1.b, t2.a, t2.b
+└─HashRightJoin_9	0.00	root	inner join, inner:TableReader_12, equal:[eq(t2.b, t1.b)]
+  ├─TableReader_12	0.00	root	data:Selection_11
+  │ └─Selection_11	0.00	cop	isnull(t2.b), not(isnull(t2.b))
   │   └─TableScan_10	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─TableReader_14	10000.00	root	data:TableScan_13
-    └─TableScan_13	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_15	9990.00	root	data:Selection_14
+    └─Selection_14	9990.00	cop	not(isnull(t1.b))
+      └─TableScan_13	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t t1 where not exists (select * from t t2 where t1.b = t2.b);
 id	count	task	operator info
 HashLeftJoin_9	8000.00	root	anti semi join, inner:TableReader_13, equal:[eq(t1.b, t2.b)]
