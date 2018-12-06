@@ -213,7 +213,6 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 	c.Assert(rs[0][1].(string), Equals, rs[0][6].(string))
 	c.Assert(rs[0][2].(string), Equals, rs[0][7].(string))
 	c.Assert(rs[0][3].(string), Equals, rs[0][8].(string))
-	c.Assert(false, IsTrue)
 }
 
 func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
@@ -264,7 +263,6 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 			tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 		}
 	}
-	c.Assert(false, IsTrue)
 }
 
 func readGaugeInt(g prometheus.Gauge) int {
