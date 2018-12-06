@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"math"
 	"sort"
 
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 var (
