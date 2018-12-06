@@ -14,10 +14,13 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -28,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
+	// "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -36,6 +39,7 @@ import (
 var _ = Suite(&testIntegrationSuite{})
 
 type testIntegrationSuite struct {
+	lease time.Duration
 	store kv.Storage
 	dom   *domain.Domain
 	ctx   sessionctx.Context
@@ -54,9 +58,28 @@ func (s *testIntegrationSuite) TearDownTest(c *C) {
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
 	testleak.BeforeTest()
-	s.store, s.dom, err = newStoreWithBootstrap()
+	s.lease = 200 * time.Millisecond
+	s.store, s.dom, err = newStoreWithBootstrap(s.lease)
 	c.Assert(err, IsNil)
-	s.ctx = mock.NewContext()
+
+	//	tk := testkit.NewTestKit(c, s.store)
+	//	tk.MustExec("USE test;")
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	s.ctx = se.(sessionctx.Context)
+	_, err = se.Execute(context.Background(), "create database test_db")
+	c.Assert(err, IsNil)
+}
+
+func newStoreWithBootstrap(lease time.Duration) (kv.Storage, *domain.Domain, error) {
+	store, err := mockstore.NewMockTikvStore()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	session.SetSchemaLease(lease)
+	session.SetStatsLease(0)
+	dom, err := session.BootstrapSession(store)
+	return store, dom, errors.Trace(err)
 }
 
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
@@ -152,13 +175,97 @@ func (s *testIntegrationSuite) TestEndIncluded(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	session.SetSchemaLease(0)
-	session.SetStatsLease(0)
-	dom, err := session.BootstrapSession(store)
-	return store, dom, errors.Trace(err)
+func (s *testIntegrationSuite) testErrorCode(c *C, tk *testkit.TestKit, sql string, errCode int) {
+	_, err := tk.Exec(sql)
+	c.Assert(err, NotNil)
+	originErr := errors.Cause(err)
+	tErr, ok := originErr.(*terror.Error)
+	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
+	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
+}
+
+// TestModifyColumnAfterAddIndex Issue 5134
+func (s *testIntegrationSuite) TestModifyColumnAfterAddIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table city (city VARCHAR(2) KEY);")
+	tk.MustExec("alter table city change column city city varchar(50);")
+	tk.MustExec(`insert into city values ("abc"), ("abd");`)
+}
+
+func (s *testIntegrationSuite) TestIssue2293(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_issue_2293 (a int)")
+	sql := "alter table t_issue_2293 add b int not null default 'a'"
+	s.testErrorCode(c, tk, sql, tmysql.ErrInvalidDefault)
+	tk.MustExec("insert into t_issue_2293 value(1)")
+	tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSuite) TestIssue6101(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
+	_, err := tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWarnDataOutOfRange))
+	tk.MustExec("drop table t1")
+
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
+	tk.MustExec("insert into t1 values (500), (-500), (~0), (-1);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("99", "0", "99", "0"))
+	tk.MustExec("drop table t1")
+}
+
+func (s *testIntegrationSuite) TestIssue3833(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table issue3833 (b char(0))")
+	s.testErrorCode(c, tk, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, tk, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
+	s.testErrorCode(c, tk, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
+}
+
+func (s *testIntegrationSuite) TestIssue2858And2717(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_issue_2858_bit (a bit(64) default b'0')")
+	tk.MustExec("insert into t_issue_2858_bit value ()")
+	tk.MustExec(`insert into t_issue_2858_bit values (100), ('10'), ('\0')`)
+	tk.MustQuery("select a+0 from t_issue_2858_bit").Check(testkit.Rows("0", "100", "12592", "0"))
+	tk.MustExec(`alter table t_issue_2858_bit alter column a set default '\0'`)
+
+	tk.MustExec("create table t_issue_2858_hex (a int default 0x123)")
+	tk.MustExec("insert into t_issue_2858_hex value ()")
+	tk.MustExec("insert into t_issue_2858_hex values (123), (0x321)")
+	tk.MustQuery("select a from t_issue_2858_hex").Check(testkit.Rows("291", "123", "801"))
+	tk.MustExec(`alter table t_issue_2858_hex alter column a set default 0x321`)
+}
+
+func (s *testIntegrationSuite) TestIssue4432(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table tx (col bit(10) default 'a')")
+	tk.MustExec("insert into tx value ()")
+	tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	tk.MustExec("drop table tx")
+
+	tk.MustExec("create table tx (col bit(10) default 0x61)")
+	tk.MustExec("insert into tx value ()")
+	tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	tk.MustExec("drop table tx")
+
+	tk.MustExec("create table tx (col bit(10) default 97)")
+	tk.MustExec("insert into tx value ()")
+	tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	tk.MustExec("drop table tx")
+
+	tk.MustExec("create table tx (col bit(10) default 0b1100001)")
+	tk.MustExec("insert into tx value ()")
+	tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
+	tk.MustExec("drop table tx")
 }
