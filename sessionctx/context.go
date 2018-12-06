@@ -31,7 +31,7 @@ type Context interface {
 	// NewTxn creates a new transaction for further execution.
 	// If old transaction is valid, it is committed first.
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
-	NewTxn() error
+	NewTxn(context.Context) error
 
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
