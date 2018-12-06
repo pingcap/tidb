@@ -166,7 +166,7 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 }
 
 // LocateEndKey searches for the region and range that the key is located.
-// Unlike LocateKey, it searches in the reverse direction.
+// Unlike LocateKey, start key of a region is exclusive and end key is inclusive.
 func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
 	c.mu.RLock()
 	r := c.searchCachedRegion(key, false)
