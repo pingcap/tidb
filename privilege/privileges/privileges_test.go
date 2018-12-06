@@ -14,6 +14,7 @@
 package privileges_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
