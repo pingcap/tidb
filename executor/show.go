@@ -663,6 +663,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	buf.WriteString(") ENGINE=InnoDB")
 	// Currently TiDB treat all the data as utf8mb4 actually.
+	// Make the TiDB's query result consistent with its actual behavior.
 	charsetName, collate := charset.GetDefaultCharsetAndCollate()
 	fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
 
