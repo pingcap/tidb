@@ -143,7 +143,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	case *plannercore.PhysicalMergeJoin:
 		return b.buildMergeJoin(v)
 	case *plannercore.PhysicalIndexJoin:
-		return b.buildIndexLookUpJoin(v)
+		return b.buildIndexJoin(v)
 	case *plannercore.PhysicalSelection:
 		return b.buildSelection(v)
 	case *plannercore.PhysicalHashAgg:
@@ -1573,7 +1573,7 @@ func (b *executorBuilder) corColInAccess(p plannercore.PhysicalPlan) bool {
 	return false
 }
 
-func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) Executor {
+func (b *executorBuilder) buildIndexJoin(v *plannercore.PhysicalIndexJoin) Executor {
 	outerExec := b.build(v.Children()[v.OuterIndex])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -1610,11 +1610,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
-	e := &IndexLookUpJoin{
+	e := &IndexJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
-			rowTypes: outerTypes,
-			filter:   outerFilter,
+			rowTypes:  outerTypes,
+			filter:    outerFilter,
+			keepOrder: v.KeepOuterOrder,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{innerPlan, b},
@@ -1637,7 +1638,17 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = e.newFirstChunk()
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
-	return e
+
+	if v.KeepOuterOrder {
+		ex := &IndexMergeJoin{
+			IndexJoin: *e,
+		}
+		return ex
+	}
+	ex := &IndexHashJoin{
+		IndexJoin: *e,
+	}
+	return ex
 }
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
