@@ -2035,6 +2035,12 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		return errors.Trace(err)
 	}
 
+	// Check before put the job is put to the queue.
+	_, err = buildIndexColumns(t.Meta().Columns, idxColNames)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if indexOption != nil {
 		// May be truncate comment here, when index comment too long and sql_mode is't strict.
 		indexOption.Comment, err = validateCommentLength(ctx.GetSessionVars(),
