@@ -45,9 +45,9 @@ require (
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
 	github.com/pingcap/errors v0.11.0
-	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26
-	github.com/pingcap/parser v0.0.0-20181108112017-a63108d7da4c
+	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
+	github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929
+	github.com/pingcap/parser v0.0.0-20181122084134-815d2f65fd25
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v0.0.0-20181112132202-4860a0d5de03
 	github.com/pingcap/tipb v0.0.0-20180910045846-371b48b15d93

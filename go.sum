@@ -92,6 +92,8 @@ github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e h1:P73/4dPCL96rG
 github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26 h1:JK4VLNYbSn36QSbCnqALi2ySXdH0DfcMssT/zmLf4Ls=
 github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
+github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929 h1:NAq95+VGsS2G7SjzZ5LP9iUlCMNAs13QUzbNY3G90v8=
+github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
 github.com/pingcap/parser v0.0.0-20181108112017-a63108d7da4c h1:qXcJU4FwcXUV4zN8Cg2Lht4LkJDFK+Tn9dGDJn6nAsw=
 github.com/pingcap/parser v0.0.0-20181108112017-a63108d7da4c/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
