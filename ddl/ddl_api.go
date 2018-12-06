@@ -1092,25 +1092,31 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 }
 
 // getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
-// and returns the last charset and collate in options.
+// and returns the last charset and collate in options. If there is no charset in the options,
+// the returns charset will be "", the same as collate.
 func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (charset, collate string) {
+	charsets := make([]string, len(options))
+	collates := make([]string, len(options))
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			charset = opt.StrValue
-			// this opt is handled, so we can skipped in the next iteration.
-			options[i].Skipped = true
+			charsets = append(charsets, opt.StrValue)
 		case ast.TableOptionCollate:
-			collate = opt.StrValue
-			// this opt is handled, so we can skipped in the next iteration.
-			options[i].Skipped = true
+			collates = append(collates, opt.StrValue)
 		}
 	}
 
-	return charset, collate
+	if len(charsets) != 0 {
+		charset = charsets[len(charsets)-1]
+	}
+
+	if len(collates) != 0 {
+		collate = collates[len(collates)-1]
+	}
+	return
 }
 
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
@@ -1177,10 +1183,6 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableOption:
 			for i, opt := range spec.Options {
-				if opt.Skipped {
-					continue
-				}
-
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
 					if opt.UintValue > shardRowIDBitsMax {
@@ -1938,7 +1940,8 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 }
 
 // AlterTableCharset changes the table charset and collate.
-func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset string, toCollate string) error {
+func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
+	// use the last one.
 	if toCharset == "" && toCollate == "" {
 		return errors.Errorf("toCharset and toCollate can't be empty")
 	}
