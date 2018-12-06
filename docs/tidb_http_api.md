@@ -159,12 +159,12 @@ timezone.*
     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
     
-1. Get TiDB all ddl job history information.
+1. Get all TiDB DDL job history information.
 	```shell
 	curl http://{TiDBIP}:10080/ddl/history
 	```
 
-1. Get TiDB all ddl job history information can limit the number of displays.
+1. Get count {number} TiDB DDL job history information.
 	```shell
 	curl http://{TiDBIP}:10080/ddl/history?limit={number}
 	```
