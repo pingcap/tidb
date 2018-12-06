@@ -11,30 +11,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package cascades
 
 import (
 	. "github.com/pingcap/check"
+	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
-// OneByOneSuite is a suite, When with-tikv flag is true, there is only one storage, so the test suite have to run one by one.
-type OneByOneSuite struct {
+func (s *testCascadesSuite) TestBaseImplementation(c *C) {
+	p := &plannercore.PhysicalLimit{}
+	impl := &baseImplementation{plan: p}
+	c.Assert(impl.getPlan(), Equals, p)
+	childCosts := []float64{5.0}
+	cost := impl.calcCost(10, childCosts, nil)
+	c.Assert(cost, Equals, 5.0)
+	c.Assert(impl.getCost(), Equals, 5.0)
+	impl.setCost(6.0)
+	c.Assert(impl.getCost(), Equals, 6.0)
 }
-
-func (s OneByOneSuite) SetUpSuite(c *C) {
-	if *withTiKV {
-		withTiKVGlobalLock.Lock()
-	}
-}
-
-func (s OneByOneSuite) TearDownSuite(c *C) {
-	if *withTiKV {
-		withTiKVGlobalLock.Unlock()
-	}
-}
-
-type testTiKVSuite struct {
-	OneByOneSuite
-}
-
-var _ = Suite(&testTiKVSuite{})
