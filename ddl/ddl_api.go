@@ -1136,6 +1136,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	for _, spec := range validSpecs {
+		var handledCharsetOrCollate bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			if len(spec.NewColumns) != 1 {
@@ -1195,8 +1196,14 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(ctx, ident, spec)
 				case ast.TableOptionCharset, ast.TableOptionCollate:
+					// getCharsetAndCollateInTableOption will get the last charset and collate in the options,
+					// so it should be handled only once.
+					if handledCharsetOrCollate {
+						continue
+					}
 					toCharset, toCollate := getCharsetAndCollateInTableOption(i, spec.Options)
 					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate)
+					handledCharsetOrCollate = true
 				}
 
 				if err != nil {
