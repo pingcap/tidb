@@ -93,6 +93,9 @@ var aesModes = map[string]*aesModeAttr{
 	"aes-128-cbc": {"cbc", 16, true},
 	"aes-192-cbc": {"cbc", 24, true},
 	"aes-256-cbc": {"cbc", 32, true},
+	"aes-128-ofb": {"ofb", 16, true},
+	"aes-192-ofb": {"ofb", 24, true},
+	"aes-256-ofb": {"ofb", 32, true},
 }
 
 type aesDecryptFunctionClass struct {
@@ -209,6 +212,8 @@ func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	switch b.modeName {
 	case "cbc":
 		plainText, err = encrypt.AESDecryptWithCBC([]byte(cryptStr), key, []byte(iv))
+	case "ofb":
+		plainText, err = encrypt.AESDecryptWithOFB([]byte(cryptStr), key, []byte(iv))
 	default:
 		return "", true, errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
@@ -332,6 +337,8 @@ func (b *builtinAesEncryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	switch b.modeName {
 	case "cbc":
 		cipherText, err = encrypt.AESEncryptWithCBC([]byte(str), key, []byte(iv))
+	case "ofb":
+		cipherText, err = encrypt.AESEncryptWithOFB([]byte(str), key, []byte(iv))
 	default:
 		return "", true, errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
