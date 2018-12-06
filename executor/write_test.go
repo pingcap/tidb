@@ -14,8 +14,10 @@
 package executor_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
@@ -29,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
 type testBypassSuite struct{}
@@ -920,6 +921,123 @@ func (s *testSuite) TestPartitionedTableReplace(c *C) {
 	r.Check(testkit.Rows("111 2"))
 }
 
+func (s *testSuite) TestHashPartitionedTableReplace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec("drop table if exists replace_test;")
+	testSQL := `create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
+			partition by hash(id) partitions 4;`
+	tk.MustExec(testSQL)
+
+	testSQL = `replace replace_test (c1) values (1),(2),(NULL);`
+	tk.MustExec(testSQL)
+
+	errReplaceSQL := `replace replace_test (c1) values ();`
+	tk.MustExec("begin")
+	_, err := tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test (c1, c2) values (1,2),(1);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test (xxx) values (3);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test_xxx (c1) values ();`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSetSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSetSQL = `replace replace_test set xxx = 6;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSetSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	tk.MustExec(`replace replace_test set c1 = 3;`)
+	tk.MustExec(`replace replace_test set c1 = 4;`)
+	tk.MustExec(`replace replace_test set c1 = 5;`)
+	tk.MustExec(`replace replace_test set c1 = 6;`)
+	tk.MustExec(`replace replace_test set c1 = 7;`)
+
+	tk.MustExec(`drop table if exists replace_test_1`)
+	tk.MustExec(`create table replace_test_1 (id int, c1 int) partition by hash(id) partitions 5;`)
+	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test;`)
+
+	tk.MustExec(`drop table if exists replace_test_2`)
+	tk.MustExec(`create table replace_test_2 (id int, c1 int) partition by hash(id) partitions 6;`)
+
+	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;`)
+
+	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	tk.MustExec(`drop table if exists replace_test_3`)
+	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by hash(c2) partitions 7;`
+	tk.MustExec(replaceUniqueIndexSQL)
+
+	tk.MustExec(`replace into replace_test_3 set c2=8;`)
+	tk.MustExec(`replace into replace_test_3 set c2=8;`)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+	tk.MustExec(`replace into replace_test_3 set c1=8, c2=8;`)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(2))
+
+	tk.MustExec(`replace into replace_test_3 set c2=NULL;`)
+	tk.MustExec(`replace into replace_test_3 set c2=NULL;`)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	for i := 0; i < 100; i++ {
+		sql := fmt.Sprintf("replace into replace_test_3 set c2=%d;", i)
+		tk.MustExec(sql)
+	}
+	result := tk.MustQuery("select count(*) from replace_test_3")
+	result.Check(testkit.Rows("102"))
+
+	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by hash(c1) partitions 8;`
+	tk.MustExec(`drop table if exists replace_test_4`)
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by hash (c2) partitions 9;`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by hash (b) partitions 10;`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
+	tk.MustExec(issue989SQL)
+	r := tk.MustQuery("select * from tIssue989;")
+	r.Check(testkit.Rows("111 2"))
+}
+
 func (s *testSuite) TestUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1081,6 +1199,13 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec(`CREATE TABLE t1 (c1 float)`)
 	tk.MustExec("INSERT INTO t1 SET c1 = 1")
 	tk.MustExec("UPDATE t1 SET c1 = 1.2 WHERE c1=1;")
+
+	// issue 8119
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (c1 float(1,1));")
+	tk.MustExec("insert into t values (0.0);")
+	_, err = tk.Exec("update t set c1 = 2.0;")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {
@@ -1768,6 +1893,17 @@ func (s *testSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
+	tk.MustExec("drop table if exists com_batch_insert")
+	tk.MustExec("create table com_batch_insert (c int)")
+	sql := "insert into com_batch_insert values "
+	values := make([]string, 0, 200)
+	for i := 0; i < 200; i++ {
+		values = append(values, "(1)")
+	}
+	sql = sql + strings.Join(values, ",")
+	tk.MustExec(sql)
+	tk.MustQuery("select count(*) from com_batch_insert;").Check(testkit.Rows("200"))
+
 	// Test case for batch delete.
 	// This will meet txn too large error.
 	_, err = tk.Exec("delete from batch_insert;")
@@ -2107,4 +2243,12 @@ func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec(`update t set i = 2 where i = 1;`)
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
+}
+
+func (s *testSuite) TestDefEnumInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
+	tk.MustExec("insert into test (id)  values (1)")
+	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
 }

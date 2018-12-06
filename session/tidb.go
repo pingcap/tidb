@@ -18,6 +18,7 @@
 package session
 
 import (
+	"context"
 	"net/url"
 	"strings"
 	"sync"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type domainMap struct {
@@ -124,6 +124,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
+	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	stmts, err := p.Parse(src, charset, collation)
 	if err != nil {

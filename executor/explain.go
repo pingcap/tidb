@@ -14,10 +14,11 @@
 package executor
 
 import (
+	"context"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // ExplainExec represents an explain executor.
