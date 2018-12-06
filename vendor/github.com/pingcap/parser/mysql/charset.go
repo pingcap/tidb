@@ -551,13 +551,15 @@ var CollationNames = map[string]uint8{
 
 // MySQL collation information.
 const (
-	UTF8Charset          = "utf8"
-	UTF8MB4Charset       = "utf8mb4"
-	DefaultCharset       = UTF8Charset
-	DefaultCollationID   = 83
-	BinaryCollationID    = 63
-	UTF8DefaultCollation = "utf8_bin"
-	DefaultCollationName = UTF8DefaultCollation
+	UTF8Charset    = "utf8"
+	UTF8MB4Charset = "utf8mb4"
+	DefaultCharset = UTF8MB4Charset
+	// DefaultCollationID is utf8mb4_bin(46)
+	DefaultCollationID      = 46
+	BinaryCollationID       = 63
+	UTF8DefaultCollation    = "utf8_bin"
+	UTF8MB4DefaultCollation = "utf8mb4_bin"
+	DefaultCollationName    = UTF8MB4DefaultCollation
 
 	// MaxBytesOfCharacter, is the max bytes length of a character,
 	// refer to RFC3629, in UTF-8, characters from the U+0000..U+10FFFF range
