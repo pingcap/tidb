@@ -34,6 +34,10 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+func init() {
+	runningUnitTest = true
+}
+
 func TestT(t *testing.T) {
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(&logutil.LogConfig{
