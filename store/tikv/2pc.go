@@ -235,16 +235,16 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
 	}
 	// Make sure the group that contains primary key goes first.
-	batches = appendBatchBySize(batches, primaryRegion, groups[primaryRegion], sizeFunc, txnCommitBatchSize)
-	if len(batches) == 1 {
+	if len(groups[primaryRegion]) > 0 {
+		batches = appendBatchBySize(batches, primaryRegion, groups[primaryRegion], sizeFunc, txnCommitBatchSize)
 		batches[0].primary = true
+		delete(groups, primaryRegion)
 	}
-	delete(groups, primaryRegion)
 	for id, g := range groups {
 		batches = appendBatchBySize(batches, id, g, sizeFunc, txnCommitBatchSize)
 	}
 
-	if action == actionCommit || action == actionCleanup {
+	if batches[0].primary && (action == actionCommit || action == actionCleanup) {
 		// primary should be committed/cleanup first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
