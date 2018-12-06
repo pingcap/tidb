@@ -90,6 +90,8 @@ github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030 h1:XJLuW0lsP7vAt
 github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929 h1:NAq95+VGsS2G7SjzZ5LP9iUlCMNAs13QUzbNY3G90v8=
 github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
+github.com/pingcap/parser v0.0.0-20181206080309-80784c39ca74 h1:9/CSV8xFvTSuMPD69pjgaosyclrQpUXLxcAvao5DS6Q=
+github.com/pingcap/parser v0.0.0-20181206080309-80784c39ca74/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/tidb-tools v0.0.0-20181112132202-4860a0d5de03 h1:xVuo5U+l6XAWHsb+xhkZ8zz3jerIwDfCHAO6kR2Kaog=
@@ -124,7 +126,6 @@ github.com/ugorji/go v1.1.1 h1:gmervu+jDMvXTbcHQ0pd2wee85nEoE0BsVyEuzkfK8w=
 github.com/ugorji/go v1.1.1/go.mod h1:hnLbHMwcvSihnDhEfx2/BzKp2xb0Y+ErdfYcrs9tkJQ=
 github.com/unrolled/render v0.0.0-20171102162132-65450fb6b2d3 h1:ZsIlNwu/G0zbChIZaWOeZ2TPGNmKMt46jZLXi3e8LFc=
 github.com/unrolled/render v0.0.0-20171102162132-65450fb6b2d3/go.mod h1:tu82oB5W2ykJRVioYsB+IQKcft7ryBr7w12qMBUPyXg=
-github.com/winkyao/parser v0.0.0-20181206022041-3fe4cf28da70/go.mod h1:R7TohkGdsluhClCn0ZTwhHDjjjqoiBr6DFFAPTaFvUI=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 h1:MPPkRncZLN9Kh4MEFmbnK4h3BD7AUmskWv2+EeZJCCs=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 golang.org/x/crypto v0.0.0-20180503215945-1f94bef427e3 h1:+U/hI4i24Enhs+2BEMCN7wg16uT6entqa2mTg/PUKB8=
