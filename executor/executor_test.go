@@ -312,7 +312,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
 		ctx.StmtCommit()
-		err1 = ctx.Txn().Commit(context.Background())
+		err1 = ctx.Txn(true).Commit(context.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
@@ -968,7 +968,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t1 (a date)")
 	tk.MustExec("CREATE TABLE t2 (a date)")
 	tk.MustExec("SELECT a from t1 UNION select a FROM t2")
-	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" + "  `a` date DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" + "  `a` date DEFAULT NULL\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Move from session test.
 	tk.MustExec("drop table if exists t1, t2")
@@ -1762,8 +1762,8 @@ func (s *testSuite) TestTableScan(c *C) {
 	c.Assert(len(result.Rows()), GreaterEqual, 4)
 	tk.MustExec("use test")
 	tk.MustExec("create database mytest")
-	rowStr1 := fmt.Sprintf("%s %s %s %s %v", "def", "mysql", "utf8", "utf8_bin", nil)
-	rowStr2 := fmt.Sprintf("%s %s %s %s %v", "def", "mytest", "utf8", "utf8_bin", nil)
+	rowStr1 := fmt.Sprintf("%s %s %s %s %v", "def", "mysql", "utf8mb4", "utf8mb4_bin", nil)
+	rowStr2 := fmt.Sprintf("%s %s %s %s %v", "def", "mytest", "utf8mb4", "utf8mb4_bin", nil)
 	tk.MustExec("use information_schema")
 	result = tk.MustQuery("select * from schemata where schema_name = 'mysql'")
 	result.Check(testkit.Rows(rowStr1))
@@ -2103,11 +2103,11 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	tk.MustExec("begin")
 	rows := tk.MustQuery("select @@tidb_current_ts").Rows()
 	tsStr := rows[0][0].(string)
-	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn(true).StartTS()))
 	tk.MustExec("begin")
 	rows = tk.MustQuery("select @@tidb_current_ts").Rows()
 	newTsStr := rows[0][0].(string)
-	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn(true).StartTS()))
 	c.Assert(newTsStr, Not(Equals), tsStr)
 	tk.MustExec("commit")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
@@ -2126,7 +2126,7 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 
 	tk.MustExec("drop table if exists t, t1")
 
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 	tk.MustExec("insert t values (12, 2, 3)")
@@ -2829,7 +2829,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(s.ctx, recordVal2, false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
 
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]

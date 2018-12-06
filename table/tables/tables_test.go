@@ -147,7 +147,7 @@ func (ts *testSuite) TestBasic(c *C) {
 
 func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) {
 	cnt := 0
-	err := util.ScanMetaWithPrefix(ctx.Txn(), prefix, func(k kv.Key, v []byte) bool {
+	err := util.ScanMetaWithPrefix(ctx.Txn(true), prefix, func(k kv.Key, v []byte) bool {
 		cnt++
 		return true
 	})
@@ -230,7 +230,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(sctx, types.MakeDatums(2, nil), false)
 	c.Assert(err, IsNil)
-	c.Assert(sctx.Txn().Rollback(), IsNil)
+	c.Assert(sctx.Txn(true).Rollback(), IsNil)
 	_, err = ts.se.Execute(context.Background(), "drop table test.t")
 	c.Assert(err, IsNil)
 }
@@ -289,7 +289,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
-	c.Assert(ts.se.Txn().Commit(context.Background()), IsNil)
+	c.Assert(ts.se.Txn(true).Commit(context.Background()), IsNil)
 }
 
 func (ts *testSuite) TestIterRecords(c *C) {
@@ -309,7 +309,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(totalCount, Equals, 2)
-	c.Assert(ts.se.Txn().Commit(context.Background()), IsNil)
+	c.Assert(ts.se.Txn(true).Commit(context.Background()), IsNil)
 }
 
 func (ts *testSuite) TestTableFromMeta(c *C) {
@@ -354,7 +354,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 
 	// Check that add record writes to the partition, rather than the table.
-	txn := ts.se.Txn()
+	txn := ts.se.Txn(true)
 	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
