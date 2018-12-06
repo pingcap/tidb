@@ -679,7 +679,7 @@ func (s *testSuite) TestShowEscape(c *C) {
 			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
 			"  `c``olum\"n` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`c``olum\"n`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// ANSI_QUOTES will change the SHOW output
@@ -690,7 +690,7 @@ func (s *testSuite) TestShowEscape(c *C) {
 			"t`abl\"e CREATE TABLE \"t`abl\"\"e\" (\n"+
 			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (\"c`olum\"\"n\")\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	tk.MustExec("rename table \"t`abl\"\"e\" to t")
