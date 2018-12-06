@@ -1411,8 +1411,6 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBDisableTxnAutoRetry + quoteCommaQuote +
 	variable.TiDBEnableWindowFunction + "')"
 
-var runningUnitTest bool
-
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	vars := s.sessionVars
@@ -1429,7 +1427,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// When a lot of connections connect to TiDB simultaneously, it can protect TiKV meta region from overload.
 	gvc := domain.GetDomain(s).GetGlobalVarsCache()
 	succ, rows, fields := gvc.Get()
-	if !succ || runningUnitTest {
+	if !succ {
 		// Set the variable to true to prevent cyclic recursive call.
 		vars.CommonGlobalLoaded = true
 		rows, fields, err = s.ExecRestrictedSQL(s, loadCommonGlobalVarsSQL)
