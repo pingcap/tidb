@@ -323,7 +323,7 @@ func (c *RegionCache) getCachedRegion(id RegionVerID) *Region {
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
 // it should be called with c.mu.RLock(), and the returned Region should not be
 // used after c.mu is RUnlock().
-// If the input key is end key, the second argument is False. for example, use it for reverse scan.
+// If the given key is the end key of the region that you want, you may set the second argument to false. This is useful when processing in reverse order.
 func (c *RegionCache) searchCachedRegion(key []byte, startKey bool) *Region {
 	var r *Region
 	c.mu.sorted.DescendLessOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
