@@ -178,7 +178,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 		c.Check(cnt[i], Equals, float64(i))
 		time.Sleep(time.Millisecond * 100)
 	}
-	c.Assert(planStr[0] < planStr[1], IsTrue)
+	c.Assert(planStr[0] < planStr[1], IsTrue, Commentf("plan 1: %v, plan 2: %v", planStr[0], planStr[1]))
 }
 
 func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
