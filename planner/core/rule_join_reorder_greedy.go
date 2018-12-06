@@ -24,50 +24,24 @@ import (
 
 // extractJoinGroup will extract the nodes that connected by join tree.
 // A join tree is a tree that all node is join except the leaves.
-func extractJoinGroup(p *LogicalJoin) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
-	if p.reordered || p.preferJoinType > uint(0) || p.JoinType != InnerJoin || p.StraightJoin {
-		return nil, nil, nil
-	}
-	lChild := p.children[0]
-	rChild := p.children[1]
-	lJoin, lOk := lChild.(*LogicalJoin)
-	rJoin, rOk := rChild.(*LogicalJoin)
-	if !lOk && !rOk {
-		eqEdges = make([]*expression.ScalarFunction, len(p.EqualConditions))
-		otherConds = make([]expression.Expression, len(p.OtherConditions))
-		copy(eqEdges, p.EqualConditions)
-		copy(otherConds, p.OtherConditions)
-		return []LogicalPlan{lChild, rChild}, eqEdges, otherConds
-	}
-	if lOk {
-		lhsJoinGroup, lEqEdges, lOtherConds := extractJoinGroup(lJoin)
-		// If left side is
-		if lhsJoinGroup == nil {
-			group = append(group, lJoin)
-		} else {
-			group = append(group, lhsJoinGroup...)
-			eqEdges = append(eqEdges, lEqEdges...)
-			otherConds = append(otherConds, lOtherConds...)
-		}
-	} else {
-		group = append(group, lChild)
+func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
+	join, isJoin := p.(*LogicalJoin)
+	if !isJoin || join.preferJoinType > uint(0) || join.JoinType != InnerJoin || join.StraightJoin {
+		return []LogicalPlan{p}, nil, nil
 	}
 
-	if rOk {
-		rhsJoinGroup, rEqEdges, rOtherConds := extractJoinGroup(rJoin)
-		if rhsJoinGroup == nil {
-			group = append(group, rJoin)
-		} else {
-			group = append(group, rhsJoinGroup...)
-			eqEdges = append(eqEdges, rEqEdges...)
-			otherConds = append(otherConds, rOtherConds...)
+	lhsGroup, lhsEqualConds, lhsOtherConds := extractJoinGroup(join.children[0])
+	rhsGroup, rhsEqualConds, rhsOtherConds := extractJoinGroup(join.children[1])
 
-		}
-	} else {
-		group = append(group, rChild)
-	}
-
-	return group, append(eqEdges, p.EqualConditions...), append(otherConds, p.OtherConditions...)
+	group = append(group, lhsGroup...)
+	group = append(group, rhsGroup...)
+	eqEdges = append(eqEdges, join.EqualConditions...)
+	eqEdges = append(eqEdges, lhsEqualConds...)
+	eqEdges = append(eqEdges, rhsEqualConds...)
+	otherConds = append(otherConds, join.OtherConditions...)
+	otherConds = append(otherConds, lhsOtherConds...)
+	otherConds = append(otherConds, rhsOtherConds...)
+	return group, eqEdges, otherConds
 }
 
 type joinReOrderGreedySolver struct {
@@ -127,6 +101,7 @@ func (s *joinReOrderGreedySolver) enlargeJoinTree() (LogicalPlan, error) {
 				finalRemainOthers = remainOthers
 			}
 		}
+		// If we could find more join node, meaning that the sub connected graph have been totally explored.
 		if bestJoin == nil {
 			break
 		}
@@ -210,15 +185,21 @@ func (s *joinReOrderGreedySolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 }
 
 func (s *joinReOrderGreedySolver) optimizeRecursive(p LogicalPlan) (LogicalPlan, error) {
-	if join, ok := p.(*LogicalJoin); ok {
-		s.curJoinGroup, s.eqEdges, s.otherConds = extractJoinGroup(join)
-		if len(s.curJoinGroup) != 0 {
-			var err error
-			p, err = s.solve()
+	var err error
+	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
+	if len(curJoinGroup) > 1 {
+		for i := range curJoinGroup {
+			curJoinGroup[i], err = s.optimizeRecursive(curJoinGroup[i])
 			if err != nil {
 				return nil, err
 			}
 		}
+		s.curJoinGroup, s.eqEdges, s.otherConds = curJoinGroup, eqEdges, otherConds
+		p, err = s.solve()
+		if err != nil {
+			return nil, err
+		}
+		return p, nil
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {

@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	log "github.com/sirupsen/logrus"
 )
 
 type joinReorderDPSolver struct {
@@ -48,8 +47,14 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, conds []expression.
 		sf := cond.(*expression.ScalarFunction)
 		lCol := sf.GetArgs()[0].(*expression.Column)
 		rCol := sf.GetArgs()[1].(*expression.Column)
-		lIdx := findNodeIndexInGroup(joinGroup, lCol)
-		rIdx := findNodeIndexInGroup(joinGroup, rCol)
+		lIdx, err := findNodeIndexInGroup(joinGroup, lCol)
+		if err != nil {
+			return nil, err
+		}
+		rIdx, err := findNodeIndexInGroup(joinGroup, rCol)
+		if err != nil {
+			return nil, err
+		}
 		addEdge(lIdx, rIdx, sf)
 	}
 	visited := make([]bool, len(joinGroup))
@@ -181,12 +186,11 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) Lo
 	return cartesianJoinGroup[0]
 }
 
-func findNodeIndexInGroup(groups []LogicalPlan, col *expression.Column) int {
-	for i, plan := range groups {
+func findNodeIndexInGroup(group []LogicalPlan, col *expression.Column) (int, error) {
+	for i, plan := range group {
 		if plan.Schema().Contains(col) {
-			return i
+			return i, nil
 		}
 	}
-	log.Errorf("Unknown columns %s, position %d", col, col.UniqueID)
-	return -1
+	return -1, ErrUnknownColumn.GenWithStackByArgs(col, "JOIN REORDER RULE")
 }
