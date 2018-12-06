@@ -4038,18 +4038,22 @@ INSERT INTO t1 VALUES (1, '2009-01-01'), (2, NULL);
 # test with an invalid date, which lead to item->null_value is set.
 EXPLAIN SELECT * FROM t1 WHERE b < CAST('2009-04-99' AS DATETIME);
 id	count	task	operator info
-Selection_11	40000.00	root	lt(test.t1.b, cast("2009-04-99"))
-└─Union_12	50000.00	root	
-  ├─TableReader_14	10000.00	root	data:TableScan_13
-  │ └─TableScan_13	10000.00	cop	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_16	10000.00	root	data:TableScan_15
-  │ └─TableScan_15	10000.00	cop	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_18	10000.00	root	data:TableScan_17
-  │ └─TableScan_17	10000.00	cop	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_20	10000.00	root	data:TableScan_19
-  │ └─TableScan_19	10000.00	cop	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─TableReader_22	10000.00	root	data:TableScan_21
-    └─TableScan_21	10000.00	cop	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
+Union_11	0.00	root	
+├─TableReader_14	0.00	root	data:Selection_13
+│ └─Selection_13	0.00	cop	lt(test.t1.b, NULL)
+│   └─TableScan_12	10000.00	cop	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_17	0.00	root	data:Selection_16
+│ └─Selection_16	0.00	cop	lt(test.t1.b, NULL)
+│   └─TableScan_15	10000.00	cop	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_20	0.00	root	data:Selection_19
+│ └─Selection_19	0.00	cop	lt(test.t1.b, NULL)
+│   └─TableScan_18	10000.00	cop	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_23	0.00	root	data:Selection_22
+│ └─Selection_22	0.00	cop	lt(test.t1.b, NULL)
+│   └─TableScan_21	10000.00	cop	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_26	0.00	root	data:Selection_25
+  └─Selection_25	0.00	cop	lt(test.t1.b, NULL)
+    └─TableScan_24	10000.00	cop	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 DROP TABLE t1;
 CREATE TABLE t1
 (a INT NOT NULL AUTO_INCREMENT,
