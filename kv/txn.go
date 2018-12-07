@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"time"
@@ -21,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // ContextKey is the type of context's key

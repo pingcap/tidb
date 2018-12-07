@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
-	"golang.org/x/net/context"
 )
 
 var (

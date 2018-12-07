@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/tracing"
-	"golang.org/x/net/context"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )
@@ -85,6 +85,13 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			data, err := json.Marshal(traces)
 			if err != nil {
 				return errors.Trace(err)
+			}
+
+			// Split json data into rows to avoid the max packet size limitation.
+			const maxRowLen = 4096
+			for len(data) > maxRowLen {
+				chk.AppendString(0, string(data[:maxRowLen]))
+				data = data[maxRowLen:]
 			}
 			chk.AppendString(0, string(data))
 		}
@@ -152,11 +159,6 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
 	chk := rs.NewChunk()
-
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.Next", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 
 	for {
 		err := rs.Next(ctx, chk)

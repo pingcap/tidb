@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // This file contains the implementation of the physical Projection Operator:

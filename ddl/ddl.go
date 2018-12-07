@@ -18,6 +18,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -43,7 +44,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
-	"golang.org/x/net/context"
 )
 
 const (
