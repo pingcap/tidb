@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -47,7 +46,7 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 		for i := range e.outputIdxes {
 			err := evalOneColumn(ctx, e.exprs[i], iter, output, e.outputIdxes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		return nil
@@ -57,7 +56,7 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 		for i := range e.outputIdxes {
 			err := evalOneCell(ctx, e.exprs[i], row, output, e.outputIdxes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}
@@ -113,7 +112,7 @@ func (e *EvaluatorSuite) Run(ctx sessionctx.Context, input, output *chunk.Chunk)
 	if e.defaultEvaluator != nil {
 		err := e.defaultEvaluator.run(ctx, input, output)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 	}
 
