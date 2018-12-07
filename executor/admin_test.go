@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestAdminCheckIndexRange(c *C) {
+func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists check_index_test;`)
@@ -54,7 +54,7 @@ func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInf
 	return nil
 }
 
-func (s *testSuite) TestAdminRecoverIndex(c *C) {
+func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -168,7 +168,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminRecoverIndex1(c *C) {
+func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
@@ -219,7 +219,7 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tk.MustExec("admin check index admin_test `primary`")
 }
 
-func (s *testSuite) TestAdminCleanupIndex(c *C) {
+func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -298,7 +298,7 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
+func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -346,7 +346,7 @@ func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
+func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -409,7 +409,7 @@ func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCheckTable(c *C) {
+func (s *testSuite1) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -509,7 +509,7 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`ADMIN CHECK TABLE td1;`)
 }
 
-func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
+func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
@@ -517,7 +517,7 @@ func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
 	tk.MustExec("admin check index t idx;")
 }
 
-func (s *testSuite) TestAdminShowNextID(c *C) {
+func (s *testSuite1) TestAdminShowNextID(c *C) {
 	step := int64(10)
 	autoIDStep := autoid.GetStep()
 	autoid.SetStep(step)
@@ -559,7 +559,7 @@ func (s *testSuite) TestAdminShowNextID(c *C) {
 	r.Check(testkit.Rows("test1 tt id 41"))
 }
 
-func (s *testSuite) TestAdminCheckWithSnapshot(c *C) {
+func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_t_s")

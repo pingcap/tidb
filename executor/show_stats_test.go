@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestShowStatsMeta(c *C) {
+func (s *testSuite1) TestShowStatsMeta(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -36,7 +36,7 @@ func (s *testSuite) TestShowStatsMeta(c *C) {
 	c.Assert(result.Rows()[0][1], Equals, "t")
 }
 
-func (s *testSuite) TestShowStatsHistograms(c *C) {
+func (s *testSuite1) TestShowStatsHistograms(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -51,7 +51,7 @@ func (s *testSuite) TestShowStatsHistograms(c *C) {
 	c.Assert(result.Rows()[0][3], Equals, "a")
 }
 
-func (s *testSuite) TestShowStatsBuckets(c *C) {
+func (s *testSuite1) TestShowStatsBuckets(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -65,7 +65,7 @@ func (s *testSuite) TestShowStatsBuckets(c *C) {
 	result.Check(testkit.Rows("test t  idx 1 0 1 1 (1, 1) (1, 1)"))
 }
 
-func (s *testSuite) TestShowStatsHealthy(c *C) {
+func (s *testSuite1) TestShowStatsHealthy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -90,7 +90,7 @@ func (s *testSuite) TestShowStatsHealthy(c *C) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }
 
-func (s *testSuite) TestShowStatsHasNullValue(c *C) {
+func (s *testSuite1) TestShowStatsHasNullValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, index idx(a))")
@@ -99,7 +99,7 @@ func (s *testSuite) TestShowStatsHasNullValue(c *C) {
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  idx 1 0 1 1 NULL NULL"))
 }
 
-func (s *testSuite) TestShowPartitionStats(c *C) {
+func (s *testSuite1) TestShowPartitionStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")

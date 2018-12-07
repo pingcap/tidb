@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestAggregation(c *C) {
+func (s *testSuite1) TestAggregation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
 	tk.MustExec("use test")
@@ -341,7 +341,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
 }
 
-func (s *testSuite) TestStreamAggPushDown(c *C) {
+func (s *testSuite1) TestStreamAggPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -361,7 +361,7 @@ func (s *testSuite) TestStreamAggPushDown(c *C) {
 	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
 }
 
-func (s *testSuite) TestAggPrune(c *C) {
+func (s *testSuite1) TestAggPrune(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -385,7 +385,7 @@ func (s *testSuite) TestAggPrune(c *C) {
 	tk.MustQuery("SELECT a, MIN(b), MAX(b) FROM t GROUP BY a").Check(testkit.Rows("1 11 11", "3 <nil> <nil>"))
 }
 
-func (s *testSuite) TestGroupConcatAggr(c *C) {
+func (s *testSuite1) TestGroupConcatAggr(c *C) {
 	// issue #5411
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -427,7 +427,7 @@ func (s *testSuite) TestSelectDistinct(c *C) {
 
 }
 
-func (s *testSuite) TestAggPushDown(c *C) {
+func (s *testSuite1) TestAggPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, tt")
@@ -439,7 +439,7 @@ func (s *testSuite) TestAggPushDown(c *C) {
 	tk.MustQuery("select a, count(b) from (select * from t union all select * from tt) k group by a order by a").Check(testkit.Rows("1 2", "2 1"))
 }
 
-func (s *testSuite) TestOnlyFullGroupBy(c *C) {
+func (s *testSuite1) TestOnlyFullGroupBy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
@@ -550,7 +550,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
-func (s *testSuite) TestHaving(c *C) {
+func (s *testSuite1) TestHaving(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
@@ -575,7 +575,7 @@ func (s *testSuite) TestHaving(c *C) {
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestAggEliminator(c *C) {
+func (s *testSuite1) TestAggEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table t(a int primary key, b int)")
@@ -587,7 +587,7 @@ func (s *testSuite) TestAggEliminator(c *C) {
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestMaxMinFloatScalaFunc(c *C) {
+func (s *testSuite1) TestMaxMinFloatScalaFunc(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec(`DROP TABLE IF EXISTS T;`)
@@ -597,7 +597,7 @@ func (s *testSuite) TestMaxMinFloatScalaFunc(c *C) {
 	tk.MustQuery(`SELECT MIN(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
 }
 
-func (s *testSuite) TestBuildProjBelowAgg(c *C) {
+func (s *testSuite1) TestBuildProjBelowAgg(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (i int);")
@@ -609,7 +609,7 @@ func (s *testSuite) TestBuildProjBelowAgg(c *C) {
 		"4 3 18 7,7,7 8"))
 }
 
-func (s *testSuite) TestFirstRowEnum(c *C) {
+func (s *testSuite1) TestFirstRowEnum(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
