@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"golang.org/x/net/context"
 )
 
 var _ SchemaSyncer = &MockSchemaSyncer{}

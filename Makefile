@@ -103,7 +103,7 @@ clean:
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist gotest explaintest
+test: checklist checkdep gotest explaintest
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -192,3 +192,6 @@ gofail-enable:
 gofail-disable:
 # Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)
+
+checkdep:
+	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
