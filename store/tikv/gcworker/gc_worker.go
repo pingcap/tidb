@@ -401,14 +401,15 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = w.doGC(ctx, safePoint)
+	err = w.syncSafePointWithPd(ctx, safePoint)
 	if err != nil {
-		log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, errors.ErrorStack(err))
+		log.Errorf("[gc worker] %s failed to upload safe point to PD: %v", w.uuid, errors.ErrorStack(err))
 		w.gcIsRunning = false
-		metrics.GCJobFailureCounter.WithLabelValues("gc").Inc()
+		metrics.GCJobFailureCounter.WithLabelValues("upload_safe_point").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
+
 	w.done <- nil
 }
 
@@ -640,6 +641,26 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 	log.Infof("[gc worker] %s finish resolve locks, safePoint: %v, regions: %v, total resolved: %v, cost time: %s",
 		w.uuid, safePoint, regions, totalResolvedLocks, time.Since(startTime))
 	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
+	return nil
+}
+
+func (w *GCWorker) syncSafePointWithPd(ctx context.Context, safePoint uint64) error {
+	var newSafePoint uint64
+	var err error
+	// Try to communicate with PD at most 3 times.
+	for i := 0; i < 3; i++ {
+		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if newSafePoint != safePoint {
+		log.Warnf("[gc worker] pd rejected our safe point %v, because pd has greater safe point %v", safePoint, newSafePoint)
+		// TODO: If unfortunately this happened, should we do something else?
+	}
 	return nil
 }
 
