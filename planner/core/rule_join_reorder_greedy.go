@@ -22,8 +22,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-// extractJoinGroup will extract the nodes that connected by join tree.
-// A join tree is a tree that all node is join except the leaves.
+// extractJoinGroup extracts all the join nodes connected with continuous
+// InnerJoins to construct a join group. This join group is further used to
+// construct a new join order based on a greedy algorithm.
+//
+// For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
+// results in a join group {a, b, LeftJoin(c, d)}.
 func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
 	join, isJoin := p.(*LogicalJoin)
 	if !isJoin || join.preferJoinType > uint(0) || join.JoinType != InnerJoin || join.StraightJoin {
@@ -51,8 +55,18 @@ type joinReOrderGreedySolver struct {
 	otherConds   []expression.Expression
 }
 
-// solve will construct a join tree by given join group using greedy algorithm.
-// We first choose the node with least cost. Then always find the node which can join with current tree and have least cost.
+// solve reorders the join nodes in the group based on a greedy algorithm.
+//
+// For each node having a join equal condition with the current join tree in
+// the group, calculate the cumulative join cost of that node and the join
+// tree, choose the node with the smallest cumulative cost to join with the
+// current join tree.
+//
+// cumulative join cost = RowCount(lhs) + RowCount(rhs) + RowCount(join)
+// TODO: this formula can be updated to fit more case.
+//
+// For the nodes and join trees which don't have a join equal condition to
+// connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReOrderGreedySolver) solve() (LogicalPlan, error) {
 	for _, node := range s.curJoinGroup {
 		_, err := node.deriveStats()
@@ -66,7 +80,7 @@ func (s *joinReOrderGreedySolver) solve() (LogicalPlan, error) {
 
 	var cartesianGroup []LogicalPlan
 	for len(s.curJoinGroup) > 0 {
-		newNode, err := s.enlargeJoinTree()
+		newNode, err := s.constructConnectedJoinTree()
 		if err != nil {
 			return nil, err
 		}
@@ -76,7 +90,7 @@ func (s *joinReOrderGreedySolver) solve() (LogicalPlan, error) {
 	return s.makeBushyJoin(cartesianGroup), nil
 }
 
-func (s *joinReOrderGreedySolver) enlargeJoinTree() (LogicalPlan, error) {
+func (s *joinReOrderGreedySolver) constructConnectedJoinTree() (LogicalPlan, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
