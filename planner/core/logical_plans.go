@@ -42,6 +42,7 @@ var (
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
 	_ LogicalPlan = &LogicalLimit{}
+	_ LogicalPlan = &LogicalWindowFunc{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -616,4 +617,19 @@ type LogicalLock struct {
 	baseLogicalPlan
 
 	Lock ast.SelectLockType
+}
+
+// LogicalWindowFunc represents a logical window function plan.
+type LogicalWindowFunc struct {
+	logicalSchemaProducer
+
+	Desc        *aggregation.WindowFuncDesc
+	ByItems     []*ByItems
+	PartitionBy []expression.Expression
+	// TODO: add frame clause
+}
+
+// GetWindowResultColumn returns the column storing the result of the window function.
+func (p *LogicalWindowFunc) GetWindowResultColumn() *expression.Column {
+	return p.schema.Columns[p.schema.Len()-1]
 }

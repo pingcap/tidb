@@ -297,3 +297,8 @@ func (p *PhysicalTopN) ExplainInfo() string {
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
 }
+
+// ExplainInfo implements PhysicalPlan interface.
+func (p *PhysicalWindowFunc) ExplainInfo() string {
+	return p.Desc.String()
+}

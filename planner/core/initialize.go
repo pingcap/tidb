@@ -81,6 +81,8 @@ const (
 	TypeTableReader = "TableReader"
 	// TypeIndexReader is the type of IndexReader.
 	TypeIndexReader = "IndexReader"
+	// TypeWindowFunc is the type of WindowFunc.
+	TypeWindowFunc = "WindowFunc"
 )
 
 // Init initializes LogicalAggregation.
@@ -226,6 +228,20 @@ func (p LogicalMaxOneRow) Init(ctx sessionctx.Context) *LogicalMaxOneRow {
 // Init initializes PhysicalMaxOneRow.
 func (p PhysicalMaxOneRow) Init(ctx sessionctx.Context, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalMaxOneRow {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeMaxOneRow, &p)
+	p.childrenReqProps = props
+	p.stats = stats
+	return &p
+}
+
+// Init initializes LogicalWindowFunc.
+func (p LogicalWindowFunc) Init(ctx sessionctx.Context) *LogicalWindowFunc {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeWindowFunc, &p)
+	return &p
+}
+
+// Init initializes PhysicalWindowFunc.
+func (p PhysicalWindowFunc) Init(ctx sessionctx.Context, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalWindowFunc {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeWindowFunc, &p)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p

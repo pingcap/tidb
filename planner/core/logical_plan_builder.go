@@ -602,6 +602,14 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
 	for _, field := range fields {
+		// Add fake placeholders.
+		if ast.HasWindowFlag(field.Expr) {
+			expr := expression.Zero
+			proj.Exprs = append(proj.Exprs, expr)
+			col := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
+			schema.Append(col)
+			continue
+		}
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
@@ -998,10 +1006,11 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 	return
 }
 
-// havingAndOrderbyExprResolver visits Expr tree.
+// havingWindowAndOrderbyExprResolver visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
-type havingAndOrderbyExprResolver struct {
+type havingWindowAndOrderbyExprResolver struct {
 	inAggFunc    bool
+	inWindowFunc bool
 	inExpr       bool
 	orderBy      bool
 	err          error
@@ -1015,10 +1024,12 @@ type havingAndOrderbyExprResolver struct {
 }
 
 // Enter implements Visitor interface.
-func (a *havingAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
 	switch n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggFunc = true
+	case *ast.WindowFuncExpr:
+		a.inWindowFunc = true
 	case *driver.ParamMarkerExpr, *ast.ColumnNameExpr, *ast.ColumnName:
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		// Enter a new context, skip it.
@@ -1030,7 +1041,7 @@ func (a *havingAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChi
 	return n, false
 }
 
-func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema *expression.Schema) (int, error) {
+func (a *havingWindowAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema *expression.Schema) (int, error) {
 	col, err := schema.FindColumn(v.Name)
 	if err != nil {
 		return -1, errors.Trace(err)
@@ -1044,7 +1055,7 @@ func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, 
 		Name:   col.ColName,
 	}
 	for i, field := range a.selectFields {
-		if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(newColName, c.Name) {
+		if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, newColName) {
 			return i, nil
 		}
 	}
@@ -1058,7 +1069,7 @@ func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, 
 }
 
 // Leave implements Visitor interface.
-func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool) {
+func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool) {
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggFunc = false
@@ -1068,9 +1079,15 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			Expr:      v,
 			AsName:    model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(a.selectFields))),
 		})
+	case *ast.WindowFuncExpr:
+		a.inWindowFunc = false
+		if a.curClause == havingClause {
+			a.err = errors.Errorf("You cannot use the window function '%s' in this context.", v.F)
+			return node, false
+		}
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || (a.orderBy && a.inExpr) {
+		if  a.inAggFunc || a.inWindowFunc || (a.orderBy && a.inExpr) {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1088,6 +1105,10 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			if a.err != nil {
 				return node, false
 			}
+			if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
+				a.err = errors.Errorf("You cannot use the alias '%s' of an expression containing a window function in this context.", v.Name.Name.O)
+				return node, false
+			}
 			if index == -1 {
 				if a.orderBy {
 					index, a.err = a.resolveFromSchema(v, a.p.Schema())
@@ -1101,8 +1122,12 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			var err error
 			index, err = a.resolveFromSchema(v, a.p.Schema())
 			_ = err
-			if index == -1 {
+			if index == -1 && a.curClause != windowClause {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
+				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
+					a.err = errors.Errorf("You cannot use the alias '%s' of an expression containing a window function in this context.", v.Name.Name.O)
+					return node, false
+				}
 			}
 		}
 		if a.err != nil {
@@ -1136,7 +1161,7 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 // When we rewrite the order by / having expression, we will find column in map at first.
 func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan) (
 	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int, error) {
-	extractor := &havingAndOrderbyExprResolver{
+	extractor := &havingWindowAndOrderbyExprResolver{
 		p:            p,
 		selectFields: sel.Fields.Fields,
 		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
@@ -1189,6 +1214,31 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 	return aggList, totalAggMapper
 }
 
+// resolveWindowFunction will process window functions and resolve the columns that don't exist in select fields.
+func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) (
+	map[*ast.AggregateFuncExpr]int, error) {
+	extractor := &havingWindowAndOrderbyExprResolver{
+		p:            p,
+		selectFields: sel.Fields.Fields,
+		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
+		colMapper:    b.colMapper,
+		outerSchemas: b.outerSchemas,
+	}
+	extractor.curClause = windowClause
+	for _, field := range sel.Fields.Fields {
+		if !ast.HasWindowFlag(field.Expr) {
+			continue
+		}
+		n, ok := field.Expr.Accept(extractor)
+		if !ok {
+			return nil, errors.Trace(extractor.err)
+		}
+		field.Expr = n.(ast.ExprNode)
+	}
+	sel.Fields.Fields = extractor.selectFields
+	return extractor.aggMapper, nil
+}
+
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
 	ctx     sessionctx.Context
@@ -1233,6 +1283,8 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				ret.Accept(extractor)
 				if len(extractor.AggFuncs) != 0 {
 					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to group function")
+				} else if ast.HasWindowFlag(ret) {
+					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
 					return ret, true
 				}
@@ -1726,6 +1778,7 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	var (
 		aggFuncs                      []*ast.AggregateFuncExpr
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
+		windowMap                     map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
 	)
 
@@ -1758,6 +1811,13 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		}
 	}
 
+	hasWindow := b.detectSelectWindow(sel)
+	if hasWindow {
+		windowMap, err = b.resolveWindowFunction(sel, p)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	// We must resolve having and order by clause before build projection,
 	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
 	// which only can be done before building projection and extracting Agg functions.
@@ -1799,6 +1859,13 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	if sel.Having != nil {
 		b.curClause = havingClause
 		p, err = b.buildSelection(p, sel.Having.Expr, havingMap)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	if hasWindow {
+		p, oldLen, err = b.buildWindowFunctions(p, sel, windowMap)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2413,6 +2480,96 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	}
 
 	return del, nil
+}
+
+func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, sel *ast.SelectStmt, windowMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, int, error) {
+	b.optFlag |= flagEliminateProjection
+	b.curClause = fieldList
+	fields := sel.Fields.Fields
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
+	oldLen := 0
+	for i, field := range fields {
+		if !field.Auxiliary {
+			oldLen++
+		}
+		// it has been built in previous projection
+		if !ast.HasWindowFlag(field.Expr) {
+			col := p.Schema().Columns[i]
+			proj.Exprs = append(proj.Exprs, col)
+			newCol := b.buildProjectionField(proj.id, schema.Len()+1, field, col)
+			schema.Append(newCol)
+			continue
+		}
+		newExpr, np, err := b.rewrite(field.Expr, p, windowMap, true)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+
+		p = np
+		proj.Exprs = append(proj.Exprs, newExpr)
+
+		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
+		schema.Append(col)
+	}
+	proj.SetSchema(schema)
+	proj.SetChildren(p)
+	return proj, oldLen, nil
+}
+
+func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindowFunc, error) {
+	spec := expr.Spec
+	// Add sort for partition by and order by
+	var byItems []*ast.ByItem
+	if spec.PartitionBy != nil {
+		byItems = append(byItems, spec.PartitionBy.Items...)
+	}
+	if spec.OrderBy != nil {
+		byItems = append(byItems, spec.OrderBy.Items...)
+	}
+	var partitionBy []expression.Expression
+	var orderByItems []*ByItems
+	if len(byItems) > 0 {
+		s, err := b.buildSort(p, byItems, nil)
+		if err != nil {
+			return nil, err
+		}
+		if spec.PartitionBy != nil {
+			partitionBy = make([]expression.Expression, 0, len(spec.PartitionBy.Items))
+			for i := 0; i < len(spec.PartitionBy.Items); i++ {
+				partitionBy = append(partitionBy, s.ByItems[i].Expr)
+			}
+		}
+		orderByItems = s.ByItems
+		p = s
+	}
+
+	newArgList := make([]expression.Expression, 0, len(expr.Args))
+	for _, arg := range expr.Args {
+		newArg, np, err := b.rewrite(arg, p, aggMap, true)
+		if err != nil {
+			return nil, err
+		}
+		p = np
+		newArgList = append(newArgList, newArg)
+	}
+
+	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, newArgList)
+	window := LogicalWindowFunc{
+		Desc:        desc,
+		PartitionBy: partitionBy,
+		ByItems:     orderByItems,
+	}.Init(b.ctx)
+	schema := p.Schema().Clone()
+	schema.Append(&expression.Column{
+		ColName:      model.NewCIStr(fmt.Sprintf("%d_window_%d", window.id, p.Schema().Len())),
+		UniqueID:     b.ctx.GetSessionVars().AllocPlanColumnID(),
+		IsReferenced: true,
+		RetType:      desc.RetTp,
+	})
+	window.SetChildren(p)
+	window.SetSchema(schema)
+	return window, nil
 }
 
 // extractTableList extracts all the TableNames from node.

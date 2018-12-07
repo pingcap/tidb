@@ -47,6 +47,7 @@ var (
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
+	_ PhysicalPlan = &PhysicalWindowFunc{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -372,4 +373,12 @@ type PhysicalTableDual struct {
 	physicalSchemaProducer
 
 	RowCount int
+}
+
+// PhysicalWindowFunc is the physical operator of window function.
+type PhysicalWindowFunc struct {
+	physicalSchemaProducer
+
+	Desc        *aggregation.WindowFuncDesc
+	PartitionBy []expression.Expression
 }

@@ -378,3 +378,21 @@ func (p *LogicalMaxOneRow) deriveStats() (*property.StatsInfo, error) {
 	p.stats = getSingletonStats(p.Schema().Len())
 	return p.stats, nil
 }
+
+func (p *LogicalWindowFunc) deriveStats() (*property.StatsInfo, error) {
+	if p.stats != nil {
+		return p.stats, nil
+	}
+	childProfile, err := p.children[0].deriveStats()
+	if err != nil {
+		return nil, err
+	}
+	childLen := len(childProfile.Cardinality)
+	p.stats = &property.StatsInfo{
+		RowCount:    childProfile.RowCount,
+		Cardinality: make([]float64, childLen+1),
+	}
+	copy(p.stats.Cardinality, childProfile.Cardinality)
+	p.stats.Cardinality[childLen] = childProfile.RowCount
+	return p.stats, nil
+}

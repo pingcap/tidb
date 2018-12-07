@@ -1852,3 +1852,81 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }
+
+func (s *testPlanSuite) TestWindowFunction(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{
+			sql:    "select a, avg(a) over() from t",
+			result: "DataScan(t)->WindowFunc(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(partition by a) from t",
+			result: "DataScan(t)->Sort->WindowFunc(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, b as a, avg(a) over(partition by a) from t",
+			result: "DataScan(t)->Sort->WindowFunc(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, b as z, sum(z) over() from t",
+			result: "[planner:1054]Unknown column 'z' in 'field list'",
+		},
+		{
+			sql:    "select a, b as z from t order by (sum(z) over())",
+			result: "DataScan(t)->WindowFunc(sum(test.t.z))->Sort->Projection",
+		},
+		{
+			sql:    "select sum(avg(a)) over() from t",
+			result: "DataScan(t)->Aggr(avg(test.t.a))->WindowFunc(sum(sel_agg_2))->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over())",
+			result: "DataScan(t)->WindowFunc(sum(test.t.a))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over(partition by a))",
+			result: "DataScan(t)->Sort->WindowFunc(sum(test.t.a))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(avg(a)) over())",
+			result: "DataScan(t)->Aggr(avg(test.t.a),firstrow(test.t.b))->WindowFunc(sum(sel_agg_2))->Sort->Projection",
+		},
+		{
+			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
+			result: "Apply{DataScan(t)->DataScan(tt)->WindowFunc(sum(tt.a))->MaxOneRow->Sel([w])}->Projection",
+		},
+		{
+			sql:    "select avg(a) over() as w from t having w > 1",
+			result: "You cannot use the alias 'w' of an expression containing a window function in this context.",
+		},
+	}
+
+	s.Parser.EnableWindowFunc(true)
+	defer func() {
+		s.Parser.EnableWindowFunc(false)
+	}()
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.result, comment)
+	}
+}
