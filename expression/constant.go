@@ -103,6 +103,7 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 			if retType.Tp == mysql.TypeUnspecified {
 				retType.Tp = mysql.TypeVarString
 			}
+			retType.Decimal = c.RetType.Decimal
 			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, retType)
 			if err != nil {
 				return dt, err
