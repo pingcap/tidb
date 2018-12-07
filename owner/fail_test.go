@@ -14,6 +14,7 @@
 package owner
 
 import (
+	"context"
 	"math"
 	"net"
 	"os"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 

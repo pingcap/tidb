@@ -2035,6 +2035,16 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		return errors.Trace(err)
 	}
 
+	// Check before put the job is put to the queue.
+	// This check is redudant, but useful. If DDL check fail before the job is put
+	// to job queue, the fail path logic is super fast.
+	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
+	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	_, err = buildIndexColumns(t.Meta().Columns, idxColNames)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if indexOption != nil {
 		// May be truncate comment here, when index comment too long and sql_mode is't strict.
 		indexOption.Comment, err = validateCommentLength(ctx.GetSessionVars(),

@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -21,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/types"
-	"golang.org/x/net/context"
 )
 
 type testCtxKeyType int
@@ -47,13 +47,13 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(ctx.Value(testCtxKey), Equals, 1)
 	ctx.ClearValue(testCtxKey)
 
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	ctx.Txn(true).Set([]byte("a"), []byte("b"))
 	err = ctx.Txn(true).Rollback()
 	c.Assert(err, IsNil)
 
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	ctx.Txn(true).Set([]byte("a"), []byte("b"))
 	err = ctx.Txn(true).Commit(context.Background())
@@ -71,7 +71,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		ID:          1,
 		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn(true))
 	rInfo := &reorgInfo{
@@ -91,7 +91,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			// Test whether reorgInfo's Handle is update.
 			err = ctx.Txn(true).Commit(context.Background())
 			c.Assert(err, IsNil)
-			err = ctx.NewTxn()
+			err = ctx.NewTxn(context.Background())
 			c.Assert(err, IsNil)
 
 			m = meta.NewMeta(ctx.Txn(true))
