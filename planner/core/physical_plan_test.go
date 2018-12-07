@@ -14,6 +14,8 @@
 package core_test
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -24,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testPlanSuite{})
@@ -204,7 +205,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = se.NewTxn()
+		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -699,7 +700,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		// Test TopN + Union.
 		{
 			sql:  "select a from t union all (select c from t) order by a limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([t.a],0,1)",
+			best: "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([a],0,1)",
 		},
 	}
 	for i, tt := range tests {
@@ -769,7 +770,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = se.NewTxn()
+		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		// Make txn not read only.
 		se.Txn(true).Set(kv.Key("AAA"), []byte("BBB"))
@@ -1317,11 +1318,42 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		err = se.NewTxn()
+		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		// Make txn not read only.
 		se.Txn(true).Set(kv.Key("AAA"), []byte("BBB"))
 		se.StmtCommit()
+		p, err := planner.Optimize(se, stmt, s.is)
+		c.Assert(err, IsNil)
+		c.Assert(core.ToString(p), Equals, tt.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestDoSubquery(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "do 1 in (select a from t)",
+			best: "LeftHashJoin{Dual->TableReader(Table(t))}->Projection",
+		},
+	}
+	for _, tt := range tests {
+		comment := Commentf("for %s", tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)

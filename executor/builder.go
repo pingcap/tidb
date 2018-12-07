@@ -15,6 +15,7 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -48,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -671,6 +671,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		stmtNode:     v.StmtNode,
 		builder:      b,
+		format:       v.Format,
 	}
 }
 
@@ -1014,6 +1015,7 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 
 	return &ProjectionExec{
 		baseExecutor:  newBaseExecutor(b.ctx, expression.NewSchema(projSchemaCols...), projFromID, src),
+		numWorkers:    b.ctx.GetSessionVars().ProjectionConcurrency,
 		evaluatorSuit: expression.NewEvaluatorSuite(projExprs, false),
 	}
 }
@@ -1078,12 +1080,12 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 				ordinal = append(ordinal, partialOrdinal+1)
 				partialOrdinal++
 			}
-			finalDesc := aggDesc.Split(ordinal)
-			partialAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
+			partialAggDesc, finalDesc := aggDesc.Split(ordinal)
+			partialAggFunc := aggfuncs.Build(b.ctx, partialAggDesc, i)
 			finalAggFunc := aggfuncs.Build(b.ctx, finalDesc, i)
 			e.PartialAggFuncs = append(e.PartialAggFuncs, partialAggFunc)
 			e.FinalAggFuncs = append(e.FinalAggFuncs, finalAggFunc)
-			if aggDesc.Name == ast.AggFuncGroupConcat {
+			if partialAggDesc.Name == ast.AggFuncGroupConcat {
 				// For group_concat, finalAggFunc and partialAggFunc need shared `truncate` flag to do duplicate.
 				finalAggFunc.(interface{ SetTruncated(t *int32) }).SetTruncated(
 					partialAggFunc.(interface{ GetTruncated() *int32 }).GetTruncated(),
@@ -1678,7 +1680,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	} else {
 		e.feedback = statistics.NewQueryFeedback(e.physicalTableID, ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
-	collect := e.feedback.CollectFeedback(len(ts.Ranges))
+	collect := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(ts.Ranges))
+	if !collect {
+		e.feedback.Invalidate()
+	}
 	e.dagPB.CollectRangeCounts = &collect
 
 	for i := range v.Schema().Columns {
@@ -1735,7 +1740,10 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		e.feedback = statistics.NewQueryFeedback(e.physicalTableID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
-	collect := e.feedback.CollectFeedback(len(is.Ranges))
+	collect := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(is.Ranges))
+	if !collect {
+		e.feedback.Invalidate()
+	}
 	e.dagPB.CollectRangeCounts = &collect
 
 	for _, col := range v.OutputColumns {
@@ -1811,7 +1819,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	// do not collect the feedback for table request.
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
-	collectIndex := e.feedback.CollectFeedback(len(is.Ranges))
+	collectIndex := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(is.Ranges))
+	if !collectIndex {
+		e.feedback.Invalidate()
+	}
 	e.dagPB.CollectRangeCounts = &collectIndex
 	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
 		e.handleIdx = cols[0].Index

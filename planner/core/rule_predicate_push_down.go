@@ -56,9 +56,24 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	return nil, p.self
 }
 
+func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	canBePushDown := make([]expression.Expression, 0, len(filters))
+	canNotBePushDown := make([]expression.Expression, 0, len(filters))
+	for _, expr := range filters {
+		if expression.HasGetSetVarFunc(expr) {
+			canNotBePushDown = append(canNotBePushDown, expr)
+		} else {
+			canBePushDown = append(canBePushDown, expr)
+		}
+	}
+	return canBePushDown, canNotBePushDown
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	retConditions, child := p.children[0].PredicatePushDown(append(p.Conditions, predicates...))
+	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
+	retConditions, child := p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
+	retConditions = append(retConditions, canNotBePushDown...)
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		// Return table dual when filter is constant false or null.
@@ -306,11 +321,18 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
-	var push = make([]expression.Expression, 0, p.Schema().Len())
+	canBePushed := make([]expression.Expression, 0, len(predicates))
+	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	for _, cond := range predicates {
-		push = append(push, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
+		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
+		if !expression.HasGetSetVarFunc(newFilter) {
+			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
+		} else {
+			canNotBePushed = append(canNotBePushed, cond)
+		}
 	}
-	return p.baseLogicalPlan.PredicatePushDown(push)
+	remained, child := p.baseLogicalPlan.PredicatePushDown(canBePushed)
+	return append(remained, canNotBePushed...), child
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.

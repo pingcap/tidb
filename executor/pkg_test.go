@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -11,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&pkgTestSuite{})

@@ -120,7 +120,16 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 	return colInfo, position, nil
 }
 
-func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
+		ver, err = onDropColumn(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
@@ -254,7 +263,11 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 
 		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		if job.IsRollingback() {
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+		} else {
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		}
 	default:
 		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}

@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type DDLForTest interface {
@@ -126,7 +126,7 @@ func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 }
 
 func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn(true))
 	ver, err := m.GetSchemaVersion()
@@ -191,6 +191,21 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 
 func testCreateIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, unique, indexName, colName)
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testAddColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddColumn,
+		Args:       args,
+		BinlogInfo: &model.HistoryInfo{},
+	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
