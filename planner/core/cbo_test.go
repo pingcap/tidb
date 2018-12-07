@@ -386,7 +386,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1)->HashAgg)->HashAgg}(test.t.c1,test.t1.c1)->Projection",
+			best: "RightHashJoin{TableReader(Table(t1)->HashAgg)->HashAgg->TableReader(Table(t))}(test.t1.c1,test.t.c1)->Projection",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
