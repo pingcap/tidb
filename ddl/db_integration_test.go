@@ -157,7 +157,6 @@ func (s *testIntegrationSuite) TestNullGeneratedColumn(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (" +
 		"`a` int(11) DEFAULT NULL," +
 		"`b` int(11) DEFAULT NULL," +
@@ -168,6 +167,7 @@ func (s *testIntegrationSuite) TestNullGeneratedColumn(c *C) {
 
 	tk.MustExec("insert into t values()")
 	tk.MustExec("alter table t add index idx_c(c)")
+	tk.MustExec("drop table t")
 }
 
 func (s *testIntegrationSuite) TestCaseInsensitiveCharsetAndCollate(c *C) {
