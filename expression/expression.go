@@ -17,7 +17,6 @@ import (
 	goJSON "encoding/json"
 	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -117,7 +116,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, e
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 		if data.IsNull() {
 			return false, nil
@@ -125,7 +124,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, e
 
 		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 		if i == 0 {
 			return false, nil
@@ -325,7 +324,7 @@ func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model
 func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
 	bt, err := fc.getFunction(ctx, nil)
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
