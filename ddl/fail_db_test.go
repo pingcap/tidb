@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -35,11 +36,13 @@ import (
 var _ = Suite(&testFailDBSuite{})
 
 type testFailDBSuite struct {
-	lease time.Duration
-	store kv.Storage
-	dom   *domain.Domain
-	se    session.Session
-	p     *parser.Parser
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	lease     time.Duration
+	store     kv.Storage
+	dom       *domain.Domain
+	se        session.Session
+	p         *parser.Parser
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
@@ -47,7 +50,13 @@ func (s *testFailDBSuite) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	s.cluster = mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	s.mvccStore = mocktikv.MustNewMVCCStore()
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithMVCCStore(s.mvccStore),
+	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -158,7 +167,7 @@ func (s *testStateChangeSuite) TestInitializeOffsetAndState(c *C) {
 	gofail.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState")
 }
 
-func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
+func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
 	tk := testkit.NewTestKit(c, s.store)
@@ -173,7 +182,7 @@ func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
 	tk.MustExec("admin check index t idx_b")
 }
 
-func (s *testDBSuite) TestAddIndexFailed(c *C) {
+func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	gofail.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr")
 	tk := testkit.NewTestKit(c, s.store)
@@ -203,7 +212,7 @@ func (s *testDBSuite) TestAddIndexFailed(c *C) {
 
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
-func (s *testDBSuite) TestFailSchemaSyncer(c *C) {
+func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -241,7 +250,7 @@ func (s *testDBSuite) TestFailSchemaSyncer(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testDBSuite) TestGenGlobalIDFail(c *C) {
+func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists gen_global_id_fail")

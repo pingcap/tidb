@@ -37,6 +37,7 @@ require (
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
 	github.com/myesui/uuid v1.0.0 // indirect
+	github.com/ngaut/log v0.0.0-20180314031856-b8e36e7ba5ac // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/onsi/ginkgo v1.7.0 // indirect
@@ -85,3 +86,6 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+// After we merge the PR of https://github.com/pingcap/check/pull/10, I will use the latest parser.
+replace github.com/pingcap/check => github.com/zimulala/check v0.0.0-20181207043040-f8e5859ecbdb
