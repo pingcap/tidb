@@ -131,4 +131,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
 	prometheus.MustRegister(CPUUsagePercentageGauge)
+	prometheus.MustRegister(TiKVPendingBatchRequests)
+	prometheus.MustRegister(TiKVBatchWaitTimes)
 }

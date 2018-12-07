@@ -240,6 +240,16 @@ type TiKVClient struct {
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+
+	// MaxBatchSize is the max batch size when calling batch commands API.
+	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
+	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
+	TiKVHeavyLoadToBatch uint `toml:"tikv-heavy-load-to-batch" json:"tikv-heavy-load-to-batch"`
+	// BatchWaitTime in nanosecond is the max wait time for batch.
+	BatchWaitTime time.Duration `toml:"batch-wait-time" json:"batch-wait-time"`
+	// BatchWaitSize is the max wait size for batch.
+	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
+
 	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
 	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
 }
@@ -326,7 +336,13 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
-		MaxTxnTimeUse:        590,
+
+		MaxBatchSize:         128,
+		TiKVHeavyLoadToBatch: 100,
+		BatchWaitTime:        1000 * time.Microsecond,
+		BatchWaitSize:        8,
+
+		MaxTxnTimeUse: 590,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

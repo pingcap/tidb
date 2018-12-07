@@ -178,4 +178,21 @@ var (
 			Name:      "region_cache_operations_total",
 			Help:      "Counter of region cache.",
 		}, []string{LblType, LblResult})
+
+	// TiKVPendingBatchRequests indicates the number of requests pending in the batch channel.
+	TiKVPendingBatchRequests = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "pending_batch_requests",
+			Help:      "Pending batch requests",
+		})
+
+	TiKVBatchWaitTimes = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_wait_times",
+			Help:      "counter of batch wait times",
+		})
 )
