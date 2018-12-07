@@ -488,7 +488,9 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	if req.Type == tikvrpc.CmdGC {
 		// Deal with GC command without batch.
+		log.Infof("[gc worker] trying to get gc token to %s", addr)
 		connArray.gcTokenBucket <- 0
+		log.Infof("[gc worker] get gc token to %s success", addr)
 	} else if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
 		if batchCommandsReq := req.ToBatchCommandsRequest(); batchCommandsReq != nil {
 			entry := &batchCommandsEntry{
@@ -522,6 +524,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		result, err := tikvrpc.CallRPC(ctx1, client, req)
 		if req.Type == tikvrpc.CmdGC {
 			<-connArray.gcTokenBucket
+			log.Infof("[gc worker] gc %s finished, release token", addr)
 		}
 		return result, err
 	}
