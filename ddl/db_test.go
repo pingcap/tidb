@@ -556,7 +556,7 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 			jobIDs := []int64{job.ID}
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
-			err := hookCtx.NewTxn()
+			err := hookCtx.NewTxn(context.TODO())
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
