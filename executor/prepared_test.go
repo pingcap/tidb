@@ -28,7 +28,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
-func (s *testSuite) TestPrepared(c *C) {
+func (s *testSuite1) TestPrepared(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
@@ -235,7 +235,7 @@ func (s *testSuite) TestPrepared(c *C) {
 	}
 }
 
-func (s *testSuite) TestPreparedLimitOffset(c *C) {
+func (s *testSuite1) TestPreparedLimitOffset(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
@@ -280,7 +280,7 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 	}
 }
 
-func (s *testSuite) TestPreparedNullParam(c *C) {
+func (s *testSuite1) TestPreparedNullParam(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
@@ -324,7 +324,7 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 	}
 }
 
-func (s *testSuite) TestPreparedNameResolver(c *C) {
+func (s *testSuite1) TestPreparedNameResolver(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -337,7 +337,7 @@ func (s *testSuite) TestPreparedNameResolver(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'order clause'")
 }
 
-func (s *testSuite) TestPrepareMaxParamCountCheck(c *C) {
+func (s *testSuite3) TestPrepareMaxParamCountCheck(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -352,7 +352,7 @@ func (s *testSuite) TestPrepareMaxParamCountCheck(c *C) {
 	c.Assert(err.Error(), Equals, "[executor:1390]Prepared statement contains too many placeholders")
 }
 
-func (s *testSuite) TestPrepareWithAggregation(c *C) {
+func (s *testSuite1) TestPrepareWithAggregation(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
@@ -397,7 +397,7 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 	return "insert into t values " + strings.Join(placeholders, ","), params
 }
 
-func (s *testSuite) TestPreparedIssue7579(c *C) {
+func (s *testSuite1) TestPreparedIssue7579(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
@@ -448,7 +448,7 @@ func (s *testSuite) TestPreparedIssue7579(c *C) {
 	}
 }
 
-func (s *testSuite) TestPreparedInsert(c *C) {
+func (s *testSuite1) TestPreparedInsert(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
@@ -530,7 +530,7 @@ func (s *testSuite) TestPreparedInsert(c *C) {
 	}
 }
 
-func (s *testSuite) TestPreparedUpdate(c *C) {
+func (s *testSuite1) TestPreparedUpdate(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
@@ -589,7 +589,7 @@ func (s *testSuite) TestPreparedUpdate(c *C) {
 	}
 }
 
-func (s *testSuite) TestPreparedDelete(c *C) {
+func (s *testSuite1) TestPreparedDelete(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
@@ -648,7 +648,7 @@ func (s *testSuite) TestPreparedDelete(c *C) {
 	}
 }
 
-func (s *testSuite) TestPrepareDealloc(c *C) {
+func (s *testSuite1) TestPrepareDealloc(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
@@ -690,7 +690,7 @@ func (s *testSuite) TestPrepareDealloc(c *C) {
 	c.Assert(tk.Se.PreparedPlanCache().Size(), Equals, 0)
 }
 
-func (s *testSuite) TestPreparedIssue8153(c *C) {
+func (s *testSuite1) TestPreparedIssue8153(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio

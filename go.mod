@@ -85,3 +85,6 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+// After we merge the PR of https://github.com/pingcap/check/pull/10, I will use the latest parser.
+replace github.com/pingcap/check => github.com/zimulala/check v0.0.0-20181207043040-f8e5859ecbdb
