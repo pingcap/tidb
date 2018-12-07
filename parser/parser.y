@@ -2349,17 +2349,22 @@ DropIndexStmt:
 DropTableStmt:
 	"DROP" TableOrTables TableNameList RestrictOrCascadeOpt
 	{
-		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName)}
+		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName), IsView: false}
 	}
 |	"DROP" TableOrTables "IF" "EXISTS" TableNameList RestrictOrCascadeOpt
 	{
-		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName)}
+		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName), IsView: false}
 	}
 
 DropViewStmt:
-	"DROP" "VIEW" "IF" "EXISTS" TableNameList
+	"DROP" "VIEW" TableNameList RestrictOrCascadeOpt
 	{
-		$$ = &ast.DoStmt{}
+		$$ = &ast.DropTableStmt{Tables: $3.([]*ast.TableName), IsView: true}
+	}
+|
+	"DROP" "VIEW" "IF" "EXISTS" TableNameList RestrictOrCascadeOpt
+	{
+		$$ = &ast.DropTableStmt{IfExists: true, Tables: $5.([]*ast.TableName), IsView: true}
 	}
 
 DropUserStmt:
