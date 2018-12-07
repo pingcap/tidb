@@ -958,6 +958,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if len(tbInfo.Charset) != 0 && strings.ToLower(tbInfo.Charset) != mysql.DefaultCharset {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The user specified charset of table '%s.%s' is %s, currently TiDB treat all the data as utf8mb4 actually.", schema.Name, tbInfo.Name, tbInfo.Charset))
+	}
+
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
