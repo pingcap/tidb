@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 // For gofail injection.
@@ -753,6 +753,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		ctx1, cancel := context.WithCancel(ctx)
 		copStream, err := handler.handleCopStream(ctx1, r)
 		if err != nil {
+			cancel()
 			return nil, errors.Trace(err)
 		}
 

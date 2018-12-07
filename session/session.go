@@ -18,6 +18,7 @@
 package session
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -60,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // Session context
@@ -803,6 +803,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 		defer span1.Finish()
 	}
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
+	s.parser.EnableWindowFunc(s.sessionVars.EnableWindowFunction)
 	return s.parser.Parse(sql, charset, collation)
 }
 
@@ -1042,10 +1043,9 @@ func (s *session) Txn(active bool) kv.Transaction {
 	return &s.txn
 }
 
-func (s *session) NewTxn() error {
+func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		ctx := context.TODO()
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -1401,12 +1401,14 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBConstraintCheckInPlace + quoteCommaQuote +
 	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
+	variable.TiDBDDLReorgBatchSize + quoteCommaQuote +
 	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBEnableCascadesPlanner + quoteCommaQuote +
 	variable.TiDBRetryLimit + quoteCommaQuote +
-	variable.TiDBDisableTxnAutoRetry + "')"
+	variable.TiDBDisableTxnAutoRetry + quoteCommaQuote +
+	variable.TiDBEnableWindowFunction + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
@@ -1473,7 +1475,7 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(s.NewTxn())
+	return errors.Trace(s.NewTxn(ctx))
 }
 
 // InitTxnWithStartTS create a transaction with startTS.
@@ -1506,7 +1508,6 @@ func (s *session) ShowProcess() util.ProcessInfo {
 	tmp := s.processInfo.Load()
 	if tmp != nil {
 		pi = tmp.(util.ProcessInfo)
-		pi.Mem = s.GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
 	}
 	return pi
 }

@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 var (
