@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -144,7 +145,7 @@ func (e *ReplaceExec) removeIndexRow(r toBeCheckedRow) (bool, bool, error) {
 	return false, false, nil
 }
 
-func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
+func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -179,9 +180,13 @@ func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
 
 // Next implements the Executor Next interface.
 func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("replace.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	chk.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
 		return e.insertRowsFromSelect(ctx, e.exec)
 	}
-	return e.insertRows(e.exec)
+	return e.insertRows(ctx, e.exec)
 }

@@ -1550,7 +1550,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1969-12-31 23:59:59');")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-13-01 00:00:00');")
-	result.Check(testkit.Rows("0"))
+	// FIXME: MySQL returns 0 here.
+	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:07.999999');")
 	result.Check(testkit.Rows("2147483647.999999"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:08');")
@@ -3635,11 +3636,11 @@ func (s *testIntegrationSuite) testTiDBIsOwnerFunc(c *C) {
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	session.SetSchemaLease(0)
 	dom, err := session.BootstrapSession(store)
-	return store, dom, errors.Trace(err)
+	return store, dom, err
 }
 
 func (s *testIntegrationSuite) TestTwoDecimalTruncate(c *C) {
