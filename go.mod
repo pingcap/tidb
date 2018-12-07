@@ -88,4 +88,4 @@ require (
 )
 
 // After we merge the PR of https://github.com/pingcap/check/pull/10, I will use the latest parser.
-replace github.com/pingcap/check => github.com/zimulala/check v0.0.0-20181207043040-f8e5859ecbdb
+replace github.com/pingcap/check => github.com/zimulala/check v0.0.0-20181207093003-cd2237775f23
