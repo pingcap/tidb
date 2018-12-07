@@ -665,6 +665,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// Currently TiDB treat all the data as utf8mb4 actually.
 	// Make the TiDB's query result consistent with its actual behavior.
 	charsetName, collate := charset.GetDefaultCharsetAndCollate()
+	if len(tb.Meta().Charset) != 0 && tb.Meta().Charset != charsetName {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The user specified charset of table '%s' is %s, currently TiDB treat all the data as utf8mb4 actually.", tb.Meta().Name, tb.Meta().Charset))
+	}
+
 	fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
 
 	// Displayed if the compression typed is set.
