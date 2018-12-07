@@ -47,7 +47,7 @@ require (
 	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929
-	github.com/pingcap/parser v0.0.0-20181206123229-b006f4e22d98
+	github.com/pingcap/parser v0.0.0-20181207082251-639797cdc405
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v0.0.0-20181112132202-4860a0d5de03
 	github.com/pingcap/tipb v0.0.0-20180910045846-371b48b15d93
@@ -79,5 +79,3 @@ require (
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v2 v2.2.1 // indirect
 )
-
-replace github.com/pingcap/parser => github.com/winkyao/parser v0.0.0-20181206123815-3f05cc1622cf
