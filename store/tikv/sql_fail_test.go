@@ -14,6 +14,7 @@
 package tikv_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -26,7 +27,6 @@ import (
 	. "github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(new(testSQLSuite))

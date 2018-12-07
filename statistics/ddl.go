@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 // HandleDDLEvent begins to process a ddl task.
