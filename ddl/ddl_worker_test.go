@@ -387,7 +387,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// create table t (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
 	ctx := testNewContext(d)
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	job := testCreateTable(c, ctx, d, dbInfo, tblInfo)
 	// insert t values (1, 2);
@@ -415,7 +415,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		hookCtx := mock.NewContext()
 		hookCtx.Store = store
 		var err1 error
-		err1 = hookCtx.NewTxn()
+		err1 = hookCtx.NewTxn(context.Background())
 		if err1 != nil {
 			checkErr = errors.Trace(err1)
 			return
@@ -596,7 +596,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 	ctx := testNewContext(d)
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	/*

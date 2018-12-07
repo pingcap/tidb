@@ -78,7 +78,7 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := s.ctx.NewTxn()
+	err := s.ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	err = s.d.doDDLJob(s.ctx, job)
 	c.Assert(err, IsNil)
@@ -123,7 +123,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	testCreateSchema(c, ctx, d, s.dbInfo)
 	tblInfo := testTableInfo(c, d, "t", 3)
 
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -208,7 +208,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	tc.onJobUpdated = func(job *model.Job) {
