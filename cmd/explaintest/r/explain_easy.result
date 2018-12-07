@@ -159,7 +159,7 @@ TableReader_5	10000.00	root	data:TableScan_4
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 id	count	task	operator info
 Union_17	26000.00	root	
-├─HashAgg_21	16000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
+├─HashAgg_21	16000.00	root	group by:c1, funcs:firstrow(join_agg_0)
 │ └─Union_22	16000.00	root	
 │   ├─StreamAgg_35	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
 │   │ └─IndexReader_36	8000.00	root	index:StreamAgg_26
@@ -173,7 +173,7 @@ Union_17	26000.00	root
   └─TableScan_58	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	count	task	operator info
-HashAgg_18	24000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
+HashAgg_18	24000.00	root	group by:c1, funcs:firstrow(join_agg_0)
 └─Union_19	24000.00	root	
   ├─StreamAgg_32	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
   │ └─IndexReader_33	8000.00	root	index:StreamAgg_23
@@ -547,4 +547,38 @@ Projection_4	2666.67	root	test.t.a
   └─Selection_6	2666.67	cop	gt(test.t.a, 0)
     └─TableScan_5	3333.33	cop	table:t, range:(0,+inf], keep order:false, stats:pseudo
 drop table if exists t;
+create table t(a int, b int, c int);
+explain select * from (select * from t order by (select 2)) t order by a, b;
+id	count	task	operator info
+Sort_12	10000.00	root	t.a:asc, t.b:asc
+└─TableReader_18	10000.00	root	data:TableScan_17
+  └─TableScan_17	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from (select * from t order by c) t order by a, b;
+id	count	task	operator info
+Sort_6	10000.00	root	t.a:asc, t.b:asc
+└─Sort_9	10000.00	root	test.t.c:asc
+  └─TableReader_12	10000.00	root	data:TableScan_11
+    └─TableScan_11	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
+explain SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a;
+id	count	task	operator info
+Sort_13	2.00	root	a:asc
+└─HashAgg_17	2.00	root	group by:a, funcs:firstrow(join_agg_0)
+  └─Union_18	2.00	root	
+    ├─HashAgg_21	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+    │ └─Projection_22	1.00	root	0
+    │   └─TableDual_23	1.00	root	rows:1
+    └─HashAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+      └─Projection_27	1.00	root	1
+        └─TableDual_28	1.00	root	rows:1
+explain SELECT 0 AS a FROM dual UNION (SELECT 1 AS a FROM dual ORDER BY a)
+id	count	task	operator info
+HashAgg_15	2.00	root	group by:a, funcs:firstrow(join_agg_0)
+└─Union_16	2.00	root	
+  ├─HashAgg_19	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+  │ └─Projection_20	1.00	root	0
+  │   └─TableDual_21	1.00	root	rows:1
+  └─StreamAgg_26	1.00	root	group by:a, funcs:firstrow(a), firstrow(a)
+    └─Projection_31	1.00	root	1
+      └─TableDual_32	1.00	root	rows:1

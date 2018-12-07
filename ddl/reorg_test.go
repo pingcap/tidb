@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -21,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/types"
-	"golang.org/x/net/context"
 )
 
 type testCtxKeyType int
@@ -47,16 +47,16 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(ctx.Value(testCtxKey), Equals, 1)
 	ctx.ClearValue(testCtxKey)
 
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
-	ctx.Txn().Set([]byte("a"), []byte("b"))
-	err = ctx.Txn().Rollback()
+	ctx.Txn(true).Set([]byte("a"), []byte("b"))
+	err = ctx.Txn(true).Rollback()
 	c.Assert(err, IsNil)
 
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
-	ctx.Txn().Set([]byte("a"), []byte("b"))
-	err = ctx.Txn().Commit(context.Background())
+	ctx.Txn(true).Set([]byte("a"), []byte("b"))
+	err = ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	rowCount := int64(10)
@@ -71,9 +71,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		ID:          1,
 		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
-	m := meta.NewMeta(ctx.Txn())
+	m := meta.NewMeta(ctx.Txn(true))
 	rInfo := &reorgInfo{
 		Job: job,
 	}
@@ -89,12 +89,12 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(d.generalWorker().reorgCtx.rowCount, Equals, int64(0))
 
 			// Test whether reorgInfo's Handle is update.
-			err = ctx.Txn().Commit(context.Background())
+			err = ctx.Txn(true).Commit(context.Background())
 			c.Assert(err, IsNil)
-			err = ctx.NewTxn()
+			err = ctx.NewTxn(context.Background())
 			c.Assert(err, IsNil)
 
-			m = meta.NewMeta(ctx.Txn())
+			m = meta.NewMeta(ctx.Txn(true))
 			info, err1 := getReorgInfo(d.ddlCtx, m, job, nil)
 			c.Assert(err1, IsNil)
 			c.Assert(info.StartHandle, Equals, handle)
@@ -110,7 +110,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		return nil
 	})
 	c.Assert(err, NotNil)
-	err = ctx.Txn().Commit(context.Background())
+	err = ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.start(context.Background(), nil)
@@ -172,7 +172,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.Txn().Commit(context.Background())
+	err := ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
