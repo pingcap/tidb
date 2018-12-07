@@ -134,7 +134,7 @@ func (tc *TransactionContext) Cleanup() {
 	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.DirtyDB = nil
 	tc.Binlog = nil
-	tc.Histroy = nil
+	tc.History = nil
 	tc.TableDeltaMap = nil
 }
 
