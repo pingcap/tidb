@@ -1950,7 +1950,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
 	// use the last one.
 	if toCharset == "" && toCollate == "" {
-		return errors.Errorf("toCharset and toCollate can't be empty")
+		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset)
 	}
 
 	is := d.infoHandle.Get()
