@@ -142,10 +142,10 @@ func (c *absFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	case types.ETInt:
 		if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 			sig = &builtinAbsUIntSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_AbsInt)
+			sig.setPbCode(tipb.ScalarFuncSig_AbsUInt)
 		} else {
 			sig = &builtinAbsIntSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_AbsUInt)
+			sig.setPbCode(tipb.ScalarFuncSig_AbsInt)
 		}
 	case types.ETDecimal:
 		sig = &builtinAbsDecSig{bf}
