@@ -1244,6 +1244,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		function, er.err = expression.NewFunctionBase(er.ctx, v.FnName.L, &v.Type, args...)
 		c := &expression.Constant{Value: types.NewDatum(nil), RetType: &v.Type, DeferredExpr: function}
 		c.GetType().Tp = function.GetType().Tp
+		c.GetType().Decimal = function.GetType().Decimal
 		er.ctxStack = append(er.ctxStack, c)
 	} else {
 		function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)
