@@ -1085,7 +1085,7 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, indexInfo *model.
 		reorgInfo.d.mu.hook.OnIndexWorkerReorgBefore(len(idxWorkers), len(kvRanges))
 		reorgInfo.d.mu.Unlock()
 
-		log.Infof("[ddl-reorg] start to reorg index of %v region ranges, handle range:[%v, %v).", len(kvRanges), startHandle, endHandle)
+		log.Infof("[ddl-reorg] start %d workers to reorg index of %v region ranges, handle range:[%v, %v).", len(idxWorkers), len(kvRanges), startHandle, endHandle)
 		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {
 			return errors.Trace(err)
