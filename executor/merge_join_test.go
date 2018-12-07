@@ -235,7 +235,7 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 	return tk.MustQuery(sql)
 }
 
-func (s *testSuite) TestMergeJoin(c *C) {
+func (s *testSuite1) TestMergeJoin(c *C) {
 	// FIXME: the TIDB_SMJ hint does not really work when there is no index on join onCondition.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -303,11 +303,11 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	tk.MustExec("rollback;")
 
 	plannercore.AllowCartesianProduct = false
-	_, err := tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t, t1")
+	err := tk.ExecNoRes("select /*+ TIDB_SMJ(t,t1) */ * from t, t1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t left join t1 on 1")
+	err = tk.ExecNoRes("select /*+ TIDB_SMJ(t,t1) */ * from t left join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t right join t1 on 1")
+	err = tk.ExecNoRes("select /*+ TIDB_SMJ(t,t1) */ * from t right join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	plannercore.AllowCartesianProduct = true
 	tk.MustExec("drop table if exists t")
@@ -333,7 +333,7 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ count(*) from t join s on t.a = s.a").Check(testkit.Rows("4"))
 }
 
-func (s *testSuite) Test3WaysMergeJoin(c *C) {
+func (s *testSuite1) Test3WaysMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
