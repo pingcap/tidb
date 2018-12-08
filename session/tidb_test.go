@@ -14,6 +14,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -143,8 +143,6 @@ func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 		}(se)
 	}
 	wg.Wait()
-	se.sysSessionPool().Close()
-	c.Assert(se.sysSessionPool().IsClosed(), Equals, true)
 }
 
 func newStore(c *C, dbPath string) kv.Storage {

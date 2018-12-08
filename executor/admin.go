@@ -14,7 +14,7 @@
 package executor
 
 import (
-	"github.com/pingcap/tidb/util/dagpb"
+	"context"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -31,11 +31,11 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dagpb"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (

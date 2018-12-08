@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
+func (s *testStatsSuite) TestDDLAfterLoad(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -55,7 +55,7 @@ func (s *testStatsCacheSuite) TestDDLAfterLoad(c *C) {
 	c.Assert(int(count), Equals, 333)
 }
 
-func (s *testStatsCacheSuite) TestDDLTable(c *C) {
+func (s *testStatsSuite) TestDDLTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -95,7 +95,7 @@ func (s *testStatsCacheSuite) TestDDLTable(c *C) {
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
 
-func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
+func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	do := s.do
@@ -172,7 +172,7 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 	rs.Check(testkit.Rows("2"))
 }
 
-func (s *testStatsCacheSuite) TestDDLPartition(c *C) {
+func (s *testStatsSuite) TestDDLPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
