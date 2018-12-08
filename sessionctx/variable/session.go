@@ -526,6 +526,12 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
 	case TxnIsolationOneShot:
+		switch val {
+		case "SERIALIZABLE":
+			return ErrWrongValueForVar.GenWithStackByArgs(name, val)
+		case "READ-COMMITTED", "READ-UNCOMMITTED":
+			s.StmtCtx.AppendWarning(ErrWrongValueForVar.GenWithStackByArgs(name, val))
+		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val
 	case TimeZone:

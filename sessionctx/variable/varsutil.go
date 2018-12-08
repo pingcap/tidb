@@ -343,11 +343,17 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", errors.Trace(err)
 		}
 		return v, nil
-	case TxnIsolation, TransactionIsolation:
+	case TransactionIsolation:
 		upVal := strings.ToUpper(value)
 		_, exists := TxIsolationNames[upVal]
 		if !exists {
 			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		switch upVal {
+		case "SERIALIZABLE":
+			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		case "READ-COMMITTED", "READ-UNCOMMITTED":
+			vars.StmtCtx.AppendWarning(ErrWrongValueForVar.GenWithStackByArgs(name, value))
 		}
 		return upVal, nil
 	}
