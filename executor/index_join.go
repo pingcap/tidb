@@ -64,7 +64,6 @@ type innerCtx struct {
 
 type indexJoinTask struct {
 	outerResult *chunk.Chunk
-	resultForHash *chunk.List
 	outerMatch  []bool
 
 	innerResult *chunk.List
@@ -176,6 +175,7 @@ func (e *IndexHashJoin)finishInnerWorker(r interface {}) {
 func (e *IndexHashJoin) waitInnerHashWorkersAndCloseResultChan() {
 	e.workerWg.Wait()
 	close(e.joinResultCh)
+
 }
 
 func (e *IndexJoin) open(ctx context.Context) (error, chan *indexJoinTask, context.Context) {
@@ -242,31 +242,20 @@ func (iw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 }
 func (iw *innerHashWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	var task *indexJoinTask
-	//defer func() {
-	//	if r := recover(); r != nil {
-	//		buf := make([]byte, 4096)
-	//		stackSize := runtime.Stack(buf, false)
-	//		buf = buf[:stackSize]
-	//		log.Errorf("innerWorker panic stack is:\n%s", buf)
-	//		// "task != nil" is guaranteed when panic happened.
-	//		//task.doneCh <- errors.Errorf("%v", r)
-	//	}
-	//	//wg.Done()
-	//}()
+	ok, joinResult := iw.getNewJoinResult()
+	if !ok {
+		return
+	}
 	for ok := true; ok; {
 		select {
 		case task, ok = <-iw.taskCh:
 			if !ok {
-				log.Info("taskCh clean done, inner worker exit")
 				return
 			}
 		case <-ctx.Done():
-			log.Info("get done")
-
 			return
 		}
-		log.Info("get task %v", task)
-		err := iw.handleTask(ctx, task)
+		err := iw.handleTask(ctx, task, joinResult)
 		if err != nil {
 			return
 		}
@@ -277,16 +266,15 @@ func (iw *innerMergeWorker) handleTask(ctx context.Context, task *indexJoinTask)
 	return nil
 }
 
-func (iw *innerHashWorker) handleTask(ctx context.Context, task *indexJoinTask) error {
+func (iw *innerHashWorker) handleTask(ctx context.Context, task *indexJoinTask, joinResult *hashWorkerResult) error {
 
 	dLookUpKeys, err := iw.constructDatumLookupKeys(task)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	dLookUpKeys = iw.sortAndDedupDatumLookUpKeys(dLookUpKeys)
-	log.Info("get look up keys %v", dLookUpKeys)
 
-	err = iw.doJoin(ctx, task, dLookUpKeys)
+	err = iw.doJoin(ctx, task, dLookUpKeys, joinResult)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -359,16 +347,13 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *ind
 	for _, keyCol := range iw.keyCols {
 		d := innerRow.GetDatum(keyCol, iw.rowTypes[keyCol])
 		var err error
-		log.Infof("look up Key %v", d)
 		keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, d)
 		if err != nil {
 			return false, joinResult
 		}
 	}
-	log.Infof("keybuf %v", keyBuf)
 	iw.innerPtrBytes = task.lookupMap.Get(keyBuf, iw.innerPtrBytes[:0])
 	task.matchedInners = task.matchedInners[:0]
-	log.Infof("inner PtrBytes %v", iw.innerPtrBytes)
 	if len(iw.innerPtrBytes) == 0 {
 		iw.joiner.onMissMatch(innerRow, joinResult.chk)
 		return true, joinResult
@@ -376,10 +361,8 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *ind
 	for _, b := range iw.innerPtrBytes {
 		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
 		matchedInner := task.outerResult.GetRow(int(ptr.RowIdx))
-		//matchedInner := task.outerResult.GetRow(ptr)
 		task.matchedInners = append(task.matchedInners, matchedInner)
 	}
-	log.Infof("matched inner rows %d", len(task.matchedInners))
 
 	outerIter := chunk.NewIterator4Slice(task.matchedInners)
 
@@ -391,7 +374,6 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *ind
 			return false, joinResult
 		}
 		hasMatch = hasMatch || matched
-		log.Infof("matched %v chk rows %d", matched, joinResult.chk.NumRows())
 		if joinResult.chk.NumRows() == iw.maxChunkSize {
 			ok := true
 			iw.joinResultCh <- joinResult
@@ -404,29 +386,28 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *ind
 	if !hasMatch {
 		iw.joiner.onMissMatch(innerRow, joinResult.chk)
 	}
-	log.Infof(" chk rows %d", joinResult.chk.NumRows())
 
 	return true, joinResult
 
 }
 
 func (iw *innerHashWorker) join2Chunk(innerChk *chunk.Chunk, joinResult *hashWorkerResult, task *indexJoinTask) (ok bool, _ *hashWorkerResult) {
-	log.Infof("inner rows %d", innerChk.NumRows())
 	for i := 0; i < innerChk.NumRows(); i++ {
 		innerRow := innerChk.GetRow(i)
-		log.Infof("row %d", i)
 
 		ok, joinResult = iw.joinMatchInnerRow2Chunk(innerRow, task, joinResult)
 		if !ok {
 			return false, joinResult
 		}
-		if joinResult.chk.NumRows() == iw.maxChunkSize {
-			iw.joinResultCh <- joinResult
-			ok, joinResult = iw.getNewJoinResult()
-			if !ok {
-				return false, joinResult
-			}
-		}
+		//if joinResult.chk.NumRows() == iw.maxChunkSize {
+		//
+		//	iw.joinResultCh <- joinResult
+		//	ok, joinResult = iw.getNewJoinResult()
+		//	if !ok {
+		//		return false, joinResult
+		//	}
+		//
+		//}
 	}
 
 	return true, joinResult
@@ -459,7 +440,6 @@ func (iw *innerWorker) constructDatumLookupKeys(task *indexJoinTask) ([][]types.
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		log.Infof("keyBuf %v", keyBuf)
 		// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 		//task.encodedLookUpKeys.AppendBytes(0, keyBuf)
 		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
@@ -507,29 +487,24 @@ func (iw *innerHashWorker) getNewJoinResult() (bool, *hashWorkerResult) {
 	case <-iw.closeCh:
 		ok = false
 	case joinResult.chk, ok = <-iw.joinChkResourceCh[iw.workerId]:
-		log.Info("get  join Result ")
+		//log.Info("get join result")
 	}
 	return ok, joinResult
 }
 
-func (iw *innerHashWorker) doJoin(ctx context.Context, task *indexJoinTask, dLookUpKeys [][]types.Datum) error {
+func (iw *innerHashWorker) doJoin(ctx context.Context, task *indexJoinTask, dLookUpKeys [][]types.Datum, joinResult *hashWorkerResult) error {
 	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, iw.indexRanges, iw.keyOff2IdxOff)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("start build executer for index join  done")
-
 	defer terror.Call(innerExec.Close)
 	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 
-	ok, joinResult := iw.getNewJoinResult()
-	log.Info("get join result")
-	if !ok {
-		return nil
-	}
+
 	iw.executorChk.Reset()
+	var ok bool
 	for {
 		err := innerExec.Next(ctx, iw.executorChk)
 		if err != nil {
@@ -539,13 +514,13 @@ func (iw *innerHashWorker) doJoin(ctx context.Context, task *indexJoinTask, dLoo
 		if iw.executorChk.NumRows() == 0 {
 			break
 		}
-		log.Info("get inner result")
 
 		ok, joinResult = iw.join2Chunk(iw.executorChk, joinResult, task)
 		if !ok {
 			break
 		}
 	}
+
 	if joinResult == nil {
 		return nil
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
@@ -611,13 +586,10 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		}
 		close(ow.innerCh)
 		wg.Done()
-		log.Info("outer wokrer exit")
 	}()
 	for {
 		task, err := ow.buildTask(ctx)
 		if err != nil {
-			log.Info("send task error %v", err)
-
 			task.doneCh <- errors.Trace(err)
 			//ow.pushToChan(ctx, task, ow.resultCh)
 			return
@@ -629,10 +601,8 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
 			return
 		}
-		log.Info("send task %v", task)
 
 		if ow.outerCtx.keepOrder {
-			log.Info("push chan ")
 			if finished := ow.pushToChan(ctx, task, ow.resultCh); finished {
 				return
 			}
@@ -671,7 +641,6 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*indexJoinTask, error) {
 		newMemUsage := task.outerResult.MemoryUsage()
 		task.memTracker.Consume(newMemUsage - oldMemUsage)
 	}
-	log.Infof("result size %d", task.outerResult.NumRows())
 	if task.outerResult.NumRows() == 0 {
 		return nil, nil
 	}
@@ -716,8 +685,6 @@ func (e *IndexHashJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 	result, ok := <-e.joinResultCh
-	log.Infof("get result ok %v  %v",ok , result)
-
 	if !ok {
 		return nil
 	}
@@ -734,7 +701,6 @@ func (e *IndexMergeJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *IndexHashJoin) Close() error {
-	log.Infof("do close")
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}
