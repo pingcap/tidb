@@ -584,9 +584,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TxnIsolationOneShot:
 		switch val {
 		case "SERIALIZABLE":
-			return ErrWrongValueForVar.GenWithStackByArgs(name, val)
+			return ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
 		case "READ-COMMITTED", "READ-UNCOMMITTED":
-			s.StmtCtx.AppendWarning(ErrWrongValueForVar.GenWithStackByArgs(name, val))
+			s.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(name, val))
 		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val
