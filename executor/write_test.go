@@ -230,12 +230,19 @@ func (s *testSuite) TestInsert(c *C) {
 	// issue 6360
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bigint unsigned);")
+	tk.MustExec("set sql_mode = 'strict_all_tables';")
 	_, err = tk.Exec("insert into t value (-1);")
 	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 	tk.MustExec("set sql_mode = '';")
 	tk.MustExec("insert into t value (-1);")
+	tk.MustExec("insert into t select -1;")
+	tk.MustExec("insert into t select cast(-1 as unsigned);;")
+	tk.MustExec("insert into t value (-1.111);")
+	tk.MustExec("insert into t value ('-1.111');")
 	r = tk.MustQuery("select * from t;")
-	r.Check(testkit.Rows("0"))
+	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
+	// remember to restore sql_mode so as not to influence other tests
+	tk.MustExec("set sql_mode = 'strict_all_tables';")
 
 	// issue 6424
 	tk.MustExec("drop table if exists t")

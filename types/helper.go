@@ -19,6 +19,7 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 // RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
@@ -192,4 +193,17 @@ func strToInt(str string) (int64, error) {
 		r = -r
 	}
 	return int64(r), err
+}
+
+// strToUintIgnoreError indicates whether we should ignore the error when
+// converting string to uint
+func strToUintIgnoreError(sc *stmtctx.StatementContext) bool {
+	if sc.InInsertStmt && sc.TruncateAsWarning {
+		return true
+	}
+	if sc.InLoadDataStmt {
+		return true
+	}
+
+	return false
 }

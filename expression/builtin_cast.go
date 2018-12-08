@@ -464,7 +464,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 		res = 0
 	} else {
 		var uVal uint64
-		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		uVal, err = types.ConvertIntToUint(nil, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		res = float64(uVal)
 	}
 	return res, false, errors.Trace(err)
@@ -491,7 +491,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 		res = &types.MyDecimal{}
 	} else {
 		var uVal uint64
-		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		uVal, err = types.ConvertIntToUint(nil, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
 			return res, false, errors.Trace(err)
 		}
@@ -520,7 +520,7 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 		res = strconv.FormatInt(val, 10)
 	} else {
 		var uVal uint64
-		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		uVal, err = types.ConvertIntToUint(nil, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
 			return res, false, errors.Trace(err)
 		}
@@ -747,7 +747,7 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		res = 0
 	} else {
 		var uintVal uint64
-		uintVal, err = types.ConvertFloatToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
+		uintVal, err = types.ConvertFloatToUint(nil, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
 		res = int64(uintVal)
 	}
 	return res, isNull, errors.Trace(err)
