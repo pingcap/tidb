@@ -19,8 +19,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -108,4 +110,22 @@ func (s *testCascadesSuite) TestGroupGetFirstElem(c *C) {
 	c.Assert(g.GetFirstElem(OperandProjection).Value.(*GroupExpr), Equals, expr0)
 	c.Assert(g.GetFirstElem(OperandLimit).Value.(*GroupExpr), Equals, expr1)
 	c.Assert(g.GetFirstElem(OperandAny).Value.(*GroupExpr), Equals, expr0)
+}
+
+func (s *testCascadesSuite) TestGetInsertGroupImpl(c *C) {
+	p := &plannercore.LogicalLimit{}
+	expr := NewGroupExpr(p)
+	g := NewGroup(expr)
+	col := &expression.Column{}
+	emptyProp := &property.PhysicalProperty{}
+	orderProp := &property.PhysicalProperty{}
+	orderProp.Cols = append(orderProp.Cols, col)
+	impl := g.getImpl(emptyProp)
+	c.Assert(impl, IsNil)
+	impl = &baseImplementation{plan: &plannercore.PhysicalLimit{}}
+	g.insertImpl(emptyProp, impl)
+	newImpl := g.getImpl(emptyProp)
+	c.Assert(newImpl, Equals, impl)
+	newImpl = g.getImpl(orderProp)
+	c.Assert(newImpl, Not(Equals), impl)
 }

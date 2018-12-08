@@ -125,7 +125,7 @@ type PhysicalPlan interface {
 	ExplainInfo() string
 
 	// getChildReqProps gets the required property by child index.
-	getChildReqProps(idx int) *property.PhysicalProperty
+	GetChildReqProps(idx int) *property.PhysicalProperty
 
 	// StatsCount returns the count of property.StatsInfo for this plan.
 	StatsCount() float64
@@ -161,7 +161,7 @@ type basePhysicalPlan struct {
 	children         []PhysicalPlan
 }
 
-func (p *basePhysicalPlan) getChildReqProps(idx int) *property.PhysicalProperty {
+func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return p.childrenReqProps[idx]
 }
 

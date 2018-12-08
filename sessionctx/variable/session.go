@@ -101,7 +101,7 @@ type TransactionContext struct {
 	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
-	Histroy       interface{}
+	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
 	Shard         *int64
@@ -134,7 +134,7 @@ func (tc *TransactionContext) Cleanup() {
 	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.DirtyDB = nil
 	tc.Binlog = nil
-	tc.Histroy = nil
+	tc.History = nil
 	tc.TableDeltaMap = nil
 }
 
@@ -310,6 +310,9 @@ type SessionVars struct {
 
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
+
+	// EnableWindowFunction enables the window function.
+	EnableWindowFunction bool
 
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
@@ -686,12 +689,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableTablePartition = val
 	case TiDBDDLReorgWorkerCount:
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+	case TiDBDDLReorgBatchSize:
+		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
 	case TiDBEnableRadixJoin:
 		s.EnableRadixJoin = TiDBOptOn(val)
+	case TiDBEnableWindowFunction:
+		s.EnableWindowFunction = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
