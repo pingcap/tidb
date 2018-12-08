@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"net"
 	"strings"
 	"sync"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 

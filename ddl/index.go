@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )
@@ -182,7 +183,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
-	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
+	if fromIdx := schemautil.FindIndexByName(from.L, tbl.Indices); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
 	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
@@ -192,7 +193,7 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	// If spec.FromKey.L == spec.ToKey.L, we operate on the same index(case-insensitive) and change its name (case-sensitive)
 	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
 	// that's illegal by rule.
-	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
+	if toIdx := schemautil.FindIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
 		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenWithStackByArgs(toIdx.Name.O))
 	}
 	return false, nil
@@ -219,7 +220,7 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	idx := findIndexByName(from.L, tblInfo.Indices)
+	idx := schemautil.FindIndexByName(from.L, tblInfo.Indices)
 	idx.Name = to
 	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
@@ -258,7 +259,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, ErrDupKeyName.GenWithStack("index already exist %s", indexName)
@@ -333,7 +334,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			}
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
-				ver, err = convert2RollbackJob(t, job, tblInfo, indexInfo, err)
+				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 			w.reorgCtx.cleanNotifyReorgCancel()
@@ -358,28 +359,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 	return ver, errors.Trace(err)
 }
 
-func convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
-	job.State = model.JobStateRollingback
-	job.Args = []interface{}{indexInfo.Name, getPartitionIDs(tblInfo)}
-	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
-	// Its work is the same as drop index job do.
-	// The write reorganization state in add index job that likes write only state in drop index job.
-	// So the next state is delete only state.
-	indexInfo.State = model.StateDeleteOnly
-	originalState := indexInfo.State
-	job.SchemaState = model.StateDeleteOnly
-	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-	if err1 != nil {
-		return ver, errors.Trace(err1)
-	}
-
-	if kv.ErrKeyExists.Equal(err) {
-		return ver, kv.ErrKeyExists.GenWithStack("Duplicate for key %s", indexInfo.Name.O)
-	}
-
-	return ver, errors.Trace(err)
-}
-
 func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
@@ -393,7 +372,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
@@ -437,12 +416,14 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 			job.Args[0] = indexInfo.ID
+			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compability,
+			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
+		err = ErrInvalidIndexState.GenWithStack("invalid index state %v", indexInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
@@ -521,7 +502,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
-		batchCnt:    DefaultTaskHandleCnt,
+		batchCnt:    int(variable.GetDDLReorgBatchSize()),
 		sessCtx:     sessCtx,
 		taskCh:      make(chan *reorgIndexTask, 1),
 		resultCh:    make(chan *addIndexResult, 1),
@@ -798,7 +779,8 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	handleRange := *task
 	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
 	lastLogCount := 0
-	startTime := time.Now()
+	lastLogTime := time.Now()
+	startTime := lastLogTime
 
 	for {
 		taskCtx, err := w.backfillIndexInTxn(handleRange)
@@ -815,10 +797,11 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		mergeAddIndexCtxToResult(&taskCtx, result)
 		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.addedCount))
 
-		if result.scanCount-lastLogCount >= 30000 {
+		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
-			log.Infof("[ddl-reorg] worker(%v), finish batch addedCount:%v backfill, task addedCount:%v, task scanCount:%v, nextHandle:%v",
-				w.id, taskCtx.addedCount, result.addedCount, result.scanCount, taskCtx.nextHandle)
+			log.Infof("[ddl-reorg] worker(%v), finish batch addedCount:%v backfill, task addedCount:%v, task scanCount:%v, nextHandle:%v, avg row time(ms):%v",
+				w.id, taskCtx.addedCount, result.addedCount, result.scanCount, taskCtx.nextHandle, time.Since(lastLogTime).Seconds()*1000/float64(num))
+			lastLogTime = time.Now()
 		}
 
 		handleRange.startHandle = taskCtx.nextHandle
@@ -864,6 +847,8 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		//	continue
 		//}
 
+		// Dynamic change batch size.
+		w.batchCnt = int(variable.GetDDLReorgBatchSize())
 		result := w.handleBackfillTask(d, task)
 		w.resultCh <- result
 	}
@@ -1188,15 +1173,6 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 		}
 	}
 	return 0, errors.Errorf("partition id not found %d", currentPartition)
-}
-
-func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
-	for _, idx := range indices {
-		if idx.Name.L == idxName {
-			return idx
-		}
-	}
-	return nil
 }
 
 func allocateIndexID(tblInfo *model.TableInfo) int64 {

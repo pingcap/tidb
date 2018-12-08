@@ -161,6 +161,9 @@ func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 
 func runTestRegression(c *C, overrider configOverrider, dbName string) {
 	runTestsOnNewDB(c, overrider, dbName, func(dbt *DBTest) {
+		// Show the user
+		dbt.mustExec("select user()")
+
 		// Create Table
 		dbt.mustExec("CREATE TABLE test (val TINYINT)")
 
@@ -616,13 +619,14 @@ func runTestShowProcessList(c *C) {
 func runTestAuth(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	runTests(c, func(config *mysql.Config) {
 		config.User = "authtest"
 		config.Passwd = "123"
 	}, func(dbt *DBTest) {
-		dbt.mustExec(`USE mysql;`)
+		dbt.mustExec(`USE information_schema;`)
 	})
 
 	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
@@ -630,20 +634,21 @@ func runTestAuth(c *C) {
 		config.Passwd = "456"
 	}))
 	c.Assert(err, IsNil)
-	_, err = db.Query("USE mysql;")
+	_, err = db.Query("USE information_schema;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()
 
 	// Test login use IP that not exists in mysql.user.
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest2'@'localhost' IDENTIFIED BY '123';`)
+		dbt.mustExec(`GRANT ALL on test.* to 'authtest2'@'localhost'`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	runTests(c, func(config *mysql.Config) {
 		config.User = "authtest2"
 		config.Passwd = "123"
 	}, func(dbt *DBTest) {
-		dbt.mustExec(`USE mysql;`)
+		dbt.mustExec(`USE information_schema;`)
 	})
 }
 
@@ -680,7 +685,9 @@ func runTestIssue3680(c *C) {
 func runTestIssue3682(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
-		dbt.mustExec(`FLUSH PRIVILEGES;`)
+		dbt.mustExec(`GRANT ALL on test.* to 'issue3682'`)
+		dbt.mustExec(`GRANT ALL on mysql.* to 'issue3682'`)
+		dbt.mustExec(`FLUSH PRIVILEGES`)
 	})
 	runTests(c, func(config *mysql.Config) {
 		config.User = "issue3682"
