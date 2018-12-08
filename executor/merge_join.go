@@ -305,7 +305,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		if cmpResult < 0 {
-			e.joiner.onMissMatch(e.outerTable.row, chk)
+			e.joiner.onMissMatch(false, e.outerTable.row, chk)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -319,7 +319,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			continue
 		}
 
-		matched, err := e.joiner.tryToMatch(e.outerTable.row, e.innerIter4Row, chk)
+		matched, _, err := e.joiner.tryToMatch(e.outerTable.row, e.innerIter4Row, chk)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -327,7 +327,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 
 		if e.innerIter4Row.Current() == e.innerIter4Row.End() {
 			if !e.outerTable.hasMatch {
-				e.joiner.onMissMatch(e.outerTable.row, chk)
+				e.joiner.onMissMatch(false, e.outerTable.row, chk)
 			}
 			e.outerTable.row = e.outerTable.iter.Next()
 			e.innerIter4Row.Begin()

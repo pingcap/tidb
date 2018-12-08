@@ -112,25 +112,30 @@ func (e CNFExprs) Clone() CNFExprs {
 }
 
 // EvalBool evaluates expression list to a boolean value.
-func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, error) {
+func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
+	isnull := false
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if data.IsNull() {
-			return false, nil
+			isnull = true
+			continue
 		}
 
 		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if i == 0 {
-			return false, nil
+			return false, false, nil
 		}
 	}
-	return true, nil
+	if isnull {
+		return false, true, nil
+	}
+	return true, false, nil
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.

@@ -994,3 +994,75 @@ func (s *testSuite) TestHashJoin(c *C) {
 	innerExecInfo = row[3][4].(string)
 	c.Assert(innerExecInfo[len(innerExecInfo)-1:], LessEqual, "5")
 }
+
+func (s *testSuite) TestNotInAntiJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(null, 1), (1, 2)")
+	tk.MustQuery("select * from t t1 where a not in (select b from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a not in (select b from t t2 where t1.b = t2.a)").Check(testkit.Rows(
+		"1 2",
+	))
+	tk.MustQuery("select * from t t1 where a not in (select a from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a not in (select a from t t2 where t1.b = t2.b)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a != all (select b from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a != all (select b from t t2 where t1.b = t2.a)").Check(testkit.Rows(
+		"1 2",
+	))
+	tk.MustQuery("select * from t t1 where a != all (select a from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a != all (select a from t t2 where t1.b = t2.b)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where not exists (select * from t t2 where t1.a = t2.b)").Check(testkit.Rows(
+		"<nil> 1",
+	))
+	tk.MustQuery("select * from t t1 where not exists (select * from t t2 where t1.a = t2.a)").Check(testkit.Rows(
+		"<nil> 1",
+	))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1, null), (2, 1)")
+	tk.MustQuery("select * from t t1 where a not in (select b from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a not in (select b from t t2 where t1.b = t2.a)").Check(testkit.Rows(
+		"1 <nil>",
+	))
+	tk.MustQuery("select * from t t1 where a not in (select a from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a not in (select a from t t2 where t1.b = t2.b)").Check(testkit.Rows(
+		"1 <nil>",
+	))
+	tk.MustQuery("select * from t t1 where a != all (select b from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a != all (select b from t t2 where t1.b = t2.a)").Check(testkit.Rows(
+		"1 <nil>",
+	))
+	tk.MustQuery("select * from t t1 where a != all (select a from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a != all (select a from t t2 where t1.b = t2.b)").Check(testkit.Rows(
+		"1 <nil>",
+	))
+	tk.MustQuery("select * from t t1 where not exists (select * from t t2 where t1.a = t2.b)").Check(testkit.Rows(
+		"2 1",
+	))
+	tk.MustQuery("select * from t t1 where not exists (select * from t t2 where t1.a = t2.a)").Check(testkit.Rows())
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1, null), (2, 1), (null, 2)")
+	tk.MustQuery("select * from t t1 where a not in (select b from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a not in (select b from t t2 where t1.b = t2.a)").Check(testkit.Rows(
+		"1 <nil>",
+	))
+	tk.MustQuery("select * from t t1 where a not in (select a from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a not in (select a from t t2 where t1.b = t2.b)").Check(testkit.Rows(
+		"1 <nil>",
+	))
+	tk.MustQuery("select * from t t1 where a != all (select b from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a != all (select b from t t2 where t1.b = t2.a)").Check(testkit.Rows(
+		"1 <nil>",
+	))
+	tk.MustQuery("select * from t t1 where a != all (select a from t t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t t1 where a != all (select a from t t2 where t1.b = t2.b)").Check(testkit.Rows(
+		"1 <nil>",
+	))
+	tk.MustQuery("select * from t t1 where not exists (select * from t t2 where t1.a = t2.b)").Check(testkit.Rows(
+		"<nil> 2",
+	))
+	tk.MustQuery("select * from t t1 where not exists (select * from t t2 where t1.a = t2.a)").Check(testkit.Rows(
+		"<nil> 2",
+	))
+}
