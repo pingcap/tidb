@@ -397,9 +397,9 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	for i := 0; i < len(pi.Definitions); i++ {
 		def := &pi.Definitions[i]
 		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
-			pid, err := t.GenGlobalID()
+			pid, err1 := t.GenGlobalID()
 			if err != nil {
-				return ver, errors.Trace(err)
+				return ver, errors.Trace(err1)
 			}
 			oldID = def.ID
 			def.ID = pid

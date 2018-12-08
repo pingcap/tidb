@@ -1435,7 +1435,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	if err := checkPartitionExist(meta, spec.Name); err != nil {
+	if err = checkPartitionExist(meta, spec.Name); err != nil {
 		return errors.Trace(err)
 	}
 
