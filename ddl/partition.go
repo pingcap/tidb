@@ -318,6 +318,17 @@ func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 	return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs(partName))
 }
 
+func checkPartitionExist(meta *model.TableInfo, parName string) error {
+	// TODO: MySQL behavior for hash partition is weird, "create table .. partition by hash partition 4",
+	// it use p0, p1, p2, p3 as partition names automatically.
+	for _, def := range meta.Partition.Definitions {
+		if strings.EqualFold(def.Name.L, strings.ToLower(parName)) {
+			return nil
+		}
+	}
+	return errors.Trace(errUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
+}
+
 // removePartitionInfo each ddl job deletes a partition.
 func removePartitionInfo(tblInfo *model.TableInfo, partName string) int64 {
 	oldDefs := tblInfo.Partition.Definitions
@@ -362,6 +373,52 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	// A background job will be created to delete old partition data.
 	job.Args = []interface{}{physicalTableID}
+	return ver, nil
+}
+
+// onDropTablePartition truncates old partition meta.
+func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
+	var ver int64
+	var partName string
+	if err := job.DecodeArgs(&partName); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return ver, errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	oldID := int64(-1)
+	for i := 0; i < len(pi.Definitions); i++ {
+		def := &pi.Definitions[i]
+		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
+			pid, err := t.GenGlobalID()
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			oldID = def.ID
+			def.ID = pid
+			break
+		}
+	}
+	if oldID == -1 {
+		return ver, errUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
+	}
+
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	// A background job will be created to delete old partition data.
+	job.Args = []interface{}{oldID}
 	return ver, nil
 }
 
