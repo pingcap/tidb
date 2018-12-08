@@ -491,7 +491,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil {
-				ret, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
+				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue
 				}
@@ -2105,11 +2105,29 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	return ap
 }
 
+func cannotDecorrelate(fromNotIn bool, innerPlan LogicalPlan, condition []expression.Expression) bool {
+	if !fromNotIn {
+		return false
+	}
+	innerSchema := innerPlan.Schema()
+	cols := make([]*expression.Column, 0, 2*len(condition))
+	cols = expression.ExtractColumnsFromExpressions(cols, condition, nil)
+	for _, col := range cols {
+		if innerCol := innerSchema.RetrieveColumn(col); innerCol != nil && !mysql.HasNotNullFlag(innerCol.RetType.Flag) {
+			return true
+		}
+	}
+	return false
+}
+
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
-func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression, asScalar, not bool) (LogicalPlan, error) {
+func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition []expression.Expression,
+	asScalar, not bool, fromNotIn bool) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagDecorrelate
+	if !cannotDecorrelate(fromNotIn, innerPlan, condition) {
+		b.optFlag = b.optFlag | flagDecorrelate
+	}
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	if err != nil {

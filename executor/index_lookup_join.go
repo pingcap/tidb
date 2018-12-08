@@ -234,7 +234,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, err := e.joiner.tryToMatch(outerRow, e.innerIter, chk)
+			matched, _, err := e.joiner.tryToMatch(outerRow, e.innerIter, chk)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -242,7 +242,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
 			if !task.hasMatch {
-				e.joiner.onMissMatch(outerRow, chk)
+				e.joiner.onMissMatch(false, outerRow, chk)
 			}
 			task.cursor++
 			task.hasMatch = false

@@ -1904,3 +1904,47 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }
+
+func (s *testPlanSuite) TestNotInDecorrelate(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from t t1 where a not in (select e from t t2)",
+			best: "Apply{DataScan(t1)->DataScan(t2)}->Projection",
+		},
+		{
+			sql:  "select * from t t1 where a != all (select e from t t2)",
+			best: "Apply{DataScan(t1)->DataScan(t2)}->Sel([5_aux_0])->Projection",
+		},
+		// Column `b` has NotNull flag, so we can decorrelate this `not in`.
+		{
+			sql:  "select * from t t1 where a not in (select b from t t2)",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.b)->Projection",
+		},
+		{
+			sql:  "select * from t t1 where a != all (select b from t t2)",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.b)->Sel([5_aux_0])->Projection",
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}

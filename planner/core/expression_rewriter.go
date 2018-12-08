@@ -363,11 +363,11 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 			if v.All {
 				er.handleEQAll(lexpr, rexpr, np)
 			} else {
-				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, false)
+				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, false, false)
 			}
 		} else if v.Op == opcode.NE {
 			if v.All {
-				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, true)
+				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, true, true)
 			} else {
 				er.handleNEAny(lexpr, rexpr, np)
 			}
@@ -457,7 +457,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	// plan4Agg.buildProjectionIfNecessary()
 	if !er.asScalar {
 		// For Semi LogicalApply without aux column, the result is no matter false or null. So we can add it to join predicate.
-		er.p, er.err = er.b.buildSemiApply(er.p, plan4Agg, []expression.Expression{cond}, false, false)
+		er.p, er.err = er.b.buildSemiApply(er.p, plan4Agg, []expression.Expression{cond}, false, false, false)
 		return
 	}
 	// If we treat the result as a scalar value, we will add a projection with a extra column to output true, false or null.
@@ -545,7 +545,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.popExistsSubPlan(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not, false)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
@@ -668,7 +668,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		}
 		er.p = join
 	} else {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, v.Not)
 		if er.err != nil {
 			return v, true
 		}
