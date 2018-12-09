@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"bytes"
 	"context"
 	"math"
 	"sync"
@@ -112,9 +111,6 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 			}
 			delCnt++
 		}
-		if bytes.Equal(txn.primaryKey, k) {
-			primaryKey = txn.primaryKey
-		}
 		keys = append(keys, k)
 		entrySize := len(k) + len(v)
 		if entrySize > kv.TxnEntrySizeLimit {
@@ -132,9 +128,6 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 				Op:  pb.Op_Lock,
 				Key: lockKey,
 			}
-			if bytes.Equal(txn.primaryKey, lockKey) {
-				primaryKey = txn.primaryKey
-			}
 			lockCnt++
 			keys = append(keys, lockKey)
 			size += len(lockKey)
@@ -143,13 +136,17 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	if len(keys) == 0 {
 		return nil, nil
 	}
+
 	// If primaryKey is not set or not in the mutations, use the first key as the primary key
-	if primaryKey == nil {
-		if txn.primaryKey != nil {
-			log.Warnf("[BIG_TXN] primary key is set but not used, primaryKey:%s", txn.primaryKey)
-		}
+	if txn.primaryKey == nil {
 		primaryKey = keys[0]
+	} else if _, ok := mutations[string(txn.primaryKey)]; !ok {
+		primaryKey = keys[0]
+		log.Warnf("primary key is set but not used, primaryKey:%s", txn.primaryKey)
+	} else {
+		primaryKey = txn.primaryKey
 	}
+
 	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	if len(keys) > int(entrylimit) || size > kv.TxnTotalSizeLimit {
 		return nil, kv.ErrTxnTooLarge
