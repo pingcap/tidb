@@ -395,12 +395,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		switch upVal {
-		case "SERIALIZABLE":
+		case "SERIALIZABLE", "READ-UNCOMMITTED":
 			return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
-		case "READ-COMMITTED", "READ-UNCOMMITTED":
+		case "READ-COMMITTED":
 			// prevent double warning
 			if name == "transaction_isolation" {
-				vars.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(name, value))
+				vars.StmtCtx.AppendWarning(ErrNotRecommendedValueForVar.GenWithStackByArgs(name, value))
 			}
 		}
 		return upVal, nil

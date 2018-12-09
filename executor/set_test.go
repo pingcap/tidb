@@ -140,14 +140,14 @@ func (s *testSuite) TestSetVar(c *C) {
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	// warning
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 variable 'transaction_isolation' does not yet support value: READ-COMMITTED"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 variable 'transaction_isolation' does not recommend value: READ-COMMITTED"))
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
-	// warning
-	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 variable 'transaction_isolation' does not yet support value: READ-UNCOMMITTED"))
-	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
-	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	// error
+	_, err = tk.Exec("SET SESSION TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	// Fails
 	_, err = tk.Exec("SET GLOBAL TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
@@ -156,18 +156,20 @@ func (s *testSuite) TestSetVar(c *C) {
 
 	// test synonyms variables
 	tk.MustExec("SET SESSION tx_isolation = 'READ-COMMITTED'")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1105 variable 'transaction_isolation' does not recommend value: READ-COMMITTED"))
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
-	tk.MustExec("SET SESSION tx_isolation = 'READ-UNCOMMITTED'")
-	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
-	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	_, err = tk.Exec("SET SESSION tx_isolation = 'READ-UNCOMMITTED'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
 	// fails
 	_, err = tk.Exec("SET SESSION transaction_isolation = 'SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
-	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
-	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
+	tk.MustQuery("select @@session.transaction_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
 	// fails
 	_, err = tk.Exec("SET GLOBAL transaction_isolation = 'SERIALIZABLE'")
@@ -175,14 +177,15 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 
-	tk.MustExec("SET GLOBAL transaction_isolation = 'READ-UNCOMMITTED'")
-	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
-	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	_, err = tk.Exec("SET GLOBAL transaction_isolation = 'READ-UNCOMMITTED'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 
 	_, err = tk.Exec("SET GLOBAL tx_isolation = 'SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
-	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
-	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("READ-UNCOMMITTED"))
+	tk.MustQuery("select @@global.tx_isolation").Check(testkit.Rows("REPEATABLE-READ"))
+	tk.MustQuery("select @@global.transaction_isolation").Check(testkit.Rows("REPEATABLE-READ"))
 
 	tk.MustExec("SET SESSION tx_read_only = 1")
 	tk.MustExec("SET SESSION tx_read_only = 0")

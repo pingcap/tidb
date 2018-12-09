@@ -82,6 +82,7 @@ var (
 	ErrTruncatedWrongValue         = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	ErrMaxPreparedStmtCountReached = terror.ClassVariable.New(CodeMaxPreparedStmtCountReached, mysql.MySQLErrName[mysql.ErrMaxPreparedStmtCountReached])
 	ErrUnsupportedValueForVar      = terror.ClassVariable.New(CodeUnknownStatusVar, "variable '%s' does not yet support value: %s")
+	ErrNotRecommendedValueForVar   = terror.ClassVariable.New(CodeUnknownStatusVar, "variable '%s' does not recommend value: %s")
 )
 
 func init() {
