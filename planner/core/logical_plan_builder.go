@@ -2008,6 +2008,10 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		Exprs:            make([]expression.Expression, 0, len(columns)),
 		calculateGenCols: true,
 	}.Init(b.ctx)
+
+	// colMap is a 'column id -> column generated expression' mapping
+	colMap := make(map[int64]expression.Expression)
+
 	for i, colExpr := range ds.Schema().Columns {
 		var exprIsGen = false
 		var expr expression.Expression
@@ -2021,11 +2025,21 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				// Because the expression might return different type from
 				// the generated column, we should wrap a CAST on the result.
 				expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+
+				// If any virtual column appears in expr, replace it with its definition expression.
+				// We don't need to re-iterate columns, because a generated column definition can
+				// refer to only generated columns occurring earlier in the table definition
+				expr, err = replaceVirtualColumn(colMap, expr)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				exprIsGen = true
 			}
 		}
 		if !exprIsGen {
 			expr = colExpr
+		} else {
+			colMap[columns[i].ID] = expr
 		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
@@ -2473,4 +2487,35 @@ func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
 		return getInnerFromParentheses(pexpr.Expr)
 	}
 	return expr
+}
+
+// replaceVirtualColumn tries to replace a virtual generated column in given expression with its definition expression
+// stored in 'colMap'
+func replaceVirtualColumn(colMap map[int64]expression.Expression, expr expression.Expression) (expression.Expression, error) {
+	switch x := expr.(type) {
+	case *expression.Constant:
+		return x, nil
+	case *expression.Column:
+		if e, ok := colMap[x.ID]; ok {
+			return e, nil
+		}
+		return x, nil
+	case *expression.ScalarFunction:
+		args := make([]expression.Expression, 0, len(x.GetArgs()))
+		for _, arg := range x.GetArgs() {
+			r, err := replaceVirtualColumn(colMap, arg)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			args = append(args, r)
+		}
+		sf, err := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.RetType, args...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return sf, nil
+	default:
+		// there should be no CorrelatedColumn in a data source
+		return nil, errors.Errorf("Unexpected data source column: %s", expr.String())
+	}
 }
