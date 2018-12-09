@@ -770,3 +770,143 @@ func (bj BinaryJSON) GetElemDepth() int {
 		return 1
 	}
 }
+
+// extractCallbackFn: the type of CALLBACK function for extractToCallback
+type extractCallbackFn func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
+
+// extractToCallback: callback alternative of extractTo
+// NOTICE: path [0] for JSON object other than array is INVALID, which is different from extractTo.
+//         Which is caused by the difference between JSON_SEARCH and JSON_EXTRACT.
+//            SELECT JSON_EXTRACT('{"a":"1", "b":2}', '$.a');                       ==> "1"
+//            SELECT JSON_EXTRACT('{"a":"1", "b":2}', '$[0].a');                    ==> "1"
+//            SELECT  JSON_SEARCH('{"a":"1", "b":2}', 'all', '1', NULL, '$.a');     ==> "$.a"
+//            SELECT  JSON_SEARCH('{"a":"1", "b":2}', 'all', '1', NULL, '$[0].a');  ==> NULL
+func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extractCallbackFn, fullpath PathExpression) (stop bool, err error) {
+	if len(pathExpr.legs) == 0 {
+		return callbackFn(fullpath, bj)
+	}
+
+	currentLeg, subPathExpr := pathExpr.popOneLeg()
+	if currentLeg.typ == pathLegIndex && bj.TypeCode == TypeCodeArray {
+		elemCount := bj.GetElemCount()
+		if currentLeg.arrayIndex == arrayIndexAsterisk {
+			for i := 0; i < elemCount; i++ {
+				//buf = bj.arrayGetElem(i).extractTo(buf, subPathExpr)
+				path := fullpath.pushBackOneIndexLeg(i)
+				stop, err = bj.arrayGetElem(i).extractToCallback(subPathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		} else if currentLeg.arrayIndex < elemCount {
+			//buf = bj.arrayGetElem(currentLeg.arrayIndex).extractTo(buf, subPathExpr)
+			path := fullpath.pushBackOneIndexLeg(currentLeg.arrayIndex)
+			stop, err = bj.arrayGetElem(currentLeg.arrayIndex).extractToCallback(subPathExpr, callbackFn, path)
+			if stop || err != nil {
+				return
+			}
+		}
+	} else if currentLeg.typ == pathLegKey && bj.TypeCode == TypeCodeObject {
+		elemCount := bj.GetElemCount()
+		if currentLeg.dotKey == "*" {
+			for i := 0; i < elemCount; i++ {
+				//buf = bj.objectGetVal(i).extractTo(buf, subPathExpr)
+				path := fullpath.pushBackOneKeyLeg(hack.String(bj.objectGetKey(i)))
+				stop, err = bj.objectGetVal(i).extractToCallback(subPathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		} else {
+			child, ok := bj.objectSearchKey(hack.Slice(currentLeg.dotKey))
+			if ok {
+				//buf = child.extractTo(buf, subPathExpr)
+				path := fullpath.pushBackOneKeyLeg(currentLeg.dotKey)
+				stop, err = child.extractToCallback(subPathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		}
+	} else if currentLeg.typ == pathLegDoubleAsterisk {
+		//buf = bj.extractTo(buf, subPathExpr)
+		stop, err = bj.extractToCallback(subPathExpr, callbackFn, fullpath)
+		if stop || err != nil {
+			return
+		}
+
+		if bj.TypeCode == TypeCodeArray {
+			elemCount := bj.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				//buf = bj.arrayGetElem(i).extractTo(buf, pathExpr)
+				path := fullpath.pushBackOneIndexLeg(i)
+				stop, err = bj.arrayGetElem(i).extractToCallback(pathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		} else if bj.TypeCode == TypeCodeObject {
+			elemCount := bj.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				//buf = bj.objectGetVal(i).extractTo(buf, pathExpr)
+				path := fullpath.pushBackOneKeyLeg(hack.String(bj.objectGetKey(i)))
+				stop, err = bj.objectGetVal(i).extractToCallback(pathExpr, callbackFn, path)
+				if stop || err != nil {
+					return
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
+// BinaryJSONWalkFunc is used as callback function for BinaryJSON.Walk
+type BinaryJSONWalkFunc func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
+
+// Walk traverse BinaryJSON objects
+func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...PathExpression) (err error) {
+	var doWalk extractCallbackFn
+	doWalk = func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error) {
+		stop, err = walkFn(fullpath, bj)
+		if stop || err != nil {
+			return
+		}
+
+		if bj.TypeCode == TypeCodeArray {
+			elemCount := bj.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				path := fullpath.pushBackOneIndexLeg(i)
+				stop, err = doWalk(path, bj.arrayGetElem(i))
+				if stop || err != nil {
+					return
+				}
+			}
+		} else if bj.TypeCode == TypeCodeObject {
+			elemCount := bj.GetElemCount()
+			for i := 0; i < elemCount; i++ {
+				path := fullpath.pushBackOneKeyLeg(hack.String(bj.objectGetKey(i)))
+				stop, err = doWalk(path, bj.objectGetVal(i))
+				if stop || err != nil {
+					return
+				}
+			}
+		}
+		return false, nil
+	}
+
+	fullpath := PathExpression{legs: make([]pathLeg, 0, 32), flags: pathExpressionFlag(0)}
+	if len(pathExprList) > 0 {
+		for _, pathExpr := range pathExprList {
+			stop, err := bj.extractToCallback(pathExpr, doWalk, fullpath)
+			if stop || err != nil {
+				return err
+			}
+		}
+	} else {
+		_, err = doWalk(fullpath, bj)
+		if err != nil {
+			return
+		}
+	}
+	return nil
+}

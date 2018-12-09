@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -772,11 +773,11 @@ func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	// json_doc
-	objOrigin, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	fmt.Println("[objOrigin]", objOrigin)
+	fmt.Println("[obj]", obj)
 
 	// one_or_all
 	containType, isNull, err := b.args[1].EvalString(b.ctx, row)
@@ -806,9 +807,22 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 	}
 	fmt.Println("[escapeChar]", escapeChar)
 
-	// path...
-	var obj json.BinaryJSON
-	if len(b.args) >= 5 {
+	// result
+	result := make([]interface{}, 0)
+
+	// walk json_doc
+	walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
+		fmt.Println(fullpath, bj)
+
+		if bj.TypeCode == json.TypeCodeString && string(bj.GetString()) == searchStr {
+			result = append(result, fullpath.String())
+			if containType == json.ContainsPathOne {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	if len(b.args) >= 5 { // path...
 		pathExprs := make([]json.PathExpression, 0, len(b.args)-4)
 		for i := 4; i < len(b.args); i++ {
 			var s string
@@ -823,13 +837,19 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 			}
 			pathExprs = append(pathExprs, pathExpr)
 		}
-		obj, exists = objOrigin.Extract
+		obj.Walk(walkFn, pathExprs...)
+	} else {
+		obj.Walk(walkFn)
 	}
 
-	result := make([]interface{}, 0, 2)
-	result = append(result, searchStr)
-	result = append(result, escapeChar)
-	return json.CreateBinary(result), false, nil
+	switch len(result) {
+	case 0:
+		return res, true, nil
+	case 1:
+		return json.CreateBinary(result[0]), false, nil
+	default:
+		return json.CreateBinary(result), false, nil
+	}
 }
 
 type jsonStorageSizeFunctionClass struct {

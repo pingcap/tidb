@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 /*
@@ -117,6 +118,30 @@ func (pe PathExpression) popOneLastLeg() (PathExpression, pathLeg) {
 	return PathExpression{legs: pe.legs[:lastLegIdx]}, lastLeg
 }
 
+// pushBackOneIndexLeg pushback one leg of INDEX type
+func (pe PathExpression) pushBackOneIndexLeg(index int) PathExpression {
+	newPe := PathExpression{
+		legs:  append(pe.legs, pathLeg{typ: pathLegIndex, arrayIndex: index}),
+		flags: pe.flags,
+	}
+	if index == -1 {
+		newPe.flags |= pathExpressionContainsAsterisk
+	}
+	return newPe
+}
+
+// pushBackOneKeyLeg pushback one leg of KEY type
+func (pe PathExpression) pushBackOneKeyLeg(key string) PathExpression {
+	newPe := PathExpression{
+		legs:  append(pe.legs, pathLeg{typ: pathLegKey, dotKey: key}),
+		flags: pe.flags,
+	}
+	if key == "*" {
+		newPe.flags |= pathExpressionContainsAsterisk
+	}
+	return newPe
+}
+
 // ContainsAnyAsterisk returns true if pe contains any asterisk.
 func (pe PathExpression) ContainsAnyAsterisk() bool {
 	return pe.flags.containsAnyAsterisk()
@@ -211,4 +236,28 @@ func isBlank(c rune) bool {
 		return true
 	}
 	return false
+}
+
+func (pe PathExpression) String() string {
+	buf := make([]byte, 0)
+
+	buf = append(buf, '$')
+	for _, leg := range pe.legs {
+		switch leg.typ {
+		case pathLegIndex:
+			if leg.arrayIndex == -1 {
+				buf = append(buf, "[*]"...)
+			} else {
+				buf = append(buf, '[')
+				buf = append(buf, hack.Slice(strconv.Itoa(leg.arrayIndex))...)
+				buf = append(buf, ']')
+			}
+		case pathLegKey:
+			buf = append(buf, '.')
+			buf = append(buf, hack.Slice(leg.dotKey)...)
+		case pathLegDoubleAsterisk:
+			buf = append(buf, "**"...)
+		}
+	}
+	return string(buf)
 }
