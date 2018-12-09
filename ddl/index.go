@@ -736,6 +736,9 @@ func (w *addIndexWorker) fetchBackfillRows(ctx context.Context, srcResult distsq
 	handleIdx := len(w.index.Meta().Columns)
 	nextHandle = taskRange.startHandle
 	w.idxRecords = w.idxRecords[:0]
+	if len(w.idxValsBufs) < w.batchCnt {
+		w.idxValsBufs = make([][]types.Datum, w.batchCnt)
+	}
 LOOP1:
 	for {
 		if len(w.idxRecords) >= w.batchCnt {
