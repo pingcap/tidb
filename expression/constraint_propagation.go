@@ -15,7 +15,10 @@ package expression
 
 import (
 	"bytes"
+	"fmt"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -78,24 +81,35 @@ func newExprSet(conditions []Expression) *exprSet {
 	return &exprs
 }
 
+type constraintSolver []constraintPropagateRule
+
+func newConstraintSolver(rules ...constraintPropagateRule) constraintSolver {
+	return constraintSolver(rules)
+}
+
 type pgSolver2 struct{}
 
-// PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+func (_ pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+	solver := newConstraintSolver(ruleConstantFalse, ruleColumnEQConst)
+	return solver.Solve(ctx, conditions)
+}
+
+// Solve propagate constraint according to the rules in the constraintSolver.
+func (s constraintSolver) Solve(ctx sessionctx.Context, conditions []Expression) []Expression {
 	exprs := newExprSet(conditions)
 	s.fixPoint(ctx, exprs)
 	return exprs.Slice()
 }
 
-// fixPoint is the core of the constant propagation algorithm.
+// fixPoint is the core of the constraint propagation algorithm.
 // It will iterate the expression set over and over again, pick two expressions,
 // apply one to another.
 // If new conditions can be infered, they will be append into the expression set.
 // Until no more conditions can be infered from the set, the algorithm finish.
-func (s pgSolver2) fixPoint(ctx sessionctx.Context, exprs *exprSet) {
+func (s constraintSolver) fixPoint(ctx sessionctx.Context, exprs *exprSet) {
 	for {
 		saveLen := len(exprs.data)
-		iterOnce(ctx, exprs)
+		s.iterOnce(ctx, exprs)
 		if saveLen == len(exprs.data) {
 			break
 		}
@@ -104,7 +118,7 @@ func (s pgSolver2) fixPoint(ctx sessionctx.Context, exprs *exprSet) {
 }
 
 // iterOnce picks two expressions from the set, try to propagate new conditions from them.
-func iterOnce(ctx sessionctx.Context, exprs *exprSet) {
+func (s constraintSolver) iterOnce(ctx sessionctx.Context, exprs *exprSet) {
 	for i := 0; i < len(exprs.data); i++ {
 		if exprs.tombstone[i] {
 			continue
@@ -116,24 +130,19 @@ func iterOnce(ctx sessionctx.Context, exprs *exprSet) {
 			if i == j {
 				continue
 			}
-			solve(ctx, i, j, exprs)
+			s.solve(ctx, i, j, exprs)
 		}
 	}
 }
 
 // solve uses exprs[i] exprs[j] to propagate new conditions.
-func solve(ctx sessionctx.Context, i, j int, exprs *exprSet) {
-	for _, rule := range rules {
+func (s constraintSolver) solve(ctx sessionctx.Context, i, j int, exprs *exprSet) {
+	for _, rule := range s {
 		rule(ctx, i, j, exprs)
 	}
 }
 
-type constantPropagateRule func(ctx sessionctx.Context, i, j int, exprs *exprSet)
-
-var rules = []constantPropagateRule{
-	ruleConstantFalse,
-	ruleColumnEQConst,
-}
+type constraintPropagateRule func(ctx sessionctx.Context, i, j int, exprs *exprSet)
 
 // ruleConstantFalse propagates from CNF condition that false plus anything returns false.
 // false, a = 1, b = c ... => false
@@ -163,4 +172,199 @@ func ruleColumnEQConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 			exprs.tombstone[j] = true
 		}
 	}
+}
+
+// ruleColumnGTConst propagates the "column > const" condition.
+func ruleColumnGTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
+	cond := exprs.data[i]
+	f1, ok := cond.(*ScalarFunction)
+	if !ok || f1.FuncName.L != ast.GT {
+		return
+	}
+	var col1 *Column
+	var con1 *Constant
+	col1, ok = f1.GetArgs()[0].(*Column)
+	if !ok {
+		return
+	}
+	con1, ok = f1.GetArgs()[1].(*Constant)
+	if !ok {
+		return
+	}
+
+	expr := exprs.data[j]
+	f2, ok := expr.(*ScalarFunction)
+	if !ok {
+		return
+	}
+
+	// col > c1, col > c2, c1 > c2 => col > c1
+	if f2.FuncName.L == ast.GT {
+		col2, ok := f2.GetArgs()[0].(*Column)
+		if !ok || !col1.Equal(ctx, col2) {
+			return
+		}
+		con2, ok := f2.GetArgs()[1].(*Constant)
+		if !ok {
+			return
+		}
+		if !con1.RetType.Equal(con2.RetType) {
+			return
+		}
+
+		v, isNull, err := compareConstant(ctx, ast.GT, con1, con2)
+		if err != nil {
+			log.Warn(err)
+			return
+		}
+		if !isNull && v > 0 {
+			exprs.tombstone[j] = true
+		}
+		return
+	}
+
+	// The simple case:
+	// col > c1, col < c2, c1 >= c2 => false
+	//
+	// The extended case:
+	// col > c1, f(col) < c2, f is monotonous, f(c1) <= c2 => false
+	//
+	// Prove:
+	// col > c1, f is monotonous => f(col) > f(c1)
+	// f(col) > f(c1), f(col) < c2, f(c1) >= c2 => false
+	if f2.FuncName.L == ast.LT {
+		con2, ok := f2.GetArgs()[1].(*Constant)
+		if !ok {
+			return
+		}
+		arg0 := f2.GetArgs()[0]
+		// The simple case.
+		var fc1 Expression
+		col2, ok := arg0.(*Column)
+		if ok {
+			fc1 = con1
+		} else {
+			// The extended case.
+			scalarFunc, ok := arg0.(*ScalarFunction)
+			if !ok {
+				return
+			}
+			_, ok = monotoneFuncs[scalarFunc.FuncName.L]
+			if !ok {
+				return
+			}
+			col2, ok = scalarFunc.GetArgs()[0].(*Column)
+			if !ok {
+				return
+			}
+			var err error
+			fc1, err = NewFunction(ctx, scalarFunc.FuncName.L, scalarFunc.RetType, con1)
+			if err != nil {
+				log.Warn(err)
+				return
+			}
+		}
+		if !col1.Equal(ctx, col2) {
+			return
+		}
+		v, isNull, err := compareConstant(ctx, ast.GE, fc1, con2)
+		if err != nil {
+			log.Warn(err)
+			return
+		}
+		if !isNull && v > 0 {
+			exprs.SetConstFalse()
+		}
+		return
+	}
+	return
+}
+
+var monotoneFuncs = map[string]struct{}{
+	ast.ToDays: struct{}{},
+}
+
+// compareConstant compares two expressions. c1 and c2 should be constant with the same type.
+func compareConstant(ctx sessionctx.Context, fn string, c1, c2 Expression) (int64, bool, error) {
+	cmp, err := NewFunction(ctx, fn, c1.GetType(), c1, c2)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	return cmp.EvalInt(ctx, chunk.Row{})
+}
+
+// ruleColumnLTConst propagates the "column < const" condition.
+func ruleColumnLTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
+	cond := exprs.data[i]
+	f1, ok := cond.(*ScalarFunction)
+	if !ok || f1.FuncName.L != ast.LT {
+		return
+	}
+	var col1 *Column
+	var con1 *Constant
+	col1, ok = f1.GetArgs()[0].(*Column)
+	if !ok {
+		return
+	}
+	con1, ok = f1.GetArgs()[1].(*Constant)
+	if !ok {
+		return
+	}
+
+	expr := exprs.data[j]
+	f2, ok := expr.(*ScalarFunction)
+	if !ok {
+		return
+	}
+	// col < c1, col < c2, c1 < c2 => col < c1
+	if f2.FuncName.L == ast.LT {
+		col2, ok := f2.GetArgs()[0].(*Column)
+		if !ok || !col1.Equal(ctx, col2) {
+			return
+		}
+		con2, ok := f2.GetArgs()[1].(*Constant)
+		if !ok {
+			return
+		}
+		if !con1.RetType.Equal(con2.RetType) {
+			return
+		}
+
+		v, isNull, err := compareConstant(ctx, ast.LT, con1, con2)
+		if err != nil {
+			log.Warn(err)
+			return
+		}
+		if !isNull && v > 0 {
+			exprs.tombstone[j] = true
+		}
+		return
+	}
+
+	// col < c1, col > c2, c1 <= c2 => false
+	if f2.FuncName.L == ast.GT {
+		col2, ok := f2.GetArgs()[0].(*Column)
+		if !ok || !col1.Equal(ctx, col2) {
+			return
+		}
+		con2, ok := f2.GetArgs()[1].(*Constant)
+		if !ok {
+			return
+		}
+
+		if !con1.RetType.Equal(con2.RetType) {
+			return
+		}
+
+		v, isNull, err := compareConstant(ctx, ast.LE, con1, con2)
+		if err != nil {
+			log.Warn(err)
+			return
+		}
+		if !isNull && v > 0 {
+			exprs.SetConstFalse()
+		}
+		return
+	}
+	return
 }
