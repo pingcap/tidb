@@ -262,7 +262,7 @@ func (b *builtinLastInsertIDSig) Clone() builtinFunc {
 // evalInt evals LAST_INSERT_ID().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(b.ctx.GetSessionVars().PrevLastInsertID)
+	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
 	return res, false, nil
 }
 
@@ -439,6 +439,6 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
 func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(b.ctx.GetSessionVars().PrevAffectedRows)
+	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
 	return res, false, nil
 }
