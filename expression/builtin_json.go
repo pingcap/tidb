@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -68,6 +69,7 @@ var (
 	_ builtinFunc = &builtinJSONMergeSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
 	_ builtinFunc = &builtinJSONDepthSig{}
+	_ builtinFunc = &builtinJSONSearchSig{}
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
@@ -910,7 +912,6 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	fmt.Println("[obj]", obj)
 
 	// one_or_all
 	containType, isNull, err := b.args[1].EvalString(b.ctx, row)
@@ -921,33 +922,34 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 		return res, true, json.ErrInvalidJSONContainsPathType
 	}
 
-	// search_str
+	// search_str & escape_char
 	searchStr, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-
-	// escape_char
-	escapeChar := "\\"
+	escape := byte('\\')
 	if len(b.args) >= 4 {
-		escapeChar, isNull, err = b.args[3].EvalString(b.ctx, row)
+		escapeStr, isNull, err := b.args[3].EvalString(b.ctx, row)
 		if err != nil {
 			return res, isNull, errors.Trace(err)
 		}
-		if isNull {
-			escapeChar = "\\"
+		if isNull || len(escapeStr) == 0 {
+			escape = byte('\\')
+		} else if len(escapeStr) == 1 {
+			escape = byte(escapeStr[0])
+		} else {
+			err = errors.New("Incorrect arguments to ESCAPE")
+			return res, true, errors.Trace(err)
 		}
 	}
-	fmt.Println("[escapeChar]", escapeChar)
+	patChars, patTypes := stringutil.CompilePattern(searchStr, escape)
 
 	// result
 	result := make([]interface{}, 0)
 
 	// walk json_doc
 	walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
-		fmt.Println(fullpath, bj)
-
-		if bj.TypeCode == json.TypeCodeString && string(bj.GetString()) == searchStr {
+		if bj.TypeCode == json.TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
 			result = append(result, fullpath.String())
 			if containType == json.ContainsPathOne {
 				return true, nil
