@@ -168,19 +168,19 @@ func (s *testSuite) TestCreateView(c *C) {
 	_, err = tk.Exec("create view v6 (c,d) as select * from t1")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
-	c.Assert(err, Equals, ddl.ErrViewWrongList.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 	tk.MustExec("drop table v1,v2,v3,v4,v5,v6")
 	//view with variable
 	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
-	c.Assert(err.Error(), Equals, "Table 'test.v1' already exists")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
 	tk.MustExec("drop table v1")
 	//view with different col counts
 	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
-	c.Assert(err, Equals, ddl.ErrViewWrongList.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
-	c.Assert(err, Equals, ddl.ErrViewWrongList.Error())
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 }
 
 func (s *testSuite) TestCreateDropDatabase(c *C) {
