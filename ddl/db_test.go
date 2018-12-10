@@ -294,6 +294,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	var checkErr error
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.s.(sessionctx.Context), hook)
+	originalHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "create unique index c3_index on t1 (c3)", done)
@@ -336,8 +337,7 @@ LOOP:
 
 	s.mustExec(c, "drop table t1")
 	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
-	callback := &ddl.TestDDLCallback{}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
@@ -381,6 +381,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
 	}
+	originalHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	rs, err := s.tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
@@ -390,7 +391,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 
-	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
 		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
@@ -2069,6 +2070,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 		}
 	}
 
+	originalHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
@@ -2093,6 +2095,7 @@ LOOP:
 		}
 	}
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(c, "drop table t1")
 	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }
