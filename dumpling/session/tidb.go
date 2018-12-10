@@ -153,8 +153,9 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	var rs sqlexec.RecordSet
 	se := sctx.(*session)
 	rs, err = s.Exec(ctx)
+	sessVars := se.GetSessionVars()
 	// All the history should be added here.
-	se.GetSessionVars().TxnCtx.StatementCount++
+	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly() {
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
@@ -167,7 +168,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			}
 		}
 	}
-	if !se.sessionVars.InTxn() {
+	if !sessVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
 			err1 := se.RollbackTxn(ctx)
@@ -180,10 +181,18 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// So we limit the statement count in a transaction here.
 		history := GetHistory(sctx)
 		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
-			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-				history.Count(), sctx.GetSessionVars().IsAutocommit())
+			if !sessVars.BatchCommit {
+				err1 := se.RollbackTxn(ctx)
+				terror.Log(errors.Trace(err1))
+				return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+					history.Count(), sctx.GetSessionVars().IsAutocommit())
+			}
+			err = se.NewTxn(ctx)
+			// The transaction does not committed yet, we need to keep it in transaction.
+			// The last history could not be "commit"/"rollback" statement.
+			// It means it is impossible to start a new transaction at the end of the transaction.
+			// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
+			se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 	}
 	if se.txn.pending() {
