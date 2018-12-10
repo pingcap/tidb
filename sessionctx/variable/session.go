@@ -292,6 +292,9 @@ type SessionVars struct {
 	// BatchDelete indicates if we should split delete data into multiple batches.
 	BatchDelete bool
 
+	// BatchCommit indicates if we should split the transaction into multiple batches.
+	BatchCommit bool
+
 	// IDAllocator is provided by kvEncoder, if it is provided, we will use it to alloc auto id instead of using
 	// Table.alloc.
 	IDAllocator autoid.Allocator
@@ -633,6 +636,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
 		s.BatchDelete = TiDBOptOn(val)
+	case TiDBBatchCommit:
+		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = tidbOptPositiveInt32(val, DefDMLBatchSize)
 	case TiDBCurrentTS, TiDBConfig:

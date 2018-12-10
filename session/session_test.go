@@ -2030,6 +2030,63 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSessionSuite) TestBatchCommit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_batch_commit = 1")
+	tk.MustExec("create table t (id int)")
+	saved := config.GetGlobalConfig().Performance
+	config.GetGlobalConfig().Performance.StmtCountLimit = 3
+	defer func() {
+		config.GetGlobalConfig().Performance = saved
+	}()
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("SET SESSION autocommit = 1")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (2)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("rollback")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+
+	// The above rollback will not make the session in transaction.
+	tk.MustExec("insert into t values (1)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (5)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (6)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (7)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+
+	// The session is still in transaction.
+	tk.MustExec("insert into t values (8)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into t values (9)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into t values (10)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7", "8", "9", "10"))
+
+	// The above commit will not make the session in transaction.
+	tk.MustExec("insert into t values (11)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7", "8", "9", "10", "11"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("SET SESSION autocommit = 0")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t values (3)")
+	tk.MustExec("rollback")
+	tk1.MustExec("insert into t values (4)")
+	tk1.MustExec("insert into t values (5)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("4", "5"))
+}
+
 func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '-8:00'")
