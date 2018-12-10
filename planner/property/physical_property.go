@@ -101,3 +101,17 @@ func (p *PhysicalProperty) HashCode() []byte {
 func (p *PhysicalProperty) String() string {
 	return fmt.Sprintf("Prop{cols: %v, desc: %v, TaskTp: %s, expectedCount: %v}", p.Cols, p.Desc, p.TaskTp, p.ExpectedCnt)
 }
+
+// Clone returns a copy of PhysicalProperty. Currently, this function is only used to build new
+// required property for children plan in `exhaustPhysicalPlans`, so we don't copy `Enforced` field
+// because if `Enforced` is true, the `Cols` must be empty now, this makes `Enforced` meaningless
+// for children nodes.
+func (p *PhysicalProperty) Clone() *PhysicalProperty {
+	prop := &PhysicalProperty{
+		Cols:        p.Cols,
+		Desc:        p.Desc,
+		TaskTp:      p.TaskTp,
+		ExpectedCnt: p.ExpectedCnt,
+	}
+	return prop
+}
