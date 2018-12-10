@@ -14,11 +14,11 @@
 package oracles
 
 import (
+	"context"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"golang.org/x/net/context"
 )
 
 var _ oracle.Oracle = &localOracle{}

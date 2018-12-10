@@ -14,7 +14,6 @@
 package aggregation
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -33,7 +32,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if value.IsNull() {
 			return nil
@@ -48,7 +47,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 	if cf.HasDistinct {
 		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		if !d {
 			return nil
