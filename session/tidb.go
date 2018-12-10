@@ -187,7 +187,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 					history.Count(), sctx.GetSessionVars().IsAutocommit())
 			}
-			err = se.NewTxn()
+			err = se.NewTxn(ctx)
 			// The transaction does not committed yet, we need to keep it in transaction.
 			// The last history could not be "commit"/"rollback" statement.
 			// It means it is impossible to start a new transaction at the end of the transaction.
