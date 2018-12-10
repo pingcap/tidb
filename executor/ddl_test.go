@@ -143,7 +143,7 @@ func (s *testSuite) TestCreateView(c *C) {
 	//test create a exist view
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
 	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
-	c.Assert(err.Error(), Equals, "Table 'test.view_t' already exists")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
 	//create view on nonexistent table
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
 	c.Assert(err.Error(), Equals, "Table 'test.t1' doesn't exist")
