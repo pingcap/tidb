@@ -117,7 +117,7 @@ func AfterTest(c *check.C, checkCnt ...int) func() {
 			return
 		}
 		for _, g := range leaked {
-			c.Errorf("Test appears to have leaked: %v", g)
+			c.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
 		}
 	}
 }
