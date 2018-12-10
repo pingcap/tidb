@@ -1242,9 +1242,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
 		function, er.err = expression.NewFunctionBase(er.ctx, v.FnName.L, &v.Type, args...)
-		c := &expression.Constant{Value: types.NewDatum(nil), RetType: &v.Type, DeferredExpr: function}
-		c.GetType().Tp = function.GetType().Tp
-		c.GetType().Decimal = function.GetType().Decimal
+		c := &expression.Constant{Value: types.NewDatum(nil), RetType: types.CloneFieldType(function.GetType()), DeferredExpr: function}
 		er.ctxStack = append(er.ctxStack, c)
 	} else {
 		function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)

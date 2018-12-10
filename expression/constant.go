@@ -99,12 +99,10 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 				c.Value.SetNull()
 				return c.Value, nil
 			}
-			retType := types.NewFieldType(c.RetType.Tp)
-			if retType.Tp == mysql.TypeUnspecified {
-				retType.Tp = mysql.TypeVarString
+			if c.RetType.Tp == mysql.TypeUnspecified {
+				c.RetType.Tp = mysql.TypeVarString
 			}
-			retType.Decimal = c.RetType.Decimal
-			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, retType)
+			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
 			if err != nil {
 				return dt, err
 			}
