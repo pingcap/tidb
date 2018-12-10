@@ -1009,16 +1009,8 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		Args:       []interface{}{tbInfo, s.OrReplace},
 	}
 	err = d.doDDLJob(ctx, job)
-	if err != nil {
-		return err
-	}
-	if tbInfo.AutoIncID > 1 {
-		// Default tableAutoIncID base is 0.
-		// If the first ID is expected to greater than 1, we need to do rebase.
-		err = d.handleAutoIncID(tbInfo, schema.ID)
-	}
-	err = d.callHookOnChanged(err)
-	return err
+
+	return d.callHookOnChanged(err)
 }
 
 func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
