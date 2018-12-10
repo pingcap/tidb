@@ -41,6 +41,7 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "testing.RunTests") ||
 			strings.Contains(stack, "check.(*resultTracker).start") ||
 			strings.Contains(stack, "check.(*suiteRunner).runFunc") ||
+			strings.Contains(stack, "check.(*suiteRunner).parallelRun") ||
 			strings.Contains(stack, "localstore.(*dbStore).scheduler") ||
 			strings.Contains(stack, "tikv.(*noGCHandler).Start") ||
 			strings.Contains(stack, "ddl.(*ddl).start") ||
@@ -89,7 +90,7 @@ func AfterTest(c *check.C, checkCnt ...int) func() {
 	}
 
 	cnt := defaultCheckCnt
-	if len(chekcCnt) <= 0 {
+	if len(checkCnt) > 0 {
 		cnt = checkCnt[0]
 	}
 
