@@ -3087,6 +3087,10 @@ func (s *testDBSuite) TestAlterTableTruncatePartition(c *C) {
 	result = s.tk.MustQuery("select * from employees order by id")
 	result.Check(testkit.Rows(`2 1995`, `3 2000`))
 
+	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+	hasOldPartitionData := checkPartitionDelRangeDone(c, s, partitionPrefix)
+	c.Assert(hasOldPartitionData, IsFalse)
+
 	is = domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
 	c.Assert(err, IsNil)
