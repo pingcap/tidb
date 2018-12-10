@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type processinfoSetter interface {
@@ -96,7 +96,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("executor.Next", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 

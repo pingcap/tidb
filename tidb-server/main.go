@@ -52,6 +52,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
+	"github.com/struCoder/pidusage"
 )
 
 // Flag Names
@@ -379,6 +380,11 @@ func validateConfig() {
 		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
 		os.Exit(-1)
 	}
+
+	if cfg.TxnLocalLatches.Enabled && cfg.TxnLocalLatches.Capacity == 0 {
+		log.Errorf("txn-local-latches.capacity can not be 0")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
@@ -479,11 +485,20 @@ func setupMetrics() {
 		if callBackCount >= 5 {
 			callBackCount = 0
 			metrics.KeepAliveCounter.Inc()
+			updateCPUUsageMetrics()
 		}
 	}
 	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
+}
+
+func updateCPUUsageMetrics() {
+	sysInfo, err := pidusage.GetStat(os.Getpid())
+	if err != nil {
+		return
+	}
+	metrics.CPUUsagePercentageGauge.Set(sysInfo.CPU)
 }
 
 func setupTracing() {

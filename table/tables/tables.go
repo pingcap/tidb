@@ -18,6 +18,7 @@
 package tables
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -42,7 +43,6 @@ import (
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
-	"golang.org/x/net/context"
 )
 
 // tableCommon is shared by both Table and partition.
@@ -1037,7 +1037,7 @@ func newCtxForPartitionExpr() sessionctx.Context {
 // NewTxn creates a new transaction for further execution.
 // If old transaction is valid, it is committed first.
 // It's used in BEGIN statement and DDL statements to commit old transaction.
-func (ctx *ctxForPartitionExpr) NewTxn() error {
+func (ctx *ctxForPartitionExpr) NewTxn(ctx1 context.Context) error {
 	panic("not support")
 }
 

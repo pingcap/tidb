@@ -36,6 +36,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -63,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -817,7 +817,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	var prevData, curData []byte
 	// TODO: Make the loadDataRowCnt settable.
 	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
-	err = loadDataInfo.Ctx.NewTxn()
+	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -866,7 +866,7 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 		return errNotAllowedCommand
 	}
 	if loadStatsInfo == nil {
-		return errors.New("Load stats: info is empty")
+		return errors.New("load stats: info is empty")
 	}
 	err := cc.writeReq(loadStatsInfo.Path)
 	if err != nil {
