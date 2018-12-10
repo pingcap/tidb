@@ -206,14 +206,8 @@ type SessionVars struct {
 		Value string
 	}
 
-	// Following variables are special for current session.
-
-	Status           uint16
-	PrevLastInsertID uint64 // PrevLastInsertID is the last insert ID of previous statement.
-	LastInsertID     uint64 // LastInsertID is the auto-generated ID in the current statement.
-	InsertID         uint64 // InsertID is the given insert ID of an auto_increment column.
-	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
-	PrevAffectedRows int64
+	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
+	Status uint16
 
 	// ClientCapability is client's capability.
 	ClientCapability uint32
@@ -433,7 +427,7 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
-	s.LastInsertID = insertID
+	s.StmtCtx.LastInsertID = insertID
 }
 
 // SetStatusFlag sets the session server status variable.
@@ -475,18 +469,6 @@ func (s *SessionVars) Location() *time.Location {
 		loc = timeutil.SystemLocation()
 	}
 	return loc
-}
-
-// ResetPrevAffectedRows reset the prev-affected-rows variable.
-func (s *SessionVars) ResetPrevAffectedRows() {
-	s.PrevAffectedRows = 0
-	if s.StmtCtx != nil {
-		if s.StmtCtx.InUpdateOrDeleteStmt || s.StmtCtx.InInsertStmt {
-			s.PrevAffectedRows = int64(s.StmtCtx.AffectedRows())
-		} else if s.StmtCtx.InSelectStmt {
-			s.PrevAffectedRows = -1
-		}
-	}
 }
 
 // GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
@@ -582,6 +564,10 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
 	case TxnIsolationOneShot:
+		switch val {
+		case "SERIALIZABLE", "READ-UNCOMMITTED":
+			return ErrUnsupportedValueForVar.GenWithStackByArgs(name, val)
+		}
 		s.TxnIsolationLevelOneShot.State = 1
 		s.TxnIsolationLevelOneShot.Value = val
 	case TimeZone:
