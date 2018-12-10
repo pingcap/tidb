@@ -99,9 +99,6 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 				c.Value.SetNull()
 				return c.Value, nil
 			}
-			if c.RetType.Tp == mysql.TypeUnspecified {
-				c.RetType.Tp = mysql.TypeVarString
-			}
 			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
 			if err != nil {
 				return dt, err
