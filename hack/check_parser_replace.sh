@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 grep "replace.*github.com/pingcap/parser" go.mod
 grep_ret=$?
