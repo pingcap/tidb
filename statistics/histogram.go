@@ -689,7 +689,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
 	factor := hg.getIncreaseFactor(totalCount)
 	totalNotNull := hg.notNullCount() * factor
-	curNDV := float64(hg.NDV) * hg.getIncreaseFactor(totalCount)
+	curNDV := float64(hg.NDV) * factor
 	if curNDV == 0 {
 		curNDV = 1
 	}
