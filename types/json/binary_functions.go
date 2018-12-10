@@ -811,7 +811,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extra
 		if currentLeg.dotKey == "*" {
 			for i := 0; i < elemCount; i++ {
 				//buf = bj.objectGetVal(i).extractTo(buf, subPathExpr)
-				path := fullpath.pushBackOneKeyLeg(hack.String(bj.objectGetKey(i)))
+				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
 				stop, err = bj.objectGetVal(i).extractToCallback(subPathExpr, callbackFn, path)
 				if stop || err != nil {
 					return
@@ -849,7 +849,7 @@ func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extra
 			elemCount := bj.GetElemCount()
 			for i := 0; i < elemCount; i++ {
 				//buf = bj.objectGetVal(i).extractTo(buf, pathExpr)
-				path := fullpath.pushBackOneKeyLeg(hack.String(bj.objectGetKey(i)))
+				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
 				stop, err = bj.objectGetVal(i).extractToCallback(pathExpr, callbackFn, path)
 				if stop || err != nil {
 					return
@@ -884,7 +884,7 @@ func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...PathExpress
 		} else if bj.TypeCode == TypeCodeObject {
 			elemCount := bj.GetElemCount()
 			for i := 0; i < elemCount; i++ {
-				path := fullpath.pushBackOneKeyLeg(hack.String(bj.objectGetKey(i)))
+				path := fullpath.pushBackOneKeyLeg(string(bj.objectGetKey(i)))
 				stop, err = doWalk(path, bj.objectGetVal(i))
 				if stop || err != nil {
 					return

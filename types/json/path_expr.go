@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 /*
@@ -239,25 +238,25 @@ func isBlank(c rune) bool {
 }
 
 func (pe PathExpression) String() string {
-	buf := make([]byte, 0)
+	var s strings.Builder
 
-	buf = append(buf, '$')
+	s.WriteString("$")
 	for _, leg := range pe.legs {
 		switch leg.typ {
 		case pathLegIndex:
 			if leg.arrayIndex == -1 {
-				buf = append(buf, "[*]"...)
+				s.WriteString("[*]")
 			} else {
-				buf = append(buf, '[')
-				buf = append(buf, hack.Slice(strconv.Itoa(leg.arrayIndex))...)
-				buf = append(buf, ']')
+				s.WriteString("[")
+				s.WriteString(strconv.Itoa(leg.arrayIndex))
+				s.WriteString("]")
 			}
 		case pathLegKey:
-			buf = append(buf, '.')
-			buf = append(buf, hack.Slice(leg.dotKey)...)
+			s.WriteString(".")
+			s.WriteString(leg.dotKey)
 		case pathLegDoubleAsterisk:
-			buf = append(buf, "**"...)
+			s.WriteString("**")
 		}
 	}
-	return string(buf)
+	return s.String()
 }
