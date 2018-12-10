@@ -66,8 +66,6 @@ type indexJoinTask struct {
 	outerResult *chunk.Chunk
 	outerMatch  []bool
 
-	innerResult *chunk.List
-	//encodedLookUpKeys *chunk.Chunk
 	lookupMap     *mvmap.MVMap
 	matchedInners []chunk.Row
 
@@ -151,7 +149,7 @@ func (e *IndexHashJoin) Open(ctx context.Context) error {
 
 	e.closeCh = make(chan struct{})
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
-	e.joinResultCh = make(chan *hashWorkerResult, concurrency + 1)
+	e.joinResultCh = make(chan *hashWorkerResult, concurrency+1)
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := int(0); i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
@@ -161,12 +159,12 @@ func (e *IndexHashJoin) Open(ctx context.Context) error {
 	e.workerWg.Add(concurrency)
 	for i := int(0); i < concurrency; i++ {
 		workerId := i
-		go util.WithRecovery(func(){e.newInnerWorker(innerCh, workerId).run(workerCtx, e.workerWg)}, e.finishInnerWorker)
+		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerId).run(workerCtx, e.workerWg) }, e.finishInnerWorker)
 	}
 	go util.WithRecovery(e.waitInnerHashWorkersAndCloseResultChan, nil)
 	return nil
 }
-func (e *IndexHashJoin)finishInnerWorker(r interface {}) {
+func (e *IndexHashJoin) finishInnerWorker(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashWorkerResult{err: errors.Errorf("%v", r)}
 	}
@@ -246,8 +244,10 @@ func (iw *innerHashWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	if !ok {
 		return
 	}
-	for ok := true; ok; {
+	for {
 		select {
+		case <-iw.closeCh:
+			return
 		case task, ok = <-iw.taskCh:
 			if !ok {
 				return
@@ -273,8 +273,7 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *indexJoinTask, 
 		return errors.Trace(err)
 	}
 	dLookUpKeys = iw.sortAndDedupDatumLookUpKeys(dLookUpKeys)
-
-	err = iw.doJoin(ctx, task, dLookUpKeys, joinResult)
+	err = iw.fetchAndJoin(ctx, task, dLookUpKeys, joinResult)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -399,15 +398,6 @@ func (iw *innerHashWorker) join2Chunk(innerChk *chunk.Chunk, joinResult *hashWor
 		if !ok {
 			return false, joinResult
 		}
-		//if joinResult.chk.NumRows() == iw.maxChunkSize {
-		//
-		//	iw.joinResultCh <- joinResult
-		//	ok, joinResult = iw.getNewJoinResult()
-		//	if !ok {
-		//		return false, joinResult
-		//	}
-		//
-		//}
 	}
 
 	return true, joinResult
@@ -424,7 +414,6 @@ func (ow *outerWorker) hasNullInJoinKey(row chunk.Row) bool {
 
 func (iw *innerWorker) constructDatumLookupKeys(task *indexJoinTask) ([][]types.Datum, error) {
 	dLookUpKeys := make([][]types.Datum, 0, task.outerResult.NumRows())
-	keyBuf := make([]byte, 0, 64)
 	for i := 0; i < task.outerResult.NumRows(); i++ {
 		dLookUpKey, err := iw.constructDatumLookupKey(task, i)
 		if err != nil {
@@ -432,16 +421,9 @@ func (iw *innerWorker) constructDatumLookupKeys(task *indexJoinTask) ([][]types.
 		}
 		if dLookUpKey == nil {
 			// Append null to make looUpKeys the same length as outer Result.
-			//task.encodedLookUpKeys.AppendNull(0)
 			continue
 		}
-		keyBuf = keyBuf[:0]
-		keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dLookUpKey...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 		// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
-		//task.encodedLookUpKeys.AppendBytes(0, keyBuf)
 		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 	}
 
@@ -487,12 +469,11 @@ func (iw *innerHashWorker) getNewJoinResult() (bool, *hashWorkerResult) {
 	case <-iw.closeCh:
 		ok = false
 	case joinResult.chk, ok = <-iw.joinChkResourceCh[iw.workerId]:
-		//log.Info("get join result")
 	}
 	return ok, joinResult
 }
 
-func (iw *innerHashWorker) doJoin(ctx context.Context, task *indexJoinTask, dLookUpKeys [][]types.Datum, joinResult *hashWorkerResult) error {
+func (iw *innerHashWorker) fetchAndJoin(ctx context.Context, task *indexJoinTask, dLookUpKeys [][]types.Datum, joinResult *hashWorkerResult) error {
 	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, iw.indexRanges, iw.keyOff2IdxOff)
 	if err != nil {
 		return errors.Trace(err)
@@ -501,7 +482,6 @@ func (iw *innerHashWorker) doJoin(ctx context.Context, task *indexJoinTask, dLoo
 	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
-
 
 	iw.executorChk.Reset()
 	var ok bool
@@ -525,6 +505,9 @@ func (iw *innerHashWorker) doJoin(ctx context.Context, task *indexJoinTask, dLoo
 		return nil
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		iw.joinResultCh <- joinResult
+	}
+	if !ok {
+		return errors.New("join2Chunk failed")
 	}
 	return nil
 }
@@ -704,7 +687,18 @@ func (e *IndexHashJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}
-	e.workerWg.Wait()
+	close(e.closeCh)
+	if e.joinResultCh != nil {
+		for range e.joinResultCh {
+		}
+	}
+	for i := range e.joinChkResourceCh {
+		close(e.joinChkResourceCh[i])
+		for range e.joinChkResourceCh[i] {
+		}
+	}
+	e.joinChkResourceCh = nil
+
 	e.memTracker.Detach()
 	e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
@@ -713,7 +707,8 @@ func (e *IndexMergeJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}
-	e.workerWg.Wait()
+
+	//e.workerWg.Wait()
 	e.memTracker.Detach()
 	e.memTracker = nil
 	return errors.Trace(e.children[0].Close())

@@ -1609,7 +1609,10 @@ func (b *executorBuilder) buildIndexJoin(v *plannercore.PhysicalIndexJoin) Execu
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
-
+	outerIsRight := v.OuterIndex == 1
+	if !v.KeepOuterOrder {
+		outerIsRight = v.OuterIndex != 1
+	}
 	e := &IndexJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
@@ -1622,7 +1625,7 @@ func (b *executorBuilder) buildIndexJoin(v *plannercore.PhysicalIndexJoin) Execu
 			rowTypes:      innerTypes,
 		},
 		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		joiner:        newJoiner(b.ctx, v.JoinType, outerIsRight, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 	}
