@@ -993,7 +993,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 		},
 		//issue 7833
 		{
-			sql: "drop view if exists v",
+			sql: "do 1",
 			ans: map[int][]string{
 				1: {},
 			},
