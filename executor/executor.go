@@ -1315,11 +1315,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = priority
 		}
 	}
-	if vars.LastInsertID > 0 {
-		vars.PrevLastInsertID = vars.LastInsertID
-		vars.LastInsertID = 0
+	if vars.StmtCtx.LastInsertID > 0 {
+		sc.PrevLastInsertID = vars.StmtCtx.LastInsertID
+	} else {
+		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
-	vars.ResetPrevAffectedRows()
+	sc.PrevAffectedRows = 0
+	if vars.StmtCtx.InUpdateOrDeleteStmt || vars.StmtCtx.InInsertStmt {
+		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
+	} else if vars.StmtCtx.InSelectStmt {
+		sc.PrevAffectedRows = -1
+	}
 	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
 	if err != nil {
 		return errors.Trace(err)
@@ -1328,7 +1334,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	vars.InsertID = 0
 	vars.StmtCtx = sc
 	return
 }
