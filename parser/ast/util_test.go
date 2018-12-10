@@ -11,12 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ast
+package ast_test
 
 import (
+	"fmt"
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	. "github.com/pingcap/parser/ast"
 )
 
 var _ = Suite(&testCacheableSuite{})
@@ -81,4 +84,31 @@ func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 // Leave implements Visitor interface.
 func (checker *nodeTextCleaner) Leave(in Node) (out Node, ok bool) {
 	return in, true
+}
+
+type NodeRestoreTestCase struct {
+	sourceSQL string
+	expectSQL string
+}
+
+func RunNodeRestoreTest(c *C, nodeTestCases []NodeRestoreTestCase, template string, extractNodeFunc func(node Node) Node) {
+	parser := parser.New()
+	for _, testCase := range nodeTestCases {
+		sourceSQL := fmt.Sprintf(template, testCase.sourceSQL)
+		expectSQL := fmt.Sprintf(template, testCase.expectSQL)
+		stmt, err := parser.ParseOneStmt(sourceSQL, "", "")
+		comment := Commentf("source %#v", testCase)
+		c.Assert(err, IsNil, comment)
+		var sb strings.Builder
+		err = extractNodeFunc(stmt).Restore(&sb)
+		c.Assert(err, IsNil, comment)
+		restoreSql := fmt.Sprintf(template, sb.String())
+		comment = Commentf("source %#v; restore %v", testCase, restoreSql)
+		c.Assert(restoreSql, Equals, expectSQL, comment)
+		stmt2, err := parser.ParseOneStmt(restoreSql, "", "")
+		c.Assert(err, IsNil, comment)
+		CleanNodeText(stmt)
+		CleanNodeText(stmt2)
+		c.Assert(stmt2, DeepEquals, stmt, comment)
+	}
 }
