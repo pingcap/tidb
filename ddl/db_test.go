@@ -110,7 +110,7 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 	autoid.SetStep(s.autoIDStep)
 }
 

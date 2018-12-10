@@ -51,7 +51,7 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 
 func (s *testIndexChangeSuite) TearDownSuite(c *C) {
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {

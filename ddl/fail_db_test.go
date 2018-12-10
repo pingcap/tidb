@@ -71,7 +71,7 @@ func (s *testFailDBSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.

@@ -88,7 +88,7 @@ func newStoreWithBootstrap(lease time.Duration) (kv.Storage, *domain.Domain, err
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 func (s *testIntegrationSuite) TestInvalidDefault(c *C) {

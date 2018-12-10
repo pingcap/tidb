@@ -58,7 +58,7 @@ func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 
 func (s *testColumnChangeSuite) TearDownSuite(c *C) {
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {

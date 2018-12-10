@@ -75,7 +75,7 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
