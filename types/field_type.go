@@ -40,6 +40,15 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// CloneFieldType clones the given FieldType.
+func CloneFieldType(src *FieldType) *FieldType {
+	return &FieldType{
+		Tp:      src.Tp,
+		Flen:    src.Flen,
+		Decimal: src.Decimal,
+	}
+}
+
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
 // whose return type is determined by the arguments' FieldTypes.
 // Aggregation is performed by MergeFieldType function.
