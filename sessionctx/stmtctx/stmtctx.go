@@ -62,10 +62,6 @@ type StatementContext struct {
 	PadCharToFullLength    bool
 	BatchCheck             bool
 	InNullRejectCheck      bool
-	// As for insert, update, alter table and load data infile statements, when not in strict SQL mode,
-	// the value should be clipped to 0 for unsigned integer types.
-	// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-	ClipToZero bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {

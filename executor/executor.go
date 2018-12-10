@@ -1259,7 +1259,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
-		sc.ClipToZero = true
+		// sc.ClipToZero = true
 	case *ast.DeleteStmt:
 		sc.InUpdateOrDeleteStmt = true
 		sc.DupKeyAsWarning = stmt.IgnoreErr
@@ -1276,14 +1276,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
-		sc.ClipToZero = true
+		// sc.ClipToZero = true
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
 		sc.TruncateAsWarning = !vars.StrictSQLMode
-		sc.ClipToZero = true
+		// sc.ClipToZero = true
 		sc.InLoadDataStmt = true
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true

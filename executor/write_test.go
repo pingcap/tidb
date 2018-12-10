@@ -236,10 +236,15 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
 	tk.MustExec("set sql_mode = '';")
 	tk.MustExec("insert into t value (-1);")
+	// TODO: the following warning messages is not consistent with MySQL, fix them in the future PR
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t select -1;")
-	tk.MustExec("insert into t select cast(-1 as unsigned);;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t select cast(-1 as unsigned);")
 	tk.MustExec("insert into t value (-1.111);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t value ('-1.111');")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	// remember to restore sql_mode so as not to influence other tests
