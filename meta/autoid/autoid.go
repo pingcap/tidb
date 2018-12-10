@@ -121,7 +121,7 @@ func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allo
 			newBase = mathutil.MaxUint64(uCurrentEnd, requiredBase)
 			newEnd = mathutil.MinUint64(math.MaxUint64-uint64(step), newBase) + uint64(step)
 		} else {
-			if !alloc.isUnsigned && uCurrentEnd >= requiredBase {
+			if uCurrentEnd >= requiredBase {
 				newBase = uCurrentEnd
 				newEnd = uCurrentEnd
 				// Required base satisfied, we don't need to update KV.
@@ -166,7 +166,7 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 			newBase = mathutil.MaxInt64(currentEnd, requiredBase)
 			newEnd = mathutil.MinInt64(math.MaxInt64-step, newBase) + step
 		} else {
-			if !alloc.isUnsigned && currentEnd >= requiredBase {
+			if currentEnd >= requiredBase {
 				newBase = currentEnd
 				newEnd = currentEnd
 				// Required base satisfied, we don't need to update KV.
