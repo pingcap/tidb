@@ -29,7 +29,8 @@ import (
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	us := PhysicalUnionScan{Conditions: p.conditions}.Init(p.ctx, p.stats, prop)
+	childProp := prop.Clone()
+	us := PhysicalUnionScan{Conditions: p.conditions}.Init(p.ctx, p.stats, childProp)
 	return []PhysicalPlan{us}
 }
 
@@ -857,9 +858,10 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 }
 
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	childProp := prop.Clone()
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []PhysicalPlan{sel}
 }
 
@@ -880,9 +882,10 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 }
 
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	childProp := prop.Clone()
 	lock := PhysicalLock{
 		Lock: p.Lock,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []PhysicalPlan{lock}
 }
 
