@@ -979,7 +979,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
-func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt, stmtCols []*expression.Column) (err error) {
+func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
 	ident := ast.Ident{Name: s.ViewName.Name, Schema: s.ViewName.Schema}
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)

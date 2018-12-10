@@ -156,7 +156,7 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s, e.schema.Columns)
+	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
 	return errors.Trace(err)
 }
 
