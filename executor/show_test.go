@@ -776,7 +776,7 @@ func (s *testSuite) TestShowCreateTable(c *C) {
 	r = tk.MustQuery("show warnings")
 	c.Assert(len(r.Rows()), Equals, 0)
 	tk.MustExec("create table t3 (a varchar(10)) charset=utf8;")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|The user specified charset of table 'test.t3' is utf8. Currently TiDB treats all the data as utf8mb4 actually."))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", `Warning|1105|TiDB only supports the "utf8mb4" character set, so "utf8" does not take effect.`))
 	tk.MustQuery("show create table t1;").Check(testutil.RowsWithSep("|", "t1|CREATE TABLE `t1` (\n  `a` varchar(10) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t2;").Check(testutil.RowsWithSep("|", "t2|CREATE TABLE `t2` (\n  `a` varchar(10) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("show create table t3;").Check(testutil.RowsWithSep("|", "t3|CREATE TABLE `t3` (\n  `a` varchar(10) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
