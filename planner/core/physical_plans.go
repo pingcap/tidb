@@ -113,7 +113,7 @@ type PhysicalIndexScan struct {
 	// It is used for query feedback.
 	Hist *statistics.Histogram
 
-	rangeDecidedBy []*expression.Column
+	rangeDecidedBy string
 
 	// The index scan may be on a partition.
 	isPartition     bool

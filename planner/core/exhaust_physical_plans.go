@@ -14,6 +14,8 @@
 package core
 
 import (
+	"bytes"
+	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -406,6 +408,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		bestIndexInfo  *model.IndexInfo
 		rangesOfBest   []*ranger.Range
 		maxUsedCols    int
+		accessesOfBest []expression.Expression
 		remainedOfBest []expression.Expression
 		idxOff2KeyOff  []int
 		comparesOfBest *ColWithCompareOps
@@ -415,7 +418,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			continue
 		}
 		indexInfo := path.index
-		ranges, tmpIdxOff2KeyOff, remained, compareFilters, err := p.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
+		ranges, tmpIdxOff2KeyOff, accesses, remained, compareFilters, err := p.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
 		if err != nil {
 			log.Warnf("[planner]: error happened when build index join: %v", err)
 			continue
@@ -427,6 +430,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			bestIndexInfo = indexInfo
 			maxUsedCols = len(ranges[0].LowVal)
 			rangesOfBest = ranges
+			accessesOfBest = accesses
 			remainedOfBest = remained
 			idxOff2KeyOff = tmpIdxOff2KeyOff
 			comparesOfBest = compareFilters
@@ -442,10 +446,29 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 				keyOff2IdxOff[keyOff] = idxOff
 			}
 		}
-		innerPlan := p.constructInnerIndexScan(ds, bestIndexInfo, remainedOfBest, outerJoinKeys, us)
+		idxCols, _ := expression.IndexInfo2Cols(ds.schema.Columns, bestIndexInfo)
+		rangeInfo := p.buildRangeDecidedByInformation(idxCols, idxOff2KeyOff, outerJoinKeys, accessesOfBest)
+		innerPlan := p.constructInnerIndexScan(ds, bestIndexInfo, remainedOfBest, outerJoinKeys, us, rangeInfo)
 		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff, comparesOfBest)
 	}
 	return nil
+}
+
+func (p *LogicalJoin) buildRangeDecidedByInformation(idxCols []*expression.Column, idxOff2KeyOff []int,
+	outerJoinKeys []*expression.Column, accesses []expression.Expression) string {
+	buffer := bytes.NewBufferString("")
+	buffer.WriteString("range decided by:[")
+	for idxOff, keyOff := range idxOff2KeyOff {
+		if keyOff == -1 {
+			continue
+		}
+		buffer.WriteString(fmt.Sprintf(" eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
+	}
+	for _, access := range accesses {
+		buffer.WriteString(fmt.Sprintf(" %v", access))
+	}
+	buffer.WriteString(" ]")
+	return buffer.String()
 }
 
 // constructInnerTableScan is specially used to construct the inner plan for PhysicalIndexJoin.
@@ -495,7 +518,8 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 }
 
 // constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, remainedConds []expression.Expression, outerJoinKeys []*expression.Column, us *LogicalUnionScan) PhysicalPlan {
+func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, remainedConds []expression.Expression,
+	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) PhysicalPlan {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -505,7 +529,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		dataSourceSchema: ds.schema,
 		KeepOrder:        false,
 		Ranges:           ranger.FullRange(),
-		rangeDecidedBy:   outerJoinKeys,
+		rangeDecidedBy:   rangeInfo,
 	}.Init(ds.ctx)
 	is.filterCondition = remainedConds
 
@@ -608,11 +632,24 @@ func (cwc *ColWithCompareOps) resolveIndices(schema *expression.Schema) {
 	}
 }
 
-func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan *DataSource, innerJoinKeys []*expression.Column) ([]*ranger.Range, []int, []expression.Expression, *ColWithCompareOps, error) {
+func (cwc *ColWithCompareOps) String() {
+	buffer := bytes.NewBufferString("")
+	log.Warnf("%v, %v, %v", cwc.targetCol, cwc.OpType, cwc.opArg)
+	for i := range cwc.OpType {
+		buffer.WriteString(fmt.Sprintf("%v(%v, %v)", cwc.OpType[i], cwc.targetCol, cwc.opArg[i]))
+		if i < len(cwc.OpType)-1 {
+			buffer.WriteString(" ")
+		}
+	}
+}
+
+func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan *DataSource,
+	innerJoinKeys []*expression.Column) ([]*ranger.Range, []int, []expression.Expression, []expression.Expression, *ColWithCompareOps, error) {
 	idxCols, colLengths := expression.IndexInfo2Cols(innerPlan.schema.Columns, indexInfo)
 	if len(idxCols) == 0 {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
+	accesses := make([]expression.Expression, 0, len(idxCols))
 	tmpSchema := expression.NewSchema(innerJoinKeys...)
 	idxOff2keyOff := make([]int, len(idxCols))
 	possibleUsedKeys := make([]*expression.Column, 0, len(idxCols))
@@ -636,7 +673,7 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 	//       After constant propagation. The t1.a=t2.a is removed. And if we have index (t2.a, t2.b). It can apply index join
 	//       to speed up.
 	if matchedKeyCnt <= 0 {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
 	keyMatchedLen := len(idxCols)
 	for ; keyMatchedLen > 0; keyMatchedLen-- {
@@ -661,8 +698,9 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 	// we'll mark this index as cannot be used for index join.
 	// So we should make sure that all columns before the keyMatchedLen is join key or has eq/in function.
 	if len(notKeyEqAndIn) < keyMatchedLen-matchedKeyCnt {
-		return nil, nil, nil, nil, nil
+		return nil, nil, nil, nil, nil, nil
 	}
+	accesses = append(accesses, notKeyEqAndIn...)
 	remained = append(remained, remainedEqAndIn...)
 	nextColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// If all cols have been considered, we can return the current result.
@@ -670,9 +708,9 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 		remained = append(remained, rangeFilterCandidates...)
 		ranges, err := p.buildTemplateRange(idxOff2keyOff, matchedKeyCnt, notKeyEqAndIn, nil, false)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
-		return ranges, idxOff2keyOff, remained, nil, nil
+		return ranges, idxOff2keyOff, accesses, remained, nil, nil
 	}
 	nextCol := idxCols[nextColPos]
 	nextColCmpFilterManager := &ColWithCompareOps{
@@ -696,6 +734,7 @@ loopOtherConds:
 					continue loopOtherConds
 				}
 			}
+			accesses = append(accesses, sf)
 			nextColCmpFilterManager.appendNewExpr(sf.FuncName.L, sf.GetArgs()[1], affectedCols)
 		} else if rCol, ok := sf.GetArgs()[1].(*expression.Column); ok && rCol.Equal(nil, nextCol) {
 			affectedCols := expression.ExtractColumns(sf.GetArgs()[0])
@@ -707,6 +746,7 @@ loopOtherConds:
 					continue loopOtherConds
 				}
 			}
+			accesses = append(accesses, sf)
 			nextColCmpFilterManager.appendNewExpr(symmetricOp[sf.FuncName.L], sf.GetArgs()[0], affectedCols)
 		}
 	}
@@ -716,20 +756,21 @@ loopOtherConds:
 		if colLengths[nextColPos] != types.UnspecifiedLength {
 			remained = append(remained, colAccesses...)
 		}
+		accesses = append(accesses, colAccesses...)
 		nextColRange, err := ranger.BuildColumnRange(colAccesses, p.ctx.GetSessionVars().StmtCtx, nextCol.RetType)
 		ranges, err := p.buildTemplateRange(idxOff2keyOff, matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
 		if err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
-		return ranges, idxOff2keyOff, remained, nil, nil
+		return ranges, idxOff2keyOff, accesses, remained, nil, nil
 	}
 	remained = append(remained, rangeFilterCandidates...)
 	ranges, err := p.buildTemplateRange(idxOff2keyOff, matchedKeyCnt, notKeyEqAndIn, nil, true)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 
-	return ranges, idxOff2keyOff, remained, nextColCmpFilterManager, nil
+	return ranges, idxOff2keyOff, accesses, remained, nextColCmpFilterManager, nil
 }
 
 func (p *LogicalJoin) buildTemplateRange(idxOff2KeyOff []int, matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, err error) {
