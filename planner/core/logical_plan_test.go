@@ -991,13 +991,6 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				3: {"a"},
 			},
 		},
-		//issue 7833
-		{
-			sql: "do 1",
-			ans: map[int][]string{
-				1: {},
-			},
-		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
