@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/schemautil"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -2098,11 +2099,21 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
 
-	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
+	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
 		return ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
 	if err = checkTooLongIndex(indexName); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check before put the job is put to the queue.
+	// This check is redudant, but useful. If DDL check fail before the job is put
+	// to job queue, the fail path logic is super fast.
+	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
+	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	_, err = buildIndexColumns(t.Meta().Columns, idxColNames)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2223,7 +2234,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
+	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
 		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
