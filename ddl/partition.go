@@ -318,15 +318,16 @@ func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 	return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs(partName))
 }
 
-func checkPartitionExist(meta *model.TableInfo, parName string) error {
+func findPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 	// TODO: MySQL behavior for hash partition is weird, "create table .. partition by hash partition 4",
 	// it use p0, p1, p2, p3 as partition names automatically.
+	parName = strings.ToLower(parName)
 	for _, def := range meta.Partition.Definitions {
-		if strings.EqualFold(def.Name.L, strings.ToLower(parName)) {
-			return nil
+		if strings.EqualFold(def.Name.L, parName) {
+			return def.ID, nil
 		}
 	}
-	return errors.Trace(errUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
+	return -1, errors.Trace(errUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
 }
 
 // removePartitionInfo each ddl job deletes a partition.
@@ -379,8 +380,8 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 // onDropTablePartition truncates old partition meta.
 func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
-	var partName string
-	if err := job.DecodeArgs(&partName); err != nil {
+	var oldID int64
+	if err := job.DecodeArgs(&oldID); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -393,21 +394,21 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return ver, errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	oldID := int64(-1)
+	var find bool
 	for i := 0; i < len(pi.Definitions); i++ {
 		def := &pi.Definitions[i]
-		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
+		if def.ID == oldID {
 			pid, err1 := t.GenGlobalID()
 			if err != nil {
 				return ver, errors.Trace(err1)
 			}
-			oldID = def.ID
 			def.ID = pid
+			find = true
 			break
 		}
 	}
-	if oldID == -1 {
-		return ver, errUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
+	if !find {
+		return ver, errUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)

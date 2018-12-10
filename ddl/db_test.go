@@ -3076,9 +3076,21 @@ func (s *testDBSuite) TestAlterTableTruncatePartition(c *C) {
 
 	s.testErrorCode(c, "alter table employees truncate partition xxx", tmysql.ErrUnknownPartition)
 
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
+	c.Assert(err, IsNil)
+	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+
 	s.tk.MustExec("alter table employees truncate partition p1")
 	result = s.tk.MustQuery("select * from employees order by id")
 	result.Check(testkit.Rows(`2 1995`, `3 2000`))
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
+	c.Assert(err, IsNil)
+	newPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+	c.Assert(oldPID != newPID, IsTrue)
 
 	s.tk.MustExec("alter table employees truncate partition p3")
 	result = s.tk.MustQuery("select * from employees")
@@ -3087,6 +3099,9 @@ func (s *testDBSuite) TestAlterTableTruncatePartition(c *C) {
 	s.tk.MustExec("insert into employees values (1, 1984)")
 	result = s.tk.MustQuery("select * from employees order by id")
 	result.Check(testkit.Rows(`1 1984`, `2 1995`))
+	s.tk.MustExec("insert into employees values (3, 2000)")
+	result = s.tk.MustQuery("select * from employees order by id")
+	result.Check(testkit.Rows(`1 1984`, `2 1995`, `3 2000`))
 
 	s.tk.MustExec(`create table non_partition (id int)`)
 	s.testErrorCode(c, "alter table non_partition truncate partition p0", tmysql.ErrPartitionMgmtOnNonpartitioned)

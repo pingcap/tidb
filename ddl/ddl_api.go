@@ -1435,7 +1435,9 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	if err = checkPartitionExist(meta, spec.Name); err != nil {
+	var pid int64
+	pid, err = findPartitionByName(meta, spec.Name)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1444,7 +1446,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		TableID:    meta.ID,
 		Type:       model.ActionTruncateTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{spec.Name},
+		Args:       []interface{}{pid},
 	}
 
 	err = d.doDDLJob(ctx, job)

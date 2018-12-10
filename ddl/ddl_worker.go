@@ -285,7 +285,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition:
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
 		}
 		if err != nil {
