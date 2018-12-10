@@ -70,48 +70,6 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 }
 
-func rollbackDropSchema(t *meta.Meta, job *model.Job, dbInfo *model.DBInfo) (ver int64, err error) {
-	// If dbInfo schema state is public, no need to rollback.
-	if dbInfo.State == model.StatePublic {
-		job.State = model.JobStateRollbackDone
-		job.SchemaState = dbInfo.State
-		return ver, nil
-	}
-	// Recover database.
-	// Change type to ActionCreateSchema for infoschema to load schema diff.
-	job.Type = model.ActionCreateSchema
-	defer func() {
-		job.Type = model.ActionDropSchema
-	}()
-	dbInfo.State = model.StatePublic
-	err = t.UpdateDatabase(dbInfo)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	// Recover table.
-	var tables []*model.TableInfo
-	tables, err = t.ListTables(job.SchemaID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	// Change type to ActionCreateTable for infoschema to load schema diff.
-	job.Type = model.ActionCreateTable
-	for _, tblInfo := range tables {
-		job.TableID = tblInfo.ID
-		ver, err = updateSchemaVersion(t, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-	}
-	job.FinishDBJob(model.JobStateRollbackDone, model.StatePublic, ver, dbInfo)
-	return ver, nil
-}
-
 func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
@@ -120,11 +78,6 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if dbInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrDatabaseDropExists.GenWithStackByArgs("")
-	}
-	// Rolling back drop schema.
-	if job.IsRollingback() && job.Type == model.ActionDropSchema {
-		ver, err = rollbackDropSchema(t, job, dbInfo)
-		return ver, errors.Trace(err)
 	}
 
 	ver, err = updateSchemaVersion(t, job)
