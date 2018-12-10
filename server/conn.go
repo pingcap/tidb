@@ -866,7 +866,7 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 		return errNotAllowedCommand
 	}
 	if loadStatsInfo == nil {
-		return errors.New("Load stats: info is empty")
+		return errors.New("load stats: info is empty")
 	}
 	err := cc.writeReq(loadStatsInfo.Path)
 	if err != nil {
