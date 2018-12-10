@@ -51,6 +51,9 @@ const (
 	codeWrongNumberOfColumnsInSelect = mysql.ErrWrongNumberOfColumnsInSelect
 	codeWrongValueCountOnRow         = mysql.ErrWrongValueCountOnRow
 	codeTablenameNotAllowedHere      = mysql.ErrTablenameNotAllowedHere
+
+	codeWindowInvalidWindowFuncUse      = mysql.ErrWindowInvalidWindowFuncUse
+	codeWindowInvalidWindowFuncAliasUse = mysql.ErrWindowInvalidWindowFuncAliasUse
 )
 
 // error definitions.
@@ -87,33 +90,38 @@ var (
 	ErrMixOfGroupFuncAndFields      = terror.ClassOptimizer.New(codeMixOfGroupFuncAndFields, "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by")
 	ErrNonUniqTable                 = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 	ErrWrongValueCountOnRow         = terror.ClassOptimizer.New(mysql.ErrWrongValueCountOnRow, mysql.MySQLErrName[mysql.ErrWrongValueCountOnRow])
+
+	ErrWindowInvalidWindowFuncUse      = terror.ClassOptimizer.New(codeWindowInvalidWindowFuncUse, mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncUse])
+	ErrWindowInvalidWindowFuncAliasUse = terror.ClassOptimizer.New(codeWindowInvalidWindowFuncAliasUse, mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncAliasUse])
 )
 
 func init() {
 	mysqlErrCodeMap := map[terror.ErrCode]uint16{
-		codeWrongUsage:                   mysql.ErrWrongUsage,
-		codeAmbiguous:                    mysql.ErrNonUniq,
-		codeUnknownColumn:                mysql.ErrBadField,
-		codeUnknownTable:                 mysql.ErrBadTable,
-		codeWrongArguments:               mysql.ErrWrongArguments,
-		codeBadGeneratedColumn:           mysql.ErrBadGeneratedColumn,
-		codeFieldNotInGroupBy:            mysql.ErrFieldNotInGroupBy,
-		codeBadTable:                     mysql.ErrBadTable,
-		codeKeyDoesNotExist:              mysql.ErrKeyDoesNotExist,
-		codeOperandColumns:               mysql.ErrOperandColumns,
-		codeInvalidWildCard:              mysql.ErrParse,
-		codeInvalidGroupFuncUse:          mysql.ErrInvalidGroupFuncUse,
-		codeIllegalReference:             mysql.ErrIllegalReference,
-		codeNoDB:                         mysql.ErrNoDB,
-		codeUnknownExplainFormat:         mysql.ErrUnknownExplainFormat,
-		codeWrongGroupField:              mysql.ErrWrongGroupField,
-		codeDupFieldName:                 mysql.ErrDupFieldName,
-		codeNonUpdatableTable:            mysql.ErrUnknownTable,
-		codeInternal:                     mysql.ErrInternal,
-		codeMixOfGroupFuncAndFields:      mysql.ErrMixOfGroupFuncAndFields,
-		codeNonUniqTable:                 mysql.ErrNonuniqTable,
-		codeWrongNumberOfColumnsInSelect: mysql.ErrWrongNumberOfColumnsInSelect,
-		codeWrongValueCountOnRow:         mysql.ErrWrongValueCountOnRow,
+		codeWrongUsage:                      mysql.ErrWrongUsage,
+		codeAmbiguous:                       mysql.ErrNonUniq,
+		codeUnknownColumn:                   mysql.ErrBadField,
+		codeUnknownTable:                    mysql.ErrBadTable,
+		codeWrongArguments:                  mysql.ErrWrongArguments,
+		codeBadGeneratedColumn:              mysql.ErrBadGeneratedColumn,
+		codeFieldNotInGroupBy:               mysql.ErrFieldNotInGroupBy,
+		codeBadTable:                        mysql.ErrBadTable,
+		codeKeyDoesNotExist:                 mysql.ErrKeyDoesNotExist,
+		codeOperandColumns:                  mysql.ErrOperandColumns,
+		codeInvalidWildCard:                 mysql.ErrParse,
+		codeInvalidGroupFuncUse:             mysql.ErrInvalidGroupFuncUse,
+		codeIllegalReference:                mysql.ErrIllegalReference,
+		codeNoDB:                            mysql.ErrNoDB,
+		codeUnknownExplainFormat:            mysql.ErrUnknownExplainFormat,
+		codeWrongGroupField:                 mysql.ErrWrongGroupField,
+		codeDupFieldName:                    mysql.ErrDupFieldName,
+		codeNonUpdatableTable:               mysql.ErrUnknownTable,
+		codeInternal:                        mysql.ErrInternal,
+		codeMixOfGroupFuncAndFields:         mysql.ErrMixOfGroupFuncAndFields,
+		codeNonUniqTable:                    mysql.ErrNonuniqTable,
+		codeWrongNumberOfColumnsInSelect:    mysql.ErrWrongNumberOfColumnsInSelect,
+		codeWrongValueCountOnRow:            mysql.ErrWrongValueCountOnRow,
+		codeWindowInvalidWindowFuncUse:      mysql.ErrWindowInvalidWindowFuncUse,
+		codeWindowInvalidWindowFuncAliasUse: mysql.ErrWindowInvalidWindowFuncAliasUse,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }

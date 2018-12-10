@@ -603,7 +603,8 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
 	for _, field := range fields {
-		// Add fake placeholders.
+		// Window functions that exists in field list could only be processed after having,
+		// so we add a fake placeholder here.
 		if ast.HasWindowFlag(field.Expr) {
 			expr := expression.Zero
 			proj.Exprs = append(proj.Exprs, expr)
@@ -1083,12 +1084,12 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 	case *ast.WindowFuncExpr:
 		a.inWindowFunc = false
 		if a.curClause == havingClause {
-			a.err = errors.Errorf("You cannot use the window function '%s' in this context.", v.F)
+			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
 			return node, false
 		}
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if  a.inAggFunc || a.inWindowFunc || (a.orderBy && a.inExpr) {
+		if a.inAggFunc || a.inWindowFunc || (a.orderBy && a.inExpr) {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1107,7 +1108,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				return node, false
 			}
 			if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
-				a.err = errors.Errorf("You cannot use the alias '%s' of an expression containing a window function in this context.", v.Name.Name.O)
+				a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
 				return node, false
 			}
 			if index == -1 {
@@ -1126,7 +1127,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			if index == -1 && a.curClause != windowClause {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
-					a.err = errors.Errorf("You cannot use the alias '%s' of an expression containing a window function in this context.", v.Name.Name.O)
+					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
 					return node, false
 				}
 			}
