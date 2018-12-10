@@ -990,14 +990,14 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt, stmtCols
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	viewInfo, cols, err := buildViewInfoWithTableColumns(ctx, s, stmtCols)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
 
 	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, nil, viewInfo)
+	if err != nil {
+		return err
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -1007,44 +1007,36 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt, stmtCols
 		Args:       []interface{}{tbInfo, s.OrReplace},
 	}
 	err = d.doDDLJob(ctx, job)
-	if err == nil {
-		if tbInfo.AutoIncID > 1 {
-			// Default tableAutoIncID base is 0.
-			// If the first ID is expected to greater than 1, we need to do rebase.
-			err = d.handleAutoIncID(tbInfo, schema.ID)
-		}
+	if err != nil {
+		return err
+	}
+	if tbInfo.AutoIncID > 1 {
+		// Default tableAutoIncID base is 0.
+		// If the first ID is expected to greater than 1, we need to do rebase.
+		err = d.handleAutoIncID(tbInfo, schema.ID)
 	}
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	return err
 }
 
-func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt, stmtCols []*expression.Column) (*model.ViewInfo, []*table.Column, error) {
-	if s.Cols != nil && len(s.Cols) != len(stmtCols) {
-		return nil, nil, errViewWrongList
-	}
-	var tableColumns = make([]*table.Column, len(stmtCols))
-	for i, v := range stmtCols {
+func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
+	var tableColumns = make([]*table.Column, len(s.Cols))
+	for i, v := range s.Cols {
 		tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-			Name:   v.ColName,
-			ID:     v.ID,
+			Name:   v,
+			ID:     int64(i),
 			Offset: i,
 			State:  model.StatePublic,
 		})
 	}
 
-	if s.Cols == nil {
-		s.Cols = make([]model.CIStr, len(stmtCols))
-		for i, v := range stmtCols {
-			s.Cols[i] = v.ColName
-		}
-	}
 	viewInfo := &model.ViewInfo{Cols: s.Cols, Definer: s.Definer, Algorithm: s.Algorithm,
 		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
 
 	if s.Definer.CurrentUser {
 		viewInfo.Definer = ctx.GetSessionVars().User
 	}
-	return viewInfo, tableColumns, nil
+	return viewInfo, tableColumns
 }
 
 func checkPartitionByHash(pi *model.PartitionInfo) error {

@@ -1393,7 +1393,6 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 }
 
 func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
-	var schema *expression.Schema
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
@@ -1430,10 +1429,21 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		if err != nil {
 			return nil, err
 		}
-		schema = plan.Schema()
+		schema := plan.Schema()
+		if v.Cols != nil && len(v.Cols) != schema.Len() {
+			return nil, ddl.ErrViewWrongList
+		}
+		if v.Cols == nil {
+			v.Cols = make([]model.CIStr, schema.Len())
+		}
+		for i, col := range schema.Columns {
+			v.Cols[i] = col.ColName
+		}
 		if _, ok := plan.(LogicalPlan); ok {
 			b.visitInfo = append(b.visitInfo, visitInfo{
-				privilege: mysql.CreatePriv, //todo Implement CreateViewPriv
+				// TODO: We should check CreateViewPriv instead of CreatePriv.
+				// See https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_create-view.
+				privilege: mysql.CreatePriv,
 				db:        v.ViewName.Schema.L,
 				table:     v.ViewName.Name.L,
 			})
@@ -1477,9 +1487,6 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	}
 
 	p := &DDL{Statement: node}
-	if schema != nil {
-		p.SetSchema(schema)
-	}
 	return p, nil
 }
 

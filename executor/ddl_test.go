@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/ddl"
 	"math"
 	"strings"
 	"time"
@@ -142,10 +143,10 @@ func (s *testSuite) TestCreateView(c *C) {
 	//test create a exist view
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
 	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Table 'test.view_t' already exists")
 	//create view on nonexistent table
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Table 'test.t1' doesn't exist")
 	//simple view
 	tk.MustExec("create table t1 (a int ,b int)")
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
@@ -167,19 +168,19 @@ func (s *testSuite) TestCreateView(c *C) {
 	_, err = tk.Exec("create view v6 (c,d) as select * from t1")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
-	c.Assert(err, NotNil)
+	c.Assert(err, Equals, ddl.ErrViewWrongList)
 	tk.MustExec("drop table v1,v2,v3,v4,v5,v6")
 	//view with variable
 	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Table 'test.v1' already exists")
 	tk.MustExec("drop table v1")
 	//view with different col counts
 	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
-	c.Assert(err, NotNil)
+	c.Assert(err, Equals, ddl.ErrViewWrongList)
 	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
-	c.Assert(err, NotNil)
+	c.Assert(err, Equals, ddl.ErrViewWrongList)
 }
 
 func (s *testSuite) TestCreateDropDatabase(c *C) {
