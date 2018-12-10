@@ -59,7 +59,8 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	for _, row := range rs.Rows() {
 		c.Assert(len(row), Equals, 5)
 		taskType := row[2].(string)
-		if taskType != "cop" {
+		id := row[0].(string)
+		if taskType == "root" || strings.Contains(id, "Scan") {
 			execInfo := row[4].(string)
 			c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 			c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
@@ -385,7 +386,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t1)->HashAgg)->HashAgg}(test.t.c1,test.t1.c1)->Projection",
+			best: "RightHashJoin{TableReader(Table(t1)->HashAgg)->HashAgg->TableReader(Table(t))}(test.t1.c1,test.t.c1)->Projection",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
