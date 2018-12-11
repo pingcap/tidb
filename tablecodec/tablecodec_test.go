@@ -137,7 +137,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
-	c.Assert(r, IsNil)
+	c.Assert(len(r), Equals, 0)
 }
 
 func (s *testTableCodecSuite) TestTimeCodec(c *C) {
