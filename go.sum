@@ -10,6 +10,8 @@ github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470/go.mo
 github.com/boltdb/bolt v1.3.1 h1:JQmyP4ZBrce+ZQu0dY660FMfatumYDLun9hBCUVIkF4=
 github.com/boltdb/bolt v1.3.1/go.mod h1:clJnj/oiGkjum5o1McbSZDSLxVThjynRyGBgiAx27Ps=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=
+github.com/cloud-pi/parser v0.0.0-20181211095502-1e4340922693 h1:5LJarsJyYZjEuYUyJizK7/7FKsZ213qVqQrG2tw17A4=
+github.com/cloud-pi/parser v0.0.0-20181211095502-1e4340922693/go.mod h1:Zemvpgm59FmHmurOqoldI6R3ntetELwMTHaaOjbE4es=
 github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd h1:qMd81Ts1T2OTKmB4acZcyKaMtRnY5Y44NuXGX2GFJ1w=
 github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd/go.mod h1:sE/e/2PUdi/liOCUjSTXgM1o87ZssimdTWN964YiIeI=
 github.com/coreos/bbolt v1.3.0 h1:HIgH5xUWXT914HCI671AxuTTqjj64UOFr7pHn48LUTI=
