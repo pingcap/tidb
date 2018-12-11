@@ -331,7 +331,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction:
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
@@ -393,6 +393,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		_, exists := TxIsolationNames[upVal]
 		if !exists {
 			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		switch upVal {
+		case "SERIALIZABLE", "READ-UNCOMMITTED":
+			return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
 		}
 		return upVal, nil
 	}

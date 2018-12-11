@@ -71,6 +71,10 @@ const (
 	// split data into multiple batches and use a single txn for each batch. This will be helpful when deleting large data.
 	TiDBBatchDelete = "tidb_batch_delete"
 
+	// tidb_batch_commit is used to enable/disable auto-split the transaction.
+	// If set this option on, the transaction will be committed when it reaches stmt-count-limit and starts a new transaction.
+	TiDBBatchCommit = "tidb_batch_commit"
+
 	// tidb_dml_batch_size is used to split the insert/delete data into small batches.
 	// It only takes effort when tidb_batch_insert/tidb_batch_delete is on.
 	// Its default value is 20000. When the row size is large, 20k rows could be larger than 100MB.
@@ -243,6 +247,7 @@ const (
 	DefOptInSubqToJoinAndAgg         = true
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
+	DefBatchCommit                   = false
 	DefCurretTS                      = 0
 	DefMaxChunkSize                  = 32
 	DefDMLBatchSize                  = 20000
