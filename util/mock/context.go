@@ -74,7 +74,7 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(...bool) kv.Transaction {
+func (c *Context) Txn(bool) kv.Transaction {
 	return &c.txn
 }
 
@@ -133,21 +133,6 @@ func (c *Context) NewTxn() error {
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn())
-}
-
-// ActivePendingTxn implements the sessionctx.Context interface.
-func (c *Context) ActivePendingTxn() error {
-	if c.txn.Valid() {
-		return nil
-	}
-	if c.Store != nil {
-		txn, err := c.Store.Begin()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		c.txn.Transaction = txn
-	}
-	return nil
 }
 
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.

@@ -120,7 +120,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 
 func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = e.ctx.Txn().StartTS()
+	dagReq.StartTs = e.ctx.Txn(true).StartTS()
 	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
