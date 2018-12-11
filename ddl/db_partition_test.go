@@ -1103,7 +1103,7 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 		hookCtx := mock.NewContext()
 		hookCtx.Store = store
 		var err error
-		err = hookCtx.NewTxn()
+		err = hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -1240,7 +1240,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 		pid := def.ID
 		partition := tbl.(table.PartitionedTable).GetPartition(pid)
 		startKey := partition.RecordKey(math.MinInt64)
-		c.Assert(ctx.NewTxn(), IsNil)
+		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		err := partition.IterRecords(ctx, startKey, partition.Cols(),
 			func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 				num++

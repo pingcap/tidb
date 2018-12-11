@@ -43,7 +43,7 @@ func (*testSessionSuite) TestSession(c *C) {
 
 	// For last insert id
 	ctx.GetSessionVars().SetLastInsertID(1)
-	c.Assert(ctx.GetSessionVars().LastInsertID, Equals, uint64(1))
+	c.Assert(ctx.GetSessionVars().StmtCtx.LastInsertID, Equals, uint64(1))
 
 	ss.ResetForRetry()
 	c.Assert(ss.AffectedRows(), Equals, uint64(0))
