@@ -888,6 +888,7 @@ const (
 	AlterTableAddPartitions
 	AlterTableCoalescePartitions
 	AlterTableDropPartition
+	AlterTableTruncatePartition
 
 	// TODO: Add more actions
 )
