@@ -2519,7 +2519,7 @@ func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, sel *ast.SelectStmt, w
 	return proj, oldLen, nil
 }
 
-func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindowFunc, error) {
+func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
 	spec := expr.Spec
 	// Add sort for partition by and order by
 	var byItems []*ast.ByItem
@@ -2557,10 +2557,10 @@ func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExp
 	}
 
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, newArgList)
-	window := LogicalWindowFunc{
-		Desc:        desc,
-		PartitionBy: partitionBy,
-		ByItems:     orderByItems,
+	window := LogicalWindow{
+		WindowFuncDesc: desc,
+		PartitionBy:    partitionBy,
+		ByItems:        orderByItems,
 	}.Init(b.ctx)
 	schema := p.Schema().Clone()
 	schema.Append(&expression.Column{

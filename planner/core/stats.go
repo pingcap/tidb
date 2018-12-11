@@ -379,7 +379,7 @@ func (p *LogicalMaxOneRow) deriveStats() (*property.StatsInfo, error) {
 	return p.stats, nil
 }
 
-func (p *LogicalWindowFunc) deriveStats() (*property.StatsInfo, error) {
+func (p *LogicalWindow) deriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}

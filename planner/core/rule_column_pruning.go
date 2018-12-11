@@ -266,7 +266,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalWindowFunc) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) {
 	windowColumn := p.GetWindowResultColumn()
 	len := 0
 	for _, col := range parentUsedCols {
@@ -282,8 +282,8 @@ func (p *LogicalWindowFunc) PruneColumns(parentUsedCols []*expression.Column) {
 	p.Schema().Append(windowColumn)
 }
 
-func (p *LogicalWindowFunc) extractUsedCols(parentUsedCols []*expression.Column) []*expression.Column {
-	for _, arg := range p.Desc.Args {
+func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*expression.Column {
+	for _, arg := range p.WindowFuncDesc.Args {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(arg)...)
 	}
 	for _, by := range p.ByItems {

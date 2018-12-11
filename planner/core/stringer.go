@@ -220,10 +220,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		if x.SelectPlan != nil {
 			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))
 		}
-	case *LogicalWindowFunc:
-		str = fmt.Sprintf("WindowFunc(%s)", x.Desc.String())
-	case *PhysicalWindowFunc:
-		str = fmt.Sprintf("WindowFunc(%s)", x.Desc.String())
+	case *LogicalWindow:
+		str = fmt.Sprintf("WindowFunc(%s)", x.WindowFuncDesc.String())
+	case *PhysicalWindow:
+		str = fmt.Sprintf("WindowFunc(%s)", x.WindowFuncDesc.String())
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

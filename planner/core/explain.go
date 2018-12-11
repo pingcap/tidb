@@ -299,6 +299,6 @@ func (p *PhysicalTopN) ExplainInfo() string {
 }
 
 // ExplainInfo implements PhysicalPlan interface.
-func (p *PhysicalWindowFunc) ExplainInfo() string {
-	return p.Desc.String()
+func (p *PhysicalWindow) ExplainInfo() string {
+	return p.WindowFuncDesc.String()
 }
