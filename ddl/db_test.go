@@ -572,6 +572,8 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
 	}
+	originHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	for i := range testCases {
 		testCase = &testCases[i]
@@ -598,7 +600,6 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 			c.Assert(indexInfo, IsNil)
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
 	s.mustExec(c, "alter table t add index idx_c2(c2)")
 	s.mustExec(c, "alter table t drop index idx_c2")
 }
@@ -654,6 +655,8 @@ func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
 			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
 	}
+	originHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err error
 	sql := ""
@@ -686,7 +689,6 @@ func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
 		}
 
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
