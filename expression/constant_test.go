@@ -54,7 +54,10 @@ func newLonglong(value int64) *Constant {
 
 func newDate(year, month, day int) *Constant {
 	var tmp types.Datum
-	tmp.SetMysqlTime(types.Time{types.FromDate(year, month, day, 0, 0, 0, 0), mysql.TypeDate, 0})
+	tmp.SetMysqlTime(types.Time{
+		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
+		Type: mysql.TypeDate,
+	})
 	return &Constant{
 		Value:   tmp,
 		RetType: types.NewFieldType(mysql.TypeDate),

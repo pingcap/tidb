@@ -88,7 +88,7 @@ func newConstraintSolver(rules ...constraintPropagateRule) constraintSolver {
 
 type pgSolver2 struct{}
 
-func (_ pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+func (s pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
 	solver := newConstraintSolver(ruleConstantFalse, ruleColumnEQConst)
 	return solver.Solve(ctx, conditions)
 }
