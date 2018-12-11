@@ -570,7 +570,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	return nil
 }
 
-func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) decoder.RowDecoder {
+func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
 	cols := t.Cols()
 	tblInfo := t.Meta()
 	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
@@ -595,7 +595,7 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 }
 
 // genExprs use to calculate generated column value.
-func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder decoder.RowDecoder) ([]types.Datum, error) {
+func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder *decoder.RowDecoder) ([]types.Datum, error) {
 	key := t.RecordKey(h)
 	value, err := txn.Get(key)
 	if err != nil {
