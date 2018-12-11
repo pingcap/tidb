@@ -291,7 +291,7 @@ func ruleColumnXXConst(ctx sessionctx.Context, i, j int, exprs *exprSet, GT stri
 }
 
 var monotoneFuncs = map[string]struct{}{
-	ast.ToDays: struct{}{},
+	ast.ToDays: {},
 }
 
 // compareConstant compares two expressions. c1 and c2 should be constant with the same type.
