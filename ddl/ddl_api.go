@@ -1066,9 +1066,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
-		if tbInfo.AutoIncID > 1 {
+		if tbInfo.AutoIncID > 1 && s.Select == nil {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
+			// But if s.Select != nil, we've rebased auto increase ID before inserting data.
 			err = d.handleAutoIncID(tbInfo, schema.ID)
 		}
 	}
@@ -2210,7 +2211,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	return errors.Trace(err)
 }
 
-// AlterTableCharset changes the table charset and collate.
+// AlterTableCharsetAndCollate changes the table charset and collate.
 func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
 	// use the last one.
 	if toCharset == "" && toCollate == "" {

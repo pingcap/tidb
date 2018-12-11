@@ -46,6 +46,29 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err erro
 		return ver, errors.Trace(err)
 	}
 
+	if job.IsRollingback() {
+		err = t.DropTable(job.SchemaID, job.TableID, true)
+		if err != nil {
+			if meta.ErrDBNotExists.Equal(err) {
+				log.Warnf("Cancelling create table job, but database'(Schema ID %d)' does not exists", job.SchemaID)
+			} else if meta.ErrTableNotExists.Equal(err) {
+				log.Warnf("Cancelling create table job, but table'(Schema ID %d).(Table ID %d)' does not exists", job.SchemaID, job.TableID)
+			} else {
+				return ver, errors.Trace(err)
+			}
+		}
+		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tbInfo)
+		// for 'create table', a rolling-back may be caused by errors from inserting-data, or cancel command.
+		if job.Error != nil {
+			// for insert error, `job.Error` is set already.
+			err = job.Error
+		} else {
+			// for cancel command, use 'cancel DDL job' as err
+			err = errCancelledDDLJob
+		}
+		return ver, err
+	}
+
 	originalState := job.SchemaState
 	switch tbInfo.State {
 	case model.StateNone:
@@ -77,7 +100,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err erro
 		// reorganization -> public (insert data before we make the table public)
 		err = doCreateTableInsert(d, t, job, tbInfo, snapshotTS)
 		if err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 
@@ -89,7 +111,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err erro
 	tbInfo.UpdateTS = t.StartTS
 	ver, err = updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, err
 	}
 	if tbInfo.State == model.StatePublic {
@@ -751,6 +772,7 @@ func doCreateTableInsert(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.
 	}
 	closable := sctx.(interface{ Close() })
 	if closable == nil {
+		job.State = model.JobStateCancelling
 		return errors.Errorf("temporary session cannot be closed, should never happen")
 	}
 	defer closable.Close()
@@ -766,9 +788,7 @@ func doCreateTableInsert(d *ddlCtx, t *meta.Meta, job *model.Job, tbInfo *model.
 
 	_, err = sctx.(sqlexec.SQLExecutor).Execute(context.Background(), job.Query)
 	if err != nil {
-		job.State = model.JobStateCancelled
-		startKey := tablecodec.EncodeTablePrefix(tbInfo.ID)
-		job.Args = append(job.Args, startKey, getPartitionIDs(tbInfo))
+		job.State = model.JobStateCancelling
 		return errors.Trace(err)
 	}
 	job.SetRowCount(int64(sctx.GetSessionVars().StmtCtx.AffectedRows()))

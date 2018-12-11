@@ -692,9 +692,10 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 }
 
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
-	if b.ctx.GetSessionVars().CreateTableInsertingID != 0 {
-		// in a 'inserting data from select' state of creating table.
-		return b.buildTableInserter(v, b.ctx.GetSessionVars().CreateTableInsertingID)
+	if b.ctx.GetSessionVars().InsertingDataForCreateTable() {
+		// Create insert executor if we need to insert data for 'create table ... select', see comments of
+		// `InsertingDataForCreateTable()` for more explanations.
+		return b.buildCreateTableInsert(v, b.ctx.GetSessionVars().CreateTableInsertingID)
 	}
 	return &DDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -703,8 +704,8 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 	}
 }
 
-// buildTableInserter builds a CreateTableInsertExec to insert data when creating table by 'create table ... select'
-func (b *executorBuilder) buildTableInserter(v *plannercore.DDL, tableID int64) Executor {
+// buildCreateTableInsert builds a CreateTableInsertExec to insert data when creating table by 'create table ... select'
+func (b *executorBuilder) buildCreateTableInsert(v *plannercore.DDL, tableID int64) Executor {
 	stmt, ok := v.Statement.(*ast.CreateTableStmt)
 	if !ok || v.InsertPlan.SelectPlan == nil {
 		b.err = errors.Errorf("Unexpected plan: %s", v.Statement.Text())
@@ -731,12 +732,14 @@ func (b *executorBuilder) buildTableInserter(v *plannercore.DDL, tableID int64) 
 		b.err = errors.Trace(err)
 		return nil
 	}
-	// The operation of the minus 1 to make sure that the current value doesn't be used,
-	// the next Alloc operation will get this value.
-	// Its behavior is consistent with MySQL.
-	if err = tbl.RebaseAutoID(nil, tbInfo.AutoIncID-1, false); err != nil {
-		b.err = errors.Trace(err)
-		return nil
+	if tbInfo.AutoIncID > 1 {
+		// The operation of the minus 1 to make sure that the current value doesn't be used,
+		// the next Alloc operation will get this value.
+		// Its behavior is consistent with MySQL.
+		if err = tbl.RebaseAutoID(nil, tbInfo.AutoIncID-1, false); err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
 	}
 
 	insertVal := &InsertValues{

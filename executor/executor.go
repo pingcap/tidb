@@ -1317,8 +1317,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt:
-		if ctx.GetSessionVars().CreateTableInsertingID != 0 {
-			// in a 'inserting data from select' state of creating table.
+		// We may need to insert data for 'create table ... select', see comments of
+		// `InsertingDataForCreateTable()` for more explanations.
+		if ctx.GetSessionVars().InsertingDataForCreateTable() {
 			ignoreError := stmt.OnDuplicate == ast.OnDuplicateCreateTableSelectIgnore
 			sc.InInsertStmt = true
 			sc.DupKeyAsWarning = ignoreError

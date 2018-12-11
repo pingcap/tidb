@@ -157,10 +157,27 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	r.Check(testkit.Rows("aa 1", "bb 2", "bb 3", "bb 5"))
 
 	// test auto-increment with create table ... select
+	originalAutoStep := autoid.GetStep()
+	defer func() {
+		autoid.SetStep(originalAutoStep)
+	}()
+	autoid.SetStep(10)
+
+	tk.MustExec("drop table create_target;")
+	tk.MustExec("create table create_target(idx int key auto_increment) select * from create_source;")
+	r = tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("1 aa 1", "2 bb 2", "3 bb 3"))
+	tk.MustExec("insert into create_target(a, b) values ('cc', 4)")
+	r = tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("1 aa 1", "2 bb 2", "3 bb 3", "11 cc 4"))
+
 	tk.MustExec("drop table create_target;")
 	tk.MustExec("create table create_target(idx int key auto_increment) auto_increment=5 select * from create_source;")
 	r = tk.MustQuery("select * from create_target;")
 	r.Check(testkit.Rows("5 aa 1", "6 bb 2", "7 bb 3"))
+	tk.MustExec("insert into create_target(a, b) values ('cc', 4)")
+	r = tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("5 aa 1", "6 bb 2", "7 bb 3", "15 cc 4"))
 
 	// test 'ignore' and 'replace' keywords
 	tk.MustExec("drop table if exists create_target;")

@@ -205,6 +205,12 @@ func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
+func rollingbackCreateTable(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	job.State = model.JobStateRollingback
+	log.Infof("[ddl-%s] run the cancelling create table job: %s", w, job)
+	return
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -221,6 +227,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		err = rollingbackDropSchema(t, job)
 	case model.ActionRenameIndex:
 		ver, err = rollingbackRenameIndex(t, job)
+	case model.ActionCreateTable:
+		ver, err = rollingbackCreateTable(w, d, t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob

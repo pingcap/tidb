@@ -672,6 +672,63 @@ func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
 }
 
+func (s *testDBSuite) TestCancelCreateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	sql := "create database if not exists test_db; use test_db;"
+	s.tk.MustExec(sql)
+	sql = "drop table if exists test_source; create table test_source(a int); insert into test_source values (1), (2);"
+	s.tk.MustExec(sql)
+
+	testCases := []struct {
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+	}{
+		// Check create table.
+		{model.JobStateNone, model.StateNone},
+		{model.JobStateRunning, model.StateWriteReorganization},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionCreateTable && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = hookCtx.Txn(true).Commit(context.Background())
+		}
+	}
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	var err error
+	for i := range testCases {
+		testCase = &testCases[i]
+		sql = "create table test_cancel_create select * from test_source"
+		_, err = s.tk.Exec(sql)
+		c.Assert(checkErr, IsNil)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	}
+	// make sure the table can be created normally
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	s.tk.Exec("create table test_cancel_create select * from test_source")
+}
+
 func (s *testDBSuite) testAlterLock(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)

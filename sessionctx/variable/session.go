@@ -504,6 +504,19 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	return val, ok
 }
 
+// InsertingDataForCreateTable indicates if it's in a 'inserting data from select' state of creating table.
+// ********************************************************************************************************
+// In order to make 'create table ... select' one transaction, it's required to insert data from select
+// statement during the execution of ddl job at ddl owner side. For now TiDB doesn't support serialization &
+// transmission of an execution plan, so original query is parsed again inside a ddl job, and a insert/replace
+// executor is created to insert data from the 'select' part of statement.
+// This functions tells if we're trying to insert data inside a ddl job.
+// ********************************************************************************************************
+// TODO: current implementation is an expedience, refactor it after query plan serialization is supported.
+func (s *SessionVars) InsertingDataForCreateTable() bool {
+	return s.CreateTableInsertingID != 0
+}
+
 // deleteSystemVar deletes a system variable.
 func (s *SessionVars) deleteSystemVar(name string) error {
 	if name != CharacterSetResults {
