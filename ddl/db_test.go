@@ -2947,6 +2947,62 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	s.testErrorCode(c, sql4, tmysql.ErrDropPartitionNonExistent)
 }
 
+func (s *testDBSuite) TestAlterTableTruncatePartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists employees")
+	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
+	s.tk.MustExec(`create table employees (
+	  id int not null,
+	  hired int not null
+	) partition by range( hired ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	)`)
+	s.tk.MustExec("insert into employees values (1, 1990)")
+	s.tk.MustExec("insert into employees values (2, 1995)")
+	s.tk.MustExec("insert into employees values (3, 2000)")
+	result := s.tk.MustQuery("select * from employees order by id")
+	result.Check(testkit.Rows(`1 1990`, `2 1995`, `3 2000`))
+
+	s.testErrorCode(c, "alter table employees truncate partition xxx", tmysql.ErrUnknownPartition)
+
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
+	c.Assert(err, IsNil)
+	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+
+	s.tk.MustExec("alter table employees truncate partition p1")
+	result = s.tk.MustQuery("select * from employees order by id")
+	result.Check(testkit.Rows(`2 1995`, `3 2000`))
+
+	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+	hasOldPartitionData := checkPartitionDelRangeDone(c, s, partitionPrefix)
+	c.Assert(hasOldPartitionData, IsFalse)
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
+	c.Assert(err, IsNil)
+	newPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+	c.Assert(oldPID != newPID, IsTrue)
+
+	s.tk.MustExec("alter table employees truncate partition p3")
+	result = s.tk.MustQuery("select * from employees")
+	result.Check(testkit.Rows(`2 1995`))
+
+	s.tk.MustExec("insert into employees values (1, 1984)")
+	result = s.tk.MustQuery("select * from employees order by id")
+	result.Check(testkit.Rows(`1 1984`, `2 1995`))
+	s.tk.MustExec("insert into employees values (3, 2000)")
+	result = s.tk.MustQuery("select * from employees order by id")
+	result.Check(testkit.Rows(`1 1984`, `2 1995`, `3 2000`))
+
+	s.tk.MustExec(`create table non_partition (id int)`)
+	s.testErrorCode(c, "alter table non_partition truncate partition p0", tmysql.ErrPartitionMgmtOnNonpartitioned)
+}
+
 func (s *testDBSuite) TestAddPartitionTooManyPartitions(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
