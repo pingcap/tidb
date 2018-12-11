@@ -258,6 +258,15 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 			},
 			result: "0",
 		},
+		{
+			solver: newConstraintSolver(ruleColumnLTConst),
+			// col1 < '2018-12-11' and to_days(col1) > 737999 => false
+			conditions: []Expression{
+				newFunction(ast.LT, col1, newDate(2018, 12, 11)),
+				newFunction(ast.GT, newFunction(ast.ToDays, col1), newLonglong(737999)),
+			},
+			result: "0",
+		},
 	}
 	for _, tt := range tests {
 		ctx := mock.NewContext()

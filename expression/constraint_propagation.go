@@ -174,11 +174,21 @@ func ruleColumnEQConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	}
 }
 
-// ruleColumnGTConst propagates the "column > const" condition.
+// ruleColumnLTConst propagates the "column > const" condition.
 func ruleColumnGTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
+	ruleColumnXXConst(ctx, i, j, exprs, ast.GT, ast.LT, ast.GE)
+}
+
+// ruleColumnLTConst propagates the "column < const" condition.
+func ruleColumnLTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
+	ruleColumnXXConst(ctx, i, j, exprs, ast.LT, ast.GT, ast.LE)
+}
+
+// ruleColumnXXConst propagates the "column OP const" condition, where op may be '>' and '<'
+func ruleColumnXXConst(ctx sessionctx.Context, i, j int, exprs *exprSet, GT string, LT string, GE string) {
 	cond := exprs.data[i]
 	f1, ok := cond.(*ScalarFunction)
-	if !ok || f1.FuncName.L != ast.GT {
+	if !ok || f1.FuncName.L != GT {
 		return
 	}
 	var col1 *Column
@@ -199,7 +209,7 @@ func ruleColumnGTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	}
 
 	// col > c1, col > c2, c1 > c2 => col > c1
-	if f2.FuncName.L == ast.GT {
+	if f2.FuncName.L == GT {
 		col2, ok := f2.GetArgs()[0].(*Column)
 		if !ok || !col1.Equal(ctx, col2) {
 			return
@@ -212,7 +222,7 @@ func ruleColumnGTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 			return
 		}
 
-		v, isNull, err := compareConstant(ctx, ast.GT, con1, con2)
+		v, isNull, err := compareConstant(ctx, GT, con1, con2)
 		if err != nil {
 			log.Warn(err)
 			return
@@ -232,7 +242,7 @@ func ruleColumnGTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	// Prove:
 	// col > c1, f is monotonous => f(col) > f(c1)
 	// f(col) > f(c1), f(col) < c2, f(c1) >= c2 => false
-	if f2.FuncName.L == ast.LT {
+	if f2.FuncName.L == LT {
 		con2, ok := f2.GetArgs()[1].(*Constant)
 		if !ok {
 			return
@@ -267,7 +277,7 @@ func ruleColumnGTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 		if !col1.Equal(ctx, col2) {
 			return
 		}
-		v, isNull, err := compareConstant(ctx, ast.GE, fc1, con2)
+		v, isNull, err := compareConstant(ctx, GE, fc1, con2)
 		if err != nil {
 			log.Warn(err)
 			return
@@ -291,80 +301,4 @@ func compareConstant(ctx sessionctx.Context, fn string, c1, c2 Expression) (int6
 		return 0, false, errors.Trace(err)
 	}
 	return cmp.EvalInt(ctx, chunk.Row{})
-}
-
-// ruleColumnLTConst propagates the "column < const" condition.
-func ruleColumnLTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
-	cond := exprs.data[i]
-	f1, ok := cond.(*ScalarFunction)
-	if !ok || f1.FuncName.L != ast.LT {
-		return
-	}
-	var col1 *Column
-	var con1 *Constant
-	col1, ok = f1.GetArgs()[0].(*Column)
-	if !ok {
-		return
-	}
-	con1, ok = f1.GetArgs()[1].(*Constant)
-	if !ok {
-		return
-	}
-
-	expr := exprs.data[j]
-	f2, ok := expr.(*ScalarFunction)
-	if !ok {
-		return
-	}
-	// col < c1, col < c2, c1 < c2 => col < c1
-	if f2.FuncName.L == ast.LT {
-		col2, ok := f2.GetArgs()[0].(*Column)
-		if !ok || !col1.Equal(ctx, col2) {
-			return
-		}
-		con2, ok := f2.GetArgs()[1].(*Constant)
-		if !ok {
-			return
-		}
-		if !con1.RetType.Equal(con2.RetType) {
-			return
-		}
-
-		v, isNull, err := compareConstant(ctx, ast.LT, con1, con2)
-		if err != nil {
-			log.Warn(err)
-			return
-		}
-		if !isNull && v > 0 {
-			exprs.tombstone[j] = true
-		}
-		return
-	}
-
-	// col < c1, col > c2, c1 <= c2 => false
-	if f2.FuncName.L == ast.GT {
-		col2, ok := f2.GetArgs()[0].(*Column)
-		if !ok || !col1.Equal(ctx, col2) {
-			return
-		}
-		con2, ok := f2.GetArgs()[1].(*Constant)
-		if !ok {
-			return
-		}
-
-		if !con1.RetType.Equal(con2.RetType) {
-			return
-		}
-
-		v, isNull, err := compareConstant(ctx, ast.LE, con1, con2)
-		if err != nil {
-			log.Warn(err)
-			return
-		}
-		if !isNull && v > 0 {
-			exprs.SetConstFalse()
-		}
-		return
-	}
-	return
 }
