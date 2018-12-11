@@ -152,7 +152,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	tk.MustExec("prepare sel1 from 'select id, c1 from t1 where c1 < now(3)'")
 
 	sql1 := "execute sel1"
-	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].000\)\]\)`
+	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].[0-9][0-9][0-9]\)\]\)`
 
 	var cnt [2]float64
 	var planStr [2]string
@@ -176,7 +176,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 		counter.Write(pb)
 		cnt[i] = pb.GetCounter().GetValue()
 		c.Check(cnt[i], Equals, float64(i))
-		time.Sleep(time.Second * 1)
+		time.Sleep(time.Millisecond * 10)
 	}
 	c.Assert(planStr[0] < planStr[1], IsTrue)
 }
@@ -250,7 +250,9 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
 	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
 	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
-	time.Sleep(3 * time.Second) // renew a session after 2 sec
+
+	// Disable global variable cache, so load global session variable take effect immediate.
+	dom.GetGlobalVarsCache().Disable()
 
 	// test close session to give up all prepared stmt
 	tk.MustExec(`prepare stmt2 from "select 1"`)
