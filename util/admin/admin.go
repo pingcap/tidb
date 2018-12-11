@@ -551,8 +551,37 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	return nil
 }
 
+<<<<<<< HEAD
 // genExprs use to calculate generated column value.
 func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, genExprs map[string]expression.Expression) ([]types.Datum, error) {
+=======
+func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
+	cols := t.Cols()
+	tblInfo := t.Meta()
+	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
+	for _, v := range decodeCol {
+		col := cols[v.Offset]
+		tpExpr := decoder.Column{
+			Info: col.ToInfo(),
+		}
+		if col.IsGenerated() && !col.GeneratedStored {
+			for _, c := range cols {
+				if _, ok := col.Dependences[c.Name.L]; ok {
+					decodeColsMap[c.ID] = decoder.Column{
+						Info: c.ToInfo(),
+					}
+				}
+			}
+			tpExpr.GenExpr = genExpr[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
+		}
+		decodeColsMap[col.ID] = tpExpr
+	}
+	return decoder.NewRowDecoder(cols, decodeColsMap)
+}
+
+// genExprs use to calculate generated column value.
+func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder *decoder.RowDecoder) ([]types.Datum, error) {
+>>>>>>> d3b92e028...  ddl: fix panic when add index of generated column. (#8620)
 	key := t.RecordKey(h)
 	value, err := txn.Get(key)
 	genColFlag := false
