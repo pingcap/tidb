@@ -1433,12 +1433,12 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		if v.Cols != nil && len(v.Cols) != schema.Len() {
 			return nil, ddl.ErrViewWrongList
 		}
-		if v.Cols == nil {
-			v.Cols = make([]model.CIStr, schema.Len())
-		}
+		// we use fieldList to store schema.Columns temporary
+		var fieldList = make([]*ast.SelectField, schema.Len())
 		for i, col := range schema.Columns {
-			v.Cols[i] = col.ColName
+			fieldList[i] = &ast.SelectField{AsName: col.ColName}
 		}
+		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
 		if _, ok := plan.(LogicalPlan); ok {
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				// TODO: We should check CreateViewPriv instead of CreatePriv.

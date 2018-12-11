@@ -1014,22 +1014,33 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 }
 
 func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
-	var tableColumns = make([]*table.Column, len(s.Cols))
-	for i, v := range s.Cols {
+	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
+		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
+
+	if s.Definer.CurrentUser {
+		viewInfo.Definer = ctx.GetSessionVars().User
+	}
+
+	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
+	if s.Cols != nil {
+		viewInfo.Cols = s.Cols
+	} else {
+		viewInfo.Cols = make([]model.CIStr, len(schemaCols))
+		for i, v := range schemaCols {
+			viewInfo.Cols[i] = v.AsName
+		}
+	}
+
+	var tableColumns = make([]*table.Column, len(schemaCols))
+	for i, v := range schemaCols {
 		tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-			Name:   v,
+			Name:   v.AsName,
 			ID:     int64(i),
 			Offset: i,
 			State:  model.StatePublic,
 		})
 	}
 
-	viewInfo := &model.ViewInfo{Cols: s.Cols, Definer: s.Definer, Algorithm: s.Algorithm,
-		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
-
-	if s.Definer.CurrentUser {
-		viewInfo.Definer = ctx.GetSessionVars().User
-	}
 	return viewInfo, tableColumns
 }
 
