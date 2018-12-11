@@ -17,4 +17,3 @@ before_install:
 script:
   - make dev
   - ./hack/check-tidy.sh
-  - ./hack/check_parser_replace.sh
