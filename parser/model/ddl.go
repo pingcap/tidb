@@ -52,6 +52,7 @@ const (
 	ActionDropTablePartition           ActionType = 20
 	ActionCreateView                   ActionType = 21
 	ActionModifyTableCharsetAndCollate ActionType = 22
+	ActionTruncateTablePartition       ActionType = 23
 )
 
 // AddIndexStr is a string related to the operation of "add index".
@@ -77,9 +78,10 @@ var actionMap = map[ActionType]string{
 	ActionModifyTableComment:           "modify table comment",
 	ActionRenameIndex:                  "rename index",
 	ActionAddTablePartition:            "add partition",
-	ActionDropTablePartition:           "drop table partition",
+	ActionDropTablePartition:           "drop partition",
 	ActionCreateView:                   "create view",
 	ActionModifyTableCharsetAndCollate: "modify table charset and collate",
+	ActionTruncateTablePartition:       "truncate partition",
 }
 
 // String return current ddl action in string
