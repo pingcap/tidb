@@ -809,16 +809,22 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 	}
 	patChars, patTypes := stringutil.CompilePattern(searchStr, escape)
 
-	// result
-	result := make([]interface{}, 0)
+	// resultSet
+	resultSet := make(map[string]bool)
 
 	// walk json_doc
 	walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
+		pathStr := fullpath.String()
+		if _, ok := resultSet[pathStr]; ok {
+			return false, nil
+		}
 		if bj.TypeCode == json.TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
-			result = append(result, fullpath.String())
+			resultSet[pathStr] = true
 			if containType == json.ContainsPathOne {
 				return true, nil
 			}
+		} else {
+			resultSet[pathStr] = false
 		}
 		return false, nil
 	}
@@ -842,6 +848,13 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 		obj.Walk(walkFn)
 	}
 
+	// result
+	result := make([]interface{}, 0)
+	for path, match := range resultSet {
+		if match {
+			result = append(result, path)
+		}
+	}
 	switch len(result) {
 	case 0:
 		return res, true, nil

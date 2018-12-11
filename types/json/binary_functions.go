@@ -775,8 +775,9 @@ func (bj BinaryJSON) GetElemDepth() int {
 type extractCallbackFn func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
 
 // extractToCallback: callback alternative of extractTo
-// NOTICE: path [0] for JSON object other than array is INVALID, which is different from extractTo.
-//         Which is caused by the difference between JSON_SEARCH and JSON_EXTRACT.
+//     would be more effective when walk through the whole JSON is unnecessary
+// NOTICE: path [0] & [*] for JSON object other than array is INVALID, which is different from extractTo.
+//         Due to the difference between JSON_SEARCH and JSON_EXTRACT.
 //            SELECT JSON_EXTRACT('{"a":"1", "b":2}', '$.a');                       ==> "1"
 //            SELECT JSON_EXTRACT('{"a":"1", "b":2}', '$[0].a');                    ==> "1"
 //            SELECT  JSON_SEARCH('{"a":"1", "b":2}', 'all', '1', NULL, '$.a');     ==> "$.a"
