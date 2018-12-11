@@ -127,7 +127,11 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
 	default:
+		flen := tp.Flen
 		DefaultTypeForValue(value, tp)
+		if tp.Tp == mysql.TypeVarString {
+			tp.Flen = flen
+		}
 		if tp.Tp == mysql.TypeUnspecified {
 			tp.Tp = mysql.TypeVarString
 		}
