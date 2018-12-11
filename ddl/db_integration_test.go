@@ -152,6 +152,24 @@ func (s *testIntegrationSuite) TestEndIncluded(c *C) {
 	tk.MustExec("admin check table t")
 }
 
+func (s *testIntegrationSuite) TestNullGeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` int(11) DEFAULT NULL," +
+		"`b` int(11) DEFAULT NULL," +
+		"`c` int(11) GENERATED ALWAYS AS (`a` + `b`) VIRTUAL DEFAULT NULL," +
+		"`h` varchar(10) DEFAULT NULL," +
+		"`m` int(11) DEFAULT NULL" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+
+	tk.MustExec("insert into t values()")
+	tk.MustExec("alter table t add index idx_c(c)")
+	tk.MustExec("drop table t")
+}
+
 func (s *testIntegrationSuite) TestCaseInsensitiveCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
