@@ -263,8 +263,7 @@ const (
 // otherwise it returns an error with a different information.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
-	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
-	tblCnt, err := getCount(ctx, sql)
+	tblCnt, err := getCount(ctx, fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName))
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -280,7 +279,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		wg.Add(1)
 		go func(num int, idx string, ch chan result) {
 			defer wg.Done()
-			sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
+			sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 			idxCnt, err := getCount(ctx, sql)
 			if err != nil {
 				ch <- result{
