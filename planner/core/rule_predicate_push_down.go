@@ -159,10 +159,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
 		tempCond = expression.PropagateConstant(p.ctx, tempCond)
-		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, tempCond)
-		if dual != nil {
-			return ret, dual
+		// Return table dual when filter is constant false or null. Not applicable to AntiSemiJoin.
+		// TODO: For AntiSemiJoin, we can use outer plan to substitute LogicalJoin actually.
+		if p.JoinType != AntiSemiJoin {
+			dual := conds2TableDual(p, tempCond)
+			if dual != nil {
+				return ret, dual
+			}
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(tempCond, leftPlan, rightPlan, true, true)
 		p.LeftConditions = nil
