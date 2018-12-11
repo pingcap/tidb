@@ -86,7 +86,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 	copy(funcArgs, args)
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
 		retType = builtinRetTp
@@ -115,7 +115,7 @@ func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.Fie
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
 func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	return expr
 }
 
@@ -204,7 +204,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 
 	if isNull || err != nil {
 		d.SetValue(nil)
-		return d, errors.Trace(err)
+		return d, err
 	}
 	d.SetValue(res)
 	return

@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type DDLForTest interface {
@@ -133,7 +133,7 @@ func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 }
 
 func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn(true))
 	ver, err := m.GetSchemaVersion()

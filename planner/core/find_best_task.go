@@ -119,7 +119,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
 		for i, child := range p.children {
-			childTask, err := child.findBestTask(pp.getChildReqProps(i))
+			childTask, err := child.findBestTask(pp.GetChildReqProps(i))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
