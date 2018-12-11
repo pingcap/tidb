@@ -995,6 +995,27 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	}
 	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
 
+	for _, v := range viewInfo.Cols {
+		if len(v.L) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.GenWithStackByArgs(v.L)
+		}
+	}
+
+	for _, v := range cols {
+		if len(v.Name.L) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.GenWithStackByArgs(v.Name.L)
+		}
+	}
+
+	colNames := map[string]bool{}
+	for _, v := range viewInfo.Cols {
+		nameLower := v.L
+		if colNames[nameLower] {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(v.L)
+		}
+		colNames[nameLower] = true
+	}
+
 	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, nil)
 	if err != nil {
 		return err
