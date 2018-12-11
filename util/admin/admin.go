@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -263,54 +262,30 @@ const (
 // otherwise it returns an error with a different information.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
-	tblCnt, err := getCount(ctx, fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName))
+	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
+	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	wg := sync.WaitGroup{}
-	type result struct {
-		greater byte
-		offset  int
-		err     error
-	}
-	retCh := make(chan result, len(indices))
 	for i, idx := range indices {
-		wg.Add(1)
-		go func(num int, idx string, ch chan result) {
-			defer wg.Done()
-			sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
-			idxCnt, err := getCount(ctx, sql)
-			if err != nil {
-				ch <- result{
-					greater: InvalidGreater,
-					offset:  num,
-					err:     errors.Trace(err),
-				}
-			}
-			log.Infof("check indices count, table %s cnt %d, index %s cnt %d", tableName, tblCnt, idx, idxCnt)
-			if tblCnt == idxCnt {
-				return
-			}
+		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
+		idxCnt, err := getCount(ctx, sql)
+		if err != nil {
+			return InvalidGreater, i, errors.Trace(err)
+		}
+		log.Infof("check indices count, table %s cnt %d, index %s cnt %d", tableName, tblCnt, idx, idxCnt)
+		if tblCnt == idxCnt {
+			continue
+		}
 
-			var ret byte
-			if tblCnt > idxCnt {
-				ret = TblCntGreater
-			} else if idxCnt > tblCnt {
-				ret = IdxCntGreater
-			}
-			ch <- result{
-				greater: ret,
-				offset:  num,
-				err:     errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt),
-			}
-		}(i, idx, retCh)
-	}
-	wg.Wait()
-
-	if len(retCh) > 0 {
-		ret := <-retCh
-		return ret.greater, ret.offset, errors.Trace(ret.err)
+		var ret byte
+		if tblCnt > idxCnt {
+			ret = TblCntGreater
+		} else if idxCnt > tblCnt {
+			ret = IdxCntGreater
+		}
+		return ret, i, errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
 	}
 	return 0, 0, nil
 }
