@@ -1318,29 +1318,26 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		if col.Name.L != v.Name.Name.L {
 			continue
 		}
-		if hasCurrentDatetimeDefault(col) {
-			if col.Tp == mysql.TypeDatetime {
-				// for DATETIME column with current_timestamp, use NULL to be compatible with MySQL 5.7
-				val = expression.Null
-			} else if col.Tp == mysql.TypeTimestamp {
-				// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
-				zero := types.Time{
-					Time: types.ZeroTime,
-					Type: mysql.TypeTimestamp,
-					Fsp:  col.Decimal,
-				}
-				val = &expression.Constant{
-					Value:   types.NewDatum(zero),
-					RetType: types.NewFieldType(mysql.TypeTimestamp),
-				}
-			} else {
-				// for other columns, just use what it is
-				val, er.err = er.b.getDefaultValue(col)
+		isCurrentTimestamp := hasCurrentDatetimeDefault(col)
+		switch {
+		case isCurrentTimestamp && col.Tp == mysql.TypeDatetime:
+			// for DATETIME column with current_timestamp, use NULL to be compatible with MySQL 5.7
+			val = expression.Null
+		case isCurrentTimestamp && col.Tp == mysql.TypeTimestamp:
+			// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
+			zero := types.Time{
+				Time: types.ZeroTime,
+				Type: mysql.TypeTimestamp,
+				Fsp:  col.Decimal,
 			}
-		} else {
+			val = &expression.Constant{
+				Value:   types.NewDatum(zero),
+				RetType: types.NewFieldType(mysql.TypeTimestamp),
+			}
+		default:
+			// for other columns, just use what it is
 			val, er.err = er.b.getDefaultValue(col)
 		}
-		break
 	}
 	if er.err != nil {
 		return
