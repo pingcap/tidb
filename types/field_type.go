@@ -40,6 +40,12 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// CloneFieldType clones the given FieldType.
+func CloneFieldType(src *FieldType) *FieldType {
+	ft := *src
+	return &ft
+}
+
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
 // whose return type is determined by the arguments' FieldTypes.
 // Aggregation is performed by MergeFieldType function.
@@ -123,11 +129,14 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 	switch value.(type) {
 	case nil:
-		tp.Tp = mysql.TypeUnspecified
+		tp.Tp = mysql.TypeVarString
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
 	default:
 		DefaultTypeForValue(value, tp)
+		if tp.Tp == mysql.TypeUnspecified {
+			tp.Tp = mysql.TypeVarString
+		}
 	}
 }
 

@@ -27,6 +27,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	tmysql "github.com/pingcap/parser/mysql"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -514,6 +516,96 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 	for _, idx := range t.Indices() {
 		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
 	}
+	s.mustExec(c, "alter table t add index idx_c2(c2)")
+	s.mustExec(c, "alter table t drop index idx_c2")
+}
+
+// TestCancelDropIndex tests cancel ddl job which type is drop index.
+func (s *testDBSuite) TestCancelDropIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+	for i := 0; i < 5; i++ {
+		s.mustExec(c, "insert into t values (?, ?)", i, i)
+	}
+
+	testCases := []struct {
+		needAddIndex   bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		// model.JobStateNone means the jobs is canceled before the first run.
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, true},
+		{false, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
+	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropIndex && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobID = job.ID
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+
+			checkErr = hookCtx.Txn(true).Commit(context.Background())
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.needAddIndex {
+			s.mustExec(c, "alter table t add index idx_c2(c2)")
+		}
+		rs, err := s.tk.Exec("alter table t drop index idx_c2")
+		if rs != nil {
+			rs.Close()
+		}
+
+		t := s.testGetTable(c, "t")
+		indexInfo := schemautil.FindIndexByName("idx_c2", t.Meta().Indices)
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+
+			c.Assert(indexInfo, NotNil)
+			c.Assert(indexInfo.State, Equals, model.StatePublic)
+		} else {
+			err1 := admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID)
+			c.Assert(err, IsNil)
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, err1.Error())
+
+			c.Assert(indexInfo, IsNil)
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
 	s.mustExec(c, "alter table t add index idx_c2(c2)")
 	s.mustExec(c, "alter table t drop index idx_c2")
 }
@@ -2964,6 +3056,62 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	s.testErrorCode(c, sql4, tmysql.ErrDropPartitionNonExistent)
 }
 
+func (s *testDBSuite) TestAlterTableTruncatePartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists employees")
+	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
+	s.tk.MustExec(`create table employees (
+	  id int not null,
+	  hired int not null
+	) partition by range( hired ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	)`)
+	s.tk.MustExec("insert into employees values (1, 1990)")
+	s.tk.MustExec("insert into employees values (2, 1995)")
+	s.tk.MustExec("insert into employees values (3, 2000)")
+	result := s.tk.MustQuery("select * from employees order by id")
+	result.Check(testkit.Rows(`1 1990`, `2 1995`, `3 2000`))
+
+	s.testErrorCode(c, "alter table employees truncate partition xxx", tmysql.ErrUnknownPartition)
+
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
+	c.Assert(err, IsNil)
+	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+
+	s.tk.MustExec("alter table employees truncate partition p1")
+	result = s.tk.MustQuery("select * from employees order by id")
+	result.Check(testkit.Rows(`2 1995`, `3 2000`))
+
+	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+	hasOldPartitionData := checkPartitionDelRangeDone(c, s, partitionPrefix)
+	c.Assert(hasOldPartitionData, IsFalse)
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
+	c.Assert(err, IsNil)
+	newPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+	c.Assert(oldPID != newPID, IsTrue)
+
+	s.tk.MustExec("alter table employees truncate partition p3")
+	result = s.tk.MustQuery("select * from employees")
+	result.Check(testkit.Rows(`2 1995`))
+
+	s.tk.MustExec("insert into employees values (1, 1984)")
+	result = s.tk.MustQuery("select * from employees order by id")
+	result.Check(testkit.Rows(`1 1984`, `2 1995`))
+	s.tk.MustExec("insert into employees values (3, 2000)")
+	result = s.tk.MustQuery("select * from employees order by id")
+	result.Check(testkit.Rows(`1 1984`, `2 1995`, `3 2000`))
+
+	s.tk.MustExec(`create table non_partition (id int)`)
+	s.testErrorCode(c, "alter table non_partition truncate partition p0", tmysql.ErrPartitionMgmtOnNonpartitioned)
+}
+
 func (s *testDBSuite) TestAddPartitionTooManyPartitions(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
@@ -3738,6 +3886,98 @@ func testPartitionAddIndex(tk *testkit.TestKit, c *C) {
 
 	tk.MustExec("admin check table partition_add_idx")
 	tk.MustExec("drop table partition_add_idx")
+}
+
+func (s *testDBSuite) TestAlterTableCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database test_charset")
+	defer tk.MustExec("drop database test_charset")
+	tk.MustExec("use test_charset")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int) charset latin1")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().Charset, Equals, "latin1")
+	defCollate, err := charset.GetDefaultCollation("latin1")
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().Collate, Equals, defCollate)
+
+	tk.MustExec("alter table t charset utf8")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(t.Meta().Charset, Equals, "utf8")
+	defCollate, err = charset.GetDefaultCollation("utf8")
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().Collate, Equals, defCollate)
+
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_general_ci")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_general_ci")
+
+	rs, err := tk.Exec("alter table t charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
+
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8mb4 to utf8")
+}
+
+func (s *testDBSuite) TestAlterColumnCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database test_charset")
+	defer tk.MustExec("drop database test_charset")
+	tk.MustExec("use test_charset")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) charset latin1)")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	col := model.FindColumnInfo(t.Meta().Columns, "a")
+	c.Assert(col, NotNil)
+	c.Assert(col.Charset, Equals, "latin1")
+	defCollate, err := charset.GetDefaultCollation("latin1")
+	c.Assert(err, IsNil)
+	c.Assert(col.Collate, Equals, defCollate)
+
+	tk.MustExec("alter table t modify column a char(10) charset utf8")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	col = model.FindColumnInfo(t.Meta().Columns, "a")
+	c.Assert(col, NotNil)
+	c.Assert(col.Charset, Equals, "utf8")
+	defCollate, err = charset.GetDefaultCollation("utf8")
+	c.Assert(err, IsNil)
+	c.Assert(col.Collate, Equals, defCollate)
+
+	tk.MustExec("alter table t modify column a char(10) charset utf8 collate utf8_general_ci")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	col = model.FindColumnInfo(t.Meta().Columns, "a")
+	c.Assert(col, NotNil)
+	c.Assert(col.Charset, Equals, "utf8")
+	c.Assert(col.Collate, Equals, "utf8_general_ci")
+
+	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_general_ci")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	col = model.FindColumnInfo(t.Meta().Columns, "a")
+	c.Assert(col, NotNil)
+	c.Assert(col.Charset, Equals, "utf8mb4")
+	c.Assert(col.Collate, Equals, "utf8mb4_general_ci")
+
+	rs, err := tk.Exec("alter table t modify column a char(10) charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8mb4 to utf8")
 }
 
 func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
