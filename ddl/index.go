@@ -457,7 +457,7 @@ type addIndexWorker struct {
 	defaultVals        []types.Datum
 	idxRecords         []*indexRecord
 	rowMap             map[int64]types.Datum
-	rowDecoder         decoder.RowDecoder
+	rowDecoder         *decoder.RowDecoder
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
@@ -543,8 +543,8 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 			}
 			continue
 		}
-		idxColumnVal := w.rowMap[col.ID]
-		if _, ok := w.rowMap[col.ID]; ok {
+		idxColumnVal, ok := w.rowMap[col.ID]
+		if ok {
 			idxVal[j] = idxColumnVal
 			// Make sure there is no dirty data.
 			delete(w.rowMap, col.ID)
@@ -567,8 +567,17 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 		}
 		idxVal[j] = idxColumnVal
 	}
+	// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
+	// the generated value, so we need to clear up the reusing map.
+	w.cleanRowMap()
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal}
 	return idxRecord, nil
+}
+
+func (w *addIndexWorker) cleanRowMap() {
+	for id := range w.rowMap {
+		delete(w.rowMap, id)
+	}
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
@@ -789,6 +798,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 			// we should check whether this ddl job is still runnable.
 			err = w.ddlWorker.isReorgRunnable(d)
 		}
+
 		if err != nil {
 			result.err = err
 			return result
