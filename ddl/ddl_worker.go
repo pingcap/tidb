@@ -285,25 +285,16 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
+		case model.ActionCreateTable:
+			if job.State != model.JobStateRollbackDone {
+				break
+			}
+
+			// After rolling back an CreateTable operation, we need to use delete-range to delete the half-done data.
+			err = w.deleteRange(job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-	} else if job.Type == model.ActionCreateTable {
-		// We're canceling the job, table may be created already with some inserted data. A clean-up is needed
-		err = t.DropTable(job.SchemaID, job.TableID, true)
-		if err != nil {
-			if terror.ErrorEqual(err, meta.ErrDBNotExists) {
-				log.Warnf("Cancelling create table job, but database'(Schema ID %d)' does not exists", job.SchemaID)
-			} else if terror.ErrorEqual(err, meta.ErrTableNotExists) {
-				log.Warnf("Cancelling create table job, but table'(Schema ID %d).(Table ID %d)' does not exists", job.SchemaID, job.TableID)
-			} else {
-				return errors.Trace(err)
-			}
-		}
-		err = w.deleteRange(job)
 		if err != nil {
 			return errors.Trace(err)
 		}
