@@ -20,7 +20,6 @@ package ddl
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/util/set"
 	"strings"
 	"time"
 
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/schemautil"
+	"github.com/pingcap/tidb/util/set"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
