@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/sirupsen/logrus"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -119,6 +120,7 @@ func (s *joinReOrderGreedySolver) constructConnectedJoinTree() (LogicalPlan, err
 		if bestJoin == nil {
 			break
 		}
+		logrus.Warnf("bestJoin: %v, bestIdx: %v, cur group size: %v", ToString(bestJoin), bestIdx, len(s.curJoinGroup))
 		curJoinTree = bestJoin
 		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
 		s.otherConds = finalRemainOthers
