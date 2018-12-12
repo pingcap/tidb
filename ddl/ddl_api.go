@@ -613,26 +613,17 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkTooLongColumn(cols interface{}) error {
-	var checkCol = func(colName string) error {
+func checkTooLongColumn(cols []interface{}) error {
+	var colName string
+	for _, col := range cols {
+		switch x := col.(type) {
+		case *ast.ColumnDef:
+			colName = x.Name.Name.O
+		case model.CIStr:
+			colName = x.O
+		}
 		if len(colName) > mysql.MaxColumnNameLength {
 			return ErrTooLongIdent.GenWithStackByArgs(colName)
-		}
-		return nil
-	}
-
-	switch x := cols.(type) {
-	case []*ast.ColumnDef:
-		for _, col := range x {
-			if err := checkCol(col.Name.Name.O); err != nil {
-				return err
-			}
-		}
-	case []model.CIStr:
-		for _, col := range x {
-			if err := checkCol(col.O); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
@@ -924,7 +915,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err = checkGeneratedColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkTooLongColumn(colDefs); err != nil {
+	if err = checkTooLongColumn(colObjects); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkTooManyColumns(colDefs); err != nil {
@@ -1023,13 +1014,13 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	}
 	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
 
-	if err = checkTooLongColumn(viewInfo.Cols); err != nil {
-		return err
-	}
-
 	var colObjects []interface{}
 	for _, col := range viewInfo.Cols {
 		colObjects = append(colObjects, col)
+	}
+
+	if err = checkTooLongColumn(colObjects); err != nil {
+		return err
 	}
 	if err = checkDuplicateColumn(colObjects); err != nil {
 		return err
