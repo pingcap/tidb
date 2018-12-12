@@ -267,7 +267,8 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (p *PhysicalSort) getCost(count float64) float64 {
+// GetCost computes the cost of in memory sort.
+func (p *PhysicalSort) GetCost(count float64) float64 {
 	if count < 2.0 {
 		count = 2.0
 	}
@@ -299,7 +300,7 @@ func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
 func (p *PhysicalSort) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	t = attachPlan2Task(p, t)
-	t.addCost(p.getCost(t.count()))
+	t.addCost(p.GetCost(t.count()))
 	return t
 }
 
@@ -401,7 +402,8 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	partialCursor := 0
 	finalAggFuncs := make([]*aggregation.AggFuncDesc, len(p.AggFuncs))
 	for i, aggFun := range p.AggFuncs {
-		finalAggFunc := &aggregation.AggFuncDesc{Name: aggFun.Name, HasDistinct: false}
+		finalAggFunc := &aggregation.AggFuncDesc{HasDistinct: false}
+		finalAggFunc.Name = aggFun.Name
 		args := make([]expression.Expression, 0, len(aggFun.Args))
 		if aggregation.NeedCount(finalAggFunc.Name) {
 			ft := types.NewFieldType(mysql.TypeLonglong)

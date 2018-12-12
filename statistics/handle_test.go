@@ -29,28 +29,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
-
-var _ = Suite(&testStatsCacheSuite{})
-
-type testStatsCacheSuite struct {
-	store kv.Storage
-	do    *domain.Domain
-}
-
-func (s *testStatsCacheSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	var err error
-	s.store, s.do, err = newStoreWithBootstrap(0)
-	c.Assert(err, IsNil)
-}
-
-func (s *testStatsCacheSuite) TearDownSuite(c *C) {
-	s.do.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
-}
 
 func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk := testkit.NewTestKit(c, store)
@@ -60,13 +39,13 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
-	tk.MustExec("truncate table mysql.stats_meta")
-	tk.MustExec("truncate table mysql.stats_histograms")
-	tk.MustExec("truncate table mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_meta")
+	tk.MustExec("delete from mysql.stats_histograms")
+	tk.MustExec("delete from mysql.stats_buckets")
 	do.StatsHandle().Clear()
 }
 
-func (s *testStatsCacheSuite) TestStatsCache(c *C) {
+func (s *testStatsSuite) TestStatsCache(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -135,7 +114,7 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 	}
 }
 
-func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
+func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -162,7 +141,7 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 	assertTableEqual(c, statsTbl1, statsTbl2)
 }
 
-func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
+func (s *testStatsSuite) TestEmptyTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -179,7 +158,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	c.Assert(count, Equals, 0.0)
 }
 
-func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
+func (s *testStatsSuite) TestColumnIDs(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -210,7 +189,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	c.Assert(count, Equals, 0.0)
 }
 
-func (s *testStatsCacheSuite) TestAvgColLen(c *C) {
+func (s *testStatsSuite) TestAvgColLen(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -238,7 +217,7 @@ func (s *testStatsCacheSuite) TestAvgColLen(c *C) {
 	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count), Equals, 16.0)
 }
 
-func (s *testStatsCacheSuite) TestDurationToTS(c *C) {
+func (s *testStatsSuite) TestDurationToTS(c *C) {
 	tests := []time.Duration{time.Millisecond, time.Second, time.Minute, time.Hour}
 	for _, t := range tests {
 		ts := statistics.DurationToTS(t)
@@ -246,7 +225,7 @@ func (s *testStatsCacheSuite) TestDurationToTS(c *C) {
 	}
 }
 
-func (s *testStatsCacheSuite) TestVersion(c *C) {
+func (s *testStatsSuite) TestVersion(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -323,7 +302,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	c.Assert(statsTbl2.Columns[int64(3)], NotNil)
 }
 
-func (s *testStatsCacheSuite) TestLoadHist(c *C) {
+func (s *testStatsSuite) TestLoadHist(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -381,7 +360,7 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	c.Assert(newStatsTbl2.Columns[int64(3)].LastUpdateVersion, Greater, newStatsTbl2.Columns[int64(1)].LastUpdateVersion)
 }
 
-func (s *testStatsCacheSuite) TestInitStats(c *C) {
+func (s *testStatsSuite) TestInitStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -406,24 +385,25 @@ func (s *testStatsCacheSuite) TestInitStats(c *C) {
 	h.Lease = 0
 }
 
-func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
+func (s *testStatsSuite) TestLoadStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	store, do, err := newStoreWithBootstrap(10 * time.Millisecond)
-	c.Assert(err, IsNil)
-	defer store.Close()
-	defer do.Close()
-	testKit := testkit.NewTestKit(c, store)
+	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+
+	oriLease := s.do.StatsHandle().Lease
+	s.do.StatsHandle().Lease = 1
+	defer func() {
+		s.do.StatsHandle().Lease = oriLease
+	}()
 	testKit.MustExec("analyze table t")
 
-	is := do.InfoSchema()
+	is := s.do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-	time.Sleep(1 * time.Second)
+	h := s.do.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
 	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)
@@ -439,7 +419,7 @@ func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	c.Assert(cms, IsNil)
 	_, err = stat.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo.Columns[2].ID)
 	c.Assert(err, IsNil)
-	time.Sleep(1 * time.Second)
+	c.Assert(h.LoadNeededHistograms(), IsNil)
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)

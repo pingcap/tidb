@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"reflect"
 	"sync"
 
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -128,7 +128,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	i := int64(0)
@@ -166,7 +166,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14), false)
 	c.Assert(err, IsNil)
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	values, err := t.RowWithCols(ctx, h, t.Cols())
 	c.Assert(err, IsNil)
@@ -267,7 +267,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 }
 
 func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle int64, col *table.Column, columnValue interface{}, isExist bool) error {
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -322,7 +322,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -345,7 +345,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 		return errors.Trace(err)
 	}
 	// Test add a new row.
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -355,7 +355,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -382,7 +382,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 		return errors.Trace(err)
 	}
 	// Test remove a row.
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -391,7 +391,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -423,7 +423,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -449,7 +449,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	}
 
 	// Test add a new row.
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -459,7 +459,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -486,7 +486,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 		return errors.Trace(err)
 	}
 	// Test remove a row.
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -495,7 +495,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -528,7 +528,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -549,7 +549,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	}
 
 	// Test add a new row.
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -559,7 +559,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -587,7 +587,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	}
 
 	// Test remove a row.
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -596,7 +596,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -624,7 +624,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -646,7 +646,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	}
 
 	// Test add a new row.
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -656,7 +656,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -676,7 +676,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	}
 
 	// Test remove a row.
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -686,7 +686,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 		return errors.Trace(err)
 	}
 
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -750,7 +750,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -817,7 +817,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	c.Assert(errors.ErrorStack(hErr), Equals, "")
 	c.Assert(ok, IsTrue)
 
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -835,7 +835,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	tblInfo := testTableInfo(c, d, "t", 4)
 	ctx := testNewContext(d)
 
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -890,7 +890,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
@@ -915,7 +915,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11")},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
-		{"text", "blob", errUnsupportedModifyColumn.GenWithStackByArgs("charset binary not match origin utf8mb4")},
+		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
 		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10")},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
