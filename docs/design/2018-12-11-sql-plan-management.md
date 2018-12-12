@@ -14,11 +14,11 @@ The optimizer chooses a plan based on several environmental factors, such as sta
 
 ## Proposal
 
-The following proposal mainly focused on two parts: how to bind the plan and what is the syntax to manage it.
+The following proposal mainly focuses on two parts: how to bind the plan and what is the syntax to manage it.
 
 ### How to bind the plan
 
-In order to bind the plan, we need to maintain a mapping from normalized SQL text to plan. To normalize the SQL text, we can remove all the blank space, replace the parameters with placement markers,  and convert remaining parts to lower cases. The most difficult problem is how we represent and store the plan.
+In order to bind the plan, we need to maintain a mapping from normalized SQL text to plan. To normalize the SQL text, we can remove all the blank space, replace the parameters with placement markers, and convert remaining parts to lower cases. The most difficult problem is how we represent and store the plan.
 
 One way to represent the plan is using the optimized physical plan. However, it is difficult to perform the parameters replacement for later SQLs, because some parameters may already be rewritten in the optimized physical plan when doing logical and physical optimizations.
 
