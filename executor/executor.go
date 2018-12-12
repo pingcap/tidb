@@ -315,12 +315,12 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// TODO: need to return the job that the user needs.
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -357,12 +357,12 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -420,7 +420,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		for _, idx := range tb.Indices() {
-			txn := e.ctx.Txn()
+			txn := e.ctx.Txn(true)
 			err = admin.CompareIndexData(e.ctx, txn, tb, idx)
 			if err != nil {
 				return errors.Errorf("%v err:%v", t.Name, err)
@@ -523,7 +523,7 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
-	txn := e.ctx.Txn()
+	txn := e.ctx.Txn(true)
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {

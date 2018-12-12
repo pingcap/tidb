@@ -235,7 +235,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 
 	var txnStartTS uint64
 	if sctx.Txn(false).Valid() {
-		txnStartTS = sctx.Txn().StartTS()
+		txnStartTS = sctx.Txn(true).StartTS()
 	}
 	return &recordSet{
 		executor:    e,
@@ -265,7 +265,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		txnTS := uint64(0)
 		// Don't active pending txn here.
 		if sctx.Txn(false).Valid() {
-			txnTS = sctx.Txn().StartTS()
+			txnTS = sctx.Txn(true).StartTS()
 		}
 		a.LogSlowQuery(txnTS, err == nil)
 	}()

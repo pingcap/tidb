@@ -1666,7 +1666,7 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
 
 	tk.MustExec(`update t set b = 3 where a = 30001;`)
 	tk.MustExec(`insert into t (b) values (4);`)
