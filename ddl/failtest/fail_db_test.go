@@ -17,6 +17,8 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
+	"testing"
 	"time"
 
 	gofail "github.com/etcd-io/gofail/runtime"
@@ -29,9 +31,21 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	CustomParallelSuiteFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level:  logLevel,
+		Format: "highlight",
+	})
+	TestingT(t)
+}
 
 var _ = Suite(&testFailDBSuite{})
 
@@ -71,7 +85,7 @@ func (s *testFailDBSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
+	testleak.AfterTest(c)()
 }
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
@@ -104,7 +118,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Execute ddl statement reload schema.
 	_, err = s.se.Execute(context.Background(), "alter table t comment 'test1'")
 	c.Assert(err, IsNil)
-	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
+	err = s.dom.DDL().GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
@@ -137,7 +151,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Execute ddl statement reload schema.
 	_, err = s.se.Execute(context.Background(), "alter table tx comment 'tx'")
 	c.Assert(err, IsNil)
-	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
+	err = s.dom.DDL().GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
@@ -154,16 +168,14 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 
 // TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when
 // doing the operation of 'modify column'.
-func (s *testStateChangeSuite) TestInitializeOffsetAndState(c *C) {
-	_, err := s.se.Execute(context.Background(), "use test_db_state")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
-	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table t")
+func (s *testFailDBSuite) TestInitializeOffsetAndState(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	defer tk.MustExec("drop table t")
 
 	gofail.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`)
-	_, err = s.se.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
-	c.Assert(err, IsNil)
+	tk.MustExec("ALTER TABLE t MODIFY COLUMN b int FIRST;")
 	gofail.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState")
 }
 

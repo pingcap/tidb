@@ -295,7 +295,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	var checkErr error
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.s.(sessionctx.Context), hook)
-	originalHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "create unique index c3_index on t1 (c3)", done)
@@ -382,7 +382,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
 	}
-	originalHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	rs, err := s.tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
@@ -457,6 +457,7 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
 	}
+	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	for i := range testCases {
 		testCase = &testCases[i]
@@ -486,7 +487,7 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 			c.Assert(indexInfo, IsNil)
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(c, "alter table t add index idx_c2(c2)")
 	s.mustExec(c, "alter table t drop index idx_c2")
 }
@@ -2161,7 +2162,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 		}
 	}
 
-	originalHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
