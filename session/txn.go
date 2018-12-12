@@ -14,6 +14,8 @@
 package session
 
 import (
+	"runtime/debug"
+
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor"
@@ -126,6 +128,24 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		st.fail = nil
 		return errors.Trace(err)
 	}
+
+	var bug bool
+	if len(st.dirtyTableOP) != 0 {
+		log.Error("dirty table should be empty")
+		bug = true
+	}
+	if len(st.mutations) != 0 {
+		log.Error("mutations should be empty")
+		bug = true
+	}
+	if st.buf.Len() != 0 {
+		log.Error("membuffer should be empty")
+		bug = true
+	}
+	if bug {
+		debug.PrintStack()
+	}
+
 	return errors.Trace(st.Transaction.Commit(ctx))
 }
 
