@@ -94,6 +94,7 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	if co == "" {
 		return true
 	}
+	co = strings.ToLower(co)
 	_, ok = c.Collations[co]
 	if !ok {
 		return false

@@ -87,7 +87,7 @@ github.com/pingcap/kvproto/pkg/tikvpb
 github.com/pingcap/kvproto/pkg/pdpb
 github.com/pingcap/kvproto/pkg/raft_serverpb
 github.com/pingcap/kvproto/pkg/eraftpb
-# github.com/pingcap/parser v0.0.0-20181206080309-80784c39ca74
+# github.com/pingcap/parser v0.0.0-20181207085916-6c21d4344dfa
 github.com/pingcap/parser/auth
 github.com/pingcap/parser/model
 github.com/pingcap/parser/mysql
