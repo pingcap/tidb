@@ -506,17 +506,17 @@ func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
 
 // validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
 // the possible types of range are index key range and handle key range.
-func validRange(ran *ranger.Range, encoded bool) bool {
+func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) bool {
 	var low, high []byte
 	if encoded {
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
 		var err error
-		low, err = codec.EncodeKey(nil, nil, ran.LowVal[0])
+		low, err = codec.EncodeKey(sc, nil, ran.LowVal[0])
 		if err != nil {
 			return false
 		}
-		high, err = codec.EncodeKey(nil, nil, ran.HighVal[0])
+		high, err = codec.EncodeKey(sc, nil, ran.HighVal[0])
 		if err != nil {
 			return false
 		}
@@ -533,7 +533,7 @@ func validRange(ran *ranger.Range, encoded bool) bool {
 // SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
 // as inf, so all the split Ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
-func (hg *Histogram) SplitRange(ranges []*ranger.Range, encoded bool) []*ranger.Range {
+func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, ranges []*ranger.Range, encoded bool) []*ranger.Range {
 	split := make([]*ranger.Range, 0, len(ranges))
 	for len(ranges) > 0 {
 		// Find the last bound that greater or equal to the LowVal.
@@ -577,7 +577,7 @@ func (hg *Histogram) SplitRange(ranges []*ranger.Range, encoded bool) []*ranger.
 				HighExclude: false})
 			ranges[0].LowVal[0] = upper
 			ranges[0].LowExclude = true
-			if !validRange(ranges[0], encoded) {
+			if !validRange(sc, ranges[0], encoded) {
 				ranges = ranges[1:]
 			}
 		}
@@ -685,8 +685,8 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	return lh, nil
 }
 
-// AvgCountPerValue gets the average row count per value by the data of histogram.
-func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
+// AvgCountPerNotNullValue gets the average row count per value by the data of histogram.
+func (hg *Histogram) AvgCountPerNotNullValue(totalCount int64) float64 {
 	factor := hg.getIncreaseFactor(totalCount)
 	totalNotNull := hg.notNullCount() * factor
 	curNDV := float64(hg.NDV) * factor
@@ -882,7 +882,7 @@ type countByRangeFunc = func(*stmtctx.StatementContext, int64, []*ranger.Range) 
 // TODO: Datum is not efficient, try to avoid using it here.
 //  Also, there're redundant calculation with Selectivity(). We need to reduce it too.
 func newHistogramBySelectivity(sc *stmtctx.StatementContext, histID int64, oldHist, newHist *Histogram, ranges []*ranger.Range, cntByRangeFunc countByRangeFunc) error {
-	cntPerVal := int64(oldHist.AvgCountPerValue(int64(oldHist.totalRowCount())))
+	cntPerVal := int64(oldHist.AvgCountPerNotNullValue(int64(oldHist.totalRowCount())))
 	var totCnt int64 = 0
 	for boundIdx, ranIdx, highRangeIdx := 0, 0, 0; boundIdx < oldHist.Bounds.NumRows() && ranIdx < len(ranges); boundIdx, ranIdx = boundIdx+2, highRangeIdx {
 		for highRangeIdx < len(ranges) && chunk.Compare(oldHist.Bounds.GetRow(boundIdx+1), 0, &ranges[highRangeIdx].HighVal[0]) >= 0 {
@@ -999,7 +999,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 		newCol := &Column{Info: oldCol.Info, isHandle: oldCol.isHandle, CMSketch: oldCol.CMSketch}
 		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		var err error
-		splitRanges := oldCol.Histogram.SplitRange(node.Ranges, false)
+		splitRanges := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
 		// Deal with some corner case.
 		if len(splitRanges) > 0 {
 			// Deal with NULL values.

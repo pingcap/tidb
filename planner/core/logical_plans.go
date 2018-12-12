@@ -448,7 +448,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	if corColInAccessConds {
 		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
 		if ok && !ds.stats.HistColl.Pseudo {
-			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+			path.countAfterAccess = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 		} else {
 			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
 		}

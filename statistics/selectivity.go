@@ -268,13 +268,15 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 
 // getUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
 func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
-	tmpNodes := make([]*StatsNode, len(nodes))
-	copy(tmpNodes, nodes)
+	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
 		bestID, bestCount, bestTp, bestNumCols := -1, 0, colType, 0
-		for i, set := range tmpNodes {
+		for i, set := range nodes {
+			if marked[i] {
+				continue
+			}
 			set.mask &= mask
 			bits := popCount(set.mask)
 			// This set cannot cover any thing, just skip it.
@@ -294,11 +296,10 @@ func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 		}
 
 		// update the mask, remove the bit that nodes[bestID].mask has.
-		mask &^= tmpNodes[bestID].mask
+		mask &^= nodes[bestID].mask
 
-		newBlocks = append(newBlocks, tmpNodes[bestID])
-		// remove the chosen one
-		tmpNodes = append(tmpNodes[:bestID], tmpNodes[bestID+1:]...)
+		newBlocks = append(newBlocks, nodes[bestID])
+		marked[bestID] = true
 	}
 	return
 }

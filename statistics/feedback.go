@@ -1052,7 +1052,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.Count), float64(q.feedback[i].count))
 		value := types.NewBytesDatum(bytes)
 		q.feedback[i] = feedback{lower: &value, upper: &value, count: int64(equalityCount)}
-		err = rangeFB.dumpRangeFeedback(h, &rang, rangeCount)
+		err = rangeFB.dumpRangeFeedback(sc, h, &rang, rangeCount)
 		if err != nil {
 			log.Debug("dump range feedback failed:", err)
 			continue
@@ -1061,7 +1061,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 	return errors.Trace(h.dumpFeedbackToKV(q))
 }
 
-func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCount float64) error {
+func (q *QueryFeedback) dumpRangeFeedback(sc *stmtctx.StatementContext, h *Handle, ran *ranger.Range, rangeCount float64) error {
 	if q.tp == indexType {
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
@@ -1086,7 +1086,7 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 			ran.HighVal[0] = getMaxValue(k, q.hist.Tp)
 		}
 	}
-	ranges := q.hist.SplitRange([]*ranger.Range{ran}, q.tp == indexType)
+	ranges := q.hist.SplitRange(sc, []*ranger.Range{ran}, q.tp == indexType)
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for _, r := range ranges {
