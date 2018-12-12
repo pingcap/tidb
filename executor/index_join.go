@@ -67,7 +67,8 @@ type indexJoinTask struct {
 	outerMatch  []bool
 
 	lookupMap     *mvmap.MVMap
-	matchedInners []chunk.Row
+	matchKeyMap   *mvmap.MVMap
+	matchedOuters []chunk.Row
 
 	doneCh   chan error
 	cursor   int
@@ -352,18 +353,18 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *ind
 		}
 	}
 	iw.innerPtrBytes = task.lookupMap.Get(keyBuf, iw.innerPtrBytes[:0])
-	task.matchedInners = task.matchedInners[:0]
+
 	if len(iw.innerPtrBytes) == 0 {
-		iw.joiner.onMissMatch(innerRow, joinResult.chk)
 		return true, joinResult
 	}
+	task.matchedOuters = task.matchedOuters[:0]
 	for _, b := range iw.innerPtrBytes {
 		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
-		matchedInner := task.outerResult.GetRow(int(ptr.RowIdx))
-		task.matchedInners = append(task.matchedInners, matchedInner)
+		matchedOuter := task.outerResult.GetRow(int(ptr.RowIdx))
+		task.matchedOuters = append(task.matchedOuters, matchedOuter)
 	}
 
-	outerIter := chunk.NewIterator4Slice(task.matchedInners)
+	outerIter := chunk.NewIterator4Slice(task.matchedOuters)
 
 	hasMatch := false
 	for outerIter.Begin(); outerIter.Current() != outerIter.End(); {
@@ -382,8 +383,8 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *ind
 			}
 		}
 	}
-	if !hasMatch {
-		iw.joiner.onMissMatch(innerRow, joinResult.chk)
+	if hasMatch {
+		task.matchKeyMap.Put(keyBuf, []byte{0})
 	}
 
 	return true, joinResult
@@ -482,7 +483,6 @@ func (iw *innerHashWorker) fetchAndJoin(ctx context.Context, task *indexJoinTask
 	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
-
 	iw.executorChk.Reset()
 	var ok bool
 	for {
@@ -498,6 +498,17 @@ func (iw *innerHashWorker) fetchAndJoin(ctx context.Context, task *indexJoinTask
 		ok, joinResult = iw.join2Chunk(iw.executorChk, joinResult, task)
 		if !ok {
 			break
+		}
+	}
+
+	it := task.lookupMap.NewIterator()
+	for i := 0; i < task.outerResult.NumRows(); i++ {
+		key, rowPtr := it.Next()
+		iw.innerPtrBytes = task.matchKeyMap.Get(key, iw.innerPtrBytes[:0])
+		if len(iw.innerPtrBytes) == 0 {
+			ptr := *(*chunk.RowPtr)(unsafe.Pointer(&rowPtr[0]))
+			misMatchedRow := task.outerResult.GetRow(int(ptr.RowIdx))
+			iw.joiner.onMissMatch(misMatchedRow, joinResult.chk)
 		}
 	}
 
@@ -560,8 +571,6 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("outerWorker panic stack is:\n%s", buf)
-			//task := &indexJoinTask{doneCh: make(chan error, 1)}
-			//task.doneCh <- errors.Errorf("%v", r)
 			//ow.pushToChan(ctx, task, ow.resultCh)
 		}
 		if ow.keepOrder {
@@ -601,8 +610,8 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*indexJoinTask, error) {
 	task := &indexJoinTask{
 		doneCh:      make(chan error, 1),
 		outerResult: ow.executor.newFirstChunk(),
-		//encodedLookUpKeys: chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, ow.ctx.GetSessionVars().MaxChunkSize),
-		lookupMap: mvmap.NewMVMap(),
+		lookupMap:   mvmap.NewMVMap(),
+		matchKeyMap: mvmap.NewMVMap(),
 	}
 	task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
 	task.memTracker.AttachTo(ow.parentMemTracker)
@@ -708,7 +717,6 @@ func (e *IndexMergeJoin) Close() error {
 		e.cancelFunc()
 	}
 
-	//e.workerWg.Wait()
 	e.memTracker.Detach()
 	e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
