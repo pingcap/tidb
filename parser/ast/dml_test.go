@@ -72,3 +72,57 @@ func (ts *testDMLSuite) TestDMLVisitorCover(c *C) {
 		v.node.Accept(visitor1{})
 	}
 }
+
+func (tc *testDMLSuite) TestTableNameRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"dbb.`tbb1`", "`dbb`.`tbb1`"},
+		{"`tbb2`", "`tbb2`"},
+		{"tbb3", "`tbb3`"},
+		{"dbb.`hello-world`", "`dbb`.`hello-world`"},
+		{"`dbb`.`hello-world`", "`dbb`.`hello-world`"},
+		{"`dbb.HelloWorld`", "`dbb.HelloWorld`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*CreateTableStmt).Table
+	}
+	RunNodeRestoreTest(c, testCases, "CREATE TABLE %s (id VARCHAR(128) NOT NULL);", extractNodeFunc)
+}
+
+func (tc *testDMLSuite) TestTableNameIndexHintsRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"t use index (hello)", "`t` USE INDEX (`hello`)"},
+		{"t use index (hello, world)", "`t` USE INDEX (`hello`, `world`)"},
+		{"t use index ()", "`t` USE INDEX ()"},
+		{"t use key ()", "`t` USE INDEX ()"},
+		{"t ignore key ()", "`t` IGNORE INDEX ()"},
+		{"t force key ()", "`t` FORCE INDEX ()"},
+		{"t use index for order by (idx1)", "`t` USE INDEX FOR ORDER BY (`idx1`)"},
+
+		{"t use index (hello, world, yes) force key (good)", "`t` USE INDEX (`hello`, `world`, `yes`) FORCE INDEX (`good`)"},
+		{"t use index (hello, world, yes) use index for order by (good)", "`t` USE INDEX (`hello`, `world`, `yes`) USE INDEX FOR ORDER BY (`good`)"},
+		{"t ignore key (hello, world, yes) force key (good)", "`t` IGNORE INDEX (`hello`, `world`, `yes`) FORCE INDEX (`good`)"},
+
+		{"t use index for group by (idx1) use index for order by (idx2)", "`t` USE INDEX FOR GROUP BY (`idx1`) USE INDEX FOR ORDER BY (`idx2`)"},
+		{"t use index for group by (idx1) ignore key for order by (idx2)", "`t` USE INDEX FOR GROUP BY (`idx1`) IGNORE INDEX FOR ORDER BY (`idx2`)"},
+		{"t use index for group by (idx1) ignore key for group by (idx2)", "`t` USE INDEX FOR GROUP BY (`idx1`) IGNORE INDEX FOR GROUP BY (`idx2`)"},
+		{"t use index for order by (idx1) ignore key for group by (idx2)", "`t` USE INDEX FOR ORDER BY (`idx1`) IGNORE INDEX FOR GROUP BY (`idx2`)"},
+
+		{"t use index for order by (idx1) ignore key for group by (idx2) use index (idx3)", "`t` USE INDEX FOR ORDER BY (`idx1`) IGNORE INDEX FOR GROUP BY (`idx2`) USE INDEX (`idx3`)"},
+		{"t use index for order by (idx1) ignore key for group by (idx2) use index (idx3)", "`t` USE INDEX FOR ORDER BY (`idx1`) IGNORE INDEX FOR GROUP BY (`idx2`) USE INDEX (`idx3`)"},
+
+		{"t use index (`foo``bar`) force index (`baz``1`, `xyz`)", "`t` USE INDEX (`foo``bar`) FORCE INDEX (`baz``1`, `xyz`)"},
+		{"t force index (`foo``bar`) ignore index (`baz``1`, xyz)", "`t` FORCE INDEX (`foo``bar`) IGNORE INDEX (`baz``1`, `xyz`)"},
+		{"t ignore index (`foo``bar`) force key (`baz``1`, xyz)", "`t` IGNORE INDEX (`foo``bar`) FORCE INDEX (`baz``1`, `xyz`)"},
+		{"t ignore index (`foo``bar`) ignore key for group by (`baz``1`, xyz)", "`t` IGNORE INDEX (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)"},
+		{"t ignore index (`foo``bar`) ignore key for order by (`baz``1`, xyz)", "`t` IGNORE INDEX (`foo``bar`) IGNORE INDEX FOR ORDER BY (`baz``1`, `xyz`)"},
+
+		{"t use index for group by (`foo``bar`) use index for order by (`baz``1`, `xyz`)", "`t` USE INDEX FOR GROUP BY (`foo``bar`) USE INDEX FOR ORDER BY (`baz``1`, `xyz`)"},
+		{"t use index for group by (`foo``bar`) ignore key for order by (`baz``1`, `xyz`)", "`t` USE INDEX FOR GROUP BY (`foo``bar`) IGNORE INDEX FOR ORDER BY (`baz``1`, `xyz`)"},
+		{"t use index for group by (`foo``bar`) ignore key for group by (`baz``1`, `xyz`)", "`t` USE INDEX FOR GROUP BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)"},
+		{"t use index for order by (`foo``bar`) ignore key for group by (`baz``1`, `xyz`)", "`t` USE INDEX FOR ORDER BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).From.TableRefs.Left.(*TableSource).Source.(*TableName)
+	}
+	RunNodeRestoreTest(c, testCases, "SELECT * FROM %s", extractNodeFunc)
+}
