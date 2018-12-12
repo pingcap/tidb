@@ -16,7 +16,6 @@ package expression
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -174,12 +173,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
-	// ParseToJSONFlag is 0 for JSON column yet, so we can skip it. Moreover,
-	// Column.RetType refers to the infoschema, if we modify it, data race may
-	// happen if another goroutine read from the infoschema at the same time.
-	if _, ok := args[0].(*Column); !ok {
-		args[0].GetType().Flag &= ^mysql.ParseToJSONFlag
-	}
+	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONUnquoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonUnquoteSig)
 	return sig, nil
@@ -223,13 +217,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 2; i < len(args); i += 2 {
-		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
-		// Moreover, Column.RetType refers to the infoschema, if we modify it,
-		// data race may happen if another goroutine read from the infoschema at
-		// the same time.
-		if _, ok := args[i].(*Column); !ok {
-			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
-		}
+		DisableParseJSONFlag4Expr(args[i])
 	}
 	sig := &builtinJSONSetSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonSetSig)
@@ -269,13 +257,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 2; i < len(args); i += 2 {
-		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
-		// Moreover, Column.RetType refers to the infoschema, if we modify it,
-		// data race may happen if another goroutine read from the infoschema at
-		// the same time.
-		if _, ok := args[i].(*Column); !ok {
-			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
-		}
+		DisableParseJSONFlag4Expr(args[i])
 	}
 	sig := &builtinJSONInsertSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonInsertSig)
@@ -315,13 +297,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 2; i < len(args); i += 2 {
-		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
-		// Moreover, Column.RetType refers to the infoschema, if we modify it,
-		// data race may happen if another goroutine read from the infoschema at
-		// the same time.
-		if _, ok := args[i].(*Column); !ok {
-			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
-		}
+		DisableParseJSONFlag4Expr(args[i])
 	}
 	sig := &builtinJSONReplaceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonReplaceSig)
@@ -457,13 +433,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := 1; i < len(args); i += 2 {
-		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
-		// Moreover, Column.RetType refers to the infoschema, if we modify it,
-		// data race may happen if another goroutine read from the infoschema at
-		// the same time.
-		if _, ok := args[i].(*Column); !ok {
-			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
-		}
+		DisableParseJSONFlag4Expr(args[i])
 	}
 	sig := &builtinJSONObjectSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonObjectSig)
@@ -526,13 +496,7 @@ func (c *jsonArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
 	for i := range args {
-		// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
-		// Moreover, Column.RetType refers to the infoschema, if we modify it,
-		// data race may happen if another goroutine read from the infoschema at
-		// the same time.
-		if _, ok := args[i].(*Column); !ok {
-			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
-		}
+		DisableParseJSONFlag4Expr(args[i])
 	}
 	sig := &builtinJSONArraySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonArraySig)

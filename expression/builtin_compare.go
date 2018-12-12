@@ -1164,22 +1164,13 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 	return sig, errors.Trace(err)
 }
 
-func setParseToJSONFlag
-
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
 	if tp == types.ETJson {
 		// In compare, if we cast string to JSON, we shouldn't parse it.
 		for i := range args {
-			// ParseToJSONFlag is 0 for JSON column yet, so we can skip it.
-			// Moreover, Column.RetType refers to the infoschema, if we modify
-			// it, data race may happen if another goroutine read from the
-			// infoschema at the same time.
-			if _, isColumn := args[i].(*Column); isColumn {
-				continue
-			}
-			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+			DisableParseJSONFlag4Expr(args[i])
 		}
 	}
 	bf.tp.Flen = 1
