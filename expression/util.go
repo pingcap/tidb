@@ -528,7 +528,7 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expr
 	return value, nil
 }
 
-// DisableParseJSONFlag disables ParseToJSONFlag for `expr` except Column.
+// DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
 // We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
 // is 0 for JSON column yet, so we can skip it. Moreover, Column.RetType refers
 // to the infoschema, if we modify it, data race may happen if another goroutine
