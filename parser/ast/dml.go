@@ -135,7 +135,18 @@ type TableName struct {
 
 // Restore implements Recoverable interface.
 func (n *TableName) Restore(sb *strings.Builder) error {
-	return errors.New("Not implemented")
+	if n.Schema.String() != "" {
+		WriteName(sb, n.Schema.String())
+		sb.WriteString(".")
+	}
+	WriteName(sb, n.Name.String())
+	for _, value := range n.IndexHints {
+		sb.WriteString(" ")
+		if err := value.Restore(sb); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing IndexHints")
+		}
+	}
+	return nil
 }
 
 // IndexHintType is the type for index hint use, ignore or force.
@@ -164,6 +175,48 @@ type IndexHint struct {
 	IndexNames []model.CIStr
 	HintType   IndexHintType
 	HintScope  IndexHintScope
+}
+
+// IndexHint Restore (The const field uses switch to facilitate understanding)
+func (n *IndexHint) Restore(sb *strings.Builder) error {
+	indexHintType := ""
+	switch n.HintType {
+	case 1:
+		indexHintType = "USE INDEX"
+	case 2:
+		indexHintType = "IGNORE INDEX"
+	case 3:
+		indexHintType = "FORCE INDEX"
+	default: // Prevent accidents
+		return errors.New("IndexHintType has an error while matching")
+	}
+
+	indexHintScope := ""
+	switch n.HintScope {
+	case 1:
+		indexHintScope = ""
+	case 2:
+		indexHintScope = " FOR JOIN"
+	case 3:
+		indexHintScope = " FOR ORDER BY"
+	case 4:
+		indexHintScope = " FOR GROUP BY"
+	default: // Prevent accidents
+		return errors.New("IndexHintScope has an error while matching")
+	}
+
+	sb.WriteString(indexHintType)
+	sb.WriteString(indexHintScope)
+	sb.WriteString(" (")
+	for i, value := range n.IndexNames {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		WriteName(sb, value.O)
+	}
+	sb.WriteString(")")
+
+	return nil
 }
 
 // Accept implements Node Accept interface.
