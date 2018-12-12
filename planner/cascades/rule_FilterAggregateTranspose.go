@@ -40,10 +40,15 @@ func (r *baseRuleImpl) Match(expr *ExprIter) bool {
 	return true
 }
 
+// FilterAggregateTransposeRule pushes the filters through the aggregate:
+// before: filter(aggregate(any), f1, f2, ...)
+// after:  aggregate(filter(any, f1, f2, ...)),      totaly push through
+//    or:  filter(aggregate(filter(any, f1)), f2), partialy push through
 type FilterAggregateTransposeRule struct {
 	baseRuleImpl
 }
 
+// NewFilterAggregateTransposeRule creates a new FilterAggregateTransposeRule.
 func NewFilterAggregateTransposeRule() *FilterAggregateTransposeRule {
 	pattern := BuildPattern(OperandSelection, BuildPattern(OperandAggregation))
 	return &FilterAggregateTransposeRule{baseRuleImpl{pattern}}

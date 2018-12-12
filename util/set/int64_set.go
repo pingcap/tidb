@@ -16,7 +16,7 @@ package set
 // Int64Set is a string set.
 type Int64Set map[int64]struct{}
 
-// NewStringSet builds a float64 set.
+// NewInt64Set builds a Int64Set set.
 func NewInt64Set() Int64Set {
 	return make(map[int64]struct{})
 }

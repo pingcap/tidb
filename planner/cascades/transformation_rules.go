@@ -32,16 +32,16 @@ func GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
 }
 
 var transformationMap = map[Operand][]Transformation{
-	OperandSelection: []Transformation{
+	OperandSelection: {
 		NewFilterAggregateTransposeRule(),
 	},
-	OperandProjection: []Transformation{
+	OperandProjection: {
 		nil,
 	},
-	OperandAggregation: []Transformation{
+	OperandAggregation: {
 		nil,
 	},
-	OperandJoin: []Transformation{
+	OperandJoin: {
 		nil,
 	},
 }

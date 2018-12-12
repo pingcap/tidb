@@ -36,6 +36,7 @@ type ExprIter struct {
 	children []*ExprIter
 }
 
+// GetGroupExpr returns the group expression pointed by this iterator.
 func (iter *ExprIter) GetGroupExpr() *GroupExpr {
 	return iter.element.Value.(*GroupExpr)
 }
