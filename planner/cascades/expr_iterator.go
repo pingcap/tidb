@@ -36,6 +36,10 @@ type ExprIter struct {
 	children []*ExprIter
 }
 
+func (iter *ExprIter) GetGroupExpr() *GroupExpr {
+	return iter.element.Value.(*GroupExpr)
+}
+
 // Next returns the next group expression matches the pattern.
 func (iter *ExprIter) Next() (found bool) {
 	defer func() {

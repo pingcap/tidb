@@ -49,7 +49,7 @@ func convert2Group(node plannercore.LogicalPlan) *Group {
 
 func onPhaseExploration(sctx sessionctx.Context, g *Group) error {
 	for !g.explored {
-		err := exploreGroup(g)
+		err := exploreGroup(sctx, g)
 		if err != nil {
 			return err
 		}
@@ -57,7 +57,7 @@ func onPhaseExploration(sctx sessionctx.Context, g *Group) error {
 	return nil
 }
 
-func exploreGroup(g *Group) error {
+func exploreGroup(sctx sessionctx.Context, g *Group) error {
 	if g.explored {
 		return nil
 	}
@@ -72,11 +72,11 @@ func exploreGroup(g *Group) error {
 		// Explore child groups firstly.
 		curExpr.explored = true
 		for _, childGroup := range curExpr.children {
-			exploreGroup(childGroup)
+			exploreGroup(sctx, childGroup)
 			curExpr.explored = curExpr.explored && childGroup.explored
 		}
 
-		eraseCur, err := findMoreEquiv(g, elem)
+		eraseCur, err := findMoreEquiv(sctx, g, elem)
 		if err != nil {
 			return err
 		}
@@ -90,7 +90,7 @@ func exploreGroup(g *Group) error {
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func findMoreEquiv(g *Group, elem *list.Element) (eraseCur bool, err error) {
+func findMoreEquiv(sctx sessionctx.Context, g *Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*GroupExpr)
 	for _, rule := range GetTransformationRules(expr.exprNode) {
 		pattern := rule.GetPattern()
@@ -105,7 +105,7 @@ func findMoreEquiv(g *Group, elem *list.Element) (eraseCur bool, err error) {
 				continue
 			}
 
-			newExpr, erase, err := rule.OnTransform(iter)
+			newExpr, erase, err := rule.OnTransform(sctx, iter)
 			if err != nil {
 				return false, err
 			}
