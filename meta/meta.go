@@ -304,7 +304,7 @@ func (m *Meta) CreateView(dbID int64, tableInfo *model.TableInfo, orReplace bool
 		return errors.Trace(err)
 	}
 
-	// Check if view exists.
+	// Check if view not exist.
 	tableKey := m.tableKey(tableInfo.ID)
 	if err := m.checkTableNotExists(dbKey, tableKey); err != nil && !orReplace {
 		return errors.Trace(err)

@@ -245,8 +245,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
 		return a.handleNoDelayExecutor(ctx, sctx, e)
-	} else if _, ok := e.(*DDLExec); ok {
-		return a.handleNoDelayExecutor(ctx, sctx, e)
 	}
 
 	var txnStartTS uint64

@@ -20,6 +20,7 @@ package ddl
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/set"
 	"strings"
 	"time"
 
@@ -568,14 +569,20 @@ func checkColumnValueConstraint(col *table.Column) error {
 	return nil
 }
 
-func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
-	colNames := map[string]bool{}
-	for _, colDef := range colDefs {
-		nameLower := colDef.Name.Name.L
-		if colNames[nameLower] {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(colDef.Name.Name)
+func checkDuplicateColumn(cols []interface{}) error {
+	colNames := set.StringSet{}
+	var nameLower string
+	for _, col := range cols {
+		switch x := col.(type) {
+		case *ast.ColumnDef:
+			nameLower = x.Name.Name.L
+		case model.CIStr:
+			nameLower = x.L
 		}
-		colNames[nameLower] = true
+		if colNames.Exist(nameLower) {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(nameLower)
+		}
+		colNames.Insert(nameLower)
 	}
 	return nil
 }
@@ -606,10 +613,26 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
-	for _, colDef := range colDefs {
-		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.GenWithStackByArgs(colDef.Name.Name)
+func checkTooLongColumn(cols interface{}) error {
+	var checkCol = func(colName string) error {
+		if len(colName) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.GenWithStackByArgs(colName)
+		}
+		return nil
+	}
+
+	switch x := cols.(type) {
+	case []*ast.ColumnDef:
+		for _, col := range x {
+			if err := checkCol(col.Name.Name.O); err != nil {
+				return err
+			}
+		}
+	case []model.CIStr:
+		for _, col := range x {
+			if err := checkCol(col.O); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -887,10 +910,15 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		}
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
+
+	var colObjects []interface{}
+	for _, col := range colDefs {
+		colObjects = append(colObjects, col)
+	}
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkDuplicateColumn(colDefs); err != nil {
+	if err = checkDuplicateColumn(colObjects); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkGeneratedColumn(colDefs); err != nil {
@@ -995,25 +1023,19 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	}
 	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
 
-	for _, v := range viewInfo.Cols {
-		if len(v.L) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.GenWithStackByArgs(v.L)
-		}
+	if err = checkTooLongColumn(viewInfo.Cols); err != nil {
+		return err
+	}
+	if err = checkTooLongColumn(cols); err != nil {
+		return err
 	}
 
-	for _, v := range cols {
-		if len(v.Name.L) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.GenWithStackByArgs(v.Name.L)
-		}
+	var colObjects []interface{}
+	for _, col := range viewInfo.Cols {
+		colObjects = append(colObjects, col)
 	}
-
-	colNames := map[string]bool{}
-	for _, v := range viewInfo.Cols {
-		nameLower := v.L
-		if colNames[nameLower] {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(v.L)
-		}
-		colNames[nameLower] = true
+	if err = checkDuplicateColumn(colObjects); err != nil {
+		return err
 	}
 
 	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, nil)
