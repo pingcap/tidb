@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package memo
 
 import (
 	. "github.com/pingcap/check"
@@ -36,27 +36,27 @@ func (s *testCascadesSuite) TestGetOperand(c *C) {
 }
 
 func (s *testCascadesSuite) TestOperandMatch(c *C) {
-	c.Assert(OperandAny.match(OperandLimit), IsTrue)
-	c.Assert(OperandAny.match(OperandSelection), IsTrue)
-	c.Assert(OperandAny.match(OperandJoin), IsTrue)
-	c.Assert(OperandAny.match(OperandMaxOneRow), IsTrue)
-	c.Assert(OperandAny.match(OperandAny), IsTrue)
+	c.Assert(OperandAny.Match(OperandLimit), IsTrue)
+	c.Assert(OperandAny.Match(OperandSelection), IsTrue)
+	c.Assert(OperandAny.Match(OperandJoin), IsTrue)
+	c.Assert(OperandAny.Match(OperandMaxOneRow), IsTrue)
+	c.Assert(OperandAny.Match(OperandAny), IsTrue)
 
-	c.Assert(OperandLimit.match(OperandAny), IsTrue)
-	c.Assert(OperandSelection.match(OperandAny), IsTrue)
-	c.Assert(OperandJoin.match(OperandAny), IsTrue)
-	c.Assert(OperandMaxOneRow.match(OperandAny), IsTrue)
-	c.Assert(OperandAny.match(OperandAny), IsTrue)
+	c.Assert(OperandLimit.Match(OperandAny), IsTrue)
+	c.Assert(OperandSelection.Match(OperandAny), IsTrue)
+	c.Assert(OperandJoin.Match(OperandAny), IsTrue)
+	c.Assert(OperandMaxOneRow.Match(OperandAny), IsTrue)
+	c.Assert(OperandAny.Match(OperandAny), IsTrue)
 
-	c.Assert(OperandLimit.match(OperandLimit), IsTrue)
-	c.Assert(OperandSelection.match(OperandSelection), IsTrue)
-	c.Assert(OperandJoin.match(OperandJoin), IsTrue)
-	c.Assert(OperandMaxOneRow.match(OperandMaxOneRow), IsTrue)
-	c.Assert(OperandAny.match(OperandAny), IsTrue)
+	c.Assert(OperandLimit.Match(OperandLimit), IsTrue)
+	c.Assert(OperandSelection.Match(OperandSelection), IsTrue)
+	c.Assert(OperandJoin.Match(OperandJoin), IsTrue)
+	c.Assert(OperandMaxOneRow.Match(OperandMaxOneRow), IsTrue)
+	c.Assert(OperandAny.Match(OperandAny), IsTrue)
 
-	c.Assert(OperandLimit.match(OperandSelection), IsFalse)
-	c.Assert(OperandLimit.match(OperandJoin), IsFalse)
-	c.Assert(OperandLimit.match(OperandMaxOneRow), IsFalse)
+	c.Assert(OperandLimit.Match(OperandSelection), IsFalse)
+	c.Assert(OperandLimit.Match(OperandJoin), IsFalse)
+	c.Assert(OperandLimit.Match(OperandMaxOneRow), IsFalse)
 }
 
 func (s *testCascadesSuite) TestNewPattern(c *C) {

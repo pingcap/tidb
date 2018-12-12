@@ -11,25 +11,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package implementation
 
 import (
-	. "github.com/pingcap/check"
+	"math"
+
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 )
 
-func (s *testCascadesSuite) TestNewGroupExpr(c *C) {
-	p := &plannercore.LogicalLimit{}
-	expr := NewGroupExpr(p)
-	c.Assert(expr.exprNode, Equals, p)
-	c.Assert(expr.children, IsNil)
-	c.Assert(expr.explored, IsFalse)
+// SortImpl implementation of PhysicalSort.
+type SortImpl struct {
+	baseImpl
 }
 
-func (s *testCascadesSuite) TestGroupExprFingerprint(c *C) {
-	p := &plannercore.LogicalLimit{}
-	expr := NewGroupExpr(p)
+func NewSortImpl(sort *plannercore.PhysicalSort) *SortImpl {
+	return &SortImpl{baseImpl{plan: sort}}
+}
 
-	// we haven't set the id of the created LogicalLimit, so the result is 0.
-	c.Assert(expr.FingerPrint(), Equals, "0")
+func (impl *SortImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
+	cnt := math.Min(children[0].LogicalProperty.Stats.RowCount, impl.plan.GetChildReqProps(0).ExpectedCnt)
+	sort := impl.plan.(*plannercore.PhysicalSort)
+	impl.cost = sort.GetCost(cnt) + childCosts[0]
+	return impl.cost
 }

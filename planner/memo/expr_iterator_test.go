@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package memo
 
 import (
 	. "github.com/pingcap/check"
@@ -35,26 +35,26 @@ func (s *testCascadesSuite) TestNewExprIterFromGroupElem(c *C) {
 	g2 := NewGroup(expr)
 
 	pattern := BuildPattern(OperandJoin, BuildPattern(OperandProjection), BuildPattern(OperandSelection))
-	iter := NewExprIterFromGroupElem(g2.equivalents.Front(), pattern)
+	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pattern)
 
 	c.Assert(iter, NotNil)
-	c.Assert(iter.group, IsNil)
-	c.Assert(iter.element, Equals, g2.equivalents.Front())
-	c.Assert(iter.matched, Equals, true)
-	c.Assert(iter.operand, Equals, OperandJoin)
-	c.Assert(len(iter.children), Equals, 2)
+	c.Assert(iter.Group, IsNil)
+	c.Assert(iter.Element, Equals, g2.Equivalents.Front())
+	c.Assert(iter.Matched, Equals, true)
+	c.Assert(iter.Operand, Equals, OperandJoin)
+	c.Assert(len(iter.Children), Equals, 2)
 
-	c.Assert(iter.children[0].group, Equals, g0)
-	c.Assert(iter.children[0].element, Equals, g0.GetFirstElem(OperandProjection))
-	c.Assert(iter.children[0].matched, Equals, true)
-	c.Assert(iter.children[0].operand, Equals, OperandProjection)
-	c.Assert(len(iter.children[0].children), Equals, 0)
+	c.Assert(iter.Children[0].Group, Equals, g0)
+	c.Assert(iter.Children[0].Element, Equals, g0.GetFirstElem(OperandProjection))
+	c.Assert(iter.Children[0].Matched, Equals, true)
+	c.Assert(iter.Children[0].Operand, Equals, OperandProjection)
+	c.Assert(len(iter.Children[0].Children), Equals, 0)
 
-	c.Assert(iter.children[1].group, Equals, g1)
-	c.Assert(iter.children[1].element, Equals, g1.GetFirstElem(OperandSelection))
-	c.Assert(iter.children[1].matched, Equals, true)
-	c.Assert(iter.children[1].operand, Equals, OperandSelection)
-	c.Assert(len(iter.children[0].children), Equals, 0)
+	c.Assert(iter.Children[1].Group, Equals, g1)
+	c.Assert(iter.Children[1].Element, Equals, g1.GetFirstElem(OperandSelection))
+	c.Assert(iter.Children[1].Matched, Equals, true)
+	c.Assert(iter.Children[1].Operand, Equals, OperandSelection)
+	c.Assert(len(iter.Children[0].Children), Equals, 0)
 }
 
 func (s *testCascadesSuite) TestExprIterNext(c *C) {
@@ -76,26 +76,26 @@ func (s *testCascadesSuite) TestExprIterNext(c *C) {
 	g2 := NewGroup(expr)
 
 	pattern := BuildPattern(OperandJoin, BuildPattern(OperandProjection), BuildPattern(OperandSelection))
-	iter := NewExprIterFromGroupElem(g2.equivalents.Front(), pattern)
+	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pattern)
 	c.Assert(iter, NotNil)
 
 	count := 0
 	for ; iter.Matched(); iter.Next() {
 		count++
-		c.Assert(iter.group, IsNil)
-		c.Assert(iter.matched, Equals, true)
-		c.Assert(iter.operand, Equals, OperandJoin)
-		c.Assert(len(iter.children), Equals, 2)
+		c.Assert(iter.Group, IsNil)
+		c.Assert(iter.Matched, Equals, true)
+		c.Assert(iter.Operand, Equals, OperandJoin)
+		c.Assert(len(iter.Children), Equals, 2)
 
-		c.Assert(iter.children[0].group, Equals, g0)
-		c.Assert(iter.children[0].matched, Equals, true)
-		c.Assert(iter.children[0].operand, Equals, OperandProjection)
-		c.Assert(len(iter.children[0].children), Equals, 0)
+		c.Assert(iter.Children[0].Group, Equals, g0)
+		c.Assert(iter.Children[0].Matched, Equals, true)
+		c.Assert(iter.Children[0].Operand, Equals, OperandProjection)
+		c.Assert(len(iter.Children[0].Children), Equals, 0)
 
-		c.Assert(iter.children[1].group, Equals, g1)
-		c.Assert(iter.children[1].matched, Equals, true)
-		c.Assert(iter.children[1].operand, Equals, OperandSelection)
-		c.Assert(len(iter.children[1].children), Equals, 0)
+		c.Assert(iter.Children[1].Group, Equals, g1)
+		c.Assert(iter.Children[1].Matched, Equals, true)
+		c.Assert(iter.Children[1].Operand, Equals, OperandSelection)
+		c.Assert(len(iter.Children[1].Children), Equals, 0)
 	}
 
 	c.Assert(count, Equals, 9)
@@ -123,13 +123,13 @@ func (s *testCascadesSuite) TestExprIterReset(c *C) {
 	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g2.Insert(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)))
 
-	// link join with group 0 and 1
+	// link join with Group 0 and 1
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx))
 	expr.children = append(expr.children, g0)
 	expr.children = append(expr.children, g1)
 	g3 := NewGroup(expr)
 
-	// link sel 1~3 with group 2
+	// link sel 1~3 with Group 2
 	sel1.children = append(sel1.children, g2)
 	sel2.children = append(sel2.children, g2)
 	sel3.children = append(sel3.children, g2)
@@ -140,31 +140,31 @@ func (s *testCascadesSuite) TestExprIterReset(c *C) {
 	pattern := BuildPattern(OperandJoin, lhsPattern, rhsPattern)
 
 	// create expression iterator for the pattern on join
-	iter := NewExprIterFromGroupElem(g3.equivalents.Front(), pattern)
+	iter := NewExprIterFromGroupElem(g3.Equivalents.Front(), pattern)
 	c.Assert(iter, NotNil)
 
 	count := 0
 	for ; iter.Matched(); iter.Next() {
 		count++
-		c.Assert(iter.group, IsNil)
-		c.Assert(iter.matched, Equals, true)
-		c.Assert(iter.operand, Equals, OperandJoin)
-		c.Assert(len(iter.children), Equals, 2)
+		c.Assert(iter.Group, IsNil)
+		c.Assert(iter.Matched, Equals, true)
+		c.Assert(iter.Operand, Equals, OperandJoin)
+		c.Assert(len(iter.Children), Equals, 2)
 
-		c.Assert(iter.children[0].group, Equals, g0)
-		c.Assert(iter.children[0].matched, Equals, true)
-		c.Assert(iter.children[0].operand, Equals, OperandProjection)
-		c.Assert(len(iter.children[0].children), Equals, 0)
+		c.Assert(iter.Children[0].Group, Equals, g0)
+		c.Assert(iter.Children[0].Matched, Equals, true)
+		c.Assert(iter.Children[0].Operand, Equals, OperandProjection)
+		c.Assert(len(iter.Children[0].Children), Equals, 0)
 
-		c.Assert(iter.children[1].group, Equals, g1)
-		c.Assert(iter.children[1].matched, Equals, true)
-		c.Assert(iter.children[1].operand, Equals, OperandSelection)
-		c.Assert(len(iter.children[1].children), Equals, 1)
+		c.Assert(iter.Children[1].Group, Equals, g1)
+		c.Assert(iter.Children[1].Matched, Equals, true)
+		c.Assert(iter.Children[1].Operand, Equals, OperandSelection)
+		c.Assert(len(iter.Children[1].Children), Equals, 1)
 
-		c.Assert(iter.children[1].children[0].group, Equals, g2)
-		c.Assert(iter.children[1].children[0].matched, Equals, true)
-		c.Assert(iter.children[1].children[0].operand, Equals, OperandLimit)
-		c.Assert(len(iter.children[1].children[0].children), Equals, 0)
+		c.Assert(iter.Children[1].Children[0].Group, Equals, g2)
+		c.Assert(iter.Children[1].Children[0].Matched, Equals, true)
+		c.Assert(iter.Children[1].Children[0].Operand, Equals, OperandLimit)
+		c.Assert(len(iter.Children[1].Children[0].Children), Equals, 0)
 	}
 
 	c.Assert(count, Equals, 18)

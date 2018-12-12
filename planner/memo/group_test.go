@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package memo
 
 import (
 	"testing"
@@ -56,10 +56,10 @@ func (s *testCascadesSuite) TestNewGroup(c *C) {
 	expr := NewGroupExpr(p)
 	g := NewGroup(expr)
 
-	c.Assert(g.equivalents.Len(), Equals, 1)
-	c.Assert(g.equivalents.Front().Value.(*GroupExpr), Equals, expr)
-	c.Assert(len(g.fingerprints), Equals, 1)
-	c.Assert(g.explored, IsFalse)
+	c.Assert(g.Equivalents.Len(), Equals, 1)
+	c.Assert(g.Equivalents.Front().Value.(*GroupExpr), Equals, expr)
+	c.Assert(len(g.Fingerprints), Equals, 1)
+	c.Assert(g.Explored, IsFalse)
 }
 
 func (s *testCascadesSuite) TestGroupInsert(c *C) {
@@ -75,13 +75,13 @@ func (s *testCascadesSuite) TestGroupDelete(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroup(expr)
-	c.Assert(g.equivalents.Len(), Equals, 1)
+	c.Assert(g.Equivalents.Len(), Equals, 1)
 
 	g.Delete(expr)
-	c.Assert(g.equivalents.Len(), Equals, 0)
+	c.Assert(g.Equivalents.Len(), Equals, 0)
 
 	g.Delete(expr)
-	c.Assert(g.equivalents.Len(), Equals, 0)
+	c.Assert(g.Equivalents.Len(), Equals, 0)
 }
 
 func (s *testCascadesSuite) TestGroupExists(c *C) {

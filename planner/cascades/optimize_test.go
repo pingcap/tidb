@@ -30,8 +30,8 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	c.Assert(ok, IsTrue)
 	rootGroup := convert2Group(logic)
 	// TODO remove these hard code about logical property after we support deriving stats in exploration phase.
-	rootGroup.prop = &property.LogicalProperty{}
-	rootGroup.prop.Stats = property.NewSimpleStats(10.0)
+	rootGroup.LogicalProperty = &property.LogicalProperty{}
+	rootGroup.LogicalProperty.Stats = property.NewSimpleStats(10.0)
 
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
