@@ -28,9 +28,10 @@ Since the parameters replacement is hard, it is better not doing it. Another way
 
 To manage the SQL bindings, we need to support basic operations like create, show and drop. We can also support SQL bindings that only exist in the current session. The syntax will be like the following:
 
-- CREATE [GLOBAL|SESSION] BINDING FOR `SQL`  USING `HINTED SQL`
-- DROP [GLOBAL|SESSION] BINDING FOR `SQL`
-- SHOW [GLOBAL|SESSION] BINDINGS
+- CREATE [GLOBAL|SESSION] BINDING_NAME BINDING FOR `SQL`  USING `HINTED SQL`
+- DROP [GLOBAL|SESSION] BINDINGS
+- DROP [GLOBAL|SESSION] BINDING BINDING_NAME
+- SHOW [GLOBAL|SESSION] BINDINGS [SHOW_LIKE_OR_WHERE]
 
 ## Rationale
 
