@@ -74,7 +74,7 @@ func (s *joinReOrderGreedySolver) solve() (LogicalPlan, error) {
 			return nil, err
 		}
 	}
-	sort.Slice(s.curJoinGroup, func(i, j int) bool {
+	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].statsInfo().RowCount < s.curJoinGroup[j].statsInfo().RowCount
 	})
 
