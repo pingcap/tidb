@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )
@@ -182,7 +183,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
-	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
+	if fromIdx := schemautil.FindIndexByName(from.L, tbl.Indices); fromIdx == nil {
 		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
 	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
@@ -192,7 +193,7 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	// If spec.FromKey.L == spec.ToKey.L, we operate on the same index(case-insensitive) and change its name (case-sensitive)
 	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
 	// that's illegal by rule.
-	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
+	if toIdx := schemautil.FindIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
 		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenWithStackByArgs(toIdx.Name.O))
 	}
 	return false, nil
@@ -219,7 +220,7 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	idx := findIndexByName(from.L, tblInfo.Indices)
+	idx := schemautil.FindIndexByName(from.L, tblInfo.Indices)
 	idx.Name = to
 	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
@@ -258,7 +259,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, ErrDupKeyName.GenWithStack("index already exist %s", indexName)
@@ -371,7 +372,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
@@ -456,7 +457,7 @@ type addIndexWorker struct {
 	defaultVals        []types.Datum
 	idxRecords         []*indexRecord
 	rowMap             map[int64]types.Datum
-	rowDecoder         decoder.RowDecoder
+	rowDecoder         *decoder.RowDecoder
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
@@ -542,8 +543,8 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 			}
 			continue
 		}
-		idxColumnVal := w.rowMap[col.ID]
-		if _, ok := w.rowMap[col.ID]; ok {
+		idxColumnVal, ok := w.rowMap[col.ID]
+		if ok {
 			idxVal[j] = idxColumnVal
 			// Make sure there is no dirty data.
 			delete(w.rowMap, col.ID)
@@ -566,8 +567,17 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 		}
 		idxVal[j] = idxColumnVal
 	}
+	// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
+	// the generated value, so we need to clear up the reusing map.
+	w.cleanRowMap()
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal}
 	return idxRecord, nil
+}
+
+func (w *addIndexWorker) cleanRowMap() {
+	for id := range w.rowMap {
+		delete(w.rowMap, id)
+	}
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
@@ -788,6 +798,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 			// we should check whether this ddl job is still runnable.
 			err = w.ddlWorker.isReorgRunnable(d)
 		}
+
 		if err != nil {
 			result.err = err
 			return result
@@ -1194,15 +1205,6 @@ func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinitio
 		}
 	}
 	return 0, errors.Errorf("partition id not found %d", currentPartition)
-}
-
-func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
-	for _, idx := range indices {
-		if idx.Name.L == idxName {
-			return idx
-		}
-	}
-	return nil
 }
 
 func allocateIndexID(tblInfo *model.TableInfo) int64 {

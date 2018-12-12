@@ -152,6 +152,74 @@ func (s *testIntegrationSuite) TestEndIncluded(c *C) {
 	tk.MustExec("admin check table t")
 }
 
+func (s *testIntegrationSuite) TestNullGeneratedColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` int(11) DEFAULT NULL," +
+		"`b` int(11) DEFAULT NULL," +
+		"`c` int(11) GENERATED ALWAYS AS (`a` + `b`) VIRTUAL DEFAULT NULL," +
+		"`h` varchar(10) DEFAULT NULL," +
+		"`m` int(11) DEFAULT NULL" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+
+	tk.MustExec("insert into t values()")
+	tk.MustExec("alter table t add index idx_c(c)")
+	tk.MustExec("drop table t")
+}
+
+func (s *testIntegrationSuite) TestChangingCharsetToUtf8(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test")
+	tk.MustExec("create table t(a char(10) charset latin1)")
+	tk.MustExec("alter table t modify column a char(10) charset latin1")
+	tk.MustExec("alter table t modify column a char(10) charset utf8")
+	tk.MustExec("alter table t modify column a char(10) charset utf8mb4")
+	rs, err := tk.Exec("alter table t modify column a char(10) charset utf8mb4 collate utf8bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_bin")
+	rs, err = tk.Exec("alter table t modify column a char(10) charset utf8 collate utf8_bin")
+	if rs != nil {
+		rs.Close()
+	}
+
+	c.Assert(err, NotNil)
+	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_general_ci")
+}
+
+func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test")
+	tk.MustExec("create table t(a char(10)) charset latin1 collate latin1_bin")
+	rs, err := tk.Exec("alter table t charset gbk")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err.Error(), Equals, "Unknown charset gbk")
+	tk.MustExec("alter table t charset utf8")
+	tk.MustExec("alter table t charset utf8 collate utf8_bin")
+	rs, err = tk.Exec("alter table t charset utf8 collate latin1_bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	tk.MustExec("alter table t charset utf8mb4")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+
+	rs, err = tk.Exec("alter table t charset utf8 collate utf8_bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+}
+
 func (s *testIntegrationSuite) TestCaseInsensitiveCharsetAndCollate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
