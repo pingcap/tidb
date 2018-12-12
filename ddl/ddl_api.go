@@ -1026,9 +1026,6 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	if err = checkTooLongColumn(viewInfo.Cols); err != nil {
 		return err
 	}
-	if err = checkTooLongColumn(cols); err != nil {
-		return err
-	}
 
 	var colObjects []interface{}
 	for _, col := range viewInfo.Cols {
