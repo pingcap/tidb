@@ -137,7 +137,7 @@ id	count	task	operator info
 Limit_9	1.00	root	offset:0, count:1
 └─IndexLookUp_17	1.00	root	
   ├─Selection_14	3.00	cop	gt(test.t4.b, 1)
-  │ └─IndexScan_12	9.00	cop	table:t4, index:a, b, range:(1 +inf,+inf +inf], keep order:false, stats:pseudo
+  │ └─IndexScan_12	9.00	cop	table:t4, index:a, b, range:(1,+inf], keep order:false, stats:pseudo
   └─Limit_16	1.00	cop	offset:0, count:1
     └─Selection_15	1.00	cop	gt(test.t4.c, 1)
       └─TableScan_13	3.00	cop	table:t4, keep order:false
