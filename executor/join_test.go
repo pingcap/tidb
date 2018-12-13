@@ -528,6 +528,9 @@ func (s *testSuite2) TestSubquery(c *C) {
 	tk.MustExec("insert t values (2, 2)")
 	tk.MustExec("insert t values (3, 4)")
 	tk.MustExec("commit")
+
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+
 	result := tk.MustQuery("select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1)")
 	result.Check(testkit.Rows("1 1"))
 	result = tk.MustQuery("select * from t where exists(select k.c, k.d from t k, t p where t.c = k.d)")

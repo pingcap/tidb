@@ -178,12 +178,6 @@ func (s *testSuite3) TestUser(c *C) {
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
 	tk.MustExec(dropUserSQL)
-	tk.MustQuery("select * from mysql.db").Check(testkit.Rows(
-		"localhost test testDB Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
-		"localhost test testDB1 Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
-		"% dddb_% dduser Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
-		"localhost test testDBRevoke N N N N N N N N N N N N N N N N N N N",
-	))
 
 	// Test drop user meet error
 	_, err = tk.Exec(dropUserSQL)
