@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testStatsUpdateSuite) TestGCStats(c *C) {
+func (s *testStatsSuite) TestGCStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -53,7 +53,7 @@ func (s *testStatsUpdateSuite) TestGCStats(c *C) {
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
 }
 
-func (s *testStatsUpdateSuite) TestGCPartition(c *C) {
+func (s *testStatsSuite) TestGCPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")

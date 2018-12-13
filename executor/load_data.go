@@ -15,6 +15,7 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"strings"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // LoadDataExec represents a load data executor.

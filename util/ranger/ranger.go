@@ -333,22 +333,6 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 		fixPrefixColRange(ranges, lengths, newTp)
 	}
 
-	if len(ranges) > 0 && len(ranges[0].LowVal) < len(cols) {
-		for _, ran := range ranges {
-			if ran.HighExclude || ran.LowExclude {
-				if ran.HighExclude {
-					ran.HighVal = append(ran.HighVal, types.NewDatum(nil))
-				} else {
-					ran.HighVal = append(ran.HighVal, types.MaxValueDatum())
-				}
-				if ran.LowExclude {
-					ran.LowVal = append(ran.LowVal, types.MaxValueDatum())
-				} else {
-					ran.LowVal = append(ran.LowVal, types.NewDatum(nil))
-				}
-			}
-		}
-	}
 	return ranges, nil
 }
 

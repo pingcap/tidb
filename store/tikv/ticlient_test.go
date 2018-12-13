@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"sync"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/net/context"
 )
 
 var (

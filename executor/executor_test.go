@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"math"
@@ -63,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -152,7 +152,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetString(0), Equals, "1")
-	c.Assert(row.GetString(1), Equals, "error: Can't find this job")
+	c.Assert(row.GetString(1), Equals, "error: [admin:4]DDL Job:1 not found")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
@@ -335,7 +335,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	origin := ld.IgnoreLines
 	for _, tt := range tests {
 		ld.IgnoreLines = origin
-		c.Assert(ctx.NewTxn(), IsNil)
+		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
@@ -1102,6 +1102,24 @@ func (s *testSuite) TestUnion(c *C) {
 	for i := 0; i < 4; i++ {
 		tk.MustQuery("SELECT(SELECT 0 AS a FROM dual UNION SELECT 1 AS a FROM dual ORDER BY a ASC  LIMIT 1) AS dev").Check(testkit.Rows("0"))
 	}
+
+	// #issue 8231
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (uid int(1))")
+	tk.MustExec("INSERT INTO t1 SELECT 150")
+	tk.MustQuery("SELECT 'a' UNION SELECT uid FROM t1 order by 1 desc;").Check(testkit.Rows("a", "150"))
+
+	// #issue 8196
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("CREATE TABLE t1 (a int not null, b char (10) not null)")
+	tk.MustExec("insert into t1 values(1,'a'),(2,'b'),(3,'c'),(3,'c')")
+	tk.MustExec("CREATE TABLE t2 (a int not null, b char (10) not null)")
+	tk.MustExec("insert into t2 values(3,'c'),(4,'d'),(5,'f'),(6,'e')")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	_, err = tk.Exec("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b")
+	c.Assert(err.Error(), Equals, "[planner:1250]Table 't1' from one of the SELECTs cannot be used in global ORDER clause")
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
@@ -1745,8 +1763,8 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	// With the existence of global variable cache, it have to sleep a while here.
-	time.Sleep(3 * time.Second)
+	// Disable global variable cache, so load global session variable take effect immediate.
+	s.domain.GetGlobalVarsCache().Disable()
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("create table t2 (a varchar(3))")
@@ -2845,7 +2863,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20)
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
-	c.Assert(s.ctx.NewTxn(), IsNil)
+	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	_, err = tb.AddRecord(s.ctx, recordVal1, false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(s.ctx, recordVal2, false)
@@ -3341,4 +3359,48 @@ func (s *testSuite) TestDoSubquery(c *C) {
 	r, err := tk.Exec(`do 1 in (select * from t)`)
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
+}
+
+func (s *testSuite) TestTSOFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int)`)
+
+	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail")
+	_, err := tk.Exec(`select * from t`)
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestSelectHashPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists th`)
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
+	defer tk.MustExec(`drop table if exists th`)
+	tk.MustExec(`insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);`)
+	tk.MustExec("insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);")
+	tk.MustQuery("select b from th order by a").Check(testkit.Rows("-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"))
+	tk.MustQuery(" select * from th where a=-2;").Check(testkit.Rows("-2 -2"))
+	tk.MustQuery(" select * from th where a=5;").Check(testkit.Rows("5 5"))
+	// Test for select prune partitions.
+	result := tk.MustQuery("desc select * from th where a=-2;")
+	result.Check(testkit.Rows(
+		"TableReader_8 10.00 root data:Selection_7",
+		"└─Selection_7 10.00 cop eq(test.th.a, -2)",
+		"  └─TableScan_6 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	// Test select union all partition.
+	result = tk.MustQuery("desc select * from th;")
+	result.Check(testkit.Rows(
+		"Union_8 30000.00 root ",
+		"├─TableReader_10 10000.00 root data:TableScan_9",
+		"│ └─TableScan_9 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"├─TableReader_12 10000.00 root data:TableScan_11",
+		"│ └─TableScan_11 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_14 10000.00 root data:TableScan_13",
+		"  └─TableScan_13 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
 }
