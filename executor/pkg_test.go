@@ -17,7 +17,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
-	"github.com/sirupsen/logrus"
 	"github.com/klauspost/cpuid"
 )
 
@@ -247,7 +246,7 @@ func (s *pkgTestSuite) TestMoveInfoSchemaToFront(c *C) {
 
 func BenchmarkPartitionInnerRows(b *testing.B) {
 	sctx := mock.NewContext()
-	hashJoinExec := prepare4RadixPartition(sctx, 1000000)
+	hashJoinExec := prepare4RadixPartition(sctx, 1500000)
 	sv := sctx.GetSessionVars()
 	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
 	sv.L2CacheSize = cpuid.CPU.Cache.L2
@@ -270,10 +269,9 @@ func BenchmarkPartitionInnerRows(b *testing.B) {
 	hashJoinExec.fetchInnerRows(ctx, innerResultCh, doneCh)
 	hashJoinExec.evalRadixBit()
 	b.ResetTimer()
-	hashJoinExec.partConcurrency = 32
+	hashJoinExec.partConcurrency = 16
 	hashJoinExec.maxChunkSize = 1024
 	hashJoinExec.initCap = 1024
-	logrus.Warning("hashJoinExec.partConcurrency:", hashJoinExec.partConcurrency, " MaxChunkSize:", hashJoinExec.maxChunkSize, " partition count:", len(hashJoinExec.innerParts), "\n L2cacheSize:", 1.0*sv.L2CacheSize/1024, " innerSize:",float64(hashJoinExec.innerResult.GetMemTracker().BytesConsumed())/1024)
 	for i := 0; i < b.N; i++ {
 		hashJoinExec.partitionInnerRows()
 		hashJoinExec.innerRowPrts = hashJoinExec.innerRowPrts[:0]
