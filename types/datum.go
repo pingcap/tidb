@@ -218,6 +218,7 @@ func (d *Datum) SetNull() {
 	d.x = nil
 }
 
+// SetMinNotNull sets datum to minNotNull value.
 func (d *Datum) SetMinNotNull() {
 	d.k = KindMinNotNull
 	d.x = nil
