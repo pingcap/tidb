@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"runtime/pprof"
 	"strings"
-	"sync/atomic"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -30,40 +28,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/testkit"
 )
-
-// TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
-// leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
-func (s *testSuite3) TestIndexDoubleReadClose(c *C) {
-	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
-		// Make sure the store is tikv store.
-		return
-	}
-	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
-	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_index_lookup_size = '10'")
-	tk.MustExec("use test")
-	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
-
-	// Insert 100 rows.
-	var values []string
-	for i := 0; i < 100; i++ {
-		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i, i))
-	}
-	tk.MustExec("insert dist values " + strings.Join(values, ","))
-
-	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
-	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
-	keyword := "pickAndExecTask"
-	rs.Close()
-	time.Sleep(time.Millisecond * 10)
-	c.Check(checkGoroutineExists(keyword), IsFalse)
-	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
-}
 
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)

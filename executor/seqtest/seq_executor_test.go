@@ -14,19 +14,24 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"os"
+	"runtime/pprof"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
@@ -34,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -610,4 +616,46 @@ func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
 	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
 	do.StatsHandle().Update(do.InfoSchema())
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
+}
+
+// TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
+// leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
+func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
+	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
+		// Make sure the store is tikv store.
+		return
+	}
+	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
+	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_index_lookup_size = '10'")
+	tk.MustExec("use test")
+	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
+
+	// Insert 100 rows.
+	var values []string
+	for i := 0; i < 100; i++ {
+		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i, i))
+	}
+	tk.MustExec("insert dist values " + strings.Join(values, ","))
+
+	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
+	c.Assert(err, IsNil)
+	chk := rs.NewChunk()
+	err = rs.Next(context.Background(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(err, IsNil)
+	keyword := "pickAndExecTask"
+	rs.Close()
+	time.Sleep(time.Millisecond * 10)
+	c.Check(checkGoroutineExists(keyword), IsFalse)
+	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
+}
+
+func checkGoroutineExists(keyword string) bool {
+	buf := new(bytes.Buffer)
+	profile := pprof.Lookup("goroutine")
+	profile.WriteTo(buf, 1)
+	str := buf.String()
+	return strings.Contains(str, keyword)
 }
