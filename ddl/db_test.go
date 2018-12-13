@@ -562,6 +562,8 @@ func (s *testDBSuite) TestCancelAddIndexPanic(c *C) {
 			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
 	}
+	origHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	rs, err := s.tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
@@ -570,8 +572,6 @@ func (s *testDBSuite) TestCancelAddIndexPanic(c *C) {
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
-
-	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
