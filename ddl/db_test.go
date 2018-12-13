@@ -811,6 +811,80 @@ LOOP:
 	s.tk.MustExec("drop table test_drop_index")
 }
 
+// TestCancelDropColumn tests cancel ddl job which type is drop column.
+func (s *testDBSuite) TestCancelDropColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "create database if not exists test_drop_column")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+	testCases := []struct {
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+	}{
+		{model.JobStateNone, model.StateNone},
+		{model.JobStateRunning, model.StateWriteOnly},
+		{model.JobStateRunning, model.StateDeleteOnly},
+		{model.JobStateRunning, model.StateDeleteReorganization},
+	}
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
+	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropColumn && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			jobID = job.ID
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.Background())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err1 := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			if err1 != nil {
+				checkErr = errors.Trace(err1)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = hookCtx.Txn(true).Commit(context.Background())
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	for i := range testCases {
+		testCase = &testCases[i]
+		s.mustExec(c, "alter table t add column c3 int")
+		rs, err := s.tk.Exec("alter table t drop column c3")
+		if rs != nil {
+			rs.Close()
+		}
+		var col1 *table.Column
+		t := s.testGetTable(c, "t")
+		for _, col := range t.Cols() {
+			if strings.EqualFold(col.Name.L, "c3") {
+				col1 = col
+				break
+			}
+		}
+		c.Assert(col1, IsNil)
+		c.Assert(err, IsNil)
+		c.Assert(checkErr, NotNil)
+		c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.mustExec(c, "alter table t add column c3 int")
+	s.mustExec(c, "alter table t drop column c3")
+}
+
 func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	startTime := time.Now()
 	f := func() map[int64]struct{} {

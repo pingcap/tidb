@@ -118,6 +118,46 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, errCancelledDDLJob
 }
 
+func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	var colName model.CIStr
+	err = job.DecodeArgs(&colName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+	if colInfo == nil {
+		job.State = model.JobStateCancelled
+		ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+	}
+	switch colInfo.State {
+	// In the state of drop column `write only -> delete only -> reorganization`,
+	// We can not rollback now, so just continue to drop column.
+	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
+		job.State = model.JobStateRunning
+		return ver, nil
+	case model.StatePublic:
+		job.State = model.JobStateRollbackDone
+		colInfo.State = model.StatePublic
+	default:
+		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
+	}
+	originalState := colInfo.State
+	job.State = model.JobStateRollbackDone
+	job.Args = []interface{}{colInfo.Name}
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
+	return ver, errCancelledDDLJob
+}
+
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
@@ -180,6 +220,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(t, job)
+	case model.ActionDropColumn:
+		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddindex(w, d, t, job)
 	case model.ActionDropIndex:

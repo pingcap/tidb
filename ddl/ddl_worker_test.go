@@ -347,6 +347,11 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 6}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly, ddlRetErr: err},
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 7}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization, ddlRetErr: err},
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 8}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 8)}, cancelState: model.StatePublic, ddlRetErr: err},
+
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 9}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 9)}, cancelState: model.StateDeleteOnly, ddlRetErr: err},
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 10}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 10)}, cancelState: model.StateWriteOnly, ddlRetErr: err},
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 11}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 11)}, cancelState: model.StateWriteReorganization, ddlRetErr: err},
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 12}, cancelRetErrs: noErrs, cancelState: model.StatePublic, ddlRetErr: err},
 	}
 
 	return tests

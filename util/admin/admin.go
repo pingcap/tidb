@@ -91,6 +91,12 @@ func isJobRollbackable(job *model.Job, id int64) error {
 			job.SchemaState == model.StateDeleteReorganization {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
+	case model.ActionDropColumn:
+		if  job.SchemaState == model.StateDeleteOnly || job.SchemaState == model.StateNone ||
+			job.SchemaState == model.StateWriteOnly ||
+			job.SchemaState == model.StateDeleteReorganization {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
 	}
 	return nil
 }
