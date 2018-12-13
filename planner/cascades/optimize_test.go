@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
@@ -58,7 +59,7 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	c.Assert(err, IsNil)
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
-	rootGroup := convert2Group(logic)
+	rootGroup := memo.Convert2Group(logic)
 	// TODO remove these hard code about logical property after we support deriving stats in exploration phase.
 	rootGroup.LogicalProperty = &property.LogicalProperty{}
 	rootGroup.LogicalProperty.Stats = property.NewSimpleStats(10.0)

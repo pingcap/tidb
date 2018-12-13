@@ -26,9 +26,9 @@ import (
 // FindBestPlan is the optimization entrance of the cascades planner. The
 // optimization is composed of 2 phases: exploration and implementation.
 func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (plannercore.Plan, error) {
-	rootGroup := convert2Group(logical)
+	rootGroup := memo.Convert2Group(logical)
 
-	err := onPhaseExploration(sctx, rootGroup)
+	err := OnPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, err
 	}
@@ -37,20 +37,10 @@ func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (pla
 	return best, err
 }
 
-// convert2Group converts a logical plan to expression groups.
-func convert2Group(node plannercore.LogicalPlan) *memo.Group {
-	e := memo.NewGroupExpr(node)
-	e.Children = make([]*memo.Group, 0, len(node.Children()))
-	for _, child := range node.Children() {
-		childGroup := convert2Group(child)
-		e.Children = append(e.Children, childGroup)
-	}
-	return memo.NewGroup(e)
-}
-
-func onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
+// OnPhaseExploration is the exploration phase.
+func OnPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
 	for !g.Explored {
-		err := exploreGroup(g)
+		err := exploreGroup(sctx, g)
 		if err != nil {
 			return err
 		}
@@ -58,7 +48,7 @@ func onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
 	return nil
 }
 
-func exploreGroup(g *memo.Group) error {
+func exploreGroup(sctx sessionctx.Context, g *memo.Group) error {
 	if g.Explored {
 		return nil
 	}
@@ -73,11 +63,11 @@ func exploreGroup(g *memo.Group) error {
 		// Explore child groups firstly.
 		curExpr.Explored = true
 		for _, childGroup := range curExpr.Children {
-			exploreGroup(childGroup)
+			exploreGroup(sctx, childGroup)
 			curExpr.Explored = curExpr.Explored && childGroup.Explored
 		}
 
-		eraseCur, err := findMoreEquiv(g, elem)
+		eraseCur, err := findMoreEquiv(sctx, g, elem)
 		if err != nil {
 			return err
 		}
@@ -91,7 +81,7 @@ func exploreGroup(g *memo.Group) error {
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
+func findMoreEquiv(sctx sessionctx.Context, g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
 	for _, rule := range GetTransformationRules(expr.ExprNode) {
 		pattern := rule.GetPattern()
@@ -106,9 +96,14 @@ func findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error)
 				continue
 			}
 
-			newExpr, erase, err := rule.OnTransform(iter)
+			newExpr, erase, err := rule.OnTransform(sctx, iter)
 			if err != nil {
 				return false, err
+			}
+
+			// no transform operation is performed.
+			if newExpr == nil {
+				continue
 			}
 
 			eraseCur = eraseCur || erase

@@ -17,6 +17,7 @@ import (
 	"container/list"
 	"fmt"
 
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 )
 
@@ -123,4 +124,15 @@ func (g *Group) GetImpl(prop *property.PhysicalProperty) Implementation {
 func (g *Group) InsertImpl(prop *property.PhysicalProperty, impl Implementation) {
 	key := prop.HashCode()
 	g.ImplMap[string(key)] = impl
+}
+
+// Convert2Group converts a logical plan to expression groups.
+func Convert2Group(node core.LogicalPlan) *Group {
+	e := NewGroupExpr(node)
+	e.Children = make([]*Group, 0, len(node.Children()))
+	for _, child := range node.Children() {
+		childGroup := Convert2Group(child)
+		e.Children = append(e.Children, childGroup)
+	}
+	return NewGroup(e)
 }

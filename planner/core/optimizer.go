@@ -92,6 +92,20 @@ func CheckPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
+// PreProcess does the preprocess optimizations
+func PreProcess(logic LogicalPlan) (_ LogicalPlan, err error) {
+	for i, rule := range optRuleList {
+		switch uint64(1) << uint64(i) {
+		case flagPrunColumns, flagEliminateProjection:
+			logic, err = rule.optimize(logic)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return logic, nil
+}
+
 // DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	logic, err := logicalOptimize(flag, logic)

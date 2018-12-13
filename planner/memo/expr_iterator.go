@@ -129,6 +129,11 @@ func (iter *ExprIter) Reset() (findMatch bool) {
 	return false
 }
 
+// GetGroupExpr returns the group expression pointed by this iterator.
+func (iter *ExprIter) GetGroupExpr() *GroupExpr {
+	return iter.Element.Value.(*GroupExpr)
+}
+
 // NewExprIterFromGroupElem creates the iterator on the Group Element.
 func NewExprIterFromGroupElem(elem *list.Element, p *Pattern) *ExprIter {
 	expr := elem.Value.(*GroupExpr)
