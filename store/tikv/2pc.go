@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
 	"math"
 	"sync"
@@ -234,7 +235,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	// Make sure the group that contains primary key goes first.
 	if len(groups[primaryRegion]) > 0 {
 		batches = appendBatchBySize(batches, primaryRegion, groups[primaryRegion], sizeFunc, txnCommitBatchSize)
-		batches[0].primary = true
+		markBatchAsPrimary(batches, c.primary())
 		delete(groups, primaryRegion)
 	}
 	for id, g := range groups {
@@ -748,4 +749,16 @@ func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn 
 		})
 	}
 	return b
+}
+
+// markBatchAsPrimary marks the batch that contains the primaryKey as primary
+func markBatchAsPrimary(batches []batchKeys, primaryKey []byte) {
+	for i := range batches {
+		for _, k := range batches[i].keys {
+			if bytes.Compare(k, primaryKey) == 0 {
+				batches[i].primary = true
+				return
+			}
+		}
+	}
 }
