@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -50,6 +51,47 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&seqTestSuite{})
+
+type seqTestSuite struct {
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	store     kv.Storage
+	domain    *domain.Domain
+	*parser.Parser
+	ctx *mock.Context
+}
+
+var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
+
+func (s *seqTestSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.Parser = parser.New()
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
+	}
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
+}
+
+func (s *seqTestSuite) TearDownSuite(c *C) {
+	s.domain.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
 
 func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -545,43 +587,27 @@ func (s *seqTestSuite) TestShow(c *C) {
 	))
 }
 
-type seqTestSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	domain    *domain.Domain
-	*parser.Parser
-	ctx *mock.Context
-}
-
-var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
-
-func (s *seqTestSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	s.Parser = parser.New()
-	flag.Lookup("mockTikv")
-	useMockTikv := *mockTikv
-	if useMockTikv {
-		s.cluster = mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.MustNewMVCCStore()
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(s.cluster),
-			mockstore.WithMVCCStore(s.mvccStore),
-		)
-		c.Assert(err, IsNil)
-		s.store = store
-		session.SetSchemaLease(0)
-		session.SetStatsLease(0)
-	}
-	d, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	d.SetStatsUpdating(true)
-	s.domain = d
-}
-
-func (s *seqTestSuite) TearDownSuite(c *C) {
-	s.domain.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
+func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create index idx on t(a)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
+	tk.MustExec("insert into t values (1), (2)")
+	do, _ := session.GetDomain(s.store)
+	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
+	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
+	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
+	do.StatsHandle().Update(do.InfoSchema())
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
+	tk.MustExec("delete from t")
+	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
+	do.StatsHandle().Update(do.InfoSchema())
+	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }
