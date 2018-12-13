@@ -297,16 +297,16 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // CreateView creates a view with tableInfo in database.
-func (m *Meta) CreateView(dbID int64, tableInfo *model.TableInfo, orReplace bool) error {
+func (m *Meta) CreateView(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return errors.Trace(err)
 	}
 
-	// Check if view not exist.
+	// Check if table exists.
 	tableKey := m.tableKey(tableInfo.ID)
-	if err := m.checkTableNotExists(dbKey, tableKey); err != nil && !orReplace {
+	if err := m.checkTableNotExists(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
 
