@@ -160,6 +160,18 @@ func (cc *clientConn) Close() error {
 	return nil
 }
 
+func (cc *clientConn) CloseWithoutLock() error {
+	delete(cc.server.clients, cc.connectionID)
+	connections := len(cc.server.clients)
+	metrics.ConnGauge.Set(float64(connections))
+	err := cc.bufReadConn.Close()
+	terror.Log(errors.Trace(err))
+	if cc.ctx != nil {
+		return cc.ctx.Close()
+	}
+	return nil
+}
+
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
 // and auth salt to the client.
 func (cc *clientConn) writeInitialHandshake() error {
