@@ -19,6 +19,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -181,14 +183,26 @@ func (s *testSuite) TestIssue2456(c *C) {
 	tk.MustExec("GRANT ALL PRIVILEGES ON `dddb_%`.`te%` to 'dduser'@'%';")
 }
 
+func (s *testSuite) TestNoAutoCreateUser(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	tk.MustExec(`SET sql_mode='NO_AUTO_CREATE_USER'`)
+	_, err := tk.Exec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
+	c.Check(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue)
+}
+
 func (s *testSuite) TestCreateUserWhenGrant(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
+	// This only applies to sql_mode:NO_AUTO_CREATE_USER off
+	tk.MustExec(`SET SQL_MODE=''`)
 	tk.MustExec(`GRANT ALL PRIVILEGES ON *.* to 'test'@'%' IDENTIFIED BY 'xxx'`)
 	// Make sure user is created automatically when grant to a non-exists one.
 	tk.MustQuery(`SELECT user FROM mysql.user WHERE user='test' and host='%'`).Check(
 		testkit.Rows("test"),
 	)
+	tk.MustExec(`DROP USER IF EXISTS 'test'@'%'`)
 }
 
 func (s *testSuite) TestIssue2654(c *C) {
@@ -198,4 +212,15 @@ func (s *testSuite) TestIssue2654(c *C) {
 	tk.MustExec("GRANT SELECT ON test.* to 'test'")
 	rows := tk.MustQuery(`SELECT user,host FROM mysql.user WHERE user='test' and host='%'`)
 	rows.Check(testkit.Rows(`test %`))
+}
+
+func (s *testSuite) TestGrantUnderANSIQuotes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Fix a bug that the GrantExec fails in ANSI_QUOTES sql mode
+	// The bug is caused by the improper usage of double quotes like:
+	// INSERT INTO mysql.user ... VALUES ("..", "..", "..")
+	tk.MustExec(`SET SQL_MODE='ANSI_QUOTES'`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON video_ulimit.* TO web@'%' IDENTIFIED BY 'eDrkrhZ>l2sV'`)
+	tk.MustExec(`REVOKE ALL PRIVILEGES ON video_ulimit.* FROM web@'%';`)
+	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
 }

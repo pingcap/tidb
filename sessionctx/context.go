@@ -14,6 +14,7 @@
 package sessionctx
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/tidb/kv"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 )
 
 // Context is an interface for transaction and executive args environment.
@@ -31,10 +31,13 @@ type Context interface {
 	// NewTxn creates a new transaction for further execution.
 	// If old transaction is valid, it is committed first.
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
-	NewTxn() error
+	NewTxn(context.Context) error
 
 	// Txn returns the current transaction which is created before executing a statement.
-	Txn() kv.Transaction
+	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
+	// If the active parameter is true, call this function will wait for the pending txn
+	// to become valid.
+	Txn(active bool) kv.Transaction
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
@@ -56,10 +59,6 @@ type Context interface {
 	// and creates a new transaction.
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
-
-	// ActivePendingTxn receives the pending transaction from the transaction channel.
-	// It should be called right before we builds an executor.
-	ActivePendingTxn() error
 
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.

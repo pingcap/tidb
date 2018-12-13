@@ -123,11 +123,14 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 	switch value.(type) {
 	case nil:
-		tp.Tp = mysql.TypeUnspecified
+		tp.Tp = mysql.TypeVarString
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
 	default:
 		DefaultTypeForValue(value, tp)
+		if tp.Tp == mysql.TypeUnspecified {
+			tp.Tp = mysql.TypeVarString
+		}
 	}
 }
 

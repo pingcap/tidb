@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testColumnChangeSuite{})
@@ -58,7 +58,7 @@ func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 
 func (s *testColumnChangeSuite) TearDownSuite(c *C) {
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testColumnChangeSuite) TestColumnChange(c *C) {
@@ -67,7 +67,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	// create table t (c1 int, c2 int);
 	tblInfo := testTableInfo(c, d, "t", 2)
 	ctx := testNewContext(d)
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 	// insert t values (1, 2);
@@ -75,7 +75,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	row := types.MakeDatums(1, 2)
 	h, err := originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit(context.Background())
+	err = ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	var mu sync.Mutex
@@ -96,7 +96,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 		hookCtx.Store = s.store
 		prevState = job.SchemaState
 		var err error
-		err = hookCtx.NewTxn()
+		err = hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -127,7 +127,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 			}
 			mu.Unlock()
 		}
-		err = hookCtx.Txn().Commit(context.Background())
+		err = hookCtx.Txn(true).Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -159,7 +159,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 		hookCtx.Store = s.store
 		prevState = job.SchemaState
 		var err error
-		err = hookCtx.NewTxn()
+		err = hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -179,7 +179,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 				checkErr = errors.Trace(err)
 			}
 		}
-		err = hookCtx.Txn().Commit(context.TODO())
+		err = hookCtx.Txn(true).Commit(context.TODO())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -221,7 +221,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 
 func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h int64) error {
 	// WriteOnlyTable: insert t values (2, 3)
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -229,7 +229,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -262,7 +262,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -276,7 +276,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -293,22 +293,23 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func (s *testColumnChangeSuite) checkAddPublic(ctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
+func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
+	ctx := context.TODO()
 	// publicTable Insert t values (4, 4, 4)
-	err := ctx.NewTxn()
+	err := sctx.NewTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h, err := publicTable.AddRecord(ctx, types.MakeDatums(4, 4, 4), false)
+	h, err := publicTable.AddRecord(sctx, types.MakeDatums(4, 4, 4), false)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = sctx.NewTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// writeOnlyTable update t set c1 = 3 where c1 = 4
-	oldRow, err := writeOnlyTable.RowWithCols(ctx, h, writeOnlyTable.WritableCols())
+	oldRow, err := writeOnlyTable.RowWithCols(sctx, h, writeOnlyTable.WritableCols())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -316,16 +317,16 @@ func (s *testColumnChangeSuite) checkAddPublic(ctx sessionctx.Context, d *ddl, w
 		return errors.Errorf("%v", oldRow)
 	}
 	newRow := types.MakeDatums(3, 4, oldRow[2].GetValue())
-	err = writeOnlyTable.UpdateRecord(ctx, h, oldRow, newRow, touchedSlice(writeOnlyTable))
+	err = writeOnlyTable.UpdateRecord(sctx, h, oldRow, newRow, touchedSlice(writeOnlyTable))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ctx.NewTxn()
+	err = sctx.NewTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// publicTable select * from t, make sure the new c3 value 4 is not overwritten to default value 3.
-	err = checkResult(ctx, publicTable, publicTable.WritableCols(), testutil.RowsWithSep(" ", "2 3 3", "3 4 4"))
+	err = checkResult(sctx, publicTable, publicTable.WritableCols(), testutil.RowsWithSep(" ", "2 3 3", "3 4 4"))
 	if err != nil {
 		return errors.Trace(err)
 	}

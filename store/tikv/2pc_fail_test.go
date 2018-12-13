@@ -14,11 +14,13 @@
 package tikv
 
 import (
+	"context"
+
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
-	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/kv"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -33,6 +35,10 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRpcErrors(c *C) {
 	err = t1.Commit(context.Background())
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
+
+	// We don't need to call "Rollback" after "Commit" fails.
+	err = t1.Rollback()
+	c.Assert(err, Equals, kv.ErrInvalidTxn)
 }
 
 // TestFailCommitPrimaryRegionError tests RegionError is handled properly when

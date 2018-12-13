@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/schemautil"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -399,6 +400,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	err = checkColumnValueConstraint(col)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	err = checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -540,6 +545,25 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	// Primary key should not be null.
 	if mysql.HasPriKeyFlag(col.Flag) && hasNullFlag {
 		return ErrPrimaryCantHaveNull
+	}
+	return nil
+}
+
+func checkColumnValueConstraint(col *table.Column) error {
+	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
+		return nil
+	}
+	valueMap := make(map[string]string, len(col.Elems))
+	for i := range col.Elems {
+		val := strings.ToLower(col.Elems[i])
+		if _, ok := valueMap[val]; ok {
+			tpStr := "ENUM"
+			if col.Tp == mysql.TypeSet {
+				tpStr = "SET"
+			}
+			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, valueMap[val], tpStr)
+		}
+		valueMap[val] = col.Elems[i]
 	}
 	return nil
 }
@@ -903,33 +927,18 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if pi != nil && pi.Type == model.PartitionTypeRange {
-		// Only range type partition is now supported.
-		// Range columns partition only implements the parser, so it will not be checked.
-		if s.Partition.ColumnNames == nil {
-			if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
-				return errors.Trace(err)
-			}
-
-			if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
-				return errors.Trace(err)
-			}
-
-			if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
-				return errors.Trace(err)
-			}
-
-			if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-				return errors.Trace(err)
-			}
-
-			if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-				return errors.Trace(err)
-			}
-
-			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
-				return errors.Trace(err)
-			}
+	if pi != nil {
+		switch pi.Type {
+		case model.PartitionTypeRange:
+			err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
+		case model.PartitionTypeHash:
+			err = checkPartitionByHash(pi)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+			return errors.Trace(err)
 		}
 		tbInfo.Partition = pi
 	}
@@ -950,6 +959,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if len(tbInfo.Charset) != 0 && strings.ToLower(tbInfo.Charset) != mysql.DefaultCharset {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(`TiDB only supports the "utf8mb4" character set, so "%s" does not take effect.`, tbInfo.Charset))
+	}
+
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
@@ -965,6 +978,41 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkPartitionByHash(pi *model.PartitionInfo) error {
+	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
+	// Range columns partition only implements the parser, so it will not be checked.
+	if s.Partition.ColumnNames != nil {
+		return nil
+	}
+
+	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func checkCharsetAndCollation(cs string, co string) error {
@@ -992,6 +1040,17 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	return nil
 }
 
+func setDefaultTableCharsetAndCollation(tbInfo *model.TableInfo) (err error) {
+	if len(tbInfo.Charset) == 0 {
+		tbInfo.Charset = mysql.DefaultCharset
+	}
+
+	if len(tbInfo.Collate) == 0 {
+		tbInfo.Collate, err = charset.GetDefaultCollation(tbInfo.Charset)
+	}
+	return
+}
+
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -1016,6 +1075,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			}
 		}
 	}
+
+	setDefaultTableCharsetAndCollation(tbInfo)
 	return nil
 }
 
@@ -1035,6 +1096,34 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 	return tp == ast.AlterTableLock || tp == ast.AlterTableAlgorithm
 }
 
+// getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
+// and returns the last charset and collate in options. If there is no charset in the options,
+// the returns charset will be "", the same as collate.
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (charset, collate string) {
+	charsets := make([]string, len(options))
+	collates := make([]string, len(options))
+	for i := startIdx; i < len(options); i++ {
+		opt := options[i]
+		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
+		// the charset will be utf8, collate will be utf8_bin
+		switch opt.Tp {
+		case ast.TableOptionCharset:
+			charsets = append(charsets, opt.StrValue)
+		case ast.TableOptionCollate:
+			collates = append(collates, opt.StrValue)
+		}
+	}
+
+	if len(charsets) != 0 {
+		charset = charsets[len(charsets)-1]
+	}
+
+	if len(collates) != 0 {
+		collate = collates[len(collates)-1]
+	}
+	return
+}
+
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
 	// Only handle valid specs.
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
@@ -1052,6 +1141,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	for _, spec := range validSpecs {
+		var handledCharsetOrCollate bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			if len(spec.NewColumns) != 1 {
@@ -1060,12 +1150,16 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AddColumn(ctx, ident, spec)
 		case ast.AlterTableAddPartitions:
 			err = d.AddTablePartitions(ctx, ident, spec)
+		case ast.AlterTableCoalescePartitions:
+			err = d.CoalescePartitions(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableDropPartition:
 			err = d.DropTablePartition(ctx, ident, spec)
+		case ast.AlterTableTruncatePartition:
+			err = d.TruncateTablePartition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
@@ -1096,7 +1190,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableOption:
-			for _, opt := range spec.Options {
+			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
 					if opt.UintValue > shardRowIDBitsMax {
@@ -1108,7 +1202,17 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(ctx, ident, spec)
+				case ast.TableOptionCharset, ast.TableOptionCollate:
+					// getCharsetAndCollateInTableOption will get the last charset and collate in the options,
+					// so it should be handled only once.
+					if handledCharsetOrCollate {
+						continue
+					}
+					toCharset, toCollate := getCharsetAndCollateInTableOption(i, spec.Options)
+					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate)
+					handledCharsetOrCollate = true
 				}
+
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -1290,10 +1394,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 // AddTablePartitions will add a new partition to the table.
 func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	if len(spec.PartDefinitions) == 0 {
-		return errors.Trace(ErrPartitionsMustBeDefined)
-	}
-
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -1308,12 +1408,17 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if meta.GetPartitionInfo() == nil {
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
+	// We don't support add hash type partition now.
+	if meta.Partition.Type == model.PartitionTypeHash {
+		return errors.Trace(ErrUnsupportedAddPartition)
+	}
+
 	partInfo, err := buildPartitionInfo(meta, d, spec)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = checkAddPartitionTooManyPartitions(len(meta.Partition.Definitions) + len(partInfo.Definitions))
+	err = checkAddPartitionTooManyPartitions(uint64(len(meta.Partition.Definitions) + len(partInfo.Definitions)))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1337,6 +1442,73 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.
+func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta()
+	if meta.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	// Coalesce partition can only be used on hash/key partitions.
+	if meta.Partition.Type == model.PartitionTypeRange {
+		return errors.Trace(ErrCoalesceOnlyOnHashPartition)
+	}
+
+	// We don't support coalesce partitions hash type partition now.
+	if meta.Partition.Type == model.PartitionTypeHash {
+		return errors.Trace(ErrUnsupportedCoalescePartition)
+	}
+
+	return errors.Trace(err)
+}
+
+func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+	meta := t.Meta()
+	if meta.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	var pid int64
+	pid, err = findPartitionByName(meta, spec.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		Type:       model.ActionTruncateTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{pid},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -1416,6 +1588,29 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 	return errors.Trace(err)
 }
 
+// modifiableCharsetAndCollation returns error when the charset or collation is not modifiable.
+func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate string) error {
+	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
+		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset, toCollate)
+	}
+
+	if toCharset == charset.CharsetUTF8MB4 || (toCharset == charset.CharsetUTF8 && origCharset != charset.CharsetUTF8MB4) {
+		// TiDB treats all the data as utf8mb4, so we support changing the charset to utf8mb4.
+		// And not allow to change utf8mb4 to utf8.
+		return nil
+	}
+
+	if toCharset != origCharset {
+		msg := fmt.Sprintf("charset from %s to %s", origCharset, toCharset)
+		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
+	}
+	if toCollate != origCollate {
+		msg := fmt.Sprintf("collate from %s to %s", origCollate, toCollate)
+		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
+	}
+	return nil
+}
+
 // modifiable checks if the 'origin' type can be modified to 'to' type with out the need to
 // change or check existing data in the table.
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
@@ -1429,14 +1624,10 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	if to.Charset != origin.Charset {
-		msg := fmt.Sprintf("charset %s not match origin %s", to.Charset, origin.Charset)
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	if err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate); err != nil {
+		return errors.Trace(err)
 	}
-	if to.Collate != origin.Collate {
-		msg := fmt.Sprintf("collate %s not match origin %s", to.Collate, origin.Collate)
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-	}
+
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
@@ -1799,6 +1990,60 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	return errors.Trace(err)
 }
 
+// AlterTableCharset changes the table charset and collate.
+func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
+	// use the last one.
+	if toCharset == "" && toCollate == "" {
+		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset)
+	}
+
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	origCharset := tb.Meta().Charset
+	origCollate := tb.Meta().Collate
+	if toCharset == "" {
+		// charset does not change.
+		toCharset = origCharset
+	}
+
+	if toCollate == "" {
+		// get the default collation of the charset.
+		toCollate, err = charset.GetDefaultCollation(toCharset)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if origCharset == toCharset && origCollate == toCollate {
+		// nothing to do.
+		return nil
+	}
+
+	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionModifyTableCharsetAndCollate,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{toCharset, toCollate},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 // RenameIndex renames an index.
 // In TiDB, indexes are case-insensitive (so index 'a' and 'A" are considered the same index),
 // but index names are case-sensitive (we can rename index 'a' to 'A')
@@ -1951,11 +2196,21 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		indexName = getAnonymousIndex(t, idxColNames[0].Column.Name)
 	}
 
-	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
+	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
 		return ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
 	if err = checkTooLongIndex(indexName); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check before put the job is put to the queue.
+	// This check is redudant, but useful. If DDL check fail before the job is put
+	// to job queue, the fail path logic is super fast.
+	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
+	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	_, err = buildIndexColumns(t.Meta().Columns, idxColNames)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2076,7 +2331,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
+	if indexInfo := schemautil.FindIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
 		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
@@ -2129,6 +2384,9 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 }
 
 func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	if meta.Partition.Type == model.PartitionTypeRange && len(spec.PartDefinitions) == 0 {
+		return nil, errors.Trace(ErrPartitionsMustBeDefined)
+	}
 	part := &model.PartitionInfo{
 		Type:    meta.Partition.Type,
 		Expr:    meta.Partition.Expr,

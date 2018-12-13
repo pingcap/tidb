@@ -14,6 +14,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -75,7 +75,7 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
@@ -376,7 +376,7 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column the number of enum column's elements is less than the original: 2")
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column charset binary not match origin utf8mb4")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8mb4 to binary")
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -602,17 +602,19 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
-func (s *testStateChangeSuite) TestParallelColumnModifyingDefinition(c *C) {
-	sql1 := "insert into t(b) values (null);"
-	sql2 := "alter table t change b b2 bigint not null;"
-	f := func(c *C, err1, err2 error) {
-		c.Assert(err1, IsNil)
-		if err2 != nil {
-			c.Assert(err2.Error(), Equals, "[ddl:1265]Data truncated for column 'b2' at row 1")
-		}
-	}
-	s.testControlParallelExecSQL(c, sql1, sql2, f)
-}
+// TODO: This test is not a test that performs two DDLs in parallel.
+// So we should not use the function of testControlParallelExecSQL. We will handle this test in the next PR.
+// func (s *testStateChangeSuite) TestParallelColumnModifyingDefinition(c *C) {
+// 	sql1 := "insert into t(b) values (null);"
+// 	sql2 := "alter table t change b b2 bigint not null;"
+// 	f := func(c *C, err1, err2 error) {
+// 		c.Assert(err1, IsNil)
+// 		if err2 != nil {
+// 			c.Assert(err2.Error(), Equals, "[ddl:1265]Data truncated for column 'b2' at row 1")
+// 		}
+// 	}
+// 	s.testControlParallelExecSQL(c, sql1, sql2, f)
+// }
 
 func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 	sql1 := "ALTER TABLE t CHANGE a aa int;"
@@ -710,16 +712,33 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	c.Assert(err, IsNil)
 	wg.Add(2)
 	ch := make(chan struct{})
+	// Make sure the sql1 is put into the DDLJobQueue.
+	go func() {
+		var qLen int
+		for {
+			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				jobs, err3 := admin.GetDDLJobs(txn)
+				if err3 != nil {
+					return err3
+				}
+				qLen = len(jobs)
+				return nil
+			})
+			if qLen == 1 {
+				// Make sure sql2 is executed after the sql1.
+				close(ch)
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
 	go func() {
 		defer wg.Done()
-		close(ch)
 		_, err1 = se.Execute(context.Background(), sql1)
 	}()
 	go func() {
 		defer wg.Done()
 		<-ch
-		// Make sure sql2 is executed after the sql1.
-		time.Sleep(time.Millisecond * 10)
 		_, err2 = se1.Execute(context.Background(), sql2)
 	}()
 

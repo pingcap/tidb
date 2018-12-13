@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // InsertValues is the data to insert.
@@ -174,11 +174,14 @@ func (e *InsertValues) processSetList() error {
 }
 
 // insertRows processes `insert|replace into values ()` or `insert|replace into set x=y`
-func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err error) {
+func (e *InsertValues) insertRows(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) (err error) {
 	// For `insert|replace into set x=y`, process the set list here.
 	if err = e.processSetList(); err != nil {
 		return errors.Trace(err)
 	}
+	sessVars := e.ctx.GetSessionVars()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchSize := sessVars.DMLBatchSize
 
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	for i, list := range e.Lists {
@@ -188,8 +191,19 @@ func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err er
 			return errors.Trace(err)
 		}
 		rows = append(rows, row)
+		if e.rowCount%uint64(batchSize) == 0 {
+			if err = exec(ctx, rows); err != nil {
+				return err
+			}
+			rows = rows[:0]
+			if batchInsert {
+				if err = e.doBatchInsert(ctx); err != nil {
+					return err
+				}
+			}
+		}
 	}
-	return errors.Trace(exec(rows))
+	return errors.Trace(exec(ctx, rows))
 }
 
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
@@ -277,7 +291,7 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 	return nil
 }
 
-func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows [][]types.Datum) error) error {
+func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx context.Context, rows [][]types.Datum) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	fields := selectExec.retTypes()
@@ -306,24 +320,34 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 				return errors.Trace(err)
 			}
 			rows = append(rows, row)
-			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
-				if err := exec(rows); err != nil {
+			if e.rowCount%uint64(batchSize) == 0 {
+				if err = exec(ctx, rows); err != nil {
 					return errors.Trace(err)
 				}
-				e.ctx.StmtCommit()
 				rows = rows[:0]
-				if err := e.ctx.NewTxn(); err != nil {
-					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
-				}
-				if !sessVars.LightningMode {
-					sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
+				if batchInsert {
+					if err = e.doBatchInsert(ctx); err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
-	if err := exec(rows); err != nil {
+	if err := exec(ctx, rows); err != nil {
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (e *InsertValues) doBatchInsert(ctx context.Context) error {
+	sessVars := e.ctx.GetSessionVars()
+	e.ctx.StmtCommit()
+	if err := e.ctx.NewTxn(ctx); err != nil {
+		// We should return a special error for batch insert.
+		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+	}
+	if !sessVars.LightningMode {
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
 	}
 	return nil
 }
@@ -460,7 +484,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		e.ctx.GetSessionVars().InsertID = uint64(recordID)
+		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		retryInfo.AddAutoIncrementID(recordID)
 		d.SetAutoID(recordID, c.Flag)
 		return d, nil
@@ -543,10 +567,10 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 
 func (e *InsertValues) addRecord(row []types.Datum) (int64, error) {
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
-		e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+		e.ctx.Txn(true).SetOption(kv.PresumeKeyNotExists, nil)
 	}
 	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
+	e.ctx.Txn(true).DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

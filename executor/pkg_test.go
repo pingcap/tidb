@@ -1,9 +1,11 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
+	"github.com/klauspost/cpuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -17,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
-	"github.com/klauspost/cpuid"
 )
 
 var _ = Suite(&pkgTestSuite{})
