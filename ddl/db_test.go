@@ -532,7 +532,7 @@ func (s *testDBSuite) TestCancelAddIndexPanic(c *C) {
 			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
 	}
-	origHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	origHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	rs, err := s.tk.Exec("alter table t add index idx_c2(c2)")
