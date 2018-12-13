@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
-	"github.com/sirupsen/logrus"
 )
 
 func (s *testUnitTestSuit) rewriteSimpleExpr(str string, schema *expression.Schema) ([]expression.Expression, error) {
@@ -147,7 +146,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			innerKeys:       []*expression.Column{dsSchema.Columns[1]},
 			pushedDownConds: "a = 1",
 			otherConds:      "",
-			ranges:          "[[1 NULL NULL,1 NULL +inf]]",
+			ranges:          "[[1 NULL,1 NULL]]",
 			idxOff2KeyOff:   "[-1 0 -1 -1]",
 			accesses:        "[eq(test.t.a, 1)]",
 			remained:        "[]",
@@ -191,7 +190,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			innerKeys:       []*expression.Column{dsSchema.Columns[1]},
 			pushedDownConds: "a in (1, 2, 3) and c in ('a', 'b', 'c')",
 			otherConds:      "",
-			ranges:          "[[1 NULL \"a\" NULL,1 NULL \"a\" +inf] [2 NULL \"a\" NULL,2 NULL \"a\" +inf] [3 NULL \"a\" NULL,3 NULL \"a\" +inf] [1 NULL \"b\" NULL,1 NULL \"b\" +inf] [2 NULL \"b\" NULL,2 NULL \"b\" +inf] [3 NULL \"b\" NULL,3 NULL \"b\" +inf] [1 NULL \"c\" NULL,1 NULL \"c\" +inf] [2 NULL \"c\" NULL,2 NULL \"c\" +inf] [3 NULL \"c\" NULL,3 NULL \"c\" +inf]]",
+			ranges:          "[[1 NULL \"a\",1 NULL \"a\"] [2 NULL \"a\",2 NULL \"a\"] [3 NULL \"a\",3 NULL \"a\"] [1 NULL \"b\",1 NULL \"b\"] [2 NULL \"b\",2 NULL \"b\"] [3 NULL \"b\",3 NULL \"b\"] [1 NULL \"c\",1 NULL \"c\"] [2 NULL \"c\",2 NULL \"c\"] [3 NULL \"c\",3 NULL \"c\"]]",
 			idxOff2KeyOff:   "[-1 0 -1 -1]",
 			accesses:        "[in(test.t.a, 1, 2, 3) in(test.t.c, a, b, c)]",
 			remained:        "[in(test.t.c, a, b, c)]",
@@ -227,7 +226,6 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		others, err := s.rewriteSimpleExpr(tt.otherConds, joinNode.schema)
 		c.Assert(err, IsNil)
 		joinNode.OtherConditions = others
-		logrus.Warnf("others: %v", joinNode.OtherConditions)
 		ranges, idxOff2KeyOff, accesses, remained, compareFilters, err := joinNode.analyzeLookUpFilters(idxInfo, dataSourceNode, tt.innerKeys)
 		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%v", ranges), Equals, tt.ranges)

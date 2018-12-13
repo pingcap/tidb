@@ -636,7 +636,6 @@ func (cwc *ColWithCompareOps) resolveIndices(schema *expression.Schema) {
 
 func (cwc *ColWithCompareOps) String() string {
 	buffer := bytes.NewBufferString("")
-	log.Warnf("%v, %v, %v", cwc.targetCol, cwc.OpType, cwc.opArg)
 	for i := range cwc.OpType {
 		buffer.WriteString(fmt.Sprintf("%v(%v, %v)", cwc.OpType[i], cwc.targetCol, cwc.opArg[i]))
 		if i < len(cwc.OpType)-1 {
@@ -761,8 +760,17 @@ loopOtherConds:
 			remained = append(remained, colAccesses...)
 		}
 		accesses = append(accesses, colAccesses...)
-		nextColRange, err := ranger.BuildColumnRange(colAccesses, p.ctx.GetSessionVars().StmtCtx, nextCol.RetType, colLengths[nextColPos])
-		ranges, err := p.buildTemplateRange(idxOff2keyOff, matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
+		var ranges, nextColRange []*ranger.Range
+		var err error
+		if len(colAccesses) > 0 {
+			nextColRange, err = ranger.BuildColumnRange(colAccesses, p.ctx.GetSessionVars().StmtCtx, nextCol.RetType, colLengths[nextColPos])
+			if err != nil {
+				return nil, nil, nil, nil, nil, err
+			}
+			ranges, err = p.buildTemplateRange(idxOff2keyOff, matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
+		} else {
+			ranges, err = p.buildTemplateRange(idxOff2keyOff, matchedKeyCnt, notKeyEqAndIn, nil, false)
+		}
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
