@@ -348,16 +348,7 @@ func (d *ddl) runDDLJob(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
-		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
-		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			log.Infof("[ddl] run the cancelling DDL job %s", job)
-			d.reorgCtx.notifyReorgCancel()
-		} else {
-			job.State = model.JobStateCancelled
-			job.Error = errCancelledDDLJob
-			job.ErrorCount++
-			return
-		}
+		return convertJob2RollbackJob(d, t, job)
 	}
 
 	if !job.IsRollingback() && !job.IsCancelling() {
@@ -581,7 +572,7 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 			return errors.Trace(err)
 		}
 		indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
-		_, err = d.convert2RollbackJob(m, job, tblInfo, indexInfo, nil)
+		_, err = convertAddIdxJob2RollbackJob(m, job, tblInfo, indexInfo, nil)
 		if err == nil {
 			_, err = m.DeQueueDDLJob()
 		}

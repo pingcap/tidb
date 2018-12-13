@@ -160,6 +160,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 
 		err = parseStmtArgs(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
+		stmt.Reset()
 		if err != nil {
 			return errors.Trace(err)
 		}
