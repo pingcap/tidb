@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -147,11 +146,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 }
 
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	isAutoIncColUnsigned := false
-	if autoIncrementCol := tblInfo.GetAutoIncrementColInfo(); autoIncrementCol != nil {
-		isAutoIncColUnsigned = mysql.HasUnsignedFlag(autoIncrementCol.Flag)
-	}
-	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID), isAutoIncColUnsigned)
+	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
 }

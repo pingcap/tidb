@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/perfschema"
@@ -174,11 +173,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	}
 	if alloc == nil {
 		schemaID := dbInfo.ID
-		isAutoIncColUnsigned := false
-		if autoIncrementCol := tblInfo.GetAutoIncrementColInfo(); autoIncrementCol != nil {
-			isAutoIncColUnsigned = mysql.HasUnsignedFlag(autoIncrementCol.Flag)
-		}
-		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), isAutoIncColUnsigned)
+		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
@@ -281,11 +276,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 	b.is.schemaMap[di.Name.L] = schTbls
 	for _, t := range di.Tables {
 		schemaID := di.ID
-		isAutoIncColUnsigned := false
-		if autoIncrementCol := t.GetAutoIncrementColInfo(); autoIncrementCol != nil {
-			isAutoIncColUnsigned = mysql.HasUnsignedFlag(autoIncrementCol.Flag)
-		}
-		alloc := autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID), isAutoIncColUnsigned)
+		alloc := autoid.NewAllocator(b.handle.store, t.GetDBID(schemaID), t.IsAutoIncColUnsigned())
 		var tbl table.Table
 		tbl, err := tables.TableFromMeta(alloc, t)
 		if err != nil {
