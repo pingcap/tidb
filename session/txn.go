@@ -284,9 +284,15 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 type txnFuture struct {
 	future oracle.Future
 	store  kv.Storage
+
+	mockFail bool
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
+	if tf.mockFail {
+		return nil, errors.New("mock get timestamp fail")
+	}
+
 	startTS, err := tf.future.Wait()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
@@ -304,7 +310,11 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 
 	oracleStore := s.store.GetOracle()
 	tsFuture := oracleStore.GetTimestampAsync(ctx)
-	return &txnFuture{tsFuture, s.store}
+	ret := &txnFuture{future: tsFuture, store: s.store}
+	if x := ctx.Value("mockGetTSFail"); x != nil {
+		ret.mockFail = true
+	}
+	return ret
 }
 
 // StmtCommit implements the sessionctx.Context interface.
