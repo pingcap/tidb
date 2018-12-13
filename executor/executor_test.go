@@ -72,6 +72,7 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(&logutil.LogConfig{
 		Level: logLevel,
 	})
+	autoid.SetStep(5000)
 	TestingT(t)
 }
 
@@ -88,16 +89,12 @@ type testSuite struct {
 	domain    *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
-
-	autoIDStep int64
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	s.autoIDStep = autoid.GetStep()
-	autoid.SetStep(5000)
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -123,7 +120,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	autoid.SetStep(s.autoIDStep)
 	testleak.AfterTest(c)()
 }
 
@@ -3367,14 +3363,10 @@ type testSuite2 struct {
 	domain    *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
-
-	autoIDStep int64
 }
 
 func (s *testSuite2) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	s.autoIDStep = autoid.GetStep()
-	autoid.SetStep(5000)
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -3400,7 +3392,6 @@ func (s *testSuite2) SetUpSuite(c *C) {
 func (s *testSuite2) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	autoid.SetStep(s.autoIDStep)
 	testleak.AfterTest(c)()
 }
 
@@ -3421,14 +3412,10 @@ type testSuite3 struct {
 	domain    *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
-
-	autoIDStep int64
 }
 
 func (s *testSuite3) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	s.autoIDStep = autoid.GetStep()
-	autoid.SetStep(5000)
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -3454,7 +3441,6 @@ func (s *testSuite3) SetUpSuite(c *C) {
 func (s *testSuite3) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	autoid.SetStep(s.autoIDStep)
 	testleak.AfterTest(c)()
 }
 
