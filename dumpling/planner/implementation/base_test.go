@@ -11,10 +11,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package implementation
 
 import (
-	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -22,7 +21,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -32,41 +30,35 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testCascadesSuite{})
+var _ = Suite(&testImplSuite{})
 
-type testCascadesSuite struct {
+type testImplSuite struct {
 	*parser.Parser
 	is   infoschema.InfoSchema
 	sctx sessionctx.Context
 }
 
-func (s *testCascadesSuite) SetUpSuite(c *C) {
+func (s *testImplSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
 }
 
-func (s *testCascadesSuite) TearDownSuite(c *C) {
+func (s *testImplSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
-func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
-	stmt, err := s.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
-	c.Assert(err, IsNil)
-	p, err := plannercore.BuildLogicalPlan(s.sctx, stmt, s.is)
-	c.Assert(err, IsNil)
-	logic, ok := p.(plannercore.LogicalPlan)
-	c.Assert(ok, IsTrue)
-	rootGroup := convert2Group(logic)
-	// TODO remove these hard code about logical property after we support deriving stats in exploration phase.
-	rootGroup.LogicalProperty = &property.LogicalProperty{}
-	rootGroup.LogicalProperty.Stats = property.NewSimpleStats(10.0)
+func (s *testImplSuite) TestBaseImplementation(c *C) {
+	p := plannercore.PhysicalLimit{}.Init(s.sctx, nil, nil)
+	impl := &baseImpl{plan: p}
+	c.Assert(impl.GetPlan(), Equals, p)
 
-	prop := &property.PhysicalProperty{
-		ExpectedCnt: math.MaxFloat64,
-	}
-	impl, err := implGroup(rootGroup, prop, 0.0)
-	c.Assert(impl, IsNil)
-	c.Assert(err, IsNil)
+	childCosts := []float64{5.0}
+	cost := impl.CalcCost(10, childCosts, nil)
+	c.Assert(cost, Equals, 5.0)
+	c.Assert(impl.GetCost(), Equals, 5.0)
+
+	impl.SetCost(6.0)
+	c.Assert(impl.GetCost(), Equals, 6.0)
 }
