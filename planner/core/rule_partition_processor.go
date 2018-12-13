@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -136,7 +137,7 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 
 	// Calculate the column range to prune.
 	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
-	r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
+	r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType, types.UnspecifiedLength)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

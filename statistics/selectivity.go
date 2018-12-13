@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -235,7 +236,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	switch rangeType {
 	case ranger.ColumnRangeType:
 		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].UniqueID)
-		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType)
+		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType, types.UnspecifiedLength)
 	case ranger.IndexRangeType:
 		ranges, accessConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
 	default:

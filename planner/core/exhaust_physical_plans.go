@@ -574,6 +574,7 @@ var symmetricOp = map[string]string{
 // It stores the compare functions and build ranges in execution phase.
 type ColWithCompareOps struct {
 	targetCol         *expression.Column
+	colLength         int
 	OpType            []string
 	opArg             []expression.Expression
 	tmpConstant       []*expression.Constant
@@ -620,7 +621,7 @@ func (cwc *ColWithCompareOps) BuildRangesByRow(ctx sessionctx.Context, row chunk
 		}
 		exprs = append(exprs, newExpr)
 	}
-	ranges, err := ranger.BuildColumnRange(exprs, ctx.GetSessionVars().StmtCtx, cwc.targetCol.RetType)
+	ranges, err := ranger.BuildColumnRange(exprs, ctx.GetSessionVars().StmtCtx, cwc.targetCol.RetType, cwc.colLength)
 	if err != nil {
 		return nil, err
 	}
@@ -717,6 +718,7 @@ func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan
 	nextCol := idxCols[nextColPos]
 	nextColCmpFilterManager := &ColWithCompareOps{
 		targetCol:         nextCol,
+		colLength:         colLengths[nextColPos],
 		affectedColSchema: expression.NewSchema(),
 	}
 	// We first loop the other conds to see whether there's conditions can be used to build range.
@@ -759,7 +761,7 @@ loopOtherConds:
 			remained = append(remained, colAccesses...)
 		}
 		accesses = append(accesses, colAccesses...)
-		nextColRange, err := ranger.BuildColumnRange(colAccesses, p.ctx.GetSessionVars().StmtCtx, nextCol.RetType)
+		nextColRange, err := ranger.BuildColumnRange(colAccesses, p.ctx.GetSessionVars().StmtCtx, nextCol.RetType, colLengths[nextColPos])
 		ranges, err := p.buildTemplateRange(idxOff2keyOff, matchedKeyCnt, notKeyEqAndIn, nextColRange, false)
 		if err != nil {
 			return nil, nil, nil, nil, nil, err

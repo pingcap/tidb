@@ -261,7 +261,7 @@ func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 }
 
 // BuildColumnRange builds the range for sampling histogram to calculate the row count.
-func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
+func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType, colLen int) ([]*Range, error) {
 	if len(conds) == 0 {
 		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
 	}
@@ -278,6 +278,14 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 	ranges, err := points2Ranges(sc, rangePoints, newTp)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if colLen != types.UnspecifiedLength {
+		for _, ran := range ranges {
+			fixRangeDatum(&ran.LowVal[0], colLen, tp)
+			ran.LowExclude = false
+			fixRangeDatum(&ran.HighVal[0], colLen, tp)
+			ran.HighExclude = false
+		}
 	}
 	return ranges, nil
 }
