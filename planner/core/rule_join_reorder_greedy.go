@@ -108,15 +108,20 @@ func (s *joinReOrderGreedySolver) constructConnectedJoinTree() (LogicalPlan, err
 		bestIdx = -1
 		var finalRemainOthers []expression.Expression
 		var bestJoin LogicalPlan
+		logrus.Warnf("1 cur join group size: %v", len(s.curJoinGroup))
 		for i, node := range s.curJoinGroup {
+			logrus.Warnf("2 cur join group size: %v", len(s.curJoinGroup))
 			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree, node)
+			logrus.Warnf("3 cur join group size: %v", len(s.curJoinGroup))
 			if newJoin == nil {
 				continue
 			}
+			logrus.Warnf("4 cur join group size: %v", len(s.curJoinGroup))
 			_, err := newJoin.deriveStats()
 			if err != nil {
 				return nil, err
 			}
+			logrus.Warnf("5 cur join group size: %v", len(s.curJoinGroup))
 			curCost := curJoinTree.statsInfo().RowCount + newJoin.statsInfo().RowCount + node.statsInfo().RowCount
 			if bestCost > curCost {
 				bestCost = curCost
@@ -124,6 +129,7 @@ func (s *joinReOrderGreedySolver) constructConnectedJoinTree() (LogicalPlan, err
 				bestIdx = i
 				finalRemainOthers = remainOthers
 			}
+			logrus.Warnf("6 cur join group size: %v", len(s.curJoinGroup))
 		}
 		// If we could find more join node, meaning that the sub connected graph have been totally explored.
 		if bestJoin == nil {
