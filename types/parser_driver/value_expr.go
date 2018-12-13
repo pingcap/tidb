@@ -15,13 +15,14 @@ package driver
 
 import (
 	"fmt"
+	"io"
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
-	"io"
-	"strconv"
 )
 
 // The purpose of driver package is to decompose the dependency of the parser and
