@@ -94,7 +94,7 @@ const TestLeakCheckCnt = 1000
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
-	CustomParallelSuiteFlag = true
+	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(&logutil.LogConfig{
 		Level:  logLevel,

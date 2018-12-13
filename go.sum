@@ -103,6 +103,8 @@ github.com/opentracing/opentracing-go v1.0.2 h1:3jA2P6O1F9UOrWVpwrIo17pu01KWvNWg
 github.com/opentracing/opentracing-go v1.0.2/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
 github.com/pingcap/check v0.0.0-20171206051426-1c287c953996 h1:ZBdiJCMan6GSo/aPAM7gywcUKa0z58gczVrnG6TQnAQ=
 github.com/pingcap/check v0.0.0-20171206051426-1c287c953996/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
+github.com/pingcap/check v0.0.0-20181213055612-5c2b07721bdb h1:RGm4hzUgf7wxELKAzOBV27WFMxBD33OQkDwX6VOs/W4=
+github.com/pingcap/check v0.0.0-20181213055612-5c2b07721bdb/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
 github.com/pingcap/errors v0.11.0 h1:DCJQB8jrHbQ1VVlMFIrbj2ApScNNotVmkSNplu2yUt4=
 github.com/pingcap/errors v0.11.0/go.mod h1:Oi8TUi2kEtXXLMJk9l1cGmz20kV3TaQ0usTwv5KuLY8=
 github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e h1:P73/4dPCL96rGrobssy1nVy2VaVpNCuLpCbr+FEaTA8=
