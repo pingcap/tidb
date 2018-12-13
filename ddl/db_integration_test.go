@@ -973,3 +973,169 @@ func (s *testIntegrationSuite) TestAddIndexAfterAddColumn(c *C) {
 	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
 	s.testErrorCode(c, s.tk, sql, tmysql.ErrTooManyKeyParts)
 }
+
+func (s *testIntegrationSuite) TestAddAnonymousIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("create table t_anonymous_index (c1 int, c2 int, C3 int)")
+	s.tk.MustExec("alter table t_anonymous_index add index (c1, c2)")
+	// for dropping empty index
+	_, err := s.tk.Exec("alter table t_anonymous_index drop index")
+	c.Assert(err, NotNil)
+	// The index name is c1 when adding index (c1, c2).
+	s.tk.MustExec("alter table t_anonymous_index drop index c1")
+	t := testGetTableByName(c, s.ctx, "test", "t_anonymous_index")
+	c.Assert(t.Indices(), HasLen, 0)
+	// for adding some indices that the first column name is c1
+	s.tk.MustExec("alter table t_anonymous_index add index (c1)")
+	_, err = s.tk.Exec("alter table t_anonymous_index add index c1 (c2)")
+	c.Assert(err, NotNil)
+	t = testGetTableByName(c, s.ctx, "test", "t_anonymous_index")
+	c.Assert(t.Indices(), HasLen, 1)
+	idx := t.Indices()[0].Meta().Name.L
+	c.Assert(idx, Equals, "c1")
+	// The MySQL will be a warning.
+	s.tk.MustExec("alter table t_anonymous_index add index c1_3 (c1)")
+	s.tk.MustExec("alter table t_anonymous_index add index (c1, c2, C3)")
+	// The MySQL will be a warning.
+	s.tk.MustExec("alter table t_anonymous_index add index (c1)")
+	t = testGetTableByName(c, s.ctx, "test", "t_anonymous_index")
+	c.Assert(t.Indices(), HasLen, 4)
+	s.tk.MustExec("alter table t_anonymous_index drop index c1")
+	s.tk.MustExec("alter table t_anonymous_index drop index c1_2")
+	s.tk.MustExec("alter table t_anonymous_index drop index c1_3")
+	s.tk.MustExec("alter table t_anonymous_index drop index c1_4")
+	// for case insensitive
+	s.tk.MustExec("alter table t_anonymous_index add index (C3)")
+	s.tk.MustExec("alter table t_anonymous_index drop index c3")
+	s.tk.MustExec("alter table t_anonymous_index add index c3 (C3)")
+	s.tk.MustExec("alter table t_anonymous_index drop index C3")
+	// for anonymous index with column name `primary`
+	s.tk.MustExec("create table t_primary (`primary` int, key (`primary`))")
+	t = testGetTableByName(c, s.ctx, "test", "t_primary")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	s.tk.MustExec("create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
+	t = testGetTableByName(c, s.ctx, "test", "t_primary_2")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+	s.tk.MustExec("create table t_primary_3 (`primary_2` int, key(`primary_2`), `primary` int, key(`primary`));")
+	t = testGetTableByName(c, s.ctx, "test", "t_primary_3")
+	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
+	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
+}
+
+func (s *testIntegrationSuite) TestAddColumnTooMany(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	count := ddl.TableColumnCountLimit - 1
+	var cols []string
+	for i := 0; i < count; i++ {
+		cols = append(cols, fmt.Sprintf("a%d int", i))
+	}
+	createSQL := fmt.Sprintf("create table t_column_too_many (%s)", strings.Join(cols, ","))
+	s.tk.MustExec(createSQL)
+	s.tk.MustExec("alter table t_column_too_many add column a_512 int")
+	alterSQL := "alter table t_column_too_many add column a_513 int"
+	s.testErrorCode(c, s.tk, alterSQL, tmysql.ErrTooManyFields)
+}
+
+func (s *testIntegrationSuite) TestAlterColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+
+	s.tk.MustExec("create table test_alter_column (a int default 111, b varchar(8), c varchar(8) not null, d timestamp on update current_timestamp)")
+	s.tk.MustExec("insert into test_alter_column set b = 'a', c = 'aa'")
+	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	colA := tblInfo.Columns[0]
+	hasNoDefault := tmysql.HasNoDefaultValueFlag(colA.Flag)
+	c.Assert(hasNoDefault, IsFalse)
+	s.tk.MustExec("alter table test_alter_column alter column a set default 222")
+	s.tk.MustExec("insert into test_alter_column set b = 'b', c = 'bb'")
+	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	colA = tblInfo.Columns[0]
+	hasNoDefault = tmysql.HasNoDefaultValueFlag(colA.Flag)
+	c.Assert(hasNoDefault, IsFalse)
+	s.tk.MustExec("alter table test_alter_column alter column b set default null")
+	s.tk.MustExec("insert into test_alter_column set c = 'cc'")
+	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	colC := tblInfo.Columns[2]
+	hasNoDefault = tmysql.HasNoDefaultValueFlag(colC.Flag)
+	c.Assert(hasNoDefault, IsTrue)
+	s.tk.MustExec("alter table test_alter_column alter column c set default 'xx'")
+	s.tk.MustExec("insert into test_alter_column set a = 123")
+	s.tk.MustQuery("select c from test_alter_column").Check(testkit.Rows("aa", "bb", "cc", "xx"))
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
+	c.Assert(err, IsNil)
+	tblInfo = tbl.Meta()
+	colC = tblInfo.Columns[2]
+	hasNoDefault = tmysql.HasNoDefaultValueFlag(colC.Flag)
+	c.Assert(hasNoDefault, IsFalse)
+	// TODO: After fix issue 2606.
+	// s.tk.MustExec( "alter table test_alter_column alter column d set default null")
+	s.tk.MustExec("alter table test_alter_column alter column a drop default")
+	s.tk.MustExec("insert into test_alter_column set b = 'd', c = 'dd'")
+	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
+
+	// for failing tests
+	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
+	s.testErrorCode(c, s.tk, sql, tmysql.ErrNoSuchTable)
+	sql = "alter table test_not_exist alter column b set default 'c'"
+	s.testErrorCode(c, s.tk, sql, tmysql.ErrNoSuchTable)
+	sql = "alter table test_alter_column alter column col_not_exist set default 'c'"
+	s.testErrorCode(c, s.tk, sql, tmysql.ErrBadField)
+	sql = "alter table test_alter_column alter column c set default null"
+	s.testErrorCode(c, s.tk, sql, tmysql.ErrInvalidDefault)
+
+	// The followings tests whether adding constraints via change / modify column
+	// is forbidden as expected.
+	s.tk.MustExec("drop table if exists mc")
+	s.tk.MustExec("create table mc(a int key, b int, c int)")
+	_, err = s.tk.Exec("alter table mc modify column a int key") // Adds a new primary key
+	c.Assert(err, NotNil)
+	_, err = s.tk.Exec("alter table mc modify column c int unique") // Adds a new unique key
+	c.Assert(err, NotNil)
+	result := s.tk.MustQuery("show create table mc")
+	createSQL := result.Rows()[0][1]
+	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	c.Assert(createSQL, Equals, expected)
+
+	// Change / modify column should preserve index options.
+	s.tk.MustExec("drop table if exists mc")
+	s.tk.MustExec("create table mc(a int key, b int, c int unique)")
+	s.tk.MustExec("alter table mc modify column a bigint") // NOT NULL & PRIMARY KEY should be preserved
+	s.tk.MustExec("alter table mc modify column b bigint")
+	s.tk.MustExec("alter table mc modify column c bigint") // Unique should be preserved
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	c.Assert(createSQL, Equals, expected)
+
+	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
+	s.tk.MustExec("drop table if exists mc")
+	s.tk.MustExec("create table mc(a int key auto_increment, b int)")
+	s.tk.MustExec("alter table mc modify column a bigint auto_increment") // Keeps auto_increment
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	s.tk.MustExec("alter table mc modify column a bigint") // Drops auto_increment
+	result = s.tk.MustQuery("show create table mc")
+	createSQL = result.Rows()[0][1]
+	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	c.Assert(createSQL, Equals, expected)
+	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
+	c.Assert(err, NotNil)
+}
