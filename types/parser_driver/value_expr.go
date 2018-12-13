@@ -95,7 +95,7 @@ func (n *ValueExpr) Restore(ctx *ast.RestoreCtx) error {
 		ctx.WritePlain(n.GetMysqlDecimal().String())
 	case types.KindBinaryLiteral:
 		if n.Type.Flag&mysql.UnsignedFlag != 0 {
-			fmt.Fprintf(ctx.In, "x'%x'", n.GetBytes())
+			ctx.WritePlainf("x'%x'", n.GetBytes())
 		} else {
 			ctx.WritePlain(n.GetBinaryLiteral().ToBitLiteralString(true))
 		}

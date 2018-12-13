@@ -81,6 +81,8 @@ github.com/konsorten/go-windows-terminal-sequences v1.0.1 h1:mweAR1A6xJ3oS2pRaGi
 github.com/konsorten/go-windows-terminal-sequences v1.0.1/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=
 github.com/leoppro/parser v0.0.0-00000000000000-4d2098e4b8939f10fd58e58b31f362b8bf028fbe h1:KrgyCRBN1dEkVzfCCehnt+w36o4IvntbcLBDch3KYrc=
 github.com/leoppro/parser v0.0.0-00000000000000-4d2098e4b8939f10fd58e58b31f362b8bf028fbe/go.mod h1:XtE+h0zDIrzfLWDhDiyoq0uzCFtfyrGv7CyMOSZWNe0=
+github.com/leoppro/parser v0.0.0-00000000000000-ce5a9247faef2b6876054935a0b0ed3771edf86d h1:rHIX1XPN76luDkRbMKDv8WNMHSHKc5TOH+RKnNnvV9s=
+github.com/leoppro/parser v0.0.0-00000000000000-ce5a9247faef2b6876054935a0b0ed3771edf86d/go.mod h1:XtE+h0zDIrzfLWDhDiyoq0uzCFtfyrGv7CyMOSZWNe0=
 github.com/matttproud/golang_protobuf_extensions v1.0.1 h1:4hp9jkHxhMHkqkrB3Ix0jegS5sx/RkqARlsWZ6pIwiU=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 h1:pmpDGKLw4n82EtrNiLqB+xSz/JQwFOaZuMALYUHwX5s=
