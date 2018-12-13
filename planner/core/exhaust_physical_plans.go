@@ -632,7 +632,7 @@ func (cwc *ColWithCompareOps) resolveIndices(schema *expression.Schema) {
 	}
 }
 
-func (cwc *ColWithCompareOps) String() {
+func (cwc *ColWithCompareOps) String() string {
 	buffer := bytes.NewBufferString("")
 	log.Warnf("%v, %v, %v", cwc.targetCol, cwc.OpType, cwc.opArg)
 	for i := range cwc.OpType {
@@ -641,6 +641,7 @@ func (cwc *ColWithCompareOps) String() {
 			buffer.WriteString(" ")
 		}
 	}
+	return buffer.String()
 }
 
 func (p *LogicalJoin) analyzeLookUpFilters(indexInfo *model.IndexInfo, innerPlan *DataSource,
