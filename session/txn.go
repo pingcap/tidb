@@ -166,6 +166,7 @@ func (st *TxnState) Commit(ctx context.Context) error {
 			st.buf,
 			debug.Stack())
 		st.cleanup()
+		return errors.New("invalid transaction")
 	}
 	return errors.Trace(st.Transaction.Commit(ctx))
 }
