@@ -352,7 +352,7 @@ func (s *testSuite1) TestStreamAggPushDown(c *C) {
 	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
 	// test for one row
 	tk.MustExec("insert t values(0,0,0)")
-	tk.MustQuery("select distinct b from t group by a").Check(testkit.Rows("0"))
+	tk.MustQuery("select distinct b from t").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
 	// test for rows
 	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")

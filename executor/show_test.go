@@ -16,7 +16,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -24,11 +23,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -530,21 +527,6 @@ type mockSessionManager struct {
 
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
-}
-
-type stats struct {
-}
-
-func (s stats) GetScope(status string) variable.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
-
-func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{})
-	var a, b interface{}
-	b = "123"
-	m["test_interface_nil"] = a
-	m["test_interface"] = b
-	m["test_interface_slice"] = []interface{}{"a", "b", "c"}
-	return m, nil
 }
 
 func (s *testSuite2) TestShowWarnings(c *C) {
