@@ -48,7 +48,7 @@ func (s *testDDLSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDDLSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {
