@@ -18,7 +18,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
-func (s *testCascadesSuite) TestGetOperand(c *C) {
+func (s *testMemoSuite) TestGetOperand(c *C) {
 	c.Assert(GetOperand(&plannercore.LogicalJoin{}), Equals, OperandJoin)
 	c.Assert(GetOperand(&plannercore.LogicalAggregation{}), Equals, OperandAggregation)
 	c.Assert(GetOperand(&plannercore.LogicalProjection{}), Equals, OperandProjection)
@@ -35,7 +35,7 @@ func (s *testCascadesSuite) TestGetOperand(c *C) {
 	c.Assert(GetOperand(&plannercore.LogicalLimit{}), Equals, OperandLimit)
 }
 
-func (s *testCascadesSuite) TestOperandMatch(c *C) {
+func (s *testMemoSuite) TestOperandMatch(c *C) {
 	c.Assert(OperandAny.Match(OperandLimit), IsTrue)
 	c.Assert(OperandAny.Match(OperandSelection), IsTrue)
 	c.Assert(OperandAny.Match(OperandJoin), IsTrue)
@@ -59,28 +59,28 @@ func (s *testCascadesSuite) TestOperandMatch(c *C) {
 	c.Assert(OperandLimit.Match(OperandMaxOneRow), IsFalse)
 }
 
-func (s *testCascadesSuite) TestNewPattern(c *C) {
+func (s *testMemoSuite) TestNewPattern(c *C) {
 	p := NewPattern(OperandAny)
-	c.Assert(p.operand, Equals, OperandAny)
-	c.Assert(p.children, IsNil)
+	c.Assert(p.Operand, Equals, OperandAny)
+	c.Assert(p.Children, IsNil)
 
 	p = NewPattern(OperandJoin)
-	c.Assert(p.operand, Equals, OperandJoin)
-	c.Assert(p.children, IsNil)
+	c.Assert(p.Operand, Equals, OperandJoin)
+	c.Assert(p.Children, IsNil)
 }
 
-func (s *testCascadesSuite) TestPatternSetChildren(c *C) {
+func (s *testMemoSuite) TestPatternSetChildren(c *C) {
 	p := NewPattern(OperandAny)
 	p.SetChildren(NewPattern(OperandLimit))
-	c.Assert(len(p.children), Equals, 1)
-	c.Assert(p.children[0].operand, Equals, OperandLimit)
-	c.Assert(p.children[0].children, IsNil)
+	c.Assert(len(p.Children), Equals, 1)
+	c.Assert(p.Children[0].Operand, Equals, OperandLimit)
+	c.Assert(p.Children[0].Children, IsNil)
 
 	p = NewPattern(OperandJoin)
 	p.SetChildren(NewPattern(OperandProjection), NewPattern(OperandSelection))
-	c.Assert(len(p.children), Equals, 2)
-	c.Assert(p.children[0].operand, Equals, OperandProjection)
-	c.Assert(p.children[0].children, IsNil)
-	c.Assert(p.children[1].operand, Equals, OperandSelection)
-	c.Assert(p.children[1].children, IsNil)
+	c.Assert(len(p.Children), Equals, 2)
+	c.Assert(p.Children[0].Operand, Equals, OperandProjection)
+	c.Assert(p.Children[0].Children, IsNil)
+	c.Assert(p.Children[1].Operand, Equals, OperandSelection)
+	c.Assert(p.Children[1].Children, IsNil)
 }

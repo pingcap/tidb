@@ -18,15 +18,15 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
-func (s *testCascadesSuite) TestNewGroupExpr(c *C) {
+func (s *testMemoSuite) TestNewGroupExpr(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	c.Assert(expr.exprNode, Equals, p)
-	c.Assert(expr.children, IsNil)
-	c.Assert(expr.explored, IsFalse)
+	c.Assert(expr.ExprNode, Equals, p)
+	c.Assert(expr.Children, IsNil)
+	c.Assert(expr.Explored, IsFalse)
 }
 
-func (s *testCascadesSuite) TestGroupExprFingerprint(c *C) {
+func (s *testMemoSuite) TestGroupExprFingerprint(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 

@@ -32,26 +32,26 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&testCascadesSuite{})
+var _ = Suite(&testMemoSuite{})
 
-type testCascadesSuite struct {
+type testMemoSuite struct {
 	*parser.Parser
 	is   infoschema.InfoSchema
 	sctx sessionctx.Context
 }
 
-func (s *testCascadesSuite) SetUpSuite(c *C) {
+func (s *testMemoSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockTable()})
 	s.sctx = plannercore.MockContext()
 	s.Parser = parser.New()
 }
 
-func (s *testCascadesSuite) TearDownSuite(c *C) {
+func (s *testMemoSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
-func (s *testCascadesSuite) TestNewGroup(c *C) {
+func (s *testMemoSuite) TestNewGroup(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroup(expr)
@@ -62,7 +62,7 @@ func (s *testCascadesSuite) TestNewGroup(c *C) {
 	c.Assert(g.Explored, IsFalse)
 }
 
-func (s *testCascadesSuite) TestGroupInsert(c *C) {
+func (s *testMemoSuite) TestGroupInsert(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroup(expr)
@@ -71,7 +71,7 @@ func (s *testCascadesSuite) TestGroupInsert(c *C) {
 	c.Assert(g.Insert(expr), IsTrue)
 }
 
-func (s *testCascadesSuite) TestGroupDelete(c *C) {
+func (s *testMemoSuite) TestGroupDelete(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroup(expr)
@@ -84,7 +84,7 @@ func (s *testCascadesSuite) TestGroupDelete(c *C) {
 	c.Assert(g.Equivalents.Len(), Equals, 0)
 }
 
-func (s *testCascadesSuite) TestGroupExists(c *C) {
+func (s *testMemoSuite) TestGroupExists(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 	g := NewGroup(expr)
@@ -94,7 +94,7 @@ func (s *testCascadesSuite) TestGroupExists(c *C) {
 	c.Assert(g.Exists(expr), IsFalse)
 }
 
-func (s *testCascadesSuite) TestGroupGetFirstElem(c *C) {
+func (s *testMemoSuite) TestGroupGetFirstElem(c *C) {
 	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
 	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx))
 	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx))
@@ -112,20 +112,30 @@ func (s *testCascadesSuite) TestGroupGetFirstElem(c *C) {
 	c.Assert(g.GetFirstElem(OperandAny).Value.(*GroupExpr), Equals, expr0)
 }
 
-func (s *testCascadesSuite) TestGetInsertGroupImpl(c *C) {
-	p := &plannercore.LogicalLimit{}
-	expr := NewGroupExpr(p)
-	g := NewGroup(expr)
-	col := &expression.Column{}
+type fakeImpl struct {
+	cost float64
+	plan plannercore.PhysicalPlan
+}
+
+func (impl *fakeImpl) CalcCost(float64, []float64, ...*Group) float64 { return 0 }
+func (impl *fakeImpl) SetCost(float64)                                {}
+func (impl *fakeImpl) GetCost() float64                               { return 0 }
+func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan              { return impl.plan }
+
+func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
+	g := NewGroup(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	emptyProp := &property.PhysicalProperty{}
-	orderProp := &property.PhysicalProperty{}
-	orderProp.Cols = append(orderProp.Cols, col)
-	impl := g.getImpl(emptyProp)
+	orderProp := &property.PhysicalProperty{Cols: []*expression.Column{&expression.Column{}}}
+
+	impl := g.GetImpl(emptyProp)
 	c.Assert(impl, IsNil)
-	impl = &baseImplementation{plan: &plannercore.PhysicalLimit{}}
-	g.insertImpl(emptyProp, impl)
-	newImpl := g.getImpl(emptyProp)
+
+	impl = &fakeImpl{plan: &plannercore.PhysicalLimit{}}
+	g.InsertImpl(emptyProp, impl)
+
+	newImpl := g.GetImpl(emptyProp)
 	c.Assert(newImpl, Equals, impl)
-	newImpl = g.getImpl(orderProp)
-	c.Assert(newImpl, Not(Equals), impl)
+
+	newImpl = g.GetImpl(orderProp)
+	c.Assert(newImpl, IsNil)
 }

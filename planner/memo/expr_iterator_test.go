@@ -18,7 +18,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
-func (s *testCascadesSuite) TestNewExprIterFromGroupElem(c *C) {
+func (s *testMemoSuite) TestNewExprIterFromGroupElem(c *C) {
 	g0 := NewGroup(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
@@ -30,8 +30,8 @@ func (s *testCascadesSuite) TestNewExprIterFromGroupElem(c *C) {
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx))
-	expr.children = append(expr.children, g0)
-	expr.children = append(expr.children, g1)
+	expr.Children = append(expr.Children, g0)
+	expr.Children = append(expr.Children, g1)
 	g2 := NewGroup(expr)
 
 	pattern := BuildPattern(OperandJoin, BuildPattern(OperandProjection), BuildPattern(OperandSelection))
@@ -57,7 +57,7 @@ func (s *testCascadesSuite) TestNewExprIterFromGroupElem(c *C) {
 	c.Assert(len(iter.Children[0].Children), Equals, 0)
 }
 
-func (s *testCascadesSuite) TestExprIterNext(c *C) {
+func (s *testMemoSuite) TestExprIterNext(c *C) {
 	g0 := NewGroup(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
@@ -71,8 +71,8 @@ func (s *testCascadesSuite) TestExprIterNext(c *C) {
 	g1.Insert(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx)))
 
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx))
-	expr.children = append(expr.children, g0)
-	expr.children = append(expr.children, g1)
+	expr.Children = append(expr.Children, g0)
+	expr.Children = append(expr.Children, g1)
 	g2 := NewGroup(expr)
 
 	pattern := BuildPattern(OperandJoin, BuildPattern(OperandProjection), BuildPattern(OperandSelection))
@@ -101,7 +101,7 @@ func (s *testCascadesSuite) TestExprIterNext(c *C) {
 	c.Assert(count, Equals, 9)
 }
 
-func (s *testCascadesSuite) TestExprIterReset(c *C) {
+func (s *testMemoSuite) TestExprIterReset(c *C) {
 	g0 := NewGroup(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx)))
@@ -125,14 +125,14 @@ func (s *testCascadesSuite) TestExprIterReset(c *C) {
 
 	// link join with Group 0 and 1
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx))
-	expr.children = append(expr.children, g0)
-	expr.children = append(expr.children, g1)
+	expr.Children = append(expr.Children, g0)
+	expr.Children = append(expr.Children, g1)
 	g3 := NewGroup(expr)
 
 	// link sel 1~3 with Group 2
-	sel1.children = append(sel1.children, g2)
-	sel2.children = append(sel2.children, g2)
-	sel3.children = append(sel3.children, g2)
+	sel1.Children = append(sel1.Children, g2)
+	sel2.Children = append(sel2.Children, g2)
+	sel3.Children = append(sel3.Children, g2)
 
 	// create a pattern: join(proj, sel(limit))
 	lhsPattern := BuildPattern(OperandProjection)
