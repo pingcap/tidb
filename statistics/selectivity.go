@@ -229,7 +229,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
 	for _, set := range usedSets {
-		mask ^= set.mask
+		mask &^= set.mask
 		ret *= set.Selectivity
 	}
 	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
@@ -272,13 +272,13 @@ func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID, bestCount, bestTp, bestNumCols := -1, 0, colType, 0
+		bestID, bestCount, bestTp, bestNumCols, bestMask := -1, 0, colType, 0, int64(0)
 		for i, set := range nodes {
 			if marked[i] {
 				continue
 			}
-			set.mask &= mask
-			bits := popCount(set.mask)
+			curMask := set.mask & mask
+			bits := popCount(curMask)
 			// This set cannot cover any thing, just skip it.
 			if bits == 0 {
 				continue
@@ -288,7 +288,7 @@ func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 			// (2): The number of expression that it covers, the more the better.
 			// (3): The number of columns that it contains, the less the better.
 			if (bestTp == colType && set.Tp != colType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
-				bestID, bestCount, bestTp, bestNumCols = i, bits, set.Tp, set.numCols
+				bestID, bestCount, bestTp, bestNumCols, bestMask = i, bits, set.Tp, set.numCols, curMask
 			}
 		}
 		if bestCount == 0 {
@@ -296,7 +296,7 @@ func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 		}
 
 		// update the mask, remove the bit that nodes[bestID].mask has.
-		mask &^= nodes[bestID].mask
+		mask &^= bestMask
 
 		newBlocks = append(newBlocks, nodes[bestID])
 		marked[bestID] = true
