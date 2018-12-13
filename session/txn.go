@@ -16,6 +16,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
@@ -156,6 +157,15 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		err := st.fail
 		st.fail = nil
 		return errors.Trace(err)
+	}
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
+			st,
+			st.mutations,
+			st.dirtyTableOP,
+			st.buf,
+			debug.Stack())
+		st.cleanup()
 	}
 	return errors.Trace(st.Transaction.Commit(ctx))
 }
