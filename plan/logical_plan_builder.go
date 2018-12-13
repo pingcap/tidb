@@ -654,6 +654,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			}
 		}
 		col.RetType = resultTp
+		col.TblName = model.NewCIStr("")
 		col.DBName = model.NewCIStr("")
 	}
 	// If the types of some child don't match the types of union, we add a projection with cast function.
@@ -810,7 +811,11 @@ func (by *ByItems) Clone() *ByItems {
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
-	b.curClause = orderByClause
+	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+		b.curClause = globalOrderByClause
+	} else {
+		b.curClause = orderByClause
+	}
 	sort := LogicalSort{}.init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {

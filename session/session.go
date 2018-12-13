@@ -555,7 +555,12 @@ func sqlForLog(sql string) string {
 	return executor.QueryReplacer.Replace(sql)
 }
 
-func (s *session) sysSessionPool() *pools.ResourcePool {
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
+func (s *session) sysSessionPool() sessionPool {
 	return domain.GetDomain(s).SysSessionPool()
 }
 
@@ -790,7 +795,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 
 	if planCacheEnabled {
 		schemaVersion := domain.GetDomain(s).InfoSchema().SchemaMetaVersion()
-		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
+		readOnly := s.Txn(true) == nil || s.Txn(true).IsReadOnly()
 
 		cacheKey = plan.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
 		cacheValue, hitCache = plan.GlobalPlanCache.Get(cacheKey)
@@ -979,8 +984,8 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn(opt ...bool) kv.Transaction {
-	if s.txn.pending() && len(opt) == 0 {
+func (s *session) Txn(active bool) kv.Transaction {
+	if s.txn.pending() && active {
 		// Transaction is lazy intialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
@@ -1369,20 +1374,6 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	}
 
 	return errors.Trace(s.NewTxn())
-}
-
-// ActivePendingTxn implements Context.ActivePendingTxn interface.
-func (s *session) ActivePendingTxn() error {
-	if s.txn.Valid() {
-		return nil
-	}
-	txnCap := s.getMembufCap()
-	// The transaction status should be pending.
-	if err := s.txn.changePendingToValid(txnCap); err != nil {
-		return errors.Trace(err)
-	}
-	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	return nil
 }
 
 // InitTxnWithStartTS create a transaction with startTS.

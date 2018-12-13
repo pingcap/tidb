@@ -144,10 +144,6 @@ func (s *testSessionSuite) TestForCoverage(c *C) {
 	tk.MustExec("show processlist")
 	_, err := tk.Se.FieldList("t")
 	c.Check(err, IsNil)
-
-	// Cover the error branch, althrough this never happen.
-	err = tk.Se.ActivePendingTxn()
-	c.Assert(err, NotNil)
 }
 
 func (s *testSessionSuite) TestErrorRollback(c *C) {
@@ -253,7 +249,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 	tk.MustExec("insert t values (12, 2, 3)")
@@ -466,7 +462,7 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
 }
 
@@ -541,39 +537,39 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	tk.MustExec("insert t values ()")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("drop table if exists t;")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("commit")
 	tk.MustExec("insert t values ()")
 
 	tk.MustExec("set autocommit=0")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("commit")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("commit")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 
 	tk.MustExec("set autocommit=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn().Valid(), IsTrue)
+	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
 	tk.MustExec("rollback")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 }
 
 func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
@@ -582,7 +578,7 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 

@@ -315,7 +315,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
 		ctx.StmtCommit()
-		err1 = ctx.Txn().Commit(context.Background())
+		err1 = ctx.Txn(true).Commit(context.Background())
 		c.Assert(err1, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
@@ -1068,6 +1068,18 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t1 (uid int(1))")
 	tk.MustExec("INSERT INTO t1 SELECT 150")
 	tk.MustQuery("SELECT 'a' UNION SELECT uid FROM t1 order by 1 desc;").Check(testkit.Rows("a", "150"))
+
+	// #issue 8196
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("CREATE TABLE t1 (a int not null, b char (10) not null)")
+	tk.MustExec("insert into t1 values(1,'a'),(2,'b'),(3,'c'),(3,'c')")
+	tk.MustExec("CREATE TABLE t2 (a int not null, b char (10) not null)")
+	tk.MustExec("insert into t2 values(3,'c'),(4,'d'),(5,'f'),(6,'e')")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	_, err = tk.Exec("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b")
+	c.Assert(err.Error(), Equals, "[planner:1250]Table 't1' from one of the SELECTs cannot be used in global ORDER clause")
 }
 
 func (s *testSuite) TestNeighbouringProj(c *C) {
@@ -2068,11 +2080,11 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	tk.MustExec("begin")
 	rows := tk.MustQuery("select @@tidb_current_ts").Rows()
 	tsStr := rows[0][0].(string)
-	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn(true).StartTS()))
 	tk.MustExec("begin")
 	rows = tk.MustQuery("select @@tidb_current_ts").Rows()
 	newTsStr := rows[0][0].(string)
-	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn().StartTS()))
+	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn(true).StartTS()))
 	c.Assert(newTsStr, Not(Equals), tsStr)
 	tk.MustExec("commit")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
@@ -2091,7 +2103,7 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 
 	tk.MustExec("drop table if exists t, t1")
 
-	c.Assert(tk.Se.Txn().Valid(), IsFalse)
+	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 	tk.MustExec("insert t values (12, 2, 3)")
@@ -2714,7 +2726,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(s.ctx, recordVal2, false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
 
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]

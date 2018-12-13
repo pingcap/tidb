@@ -666,7 +666,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		// Test TopN + Union.
 		{
 			sql:  "select a from t union all (select c from t) order by a limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)->Limit}->TopN([t.a],0,1)",
+			best: "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)->Limit}->TopN([a],0,1)",
 		},
 	}
 	for i, tt := range tests {
@@ -739,7 +739,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
 		// Make txn not read only.
-		se.Txn().Set(kv.Key("AAA"), []byte("BBB"))
+		se.Txn(true).Set(kv.Key("AAA"), []byte("BBB"))
 		se.StmtCommit()
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)

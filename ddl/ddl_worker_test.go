@@ -536,7 +536,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit(context.Background())
+	err = ctx.Txn(true).Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
@@ -565,7 +565,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		if checkErr != nil {
 			return
 		}
-		err1 = hookCtx.Txn().Commit(context.Background())
+		checkCancelState(hookCtx.Txn(true), job, test)
+		err1 = hookCtx.Txn(true).Commit(context.Background())
 		if err1 != nil {
 			checkErr = errors.Trace(err1)
 			return
