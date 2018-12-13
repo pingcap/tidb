@@ -45,7 +45,7 @@ func (s *testForeighKeySuite) SetUpSuite(c *C) {
 func (s *testForeighKeySuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
