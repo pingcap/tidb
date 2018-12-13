@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package memo
 
 import (
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -95,8 +95,8 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 	}
 }
 
-// match checks if current Operand matches specified one.
-func (o Operand) match(t Operand) bool {
+// Match checks if current Operand matches specified one.
+func (o Operand) Match(t Operand) bool {
 	if o == OperandAny || t == OperandAny {
 		return true
 	}
@@ -106,28 +106,28 @@ func (o Operand) match(t Operand) bool {
 	return false
 }
 
-// Pattern defines the match pattern for a rule.
+// Pattern defines the Match pattern for a rule.
 // It describes a piece of logical expression.
 // It's a tree-like structure and each node in the tree is an Operand.
 type Pattern struct {
-	operand  Operand
-	children []*Pattern
+	Operand
+	Children []*Pattern
 }
 
-// NewPattern creats a pattern node according to the operand.
+// NewPattern creats a pattern node according to the Operand.
 func NewPattern(operand Operand) *Pattern {
-	return &Pattern{operand: operand}
+	return &Pattern{Operand: operand}
 }
 
-// SetChildren sets the children information for a pattern node.
+// SetChildren sets the Children information for a pattern node.
 func (p *Pattern) SetChildren(children ...*Pattern) {
-	p.children = children
+	p.Children = children
 }
 
 // BuildPattern builds a Pattern from Operand and child Patterns.
 // Used in GetPattern() of Transformation interface to generate a Pattern.
 func BuildPattern(operand Operand, children ...*Pattern) *Pattern {
-	p := &Pattern{operand: operand}
-	p.children = children
+	p := &Pattern{Operand: operand}
+	p.Children = children
 	return p
 }
