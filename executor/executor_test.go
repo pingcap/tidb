@@ -68,7 +68,7 @@ import (
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
-	CustomParallelSuiteFlag = true
+	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(&logutil.LogConfig{
 		Level: logLevel,
@@ -2357,6 +2357,16 @@ func (s *testSuite1) SetUpSuite(c *C) {
 func (s *testSuite1) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+}
+
+func (s *testSuite1) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
 }
 
 func (s *testSuite1) TestAddIndexPriority(c *C) {
