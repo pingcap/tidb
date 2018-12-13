@@ -41,8 +41,6 @@ type DDLForTest interface {
 	SetHook(h Callback)
 	// SetInterceptoror sets the interceptor.
 	SetInterceptoror(h Interceptor)
-	// SetCheckJobMaxInterval sets the maximum interval of checking a job.
-	SetCheckJobMaxInterval(t time.Duration)
 }
 
 // SetHook implements DDL.SetHook interface.
@@ -59,11 +57,6 @@ func (d *ddl) SetInterceptoror(i Interceptor) {
 	defer d.mu.Unlock()
 
 	d.mu.interceptor = i
-}
-
-// SetCheckJobMaxInterval implements DDL.SetCheckJobMaxInterval interface.
-func (d *ddl) SetCheckJobMaxInterval(t time.Duration) {
-	d.testCheckJobMaxInterval = t
 }
 
 // generalWorker returns the general worker.

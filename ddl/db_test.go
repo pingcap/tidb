@@ -124,19 +124,6 @@ func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
 	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
 }
 
-func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0')")
-	s.tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2)")
-	s.tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
-	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
-	s.testErrorCode(c, sql, tmysql.ErrDupEntry)
-	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
-	s.testErrorCode(c, sql, tmysql.ErrTooManyKeyParts)
-}
-
 func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -1374,28 +1361,6 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 	}
 }
 
-func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-
-	sql := "create table t_too_large ("
-	cnt := 3000
-	for i := 1; i <= cnt; i++ {
-		sql += fmt.Sprintf("a%d double, b%d double, c%d double, d%d double", i, i, i, i)
-		if i != cnt {
-			sql += ","
-		}
-	}
-	sql += ");"
-	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
-
-	originLimit := ddl.TableColumnCountLimit
-	ddl.TableColumnCountLimit = cnt * 4
-	_, err := s.tk.Exec(sql)
-	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
-	ddl.TableColumnCountLimit = originLimit
-}
-
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	// for the same database
@@ -1662,62 +1627,6 @@ out:
 	s.tk.MustExec("drop table tnn")
 }
 
-func (s *testDBSuite) TestChangeColumnPosition(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.tk.MustExec("create table position (a int default 1, b int default 2)")
-	s.tk.MustExec("insert into position value ()")
-	s.tk.MustExec("insert into position values (3,4)")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("1 2", "3 4"))
-	s.tk.MustExec("alter table position modify column b int first")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3"))
-	s.tk.MustExec("insert into position value ()")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3", "<nil> 1"))
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int, b int, c double, d varchar(5))")
-	s.tk.MustExec(`insert into position value (1, 2, 3.14, 'TiDB')`)
-	s.tk.MustExec("alter table position modify column d varchar(5) after a")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("1 TiDB 2 3.14"))
-	s.tk.MustExec("alter table position modify column a int after c")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("TiDB 2 3.14 1"))
-	s.tk.MustExec("alter table position modify column c double first")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("3.14 TiDB 2 1"))
-	s.testErrorCode(c, "alter table position modify column b int after b", tmysql.ErrBadField)
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int, b int)")
-	s.tk.MustExec("alter table position add index t(a, b)")
-	s.tk.MustExec("alter table position modify column b int first")
-	s.tk.MustExec("insert into position value (3, 5)")
-	s.tk.MustQuery("select a from position where a = 3").Check(testkit.Rows())
-
-	s.tk.MustExec("alter table position change column b c int first")
-	s.tk.MustQuery("select * from position where c = 3").Check(testkit.Rows("3 5"))
-	s.testErrorCode(c, "alter table position change column c b int after c", tmysql.ErrBadField)
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int default 2)")
-	s.tk.MustExec("alter table position modify column a int default 5 first")
-	s.tk.MustExec("insert into position value ()")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("5"))
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int, b int)")
-	s.tk.MustExec("alter table position add index t(b)")
-	s.tk.MustExec("alter table position change column b c int first")
-	createSQL := s.tk.MustQuery("show create table position").Rows()[0][1]
-	exceptedSQL := []string{
-		"CREATE TABLE `position` (",
-		"  `c` int(11) DEFAULT NULL,",
-		"  `a` int(11) DEFAULT NULL,",
-		"  KEY `t` (`c`)",
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	}
-	c.Assert(createSQL, Equals, strings.Join(exceptedSQL, "\n"))
-}
-
 func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
@@ -1953,121 +1862,6 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	close(closeCh)
 	wg.Wait()
 	c.Assert(tk2Err, IsNil)
-}
-
-type testMaxTableRowIDContext struct {
-	c   *C
-	d   ddl.DDL
-	tbl table.Table
-}
-
-func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContext {
-	return &testMaxTableRowIDContext{
-		c:   c,
-		d:   d,
-		tbl: tbl,
-	}
-}
-
-func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bool) {
-	c := ctx.c
-	d := ctx.d
-	tbl := ctx.tbl
-	curVer, err := s.store.CurrentVersion()
-	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.(table.PhysicalTable))
-	c.Assert(err, IsNil)
-	return maxID, emptyTable
-}
-
-func (s *testDBSuite) checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, expectEmpty bool, expectMaxID int64) {
-	c := ctx.c
-	maxID, emptyTable := s.getMaxTableRowID(ctx)
-	c.Assert(emptyTable, Equals, expectEmpty)
-	c.Assert(maxID, Equals, expectMaxID)
-}
-
-func (s *testDBSuite) TestGetTableEndHandle(c *C) {
-	// TestGetTableEndHandle test ddl.GetTableMaxRowID method, which will return the max row id of the table.
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_get_endhandle")
-	tk.MustExec("create database test_get_endhandle")
-	tk.MustExec("use test_get_endhandle")
-	// Test PK is handle.
-	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-
-	is := s.dom.InfoSchema()
-	d := s.dom.DDL()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-
-	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
-	// test empty table
-	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
-
-	tk.MustExec("insert into t values(-1, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(-1))
-
-	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775806))
-
-	tk.MustExec("insert into t values(9223372036854775807, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
-
-	tk.MustExec("insert into t values(10, 1)")
-	tk.MustExec("insert into t values(102149142, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
-
-	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
-
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
-	}
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	s.checkGetMaxTableRowID(testCtx, false, int64(999))
-
-	// Test PK is not handle
-	tk.MustExec("create table t2(a varchar(255))")
-
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
-
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
-	}
-
-	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable := s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec("insert into t2 values(100000)")
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec("insert into t2 values(100)")
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
 }
 
 func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
