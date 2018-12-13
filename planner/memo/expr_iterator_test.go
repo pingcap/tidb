@@ -40,19 +40,19 @@ func (s *testMemoSuite) TestNewExprIterFromGroupElem(c *C) {
 	c.Assert(iter, NotNil)
 	c.Assert(iter.Group, IsNil)
 	c.Assert(iter.Element, Equals, g2.Equivalents.Front())
-	c.Assert(iter.Matched, Equals, true)
+	c.Assert(iter.matched, Equals, true)
 	c.Assert(iter.Operand, Equals, OperandJoin)
 	c.Assert(len(iter.Children), Equals, 2)
 
 	c.Assert(iter.Children[0].Group, Equals, g0)
 	c.Assert(iter.Children[0].Element, Equals, g0.GetFirstElem(OperandProjection))
-	c.Assert(iter.Children[0].Matched, Equals, true)
+	c.Assert(iter.Children[0].matched, Equals, true)
 	c.Assert(iter.Children[0].Operand, Equals, OperandProjection)
 	c.Assert(len(iter.Children[0].Children), Equals, 0)
 
 	c.Assert(iter.Children[1].Group, Equals, g1)
 	c.Assert(iter.Children[1].Element, Equals, g1.GetFirstElem(OperandSelection))
-	c.Assert(iter.Children[1].Matched, Equals, true)
+	c.Assert(iter.Children[1].matched, Equals, true)
 	c.Assert(iter.Children[1].Operand, Equals, OperandSelection)
 	c.Assert(len(iter.Children[0].Children), Equals, 0)
 }
@@ -83,17 +83,17 @@ func (s *testMemoSuite) TestExprIterNext(c *C) {
 	for ; iter.Matched(); iter.Next() {
 		count++
 		c.Assert(iter.Group, IsNil)
-		c.Assert(iter.Matched, Equals, true)
+		c.Assert(iter.matched, Equals, true)
 		c.Assert(iter.Operand, Equals, OperandJoin)
 		c.Assert(len(iter.Children), Equals, 2)
 
 		c.Assert(iter.Children[0].Group, Equals, g0)
-		c.Assert(iter.Children[0].Matched, Equals, true)
+		c.Assert(iter.Children[0].matched, Equals, true)
 		c.Assert(iter.Children[0].Operand, Equals, OperandProjection)
 		c.Assert(len(iter.Children[0].Children), Equals, 0)
 
 		c.Assert(iter.Children[1].Group, Equals, g1)
-		c.Assert(iter.Children[1].Matched, Equals, true)
+		c.Assert(iter.Children[1].matched, Equals, true)
 		c.Assert(iter.Children[1].Operand, Equals, OperandSelection)
 		c.Assert(len(iter.Children[1].Children), Equals, 0)
 	}
@@ -147,22 +147,22 @@ func (s *testMemoSuite) TestExprIterReset(c *C) {
 	for ; iter.Matched(); iter.Next() {
 		count++
 		c.Assert(iter.Group, IsNil)
-		c.Assert(iter.Matched, Equals, true)
+		c.Assert(iter.matched, Equals, true)
 		c.Assert(iter.Operand, Equals, OperandJoin)
 		c.Assert(len(iter.Children), Equals, 2)
 
 		c.Assert(iter.Children[0].Group, Equals, g0)
-		c.Assert(iter.Children[0].Matched, Equals, true)
+		c.Assert(iter.Children[0].matched, Equals, true)
 		c.Assert(iter.Children[0].Operand, Equals, OperandProjection)
 		c.Assert(len(iter.Children[0].Children), Equals, 0)
 
 		c.Assert(iter.Children[1].Group, Equals, g1)
-		c.Assert(iter.Children[1].Matched, Equals, true)
+		c.Assert(iter.Children[1].matched, Equals, true)
 		c.Assert(iter.Children[1].Operand, Equals, OperandSelection)
 		c.Assert(len(iter.Children[1].Children), Equals, 1)
 
 		c.Assert(iter.Children[1].Children[0].Group, Equals, g2)
-		c.Assert(iter.Children[1].Children[0].Matched, Equals, true)
+		c.Assert(iter.Children[1].Children[0].matched, Equals, true)
 		c.Assert(iter.Children[1].Children[0].Operand, Equals, OperandLimit)
 		c.Assert(len(iter.Children[1].Children[0].Children), Equals, 0)
 	}
