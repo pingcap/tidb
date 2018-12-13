@@ -21,7 +21,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -515,48 +514,6 @@ func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
 	tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2);")
 	tk.MustExec("admin check index t idx;")
-}
-
-func (s *testSuite1) TestAdminShowNextID(c *C) {
-	step := int64(10)
-	autoIDStep := autoid.GetStep()
-	autoid.SetStep(step)
-	defer autoid.SetStep(autoIDStep)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, c int)")
-	// Start handle is 1.
-	r := tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1"))
-	// Row ID is step + 1.
-	tk.MustExec("insert into t values(1, 1)")
-	r = tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11"))
-	// Row ID is original + step.
-	for i := 0; i < int(step); i++ {
-		tk.MustExec("insert into t values(10000, 1)")
-	}
-	r = tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21"))
-
-	// test for a table with the primary key
-	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
-	// Start handle is 1.
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1"))
-	// After rebasing auto ID, row ID is 20 + step + 1.
-	tk.MustExec("insert into tt values(20, 1)")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31"))
-	// test for renaming the table
-	tk.MustExec("create database test1")
-	tk.MustExec("rename table test.tt to test1.tt")
-	tk.MustExec("use test1")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31"))
-	tk.MustExec("insert test1.tt values ()")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41"))
 }
 
 func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
