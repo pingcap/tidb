@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util"
 	"github.com/sirupsen/logrus"
 )
 
@@ -94,9 +95,17 @@ func (s *joinReOrderGreedySolver) solve() (LogicalPlan, error) {
 func (s *joinReOrderGreedySolver) constructConnectedJoinTree() (LogicalPlan, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
+	var bestCost float64
+	var bestIdx int
+	defer func() {
+		if r := recover(); r != nil {
+			logrus.Warnf("best idx: %v, cur group size: %v", bestIdx, len(s.curJoinGroup))
+			logrus.Warnf("stack trace: \n%s", util.GetStack())
+		}
+	}()
 	for {
-		bestCost := math.MaxFloat64
-		bestIdx := -1
+		bestCost = math.MaxFloat64
+		bestIdx = -1
 		var finalRemainOthers []expression.Expression
 		var bestJoin LogicalPlan
 		for i, node := range s.curJoinGroup {
@@ -122,6 +131,9 @@ func (s *joinReOrderGreedySolver) constructConnectedJoinTree() (LogicalPlan, err
 		}
 		logrus.Warnf("bestJoin: %v, bestIdx: %v, cur group size: %v", ToString(bestJoin), bestIdx, len(s.curJoinGroup))
 		curJoinTree = bestJoin
+		if bestIdx < 0 || bestIdx+1 > len(s.curJoinGroup) || s.curJoinGroup == nil {
+			logrus.Warnf("group size: %v, idx pos: %v", len(s.curJoinGroup), bestIdx)
+		}
 		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
 		s.otherConds = finalRemainOthers
 	}
