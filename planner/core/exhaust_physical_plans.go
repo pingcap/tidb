@@ -457,8 +457,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 
 func (p *LogicalJoin) buildRangeDecidedByInformation(idxCols []*expression.Column, idxOff2KeyOff []int,
 	outerJoinKeys []*expression.Column, accesses []expression.Expression) string {
-	buffer := bytes.NewBufferString("")
-	buffer.WriteString("range decided by:[")
+	buffer := bytes.NewBufferString("[")
 	for idxOff, keyOff := range idxOff2KeyOff {
 		if keyOff == -1 {
 			continue

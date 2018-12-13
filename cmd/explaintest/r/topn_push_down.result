@@ -178,8 +178,8 @@ Projection_13	0.00	root	te.expect_time
     │   │ └─Selection_104	0.00	cop	eq(tr.brand_identy, 32314), eq(tr.domain_type, 2)
     │   │   └─TableScan_102	0.00	cop	table:tr, keep order:false
     │   └─IndexLookUp_34	250.00	root	
-    │     ├─IndexScan_31	10.00	cop	table:te, index:trade_id, range: decided by [tr.id], keep order:false, stats:pseudo
+    │     ├─IndexScan_31	10.00	cop	table:te, index:trade_id, range: decided by [ eq(te.trade_id, tr.id) ], keep order:false, stats:pseudo
     │     └─Selection_33	250.00	cop	ge(te.expect_time, 2018-04-23 00:00:00.000000), le(te.expect_time, 2018-04-23 23:59:59.000000)
     │       └─TableScan_32	10.00	cop	table:te, keep order:false, stats:pseudo
     └─IndexReader_136	10.00	root	index:IndexScan_135
-      └─IndexScan_135	10.00	cop	table:p, index:relate_id, range: decided by [tr.id], keep order:false, stats:pseudo
+      └─IndexScan_135	10.00	cop	table:p, index:relate_id, range: decided by [ eq(p.relate_id, tr.id) ], keep order:false, stats:pseudo
