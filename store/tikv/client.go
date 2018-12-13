@@ -15,6 +15,7 @@
 package tikv
 
 import (
+	"context"
 	"io"
 	"strconv"
 	"sync"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	gcodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -534,6 +534,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	ctx1, cancel := context.WithCancel(ctx)
 	resp, err := tikvrpc.CallRPC(ctx1, client, req)
 	if err != nil {
+		cancel() // This line stops the silly lint tool from complaining.
 		return nil, errors.Trace(err)
 	}
 

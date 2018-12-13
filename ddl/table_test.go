@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testTableSuite{})
@@ -198,7 +198,7 @@ func (s *testTableSuite) TearDownSuite(c *C) {
 	testDropSchema(c, testNewContext(s.d), s.d, s.dbInfo)
 	s.d.Stop()
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testTableSuite) TestTable(c *C) {

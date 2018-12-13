@@ -48,6 +48,13 @@ var (
 			Help:      "Number of connections.",
 		})
 
+	PreparedStmtGauge = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "server",
+		Name:      "prepared_stmts",
+		Help:      "number of prepared statements.",
+	})
+
 	ExecuteErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -144,6 +151,14 @@ var (
 			Name:      "slow_query_wait_duration_seconds",
 			Help:      "Bucketed histogram of all cop waiting time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22),
+		})
+
+	CPUUsagePercentageGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "cpu_usage",
+			Help:      "Percentage of CPU usage.",
 		})
 )
 

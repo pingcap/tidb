@@ -56,6 +56,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BatchAddIdxHistogram)
 	prometheus.MustRegister(CampaignOwnerCounter)
 	prometheus.MustRegister(ConnGauge)
+	prometheus.MustRegister(PreparedStmtGauge)
 	prometheus.MustRegister(CriticalErrorCounter)
 	prometheus.MustRegister(DDLCounter)
 	prometheus.MustRegister(DDLWorkerHistogram)
@@ -131,4 +132,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalCopWaitHistogram)
 	prometheus.MustRegister(TiKVPendingBatchRequests)
 	prometheus.MustRegister(TiKVBatchWaitTimes)
+	prometheus.MustRegister(CPUUsagePercentageGauge)
 }

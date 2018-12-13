@@ -14,8 +14,11 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
+	"os"
+	"testing"
 	"time"
 
 	gofail "github.com/etcd-io/gofail/runtime"
@@ -27,19 +30,32 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	logLevel := os.Getenv("log_level")
+	logutil.InitLogger(&logutil.LogConfig{
+		Level:  logLevel,
+		Format: "highlight",
+	})
+	TestingT(t)
+}
 
 var _ = Suite(&testFailDBSuite{})
 
 type testFailDBSuite struct {
-	lease time.Duration
-	store kv.Storage
-	dom   *domain.Domain
-	se    session.Session
-	p     *parser.Parser
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	lease     time.Duration
+	store     kv.Storage
+	dom       *domain.Domain
+	se        session.Session
+	p         *parser.Parser
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
@@ -47,7 +63,13 @@ func (s *testFailDBSuite) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	s.cluster = mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	s.mvccStore = mocktikv.MustNewMVCCStore()
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithMVCCStore(s.mvccStore),
+	)
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(s.lease)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -92,9 +114,10 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
-	// Reload schema.
-	s.dom.ResetHandle(s.store)
-	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
+	// Execute ddl statement reload schema.
+	_, err = s.se.Execute(context.Background(), "alter table t comment 'test1'")
+	c.Assert(err, IsNil)
+	err = s.dom.DDL().GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
@@ -105,8 +128,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(err, IsNil)
 
 	// test for renaming table
-	gofail.Enable("github.com/pingcap/tidb/ddl/errRenameTable", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errRenameTable")
+	gofail.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/renameTableErr")
 	_, err = s.se.Execute(context.Background(), "create table tx(a int)")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into tx values(1)")
@@ -124,9 +147,10 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
-	// Reload schema.
-	s.dom.ResetHandle(s.store)
-	err = s.dom.DDL().(ddl.DDLForTest).GetHook().OnChanged(nil)
+	// Execute ddl statement reload schema.
+	_, err = s.se.Execute(context.Background(), "alter table tx comment 'tx'")
+	c.Assert(err, IsNil)
+	err = s.dom.DDL().GetHook().OnChanged(nil)
 	c.Assert(err, IsNil)
 	s.se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
@@ -143,20 +167,18 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 
 // TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when
 // doing the operation of 'modify column'.
-func (s *testStateChangeSuite) TestInitializeOffsetAndState(c *C) {
-	_, err := s.se.Execute(context.Background(), "use test_db_state")
-	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
-	c.Assert(err, IsNil)
-	defer s.se.Execute(context.Background(), "drop table t")
+func (s *testFailDBSuite) TestInitializeOffsetAndState(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	defer tk.MustExec("drop table t")
 
 	gofail.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`)
-	_, err = s.se.Execute(context.Background(), "ALTER TABLE t MODIFY COLUMN b int FIRST;")
-	c.Assert(err, IsNil)
+	tk.MustExec("ALTER TABLE t MODIFY COLUMN b int FIRST;")
 	gofail.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState")
 }
 
-func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
+func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
 	tk := testkit.NewTestKit(c, s.store)
@@ -171,7 +193,7 @@ func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
 	tk.MustExec("admin check index t idx_b")
 }
 
-func (s *testDBSuite) TestAddIndexFailed(c *C) {
+func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	gofail.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr")
 	tk := testkit.NewTestKit(c, s.store)
@@ -199,7 +221,47 @@ func (s *testDBSuite) TestAddIndexFailed(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-func (s *testDBSuite) TestGenGlobalIDFail(c *C) {
+// TestFailSchemaSyncer test when the schema syncer is done,
+// should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
+func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	defer tk.MustExec("drop table if exists t")
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
+	c.Assert(ok, IsTrue)
+
+	// make reload failed.
+	s.dom.MockReloadFailed.SetValue(true)
+	mockSyncer.CloseSession()
+	// wait the schemaValidator is stopped.
+	for i := 0; i < 50; i++ {
+		if s.dom.SchemaValidator.IsStarted() == false {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
+	_, err := tk.Exec("insert into t values(1)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[domain:1]Information schema is out of date.")
+	s.dom.MockReloadFailed.SetValue(false)
+	// wait the schemaValidator is started.
+	for i := 0; i < 50; i++ {
+		if s.dom.SchemaValidator.IsStarted() == true {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	_, err = tk.Exec("insert into t values(1)")
+	c.Assert(err, IsNil)
+}
+
+func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists gen_global_id_fail")

@@ -412,7 +412,7 @@ func init() {
 }
 
 // The following constants represents the valid action configurations for OOMAction.
-// NOTE: Althrough the values is case insensitiv, we should use lower-case
+// NOTE: Although the values is case insensitive, we should use lower-case
 // strings because the configuration value will be transformed to lower-case
 // string and compared with these constants in the further usage.
 const (
