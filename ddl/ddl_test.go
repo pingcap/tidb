@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
@@ -100,6 +101,7 @@ func TestT(t *testing.T) {
 		Level:  logLevel,
 		Format: "highlight",
 	})
+	autoid.SetStep(5000)
 	TestingT(t)
 }
 

@@ -83,7 +83,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	session.SetStatsLease(0)
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
-	autoid.SetStep(5000)
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 
 	s.cluster = mocktikv.NewCluster()
@@ -112,7 +111,6 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
-	autoid.SetStep(s.autoIDStep)
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
