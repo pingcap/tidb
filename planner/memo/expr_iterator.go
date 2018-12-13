@@ -92,7 +92,7 @@ func (iter *ExprIter) Next() (found bool) {
 	return false
 }
 
-// matched returns whether the iterator founds a Group expression matches the
+// Matched returns whether the iterator founds a Group expression matches the
 // pattern.
 func (iter *ExprIter) Matched() bool {
 	return iter.matched

@@ -113,11 +113,13 @@ func (g *Group) GetFirstElem(operand Operand) *list.Element {
 	return g.FirstExpr[operand]
 }
 
+// GetImpl returns the best Implementation satisfy the physical property.
 func (g *Group) GetImpl(prop *property.PhysicalProperty) Implementation {
 	key := prop.HashCode()
 	return g.ImplMap[string(key)]
 }
 
+// InsertImpl inserts the best Implementation satisfy the physical property.
 func (g *Group) InsertImpl(prop *property.PhysicalProperty, impl Implementation) {
 	key := prop.HashCode()
 	g.ImplMap[string(key)] = impl
