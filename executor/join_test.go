@@ -30,7 +30,7 @@ func (s *testSuite2) TestJoinPanic(c *C) {
 	tk.MustExec("drop table if exists events")
 	tk.MustExec("create table events (clock int, source int)")
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
-	_, err := tk.Exec("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
+	err := tk.ExecNoRes("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	c.Check(err, NotNil)
 }
 
@@ -119,11 +119,11 @@ func (s *testSuite2) TestJoin(c *C) {
 	result.Check(testkit.Rows("1", "2", "3"))
 
 	plannercore.AllowCartesianProduct = false
-	_, err := tk.Exec("select * from t, t1")
+	err := tk.ExecNoRes("select * from t, t1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	_, err = tk.Exec("select * from t left join t1 on 1")
+	err = tk.ExecNoRes("select * from t left join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	_, err = tk.Exec("select * from t right join t1 on 1")
+	err = tk.ExecNoRes("select * from t right join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	plannercore.AllowCartesianProduct = true
 	tk.MustExec("drop table if exists t,t2,t1")
@@ -152,11 +152,11 @@ func (s *testSuite2) TestJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
 
 	// Test that two conflict hints will return error.
-	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
+	err = tk.ExecNoRes("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("select /*+ TIDB_INLJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
+	err = tk.ExecNoRes("select /*+ TIDB_INLJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
 	c.Assert(err, NotNil)
-	_, err = tk.Exec("select /*+ TIDB_SMJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
+	err = tk.ExecNoRes("select /*+ TIDB_SMJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
 	c.Assert(err, NotNil)
 
 	tk.MustExec("drop table if exists t")
@@ -800,7 +800,7 @@ func (s *testSuite2) TestSubqueryInJoinOn(c *C) {
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t2 values (1)")
 
-	_, err := tk.Exec("SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1))")
+	err := tk.ExecNoRes("SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1))")
 	c.Check(err, NotNil)
 }
 
