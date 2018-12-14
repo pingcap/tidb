@@ -23,6 +23,7 @@ import (
 )
 
 var _ = Suite(&testCacheableSuite{})
+var _ = Suite(&testRestoreCtxSuite{})
 
 type testCacheableSuite struct {
 }
@@ -48,21 +49,6 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	c.Assert(IsReadOnly(stmt), IsTrue)
 }
 
-func (s *testCacheableSuite) TestWriteName(c *C) {
-	var sb strings.Builder
-	WriteName(&sb, "")
-	sb.WriteString(";")
-	WriteName(&sb, "abc")
-	sb.WriteString(";")
-	WriteName(&sb, "ab`c")
-	sb.WriteString(";")
-	WriteName(&sb, "ab``c")
-	sb.WriteString(";")
-	WriteName(&sb, "ab` `c")
-	sb.WriteString(";")
-	c.Assert(sb.String(), Equals, "``;`abc`;`ab``c`;`ab````c`;`ab`` ``c`;")
-}
-
 // CleanNodeText set the text of node and all child node empty.
 // For test only.
 func CleanNodeText(node Node) {
@@ -86,6 +72,43 @@ func (checker *nodeTextCleaner) Leave(in Node) (out Node, ok bool) {
 	return in, true
 }
 
+type testRestoreCtxSuite struct {
+}
+
+func (s *testRestoreCtxSuite) TestRestoreCtx(c *C) {
+	testCases := []struct {
+		flag   RestoreFlags
+		expect string
+	}{
+		{0, "key`.'\"Word\\ str`.'\"ing\\ na`.'\"Me\\"},
+		{RestoreStringSingleQuotes, "key`.'\"Word\\ 'str`.''\"ing\\' na`.'\"Me\\"},
+		{RestoreStringDoubleQuotes, "key`.'\"Word\\ \"str`.'\"\"ing\\\" na`.'\"Me\\"},
+		{RestoreStringEscapeBackslash, "key`.'\"Word\\ str`.'\"ing\\\\ na`.'\"Me\\"},
+		{RestoreKeyWordUppercase, "KEY`.'\"WORD\\ str`.'\"ing\\ na`.'\"Me\\"},
+		{RestoreKeyWordLowercase, "key`.'\"word\\ str`.'\"ing\\ na`.'\"Me\\"},
+		{RestoreNameUppercase, "key`.'\"Word\\ str`.'\"ing\\ NA`.'\"ME\\"},
+		{RestoreNameLowercase, "key`.'\"Word\\ str`.'\"ing\\ na`.'\"me\\"},
+		{RestoreNameDoubleQuotes, "key`.'\"Word\\ str`.'\"ing\\ \"na`.'\"\"Me\\\""},
+		{RestoreNameBackQuotes, "key`.'\"Word\\ str`.'\"ing\\ `na``.'\"Me\\`"},
+		{DefaultRestoreFlags, "KEY`.'\"WORD\\ 'str`.''\"ing\\' `na``.'\"Me\\`"},
+		{RestoreStringSingleQuotes | RestoreStringDoubleQuotes, "key`.'\"Word\\ 'str`.''\"ing\\' na`.'\"Me\\"},
+		{RestoreKeyWordUppercase | RestoreKeyWordLowercase, "KEY`.'\"WORD\\ str`.'\"ing\\ na`.'\"Me\\"},
+		{RestoreNameUppercase | RestoreNameLowercase, "key`.'\"Word\\ str`.'\"ing\\ NA`.'\"ME\\"},
+		{RestoreNameDoubleQuotes | RestoreNameBackQuotes, "key`.'\"Word\\ str`.'\"ing\\ \"na`.'\"\"Me\\\""},
+	}
+	var sb strings.Builder
+	for _, testCase := range testCases {
+		sb.Reset()
+		ctx := NewRestoreCtx(testCase.flag, &sb)
+		ctx.WriteKeyWord("key`.'\"Word\\")
+		ctx.WritePlain(" ")
+		ctx.WriteString("str`.'\"ing\\")
+		ctx.WritePlain(" ")
+		ctx.WriteName("na`.'\"Me\\")
+		c.Assert(sb.String(), Equals, testCase.expect, Commentf("case: %#v", testCase))
+	}
+}
+
 type NodeRestoreTestCase struct {
 	sourceSQL string
 	expectSQL string
@@ -100,7 +123,7 @@ func RunNodeRestoreTest(c *C, nodeTestCases []NodeRestoreTestCase, template stri
 		comment := Commentf("source %#v", testCase)
 		c.Assert(err, IsNil, comment)
 		var sb strings.Builder
-		err = extractNodeFunc(stmt).Restore(&sb)
+		err = extractNodeFunc(stmt).Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
 		c.Assert(err, IsNil, comment)
 		restoreSql := fmt.Sprintf(template, sb.String())
 		comment = Commentf("source %#v; restore %v", testCase, restoreSql)

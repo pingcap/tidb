@@ -98,8 +98,8 @@ type TraceStmt struct {
 	Format string
 }
 
-// Restore implements Recoverable interface.
-func (n *TraceStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *TraceStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -129,8 +129,8 @@ type ExplainStmt struct {
 	Analyze bool
 }
 
-// Restore implements Recoverable interface.
-func (n *ExplainStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *ExplainStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -160,8 +160,8 @@ type PrepareStmt struct {
 	SQLVar  *VariableExpr
 }
 
-// Restore implements Recoverable interface.
-func (n *PrepareStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *PrepareStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -190,8 +190,8 @@ type DeallocateStmt struct {
 	Name string
 }
 
-// Restore implements Recoverable interface.
-func (n *DeallocateStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *DeallocateStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -223,8 +223,8 @@ type ExecuteStmt struct {
 	ExecID    uint32
 }
 
-// Restore implements Recoverable interface.
-func (n *ExecuteStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *ExecuteStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -251,8 +251,8 @@ type BeginStmt struct {
 	stmtNode
 }
 
-// Restore implements Recoverable interface.
-func (n *BeginStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *BeginStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -274,8 +274,8 @@ type BinlogStmt struct {
 	Str string
 }
 
-// Restore implements Recoverable interface.
-func (n *BinlogStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *BinlogStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -295,8 +295,8 @@ type CommitStmt struct {
 	stmtNode
 }
 
-// Restore implements Recoverable interface.
-func (n *CommitStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *CommitStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -316,8 +316,8 @@ type RollbackStmt struct {
 	stmtNode
 }
 
-// Restore implements Recoverable interface.
-func (n *RollbackStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *RollbackStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -339,10 +339,10 @@ type UseStmt struct {
 	DBName string
 }
 
-// Restore implements Recoverable interface.
-func (n *UseStmt) Restore(sb *strings.Builder) error {
-	sb.WriteString("USE ")
-	WriteName(sb, n.DBName)
+// Restore implements Node interface.
+func (n *UseStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("USE ")
+	ctx.WriteName(n.DBName)
 	return nil
 }
 
@@ -377,8 +377,8 @@ type VariableAssignment struct {
 	ExtendValue ValueExpr
 }
 
-// Restore implements Recoverable interface.
-func (n *VariableAssignment) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *VariableAssignment) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -418,8 +418,8 @@ type FlushStmt struct {
 	ReadLock        bool
 }
 
-// Restore implements Recoverable interface.
-func (n *FlushStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *FlushStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -453,8 +453,8 @@ type KillStmt struct {
 	TiDBExtension bool
 }
 
-// Restore implements Recoverable interface.
-func (n *KillStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *KillStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -475,8 +475,8 @@ type SetStmt struct {
 	Variables []*VariableAssignment
 }
 
-// Restore implements Recoverable interface.
-func (n *SetStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *SetStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -527,8 +527,8 @@ type SetPwdStmt struct {
 	Password string
 }
 
-// Restore implements Recoverable interface.
-func (n *SetPwdStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *SetPwdStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -595,8 +595,8 @@ type CreateUserStmt struct {
 	Specs       []*UserSpec
 }
 
-// Restore implements Recoverable interface.
-func (n *CreateUserStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *CreateUserStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -631,8 +631,8 @@ type AlterUserStmt struct {
 	Specs       []*UserSpec
 }
 
-// Restore implements Recoverable interface.
-func (n *AlterUserStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *AlterUserStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -666,8 +666,8 @@ type DropUserStmt struct {
 	UserList []*auth.UserIdentity
 }
 
-// Restore implements Recoverable interface.
-func (n *DropUserStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *DropUserStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -688,8 +688,8 @@ type DoStmt struct {
 	Exprs []ExprNode
 }
 
-// Restore implements Recoverable interface.
-func (n *DoStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *DoStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -780,8 +780,8 @@ type AdminStmt struct {
 	ShowSlow     *ShowSlow
 }
 
-// Restore implements Recoverable interface.
-func (n *AdminStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *AdminStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -812,8 +812,8 @@ type PrivElem struct {
 	Cols []*ColumnName
 }
 
-// Restore implements Recoverable interface.
-func (n *PrivElem) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *PrivElem) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -875,8 +875,8 @@ type RevokeStmt struct {
 	Users      []*UserSpec
 }
 
-// Restore implements Recoverable interface.
-func (n *RevokeStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *RevokeStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -908,8 +908,8 @@ type GrantStmt struct {
 	WithGrant  bool
 }
 
-// Restore implements Recoverable interface.
-func (n *GrantStmt) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *GrantStmt) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -978,8 +978,8 @@ type TableOptimizerHint struct {
 	MaxExecutionTime uint64
 }
 
-// Restore implements Recoverable interface.
-func (n *TableOptimizerHint) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *TableOptimizerHint) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 

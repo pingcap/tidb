@@ -109,6 +109,8 @@ github.com/kr/pty v1.1.1/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
 github.com/kr/pty v1.1.3/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
 github.com/kr/text v0.1.0 h1:45sCR5RtlFHMR4UwH9sdQ5TC8v0qDQCHnXt+kaKSTVE=
 github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
+github.com/leoppro/tidb v0.0.0-00000000000000-4efb42782bbc7b9589ebf4afb2f82416c7a76fa6 h1:vL8ufDZSej81fZPvtt+f0JfRzS8fftN8sppiUElL7pE=
+github.com/leoppro/tidb v0.0.0-00000000000000-4efb42782bbc7b9589ebf4afb2f82416c7a76fa6/go.mod h1:IyGiL3VYEWgyM3iNMLD7BTA6T51EYDoJF3jnc4Hdivo=
 github.com/leoppro/tidb v0.0.0-00000000000000-5791a57a03b7 h1:t9oZ5f5OO46px5blv5m45vFGxT1Ee97BF0fKYrLmj2s=
 github.com/leoppro/tidb v0.0.0-00000000000000-5791a57a03b7/go.mod h1:B8fFZPvn+zh0LEJODdc+br1SRRbljoZakm3ATyH0JuY=
 github.com/leoppro/tidb v0.0.0-00000000000000-812fd5698f7b h1:RGNCcA7g6cl0x6Dk9FjxLC9XHRggitWe4lH7EvewyaA=
@@ -155,6 +157,7 @@ github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26/go.mod h1:0gwbe1F2
 github.com/pingcap/parser v0.0.0-20181102070703-4acd198f5092/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20181120072820-10951bcfca73/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20181126111651-a38036a60de7/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20181212042131-f20218bc2903/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/tidb v0.0.0-20181105182855-379ee5b1915a h1:Qd8qbDnsmAIXxefGBgFrWh4y0GDO6froUNFqZYmC568=
@@ -206,6 +209,7 @@ github.com/spf13/pflag v1.0.1/go.mod h1:DYY7MBk1bdzusC3SYhjObp+wFpr4gzcvqqNjLnIn
 github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/testify v1.2.2 h1:bSDNvY7ZPG5RlJ8otE/7V6gMiyenm9RtJ7IUVIAoJ1w=
 github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=
+github.com/struCoder/pidusage v0.1.2/go.mod h1:pWBlW3YuSwRl6h7R5KbvA4N8oOqe9LjaKW5CwT1SPjI=
 github.com/syndtr/goleveldb v0.0.0-20180815032940-ae2bd5eed72d/go.mod h1:Z4AUp2Km+PwemOoO/VB5AOx9XSsIItzFjoJlOSiYmn0=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6 h1:lYIiVDtZnyTWlNwiAxLj0bbpTcx1BWCFhXjfsvmPdNc=
