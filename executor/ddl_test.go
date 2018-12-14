@@ -192,7 +192,7 @@ func (s *testSuite3) TestCreateDropDatabase(c *C) {
 	tk.MustExec("drop database drop_test;")
 	_, err := tk.Exec("drop table t;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
-	_, err = tk.Exec("select * from t;")
+	err = tk.ExecNoRes("select * from t;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 
 	_, err = tk.Exec("drop database mysql")
@@ -228,7 +228,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp")
 	time.Sleep(1 * time.Millisecond)
 	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
-	r, err := tk.Exec("select c2 from alter_test")
+	err := tk.ExecNoRes("select c2 from alter_test")
 	c.Assert(err, IsNil)
 	chk := r.NewChunk()
 	err = r.Next(context.Background(), chk)

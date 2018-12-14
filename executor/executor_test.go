@@ -678,7 +678,7 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 3;")
 	r.Check(testkit.Rows("4 hello"))
 
-	_, err := tk.Exec("select * from select_limit limit 18446744073709551616 offset 3;")
+	err := tk.ExecNoRes("select * from select_limit limit 18446744073709551616 offset 3;")
 	c.Assert(err, NotNil)
 }
 
@@ -806,28 +806,28 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	_, err := tk.Exec("select row(1, 1) from test")
+	err := tk.ExecNoRes("select row(1, 1) from test")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test group by row(1, 1);")
+	err = tk.ExecNoRes("select * from test group by row(1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test order by row(1, 1);")
+	err = tk.ExecNoRes("select * from test order by row(1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test having row(1, 1);")
+	err = tk.ExecNoRes("select * from test having row(1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select (select 1, 1) from test;")
+	err = tk.ExecNoRes("select (select 1, 1) from test;")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test group by (select 1, 1);")
+	err = tk.ExecNoRes("select * from test group by (select 1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test order by (select 1, 1);")
+	err = tk.ExecNoRes("select * from test order by (select 1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test having (select 1, 1);")
+	err = tk.ExecNoRes("select * from test having (select 1, 1);")
 	c.Assert(err, NotNil)
 }
 
@@ -1034,12 +1034,12 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustQuery("select -10 as a from dual union select a from t order by a limit 1 ").Check(testkit.Rows("-10"))
 	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
 
-	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
+	err := tk.ExecNoRes("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
-	_, err = tk.Exec("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
+	err = tk.ExecNoRes("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
@@ -1917,12 +1917,14 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].ColumnAsName.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
 	c.Check(fields[1].ColumnAsName.L, Equals, "count(*)")
+	rs.Close()
 	rs, err = tk.Exec("select (c) > all (select c from t) from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
 	c.Check(fields[0].ColumnAsName.L, Equals, "(c) > all (select c from t)")
+	rs.Close()
 	tk.MustExec("begin")
 	tk.MustExec("insert t values(1,1)")
 	rs, err = tk.Exec("select c d, d c from t")
@@ -1933,6 +1935,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].ColumnAsName.L, Equals, "d")
 	c.Check(fields[1].Column.Name.L, Equals, "d")
 	c.Check(fields[1].ColumnAsName.L, Equals, "c")
+	rs.Close()
 	// Test case for query a column of a table.
 	// In this case, all attributes have values.
 	rs, err = tk.Exec("select c as a from t as t2")
@@ -1943,6 +1946,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "t")
 	c.Check(fields[0].TableAsName.L, Equals, "t2")
 	c.Check(fields[0].DBName.L, Equals, "test")
+	rs.Close()
 	// Test case for query a expression which only using constant inputs.
 	// In this case, the table, org_table and database attributes will all be empty.
 	rs, err = tk.Exec("select hour(1) as a from t as t2")
@@ -1953,6 +1957,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "")
 	c.Check(fields[0].TableAsName.L, Equals, "")
 	c.Check(fields[0].DBName.L, Equals, "")
+	rs.Close()
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
@@ -2630,6 +2635,7 @@ func (s *testSuite) TestBit(c *C) {
 	err = r.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	r.Close()
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bit(31))")

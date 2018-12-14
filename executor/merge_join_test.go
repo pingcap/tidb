@@ -303,11 +303,11 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 	tk.MustExec("rollback;")
 
 	plannercore.AllowCartesianProduct = false
-	_, err := tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t, t1")
+	err := tk.ExecNoRes("select /*+ TIDB_SMJ(t,t1) */ * from t, t1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t left join t1 on 1")
+	err = tk.ExecNoRes("select /*+ TIDB_SMJ(t,t1) */ * from t left join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t right join t1 on 1")
+	err = tk.ExecNoRes("select /*+ TIDB_SMJ(t,t1) */ * from t right join t1 on 1")
 	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	plannercore.AllowCartesianProduct = true
 	tk.MustExec("drop table if exists t")

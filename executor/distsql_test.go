@@ -68,11 +68,11 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Send coprocessor request when the table split.
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	defer rs.Close()
 	chk := rs.NewChunk()
 	err = rs.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
+	rs.Close()
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
