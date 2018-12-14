@@ -40,7 +40,7 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser
+.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy
 
 default: server buildsucc
 
@@ -64,7 +64,7 @@ check-setup:
 	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
 	@GO111MODULE=off retool sync
 
-check: check-setup fmt lint vet
+check: check-setup fmt lint vet tidy
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -97,6 +97,10 @@ lint:
 vet:
 	@echo "vet"
 	$(GO) vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
+
+tidy:
+	@echo "go mod tidy"
+	./hack/check-tidy.sh
 
 clean:
 	$(GO) clean -i ./...
