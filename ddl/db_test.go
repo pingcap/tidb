@@ -273,11 +273,9 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	// let hook.OnJobUpdatedExported has chance to cancel the job.
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	var checkErr error
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.s.(sessionctx.Context), hook)
 	originalHook := s.dom.DDL().GetHook()
@@ -322,7 +320,6 @@ LOOP:
 	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
-	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -339,9 +336,6 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 	}
 
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
@@ -411,9 +405,6 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 	}
 
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]
@@ -1794,8 +1785,6 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 
 	var c2 *table.Column
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -1866,5 +1855,4 @@ LOOP:
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(c, "drop table t1")
-	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }

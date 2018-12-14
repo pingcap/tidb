@@ -102,6 +102,7 @@ func TestT(t *testing.T) {
 		Format: "highlight",
 	})
 	autoid.SetStep(5000)
+	ReorgWaitTimeout = 30 * time.Millisecond
 	TestingT(t)
 }
 

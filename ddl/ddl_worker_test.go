@@ -42,8 +42,6 @@ const testLease = 5 * time.Millisecond
 
 func (s *testDDLSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	// set ReorgWaitTimeout to small value, make test to be faster.
-	ReorgWaitTimeout = 50 * time.Millisecond
 	WaitTimeWhenErrorOccured = 1 * time.Microsecond
 
 	// We hope that this test is serially executed. So put it here.
