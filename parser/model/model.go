@@ -250,6 +250,14 @@ func (t *TableInfo) GetAutoIncrementColInfo() *ColumnInfo {
 	return nil
 }
 
+func (t *TableInfo) IsAutoIncColUnsigned() bool {
+	col := t.GetAutoIncrementColInfo()
+	if col == nil {
+		return false
+	}
+	return mysql.HasUnsignedFlag(col.Flag)
+}
+
 // Cols returns the columns of the table in public state.
 func (t *TableInfo) Cols() []*ColumnInfo {
 	publicColumns := make([]*ColumnInfo, len(t.Columns))
