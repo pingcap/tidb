@@ -504,6 +504,7 @@ func (do *Domain) mustReload() (exitLoop bool) {
 
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
+	do.SchemaValidator.Stop()
 	if do.ddl != nil {
 		terror.Log(errors.Trace(do.ddl.Stop()))
 	}
