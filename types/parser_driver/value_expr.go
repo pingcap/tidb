@@ -99,6 +99,12 @@ func (n *ValueExpr) Restore(ctx *ast.RestoreCtx) error {
 		} else {
 			ctx.WritePlain(n.GetBinaryLiteral().ToBitLiteralString(true))
 		}
+	case types.KindMysqlDuration, types.KindMysqlEnum,
+		types.KindMysqlBit, types.KindMysqlSet, types.KindMysqlTime,
+		types.KindInterface, types.KindMinNotNull, types.KindMaxValue,
+		types.KindRaw, types.KindMysqlJSON:
+		// TODO implement Restore function
+		return errors.New("Not implemented")
 	default:
 		return errors.New("can't format to string")
 	}
