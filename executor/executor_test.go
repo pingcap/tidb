@@ -67,7 +67,7 @@ import (
 
 // TestLeakCheckCnt is the check count in the pacakge of executor.
 // In this package CustomParallelSuiteFlag is true, so we need to increase check count.
-const TestLeakCheckCnt = 1000
+const TestLeakCheckCnt = 10000
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true

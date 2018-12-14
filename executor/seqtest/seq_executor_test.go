@@ -18,6 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"runtime/pprof"
 	"strconv"
@@ -700,4 +701,29 @@ func (s *seqTestSuite) TestAdminShowNextID(c *C) {
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery("admin show tt next_row_id")
 	r.Check(testkit.Rows("test1 tt id 41"))
+}
+
+func (s *seqTestSuite) TestPrepareMaxParamCountCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int)")
+	normalSQL, normalParams := generateBatchSQL(math.MaxUint16)
+	_, err := tk.Exec(normalSQL, normalParams...)
+	c.Assert(err, IsNil)
+
+	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
+	_, err = tk.Exec(bigSQL, bigParams...)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1390]Prepared statement contains too many placeholders")
+}
+
+func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
+	params := make([]interface{}, 0, paramCount)
+	placeholders := make([]string, 0, paramCount)
+	for i := 0; i < paramCount; i++ {
+		params = append(params, i)
+		placeholders = append(placeholders, "(?)")
+	}
+	return "insert into t values " + strings.Join(placeholders, ","), params
 }
