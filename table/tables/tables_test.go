@@ -126,6 +126,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(handle, Equals, int64(1))
 	c.Assert(found, Equals, true)
 	c.Assert(err, IsNil)
+	ts.se.StmtCommit()
 	_, err = ts.se.Execute(context.Background(), "drop table test.t")
 	c.Assert(err, IsNil)
 
