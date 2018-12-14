@@ -179,7 +179,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp")
 	time.Sleep(1 * time.Millisecond)
 	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
-	err := tk.ExecNoRes("select c2 from alter_test")
+	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
 	chk := r.NewChunk()
 	err = r.Next(context.Background(), chk)
@@ -187,6 +187,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
+	r.Close()
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 }
