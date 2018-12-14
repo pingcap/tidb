@@ -377,7 +377,7 @@ func (s *Server) KillAllConnections() {
 
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
-		terror.Log(errors.Trace(conn.CloseWithoutLock()))
+		terror.Log(errors.Trace(conn.closeWithoutLock()))
 	}
 }
 

@@ -166,7 +166,7 @@ func closeConn(cc *clientConn, connections int) error {
 	return nil
 }
 
-func (cc *clientConn) CloseWithoutLock() error {
+func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
 	return closeConn(cc, len(cc.server.clients))
 }
