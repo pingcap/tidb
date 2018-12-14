@@ -41,6 +41,7 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "testing.RunTests") ||
 			strings.Contains(stack, "check.(*resultTracker).start") ||
 			strings.Contains(stack, "check.(*suiteRunner).runFunc") ||
+			strings.Contains(stack, "check.(*suiteRunner).parallelRun") ||
 			strings.Contains(stack, "localstore.(*dbStore).scheduler") ||
 			strings.Contains(stack, "tikv.(*noGCHandler).Start") ||
 			strings.Contains(stack, "ddl.(*ddl).start") ||
@@ -73,16 +74,24 @@ func BeforeTest() {
 	}
 }
 
+const defaultCheckCnt = 50
+
 // AfterTest gets the current goroutines and runs the returned function to
 // get the goroutines at that time to contrast whether any goroutines leaked.
 // Usage: defer testleak.AfterTest(c)()
 // It can call with BeforeTest() at the beginning of check.Suite.TearDownSuite() or
 // call alone at the beginning of each test.
-func AfterTest(c *check.C) func() {
+// TODO: The type of checkCnt will be modified in the next PR.
+func AfterTest(c *check.C, checkCnt ...int) func() {
 	if len(beforeTestGorountines) == 0 {
 		for _, g := range interestingGoroutines() {
 			beforeTestGorountines[g] = true
 		}
+	}
+
+	cnt := defaultCheckCnt
+	if len(checkCnt) > 0 {
+		cnt = checkCnt[0]
 	}
 
 	return func() {
@@ -91,7 +100,7 @@ func AfterTest(c *check.C) func() {
 		}()
 
 		var leaked []string
-		for i := 0; i < 50; i++ {
+		for i := 0; i < cnt; i++ {
 			leaked = leaked[:0]
 			for _, g := range interestingGoroutines() {
 				if !beforeTestGorountines[g] {
@@ -108,7 +117,7 @@ func AfterTest(c *check.C) func() {
 			return
 		}
 		for _, g := range leaked {
-			c.Errorf("Test appears to have leaked: %v", g)
+			c.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
 		}
 	}
 }
