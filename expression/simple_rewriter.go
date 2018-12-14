@@ -39,7 +39,7 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 	exprStr = "select " + exprStr
 	stmts, warns, err := parser.New().Parse(exprStr, "", "")
 	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(warn	)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	exprStr = "select " + exprStr
 	stmts, warns, err := parser.New().Parse(exprStr, "", "")
 	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(warn	)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
 		return nil, err

@@ -886,9 +886,6 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
 	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
-	for _, warn := range warns {
-		s.sessionVars.StmtCtx.AppendWarning(warn)
-	}
 	if err != nil {
 		s.rollbackOnError(ctx)
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
@@ -924,6 +921,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
 		// return the first recordset if client doesn't support ClientMultiResults.
 		recordSets = recordSets[:1]
+	}
+
+	for _, warn := range warns {
+		s.sessionVars.StmtCtx.AppendWarning(warn)
 	}
 	return recordSets, nil
 }

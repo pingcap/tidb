@@ -127,7 +127,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	stmts, warns, err := p.Parse(src, charset, collation)
 	for _, warn := range warns {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(warn	)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)

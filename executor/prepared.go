@@ -117,7 +117,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		var warns []error
 		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
 		for _, warn := range warns {
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn	)
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 		}
 	}
 	if err != nil {
