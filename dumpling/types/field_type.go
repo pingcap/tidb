@@ -128,10 +128,22 @@ func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 		tp.Decimal = UnspecifiedLength
 	default:
 		DefaultTypeForValue(value, tp)
+		if hasVariantFieldLength(tp) {
+			tp.Flen = UnspecifiedLength
+		}
 		if tp.Tp == mysql.TypeUnspecified {
 			tp.Tp = mysql.TypeVarString
 		}
 	}
+}
+
+func hasVariantFieldLength(tp *FieldType) bool {
+	switch tp.Tp {
+	case mysql.TypeLonglong, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeBlob,
+		mysql.TypeBit, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeEnum, mysql.TypeSet:
+		return true
+	}
+	return false
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.
