@@ -1655,6 +1655,14 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	_, err := tk.Exec(`INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "invalid"}', '$.a')`)
 	c.Assert(err, NotNil)
 
+	// Test read generated columns after drop some irrelevant column
+	tk.MustExec(`DROP TABLE IF EXISTS test_gc_read_m`)
+	tk.MustExec(`CREATE TABLE test_gc_read_m (a int primary key, b int, c int as (a+1), d int as (c*2))`)
+	tk.MustExec(`INSERT INTO test_gc_read_m(a) values (1), (2)`)
+	tk.MustExec(`ALTER TABLE test_gc_read_m DROP b`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read_m`)
+	result.Check(testkit.Rows(`1 2 4`, `2 3 6`))
+
 	// Test not null generated columns.
 	tk.MustExec(`CREATE TABLE test_gc_read_1(a int primary key, b int, c int as (a+b) not null, d int as (a*b) stored)`)
 	tk.MustExec(`CREATE TABLE test_gc_read_2(a int primary key, b int, c int as (a+b), d int as (a*b) stored not null)`)
