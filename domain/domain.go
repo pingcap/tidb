@@ -511,12 +511,13 @@ func (do *Domain) Close() {
 		do.info.RemoveServerInfo()
 	}
 	close(do.exit)
-	if do.etcdClient != nil {
-		terror.Log(errors.Trace(do.etcdClient.Close()))
-	}
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
 	do.wg.Wait()
+	do.SchemaValidator.Stop()
+	if do.etcdClient != nil {
+		terror.Log(errors.Trace(do.etcdClient.Close()))
+	}
 	log.Info("[domain] close")
 }
 
