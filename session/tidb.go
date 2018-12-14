@@ -19,7 +19,6 @@ package session
 
 import (
 	"context"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -90,7 +89,6 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-	stores = make(map[string]kv.Driver)
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped     = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex
@@ -153,8 +151,9 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	var rs sqlexec.RecordSet
 	se := sctx.(*session)
 	rs, err = s.Exec(ctx)
+	sessVars := se.GetSessionVars()
 	// All the history should be added here.
-	se.GetSessionVars().TxnCtx.StatementCount++
+	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly() {
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
@@ -167,7 +166,19 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			}
 		}
 	}
-	if !se.sessionVars.InTxn() {
+
+	// There are two known cases that the s.txn.fail is not nil:
+	// 1. active transaction fail, can't get start ts for example
+	// 2. transaction too large and StmtCommit fail
+	// On both cases, we can return error in advance.
+	if se.txn.fail != nil {
+		err = se.txn.fail
+		se.txn.cleanup()
+		se.txn.fail = nil
+		return nil, errors.Trace(err)
+	}
+
+	if !sessVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
 			err1 := se.RollbackTxn(ctx)
@@ -180,10 +191,18 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		// So we limit the statement count in a transaction here.
 		history := GetHistory(sctx)
 		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
-			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-				history.Count(), sctx.GetSessionVars().IsAutocommit())
+			if !sessVars.BatchCommit {
+				err1 := se.RollbackTxn(ctx)
+				terror.Log(errors.Trace(err1))
+				return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+					history.Count(), sctx.GetSessionVars().IsAutocommit())
+			}
+			err = se.NewTxn(ctx)
+			// The transaction does not committed yet, we need to keep it in transaction.
+			// The last history could not be "commit"/"rollback" statement.
+			// It means it is impossible to start a new transaction at the end of the transaction.
+			// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
+			se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 	}
 	if se.txn.pending() {
@@ -202,12 +221,12 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
 func GetHistory(ctx sessionctx.Context) *StmtHistory {
-	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*StmtHistory)
+	hist, ok := ctx.GetSessionVars().TxnCtx.History.(*StmtHistory)
 	if ok {
 		return hist
 	}
 	hist = new(StmtHistory)
-	ctx.GetSessionVars().TxnCtx.Histroy = hist
+	ctx.GetSessionVars().TxnCtx.History = hist
 	return hist
 }
 
@@ -236,52 +255,6 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
-}
-
-// RegisterStore registers a kv storage with unique name and its associated Driver.
-func RegisterStore(name string, driver kv.Driver) error {
-	name = strings.ToLower(name)
-
-	if _, ok := stores[name]; ok {
-		return errors.Errorf("%s is already registered", name)
-	}
-
-	stores[name] = driver
-	return nil
-}
-
-// NewStore creates a kv Storage with path.
-//
-// The path must be a URL format 'engine://path?params' like the one for
-// session.Open() but with the dbname cut off.
-// Examples:
-//    goleveldb://relative/path
-//    boltdb:///absolute/path
-//
-// The engine should be registered before creating storage.
-func NewStore(path string) (kv.Storage, error) {
-	return newStoreWithRetry(path, util.DefaultMaxRetries)
-}
-
-func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
-	storeURL, err := url.Parse(path)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	name := strings.ToLower(storeURL.Scheme)
-	d, ok := stores[name]
-	if !ok {
-		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
-	}
-
-	var s kv.Storage
-	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
-		log.Infof("new store")
-		s, err = d.Open(path)
-		return kv.IsRetryableError(err), err
-	})
-	return s, errors.Trace(err)
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}

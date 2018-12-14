@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
@@ -39,8 +40,6 @@ import (
 type DDLForTest interface {
 	// SetHook sets the hook.
 	SetHook(h Callback)
-	// GetHook gets the hook.
-	GetHook() Callback
 	// SetInterceptoror sets the interceptor.
 	SetInterceptoror(h Interceptor)
 }
@@ -51,14 +50,6 @@ func (d *ddl) SetHook(h Callback) {
 	defer d.mu.Unlock()
 
 	d.mu.hook = h
-}
-
-// GetHook implements DDL.GetHook interface.
-func (d *ddl) GetHook() Callback {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	return d.mu.hook
 }
 
 // SetInterceptoror implements DDL.SetInterceptoror interface.
@@ -98,13 +89,20 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	}
 }
 
+// TestLeakCheckCnt is the check count in the pacakge of ddl.
+// In this package CustomParallelSuiteFlag is true, so we need to increase check count.
+const TestLeakCheckCnt = 1000
+
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(&logutil.LogConfig{
 		Level:  logLevel,
 		Format: "highlight",
 	})
+	autoid.SetStep(5000)
+	ReorgWaitTimeout = 30 * time.Millisecond
 	TestingT(t)
 }
 
@@ -126,7 +124,7 @@ func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 }
 
 func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn(true))
 	ver, err := m.GetSchemaVersion()

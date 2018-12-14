@@ -40,7 +40,7 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser
+.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy
 
 default: server buildsucc
 
@@ -64,7 +64,7 @@ check-setup:
 	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
 	@GO111MODULE=off retool sync
 
-check: check-setup fmt lint vet
+check: check-setup fmt lint vet tidy
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -98,12 +98,16 @@ vet:
 	@echo "vet"
 	$(GO) vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
+tidy:
+	@echo "go mod tidy"
+	./hack/check-tidy.sh
+
 clean:
 	$(GO) clean -i ./...
 	rm -rf *.out
 	rm -rf parser
 
-test: checklist gotest explaintest
+test: checklist checkdep gotest explaintest
 
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
@@ -192,3 +196,6 @@ gofail-enable:
 gofail-disable:
 # Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)
+
+checkdep:
+	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1

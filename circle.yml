@@ -11,5 +11,5 @@ jobs:
           name: "Build & Test"
           command: make dev
       - run:
-          name: "Go mod tidy"
-          command: ./hack/check-tidy.sh
+          name: "Check go mod replace is removed"
+          command: ./hack/check_parser_replace.sh

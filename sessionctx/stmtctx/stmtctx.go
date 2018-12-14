@@ -92,6 +92,14 @@ type StatementContext struct {
 		histogramsNotLoad bool
 		execDetails       execdetails.ExecDetails
 	}
+	// PrevAffectedRows is the affected-rows value(DDL is 0, DML is the number of affected rows).
+	PrevAffectedRows int64
+	// PrevLastInsertID is the last insert ID of previous statement.
+	PrevLastInsertID uint64
+	// LastInsertID is the auto-generated ID in the current statement.
+	LastInsertID uint64
+	// InsertID is the given insert ID of an auto_increment column.
+	InsertID uint64
 
 	// Copied from SessionVars.TimeZone.
 	TimeZone         *time.Location
@@ -342,6 +350,8 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.message = ""
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
+	sc.TableIDs = sc.TableIDs[:0]
+	sc.IndexIDs = sc.IndexIDs[:0]
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print

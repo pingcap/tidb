@@ -18,34 +18,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testDumpStatsSuite{})
-
-type testDumpStatsSuite struct {
-	store kv.Storage
-	do    *domain.Domain
-}
-
-func (s *testDumpStatsSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	var err error
-	s.store, s.do, err = newStoreWithBootstrap(0)
-	c.Assert(err, IsNil)
-}
-
-func (s *testDumpStatsSuite) TearDownSuite(c *C) {
-	s.do.Close()
-	s.store.Close()
-	testleak.AfterTest(c)()
-}
-
-func (s *testDumpStatsSuite) TestConversion(c *C) {
+func (s *testStatsSuite) TestConversion(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -76,7 +53,7 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 	assertTableEqual(c, loadTblInStorage, tbl)
 }
 
-func (s *testDumpStatsSuite) TestDumpPartitions(c *C) {
+func (s *testStatsSuite) TestDumpPartitions(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -108,9 +85,9 @@ PARTITION BY RANGE ( a ) (
 		originTables = append(originTables, h.GetPartitionStats(tableInfo, def.ID))
 	}
 
-	tk.MustExec("truncate table mysql.stats_meta")
-	tk.MustExec("truncate table mysql.stats_histograms")
-	tk.MustExec("truncate table mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_meta")
+	tk.MustExec("delete from mysql.stats_histograms")
+	tk.MustExec("delete from mysql.stats_buckets")
 	h.Clear()
 
 	err = h.LoadStatsFromJSON(s.do.InfoSchema(), jsonTbl)
@@ -121,7 +98,7 @@ PARTITION BY RANGE ( a ) (
 	}
 }
 
-func (s *testDumpStatsSuite) TestDumpAlteredTable(c *C) {
+func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
