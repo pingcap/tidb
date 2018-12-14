@@ -16,7 +16,6 @@ package ast
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -329,8 +328,8 @@ type FuncCallExpr struct {
 	Args []ExprNode
 }
 
-// Restore implements Recoverable interface.
-func (n *FuncCallExpr) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *FuncCallExpr) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -406,8 +405,8 @@ type FuncCastExpr struct {
 	FunctionType CastFunctionType
 }
 
-// Restore implements Recoverable interface.
-func (n *FuncCastExpr) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *FuncCastExpr) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -519,8 +518,8 @@ type AggregateFuncExpr struct {
 	Distinct bool
 }
 
-// Restore implements Recoverable interface.
-func (n *AggregateFuncExpr) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *AggregateFuncExpr) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
@@ -592,8 +591,8 @@ type WindowFuncExpr struct {
 	Spec WindowSpec
 }
 
-// Restore implements Recoverable interface.
-func (n *WindowFuncExpr) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *WindowFuncExpr) Restore(ctx *RestoreCtx) error {
 	return errors.New("Not implemented")
 }
 
