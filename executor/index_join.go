@@ -334,6 +334,8 @@ func (ow *outerWorker) buildHashTable(task *indexJoinTask) error {
 				return errors.Trace(err)
 			}
 		}
+		log.Infof("keyBuf %v", keyBuf)
+
 		rowPtr := chunk.RowPtr{ChkIdx: uint32(0), RowIdx: uint32(i)}
 		*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
 		task.lookupMap.Put(keyBuf, valBuf)
@@ -352,6 +354,7 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *ind
 			return false, joinResult
 		}
 	}
+	log.Infof("keyBuf %v", keyBuf)
 	iw.innerPtrBytes = task.lookupMap.Get(keyBuf, iw.innerPtrBytes[:0])
 
 	if len(iw.innerPtrBytes) == 0 {
@@ -504,6 +507,9 @@ func (iw *innerHashWorker) fetchAndJoin(ctx context.Context, task *indexJoinTask
 	it := task.lookupMap.NewIterator()
 	for i := 0; i < task.outerResult.NumRows(); i++ {
 		key, rowPtr := it.Next()
+		if key == nil || rowPtr == nil {
+			break
+		}
 		iw.innerPtrBytes = task.matchKeyMap.Get(key, iw.innerPtrBytes[:0])
 		if len(iw.innerPtrBytes) == 0 {
 			ptr := *(*chunk.RowPtr)(unsafe.Pointer(&rowPtr[0]))

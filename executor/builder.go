@@ -1151,6 +1151,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
 		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency,
@@ -1610,6 +1611,7 @@ func (b *executorBuilder) buildIndexJoin(v *plannercore.PhysicalIndexJoin) Execu
 	if defaultValues == nil {
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
+
 	e := &IndexJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
@@ -1621,8 +1623,8 @@ func (b *executorBuilder) buildIndexJoin(v *plannercore.PhysicalIndexJoin) Execu
 			readerBuilder: &dataReaderBuilder{innerPlan, b},
 			rowTypes:      innerTypes,
 		},
-		workerWg:      new(sync.WaitGroup),
-		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
+		workerWg: new(sync.WaitGroup),
+		joiner:        newJoinerEx(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 	}
@@ -1645,10 +1647,32 @@ func (b *executorBuilder) buildIndexJoin(v *plannercore.PhysicalIndexJoin) Execu
 		}
 		return ex
 	}
+
 	ex := &IndexHashJoin{
 		IndexJoin: *e,
 	}
 	return ex
+
+	b.ctx.GetSessionVars().PlanID++
+	id := b.ctx.GetSessionVars().PlanID
+	projFromID := fmt.Sprintf("%s_%d", plannercore.TypeProj, id)
+
+	fullExprs := expression.Column2Exprs(v.Schema().Columns)
+	for i, expr := range fullExprs {
+		fullExprs[i] = expr.ResolveIndices(v.Schema())
+	}
+	lenExpr := len(fullExprs)
+	lenInner := len(innerPlan.Schema().Columns)
+	newExpr := make([]expression.Expression, 0, lenExpr)
+	newExpr = fullExprs[lenInner:]
+	newExpr = append(newExpr, fullExprs[:lenInner]...)
+	fullExprs = newExpr
+
+	return &ProjectionExec{
+		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), projFromID, ex),
+		evaluatorSuit: expression.NewEvaluatorSuite(fullExprs, false),
+	}
+	//return ex
 }
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
