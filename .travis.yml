@@ -16,4 +16,3 @@ before_install:
   - bash gitcookie.sh
 script:
   - make dev
-  - ./hack/check-tidy.sh
