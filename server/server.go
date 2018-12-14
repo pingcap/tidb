@@ -378,6 +378,12 @@ func (s *Server) KillAllConnections() {
 	for _, conn := range s.clients {
 		atomic.StoreInt32(&conn.status, connStatusShutdown)
 		terror.Log(errors.Trace(conn.closeWithoutLock()))
+		conn.mu.RLock()
+		cancelFunc := conn.mu.cancelFunc
+		conn.mu.RUnlock()
+		if cancelFunc != nil {
+			cancelFunc()
+		}
 	}
 }
 
