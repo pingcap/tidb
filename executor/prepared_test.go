@@ -16,7 +16,6 @@ package executor_test
 import (
 	"context"
 	"math"
-	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -337,21 +336,6 @@ func (s *testSuite1) TestPreparedNameResolver(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'order clause'")
 }
 
-func (s *testSuite3) TestPrepareMaxParamCountCheck(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (v int)")
-	normalSQL, normalParams := generateBatchSQL(math.MaxUint16)
-	_, err := tk.Exec(normalSQL, normalParams...)
-	c.Assert(err, IsNil)
-
-	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
-	_, err = tk.Exec(bigSQL, bigParams...)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[executor:1390]Prepared statement contains too many placeholders")
-}
-
 func (s *testSuite1) TestPrepareWithAggregation(c *C) {
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	orgCapacity := plannercore.PreparedPlanCacheCapacity
@@ -385,16 +369,6 @@ func (s *testSuite1) TestPrepareWithAggregation(c *C) {
 		r = tk.MustQuery(`execute stmt using @id;`)
 		r.Check(testkit.Rows("1"))
 	}
-}
-
-func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
-	params := make([]interface{}, 0, paramCount)
-	placeholders := make([]string, 0, paramCount)
-	for i := 0; i < paramCount; i++ {
-		params = append(params, i)
-		placeholders = append(placeholders, "(?)")
-	}
-	return "insert into t values " + strings.Join(placeholders, ","), params
 }
 
 func (s *testSuite1) TestPreparedIssue7579(c *C) {
