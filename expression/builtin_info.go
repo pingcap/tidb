@@ -431,13 +431,12 @@ type builtinBenchmarkStringSig struct {
 func (b *builtinBenchmarkStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
-	var i int64 = 0
-	for ; i < x; i++ {
+	for i := int64(0); i < x; i++ {
 		_, _, err := b.args[1].EvalString(b.ctx, row)
 		if err != nil {
-			return 0, isNull, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 	}
 	return 0, false, nil
@@ -456,13 +455,13 @@ type builtinBenchmarkJSONSig struct {
 func (b *builtinBenchmarkJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var i int64 = 0
 	for ; i < x; i++ {
 		_, _, err := b.args[1].EvalJSON(b.ctx, row)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 	}
 	return 0, false, nil
@@ -481,13 +480,13 @@ type builtinBenchmarkIntSig struct {
 func (b *builtinBenchmarkIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var i int64 = 0
 	for ; i < x; i++ {
 		_, _, err := b.args[1].EvalInt(b.ctx, row)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 	}
 	return 0, false, nil
@@ -506,13 +505,13 @@ type builtinBenchmarkDecimalSig struct {
 func (b *builtinBenchmarkDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var i int64 = 0
 	for ; i < x; i++ {
 		_, _, err := b.args[1].EvalDecimal(b.ctx, row)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 	}
 	return 0, false, nil
@@ -531,13 +530,13 @@ type builtinBenchmarkRealSig struct {
 func (b *builtinBenchmarkRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var i int64 = 0
 	for ; i < x; i++ {
 		_, _, err := b.args[1].EvalReal(b.ctx, row)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 	}
 	return 0, false, nil
@@ -556,13 +555,13 @@ type builtinBenchmarkDurationSig struct {
 func (b *builtinBenchmarkDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var i int64 = 0
 	for ; i < x; i++ {
 		_, _, err := b.args[1].EvalDuration(b.ctx, row)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 	}
 	return 0, false, nil
@@ -581,13 +580,13 @@ type builtinBenchmarkTimeSig struct {
 func (b *builtinBenchmarkTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, true, errors.Trace(err)
 	}
 	var i int64 = 0
 	for ; i < x; i++ {
 		_, _, err := b.args[1].EvalTime(b.ctx, row)
 		if err != nil {
-			return 0, false, errors.Trace(err)
+			return 0, true, errors.Trace(err)
 		}
 	}
 	return 0, false, nil

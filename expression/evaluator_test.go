@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"log"
 	"testing"
 	"time"
 
@@ -116,7 +115,6 @@ func (s *testEvaluatorSuite) datumsToConstants(datums []types.Datum) []Expressio
 	constants := make([]Expression, 0, len(datums))
 	for _, d := range datums {
 		ft := s.kindToFieldType(d.Kind())
-		log.Print(d.Kind())
 		ft.Flen, ft.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 		constants = append(constants, &Constant{Value: d, RetType: &ft})
 	}

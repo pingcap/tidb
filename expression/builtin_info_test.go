@@ -14,6 +14,9 @@
 package expression
 
 import (
+	"math"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -25,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testleak"
-	"math"
-	"time"
 )
 
 func (s *testEvaluatorSuite) TestDatabase(c *C) {
@@ -142,9 +143,7 @@ func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 		{[]interface{}{1000, jsonObj}, 0, false, false},
 	}
 	for _, test := range cases {
-
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(test.args...)))
-
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
