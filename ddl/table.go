@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/admin"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -73,10 +74,22 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 }
 
 func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// check gc enable status again.
+	gcEnable, isNull, err := checkGCEnable(w)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if isNull || gcEnable {
+		job.State = model.JobStateCancelled
+		return ver, errors.Errorf("can not found gc enable variable in mysql.tidb")
+	}
+
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	var autoID, dropJobID int64
-	if err = job.DecodeArgs(tbInfo, &autoID, &dropJobID); err != nil {
+	var enableGCAfterRecover bool
+	if err = job.DecodeArgs(tbInfo, &autoID, &dropJobID, &enableGCAfterRecover); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -103,6 +116,12 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	err = t.CreateTableAndSetAutoID(schemaID, tbInfo, autoID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if enableGCAfterRecover {
+		err = enableGC(w)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -164,6 +183,26 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func enableGC(w *worker) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return admin.EnableGCAfterRecover(ctx)
+}
+
+func checkGCEnable(w *worker) (enable bool, isNull bool, err error) {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return false, false, errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return admin.CheckGCEnableStatus(ctx)
 }
 
 type splitableStore interface {

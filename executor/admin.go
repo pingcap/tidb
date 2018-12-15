@@ -178,6 +178,26 @@ func (e *RestoreTableExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Open interface.
 func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	enableGCAfterRecover, isNull, err := admin.CheckGCEnableStatus(e.ctx)
+	if err != nil {
+		return err
+	}
+	if isNull {
+		return errors.Errorf("can not found gc enable variable in mysql.tidb")
+	}
+	if enableGCAfterRecover {
+		err = admin.DisableGCForRecover(e.ctx)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			// if err == nil, should be enable gc in ddl owner.
+			if err != nil {
+				admin.EnableGCAfterRecover(e.ctx)
+			}
+		}()
+	}
+
 	t := meta.NewMeta(e.ctx.Txn(true))
 	job, err := t.GetHistoryDDLJob(e.jobID)
 	if err != nil {
@@ -214,7 +234,7 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
 	}
 	// Call DDL RestoreTable
-	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID)
+	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID, enableGCAfterRecover)
 	return errors.Trace(err)
 
 }

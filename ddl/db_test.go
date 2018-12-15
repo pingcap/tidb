@@ -1878,6 +1878,8 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	c.Assert(row.GetString(1), Equals, "test_restore")
 	c.Assert(row.GetString(3), Equals, "drop table")
 	jobID := row.GetInt64(0)
+	// enable GC first.
+	err = admin.EnableGCAfterRecover(tk.Se)
 	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
 	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))

@@ -137,21 +137,6 @@ func testTruncateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInf
 	return job
 }
 
-func testRestoreTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, dropJob *model.Job) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionRestoreTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo, 0, dropJob.ID},
-	}
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
 func testCheckTableState(c *C, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
 	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -239,12 +224,6 @@ func (s *testTableSuite) TestTable(c *C) {
 
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)
-
-	// for restore table
-	job = testRestoreTable(c, ctx, d, s.dbInfo, tblInfo, job)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
-	testCheckJobDone(c, d, job, true)
 
 	// for truncate table
 	tblInfo = testTableInfo(c, d, "tt", 3)
