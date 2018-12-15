@@ -67,7 +67,7 @@ import (
 
 // TestLeakCheckCnt is the check count in the pacakge of executor.
 // In this package CustomParallelSuiteFlag is true, so we need to increase check count.
-const TestLeakCheckCnt = 10000
+const TestLeakCheckCnt = 1000
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -846,6 +846,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
+	rs.Close()
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
