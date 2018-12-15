@@ -85,10 +85,21 @@ func (a *aggregationEliminateChecker) rewriteExpr(ctx sessionctx.Context, aggFun
 func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
+	// If is count(expr not null), we will change it to constant 1.
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
+	allConstant := true
 	for _, expr := range exprs {
-		isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
-		isNullExprs = append(isNullExprs, isNullExpr)
+		if mysql.HasNotNullFlag(expr.GetType().Flag) {
+			isNullExprs = append(isNullExprs, expression.One)
+		} else {
+			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+			isNullExprs = append(isNullExprs, isNullExpr)
+			allConstant = false
+		}
+	}
+
+	if allConstant {
+		return expression.One
 	}
 	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
 	newExpr := expression.NewFunctionInternal(ctx, ast.If, targetTp, innerExpr, expression.Zero, expression.One)
