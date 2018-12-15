@@ -153,7 +153,7 @@ func (s *seqTestSuite) TestTSOFail(c *C) {
 
 	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail")
-	_, err := tk.Exec(`select * from t`)
+	err := tk.ExecNoRes(`select * from t`)
 	c.Assert(err, NotNil)
 }
 
