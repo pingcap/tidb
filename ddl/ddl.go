@@ -240,6 +240,8 @@ type DDL interface {
 	GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (int64, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
+	// GetHook gets the hook. It's exported for testing.
+	GetHook() Callback
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -559,6 +561,14 @@ func (d *ddl) callHookOnChanged(err error) error {
 // SetBinlogClient implements DDL.SetBinlogClient interface.
 func (d *ddl) SetBinlogClient(binlogCli *pumpcli.PumpsClient) {
 	d.binlogCli = binlogCli
+}
+
+// GetHook implements DDL.GetHook interface.
+func (d *ddl) GetHook() Callback {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.mu.hook
 }
 
 // DDL error codes.
