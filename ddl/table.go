@@ -72,6 +72,43 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 }
 
+func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	schemaID := job.SchemaID
+	tbInfo := &model.TableInfo{}
+	var autoID, dropJobID int64
+	if err = job.DecodeArgs(tbInfo, &autoID, &dropJobID); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Remove dropped table DDL job from gc_delete_range table.
+	err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tbInfo.ID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	tbInfo.State = model.StatePublic
+	tbInfo.UpdateTS = t.StartTS
+	err = t.CreateTableAndSetAutoID(schemaID, tbInfo, autoID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+	return ver, nil
+}
+
 func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID

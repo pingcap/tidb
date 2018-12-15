@@ -1856,3 +1856,36 @@ LOOP:
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(c, "drop table t1")
 }
+
+func (s *testDBSuite) TestRestoreTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_restore")
+	tk.MustExec("use test_restore")
+	tk.MustExec("create table t_recover (a int);")
+	defer ddl.SetEmulatorGCEnable(ddl.GetEmulatorGCStatus())
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	originGC := ddl.GetEmulatorGCStatus()
+	defer ddl.SetEmulatorGCEnable(originGC)
+	ddl.SetEmulatorGCEnable(false)
+	tk.MustExec("insert into t_recover values (1),(2),(3)")
+	tk.MustExec("drop table t_recover")
+	rs, err := tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	row := rows[0]
+	c.Assert(row.GetString(1), Equals, "test_restore")
+	c.Assert(row.GetString(3), Equals, "drop table")
+	jobID := row.GetInt64(0)
+	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
+	// check recover table meta and data record.
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	// check recover table autoID.
+	tk.MustExec("insert into t_recover values (4),(5),(6)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+
+	// restore table by none exits job.
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
+	c.Assert(err, NotNil)
+}

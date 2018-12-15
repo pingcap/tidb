@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -22,14 +23,17 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -154,6 +158,65 @@ func (e *CheckIndexRangeExec) constructIndexScanPB() *tipb.Executor {
 // Close implements the Executor Close interface.
 func (e *CheckIndexRangeExec) Close() error {
 	return nil
+}
+
+// RestoreTableExec represents a recover table executor.
+// It is built from "admin restore table by job" statement,
+// is used to recover the table that deleted by mistake.
+type RestoreTableExec struct {
+	baseExecutor
+	jobID int64
+}
+
+// Open implements the Executor Open interface.
+func (e *RestoreTableExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// Next implements the Executor Open interface.
+func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	t := meta.NewMeta(e.ctx.Txn(true))
+	job, err := t.GetHistoryDDLJob(e.jobID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if job == nil {
+		return admin.ErrDDLJobNotFound.GenWithStackByArgs(e.jobID)
+	}
+	if job.Type != model.ActionDropTable {
+		return errors.Errorf("Job %v doesn't drop any table", job.ID)
+	}
+
+	dom := domain.GetDomain(e.ctx)
+	// Get the snapshot infoSchema before drop table.
+	snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// Get table meta from snapshot infoSchema.
+	table, ok := snapInfo.TableByID(job.TableID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", job.SchemaID),
+			fmt.Sprintf("(Table ID %d)", job.TableID),
+		)
+	}
+	// Get table original autoID before table drop.
+	m, err := dom.GetSnapshotMeta(job.StartTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	autoID, err := m.GetAutoTableID(job.SchemaID, job.TableID)
+	if err != nil {
+		return errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
+	}
+	// Call DDL RestoreTable
+	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID)
+	return errors.Trace(err)
+
 }
 
 // RecoverIndexExec represents a recover index executor.

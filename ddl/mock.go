@@ -126,6 +126,11 @@ func (dr *mockDelRange) addDelRangeJob(job *model.Job) error {
 	return nil
 }
 
+// removeFromGCDeleteRange implements delRangeManager interface.
+func (dr *mockDelRange) removeFromGCDeleteRange(jobID, tableID int64) error {
+	return nil
+}
+
 // start implements delRangeManager interface.
 func (dr *mockDelRange) start() {
 	return

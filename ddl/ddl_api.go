@@ -980,6 +980,18 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
+func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64) (err error) {
+	job := &model.Job{
+		SchemaID:   schemaID,
+		TableID:    tbInfo.ID,
+		Type:       model.ActionRestoreTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo, autoID, dropJobID},
+	}
+	err = d.doDDLJob(ctx, job)
+	return errors.Trace(err)
+}
+
 func checkPartitionByHash(pi *model.PartitionInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return errors.Trace(err)
