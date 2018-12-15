@@ -58,7 +58,7 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,

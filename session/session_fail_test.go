@@ -14,6 +14,8 @@
 package session_test
 
 import (
+	"context"
+
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
@@ -27,8 +29,22 @@ func (s *testSessionSuite) TestFailStatementCommit(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
 	gofail.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`)
-	tk.MustExec("insert into t values (2)")
-	_, err := tk.Exec("commit")
+	_, err := tk.Exec("insert into t values (2)")
 	c.Assert(err, NotNil)
-	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestGetTSFailDirtyState(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int)")
+
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
+	tk.Se.Execute(ctx, "select * from t")
+
+	// Fix a bug that active txn fail set TxnState.fail to error, and then the following write
+	// affected by this fail flag.
+	tk.MustExec("insert into t values (1)")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
 }
