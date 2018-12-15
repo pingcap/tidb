@@ -200,6 +200,7 @@ func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 		return errors.Trace(err)
 	}
 	safePointTS := variable.GoTimeToTS(safePointTime)
+	fmt.Printf("\n\nvalid safe point: %v\nformat: %v\nsafeTS: %v\nsnapTs: %v-------------\n", safePointTime, safePointTime.Format(gcTimeFormat), safePointTS, snapshotTS)
 	if safePointTS > snapshotTS {
 		return variable.ErrSnapshotTooOld.GenWithStackByArgs(safePointString)
 	}

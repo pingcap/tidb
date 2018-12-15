@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
@@ -1863,13 +1864,24 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	tk.MustExec("use test_restore")
 	tk.MustExec("create table t_recover (a int);")
 	defer ddl.SetEmulatorGCEnable(ddl.GetEmulatorGCStatus())
+
 	// disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
 	originGC := ddl.GetEmulatorGCStatus()
 	defer ddl.SetEmulatorGCEnable(originGC)
 	ddl.SetEmulatorGCEnable(false)
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
+
+	safePointSql := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
+
 	rs, err := tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
@@ -1878,9 +1890,30 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	c.Assert(row.GetString(1), Equals, "test_restore")
 	c.Assert(row.GetString(3), Equals, "drop table")
 	jobID := row.GetInt64(0)
-	// enable GC first.
+
+	// if gc enable is not exists in mysql.tidb
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_enable'")
+
 	err = admin.EnableGCAfterRecover(tk.Se)
+	c.Assert(err, IsNil)
+
+	// if gc safe point is not exists in mysql.tidb
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
+
+	// recover job is before gc safe point
+	tk.MustExec(fmt.Sprintf(safePointSql, timeAfterDrop))
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, variable.ErrSnapshotTooOld.GenWithStackByArgs(timeAfterDrop).Error())
+
+	// recover job after gc safe point
+	tk.MustExec(fmt.Sprintf(safePointSql, timeBeforeDrop))
 	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
+
 	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
 	// check recover table autoID.

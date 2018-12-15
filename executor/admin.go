@@ -178,12 +178,9 @@ func (e *RestoreTableExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Open interface.
 func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	enableGCAfterRecover, isNull, err := admin.CheckGCEnableStatus(e.ctx)
+	enableGCAfterRecover, err := admin.CheckGCEnableStatus(e.ctx)
 	if err != nil {
 		return err
-	}
-	if isNull {
-		return errors.Errorf("can not found gc enable variable in mysql.tidb")
 	}
 	if enableGCAfterRecover {
 		err = admin.DisableGCForRecover(e.ctx)
@@ -208,6 +205,12 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	if job.Type != model.ActionDropTable {
 		return errors.Errorf("Job %v doesn't drop any table", job.ID)
+	}
+
+	// check gc safe point
+	err = validateSnapshot(e.ctx, job.StartTS)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	dom := domain.GetDomain(e.ctx)

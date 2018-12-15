@@ -75,12 +75,12 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 
 func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// check gc enable status again.
-	gcEnable, isNull, err := checkGCEnable(w)
+	gcEnable, err := checkGCEnable(w)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if isNull || gcEnable {
+	if gcEnable {
 		job.State = model.JobStateCancelled
 		return ver, errors.Errorf("can not found gc enable variable in mysql.tidb")
 	}
@@ -195,10 +195,10 @@ func enableGC(w *worker) error {
 	return admin.EnableGCAfterRecover(ctx)
 }
 
-func checkGCEnable(w *worker) (enable bool, isNull bool, err error) {
+func checkGCEnable(w *worker) (enable bool, err error) {
 	ctx, err := w.sessPool.get()
 	if err != nil {
-		return false, false, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	defer w.sessPool.put(ctx)
 

@@ -712,16 +712,16 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 }
 
 // CheckGCEnableStatus is
-func CheckGCEnableStatus(ctx sessionctx.Context) (enable bool, isNull bool, err error) {
+func CheckGCEnableStatus(ctx sessionctx.Context) (enable bool, err error) {
 	sql := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, "tikv_gc_enable")
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return false, false, errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if len(rows) != 1 {
-		return false, true, nil
+		return false, errors.New("can not get 'tikv_gc_enable'")
 	}
-	return rows[0].GetString(0) == "true", false, nil
+	return rows[0].GetString(0) == "true", nil
 }
 
 // DisableGCForRecover is
