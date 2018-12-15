@@ -166,6 +166,18 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			}
 		}
 	}
+
+	// There are two known cases that the s.txn.fail is not nil:
+	// 1. active transaction fail, can't get start ts for example
+	// 2. transaction too large and StmtCommit fail
+	// On both cases, we can return error in advance.
+	if se.txn.fail != nil {
+		err = se.txn.fail
+		se.txn.cleanup()
+		se.txn.fail = nil
+		return nil, errors.Trace(err)
+	}
+
 	if !sessVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")

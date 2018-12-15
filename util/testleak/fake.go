@@ -21,7 +21,7 @@ func BeforeTest() {
 }
 
 // AfterTest is a dummy implementation when build tag 'leak' is not set.
-func AfterTest(c *check.C) func() {
+func AfterTest(c *check.C, checkCnt ...int) func() {
 	return func() {
 	}
 }
