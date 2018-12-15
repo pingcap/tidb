@@ -15,6 +15,8 @@ package session
 
 import (
 	"github.com/juju/errors"
+	"runtime/debug"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -125,6 +127,16 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		err := st.fail
 		st.fail = nil
 		return errors.Trace(err)
+	}
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
+			st,
+			st.mutations,
+			st.dirtyTableOP,
+			st.buf,
+			debug.Stack())
+		st.cleanup()
+		return errors.New("invalid transaction")
 	}
 	return errors.Trace(st.Transaction.Commit(ctx))
 }
@@ -240,9 +252,15 @@ type txnFuture struct {
 	future oracle.Future
 	store  kv.Storage
 	span   opentracing.Span
+
+	mockFail bool
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
+	if tf.mockFail {
+		return nil, errors.New("mock get timestamp fail")
+	}
+
 	startTS, err := tf.future.Wait()
 	tf.span.Finish()
 	if err == nil {
@@ -257,7 +275,11 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
 	oracleStore := s.store.GetOracle()
 	tsFuture := oracleStore.GetTimestampAsync(ctx)
-	return &txnFuture{tsFuture, s.store, span}
+	ret := &txnFuture{future: tsFuture, store: s.store, span: span}
+	if x := ctx.Value("mockGetTSFail"); x != nil {
+		ret.mockFail = true
+	}
+	return ret
 }
 
 // StmtCommit implements the sessionctx.Context interface.
