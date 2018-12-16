@@ -158,24 +158,14 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
-		if sctx.Txn(false).Valid() {
+		txn, _ := sctx.Txn(false)
+		if txn.Valid() {
 			if err != nil {
 				sctx.StmtRollback()
 			} else {
-				sctx.StmtCommit()
+				err = sctx.StmtCommit()
 			}
 		}
-	}
-
-	// There are two known cases that the s.txn.fail is not nil:
-	// 1. active transaction fail, can't get start ts for example
-	// 2. transaction too large and StmtCommit fail
-	// On both cases, we can return error in advance.
-	if se.txn.fail != nil {
-		err = se.txn.fail
-		se.txn.cleanup()
-		se.txn.fail = nil
-		return nil, errors.Trace(err)
 	}
 
 	if !sessVars.InTxn() {

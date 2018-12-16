@@ -844,7 +844,10 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 	}
 
-	txn := loadDataInfo.Ctx.Txn(true)
+	txn, err := loadDataInfo.Ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	loadDataInfo.Ctx.StmtCommit()
 	if err != nil {
 		if txn != nil && txn.Valid() {

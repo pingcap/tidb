@@ -626,7 +626,11 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
-	if s.Txn(false).Valid() {
+	txn, err := s.Txn(false)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if txn.Valid() {
 		snapshot = s.txn.StartTS()
 	}
 	if s.sessionVars.SnapshotTS != 0 {
@@ -1026,7 +1030,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn(active bool) kv.Transaction {
+func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if s.txn.pending() && active {
 		// Transaction is lazy intialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
@@ -1034,8 +1038,8 @@ func (s *session) Txn(active bool) kv.Transaction {
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
 			log.Error("active transaction fail, err = ", err)
-			s.txn.fail = errors.Trace(err)
 			s.txn.cleanup()
+			return &s.txn, errors.Trace(err)
 		} else {
 			s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		}
@@ -1043,7 +1047,7 @@ func (s *session) Txn(active bool) kv.Transaction {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 	}
-	return &s.txn
+	return &s.txn, nil
 }
 
 func (s *session) NewTxn(ctx context.Context) error {

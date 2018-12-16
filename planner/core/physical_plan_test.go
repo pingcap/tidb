@@ -773,7 +773,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		// Make txn not read only.
-		se.Txn(true).Set(kv.Key("AAA"), []byte("BBB"))
+		txn, err := se.Txn(true)
+		c.Assert(err, IsNil)
+		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		se.StmtCommit()
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -1321,7 +1323,9 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		// Make txn not read only.
-		se.Txn(true).Set(kv.Key("AAA"), []byte("BBB"))
+		txn, err := se.Txn(true)
+		c.Assert(err, IsNil)
+		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		se.StmtCommit()
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)

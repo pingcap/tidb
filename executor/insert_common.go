@@ -347,7 +347,11 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	if !sessVars.LightningMode {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
+		txn, err := e.ctx.Txn(true)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	}
 	return nil
 }
@@ -566,11 +570,15 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 }
 
 func (e *InsertValues) addRecord(row []types.Datum) (int64, error) {
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
-		e.ctx.Txn(true).SetOption(kv.PresumeKeyNotExists, nil)
+		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
 	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn(true).DelOption(kv.PresumeKeyNotExists)
+	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
