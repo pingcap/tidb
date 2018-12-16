@@ -129,6 +129,27 @@ func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 	}
 }
 
+func (s *testJSONSuite) TestQuoteString(c *C) {
+	var tests = []struct {
+		j      string
+		quoted string
+	}{
+		{j: "3", quoted: `3`},
+		{j: "hello, \"escaped quotes\" world", quoted: `"hello, \"escaped quotes\" world"`},
+		{j: "你", quoted: `你`},
+		{j: "true", quoted: `true`},
+		{j: "null", quoted: `null`},
+		{j: `"`, quoted: `"\""`},
+		{j: `'`, quoted: `'`},
+		{j: `''`, quoted: `''`},
+		{j: ``, quoted: ``},
+		{j: "\\ \" \b \f \n \r \t", quoted: `"\\ \" \b \f \n \r \t"`},
+	}
+	for _, tt := range tests {
+		c.Assert(quoteString(tt.j), Equals, tt.quoted)
+	}
+}
+
 func (s *testJSONSuite) TestBinaryJSONModify(c *C) {
 	var tests = []struct {
 		base     string
@@ -358,17 +379,17 @@ func (s *testJSONSuite) TestBinaryJSONExtractCallback(c *C) {
 		pathExpr string
 		expected []ExpectedPair
 	}{
-		/*FAIL {bj1, "$.a", []ExpectedPair{
+		{bj1, "$.a", []ExpectedPair{
 			{"$.a", mustParseBinaryFromString(c, `[1, "2", {"aa": "bb"}, 4.0, {"aa": "cc"}]`)},
-		}},*/
+		}},
 		{bj2, "$.a", []ExpectedPair{}},
 		{bj1, "$[0]", []ExpectedPair{}}, // in extractToCallback/Walk/Search, DON'T autowraped bj as an array.
-		/*FAIL {bj2, "$[0]", []ExpectedPair{
+		{bj2, "$[0]", []ExpectedPair{
 			{"$[0]", mustParseBinaryFromString(c, `{"a": 1, "b": true}`)},
-		}},*/
-		/*FAIL {bj1, "$.a[2].aa", []ExpectedPair{
+		}},
+		{bj1, "$.a[2].aa", []ExpectedPair{
 			{"$.a[2].aa", mustParseBinaryFromString(c, `"bb"`)},
-		}},*/
+		}},
 		{bj1, "$.a[*].aa", []ExpectedPair{
 			{"$.a[2].aa", mustParseBinaryFromString(c, `"bb"`)},
 			{"$.a[4].aa", mustParseBinaryFromString(c, `"cc"`)},
@@ -383,12 +404,12 @@ func (s *testJSONSuite) TestBinaryJSONExtractCallback(c *C) {
 			{"$.a[2].aa", mustParseBinaryFromString(c, `"bb"`)},
 			{"$.a[4].aa", mustParseBinaryFromString(c, `"cc"`)},
 		}},
-		/*FAIL {bj1, `$."hello"`, []ExpectedPair{
-			{`$."hello"`, mustParseBinaryFromString(c, `"world"`)},
-		}},*/
-		/*FAIL {bj1, `$**[1]`, []ExpectedPair{
+		{bj1, `$."\"hello\""`, []ExpectedPair{
+			{`$."\"hello\""`, mustParseBinaryFromString(c, `"world"`)},
+		}},
+		{bj1, `$**[1]`, []ExpectedPair{
 			{`$.a[1]`, mustParseBinaryFromString(c, `"2"`)},
-		}},*/
+		}},
 	}
 
 	for _, tt := range tests {
@@ -407,6 +428,69 @@ func (s *testJSONSuite) TestBinaryJSONExtractCallback(c *C) {
 		}
 		fullpath := PathExpression{legs: make([]pathLeg, 0), flags: pathExpressionFlag(0)}
 		_, err = tt.bj.extractToCallback(pe, cb, fullpath)
+		c.Assert(err, IsNil)
+		c.Assert(count, Equals, len(tt.expected))
+	}
+}
+
+func (s *testJSONSuite) TestBinaryJSONWalk(c *C) {
+	bj1 := mustParseBinaryFromString(c, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`)
+	bj2 := mustParseBinaryFromString(c, `{}`)
+
+	type ExpectedPair struct {
+		path string
+		bj   BinaryJSON
+	}
+	var tests = []struct {
+		bj       BinaryJSON
+		pathExpr string
+		expected []ExpectedPair
+	}{
+		{bj1, ``, []ExpectedPair{
+			{`$`, mustParseBinaryFromString(c, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`)},
+			{`$[0]`, mustParseBinaryFromString(c, `"abc"`)},
+			{`$[1]`, mustParseBinaryFromString(c, `[{"k": "10"}, "def"]`)},
+			{`$[1][0]`, mustParseBinaryFromString(c, `{"k": "10"}`)},
+			{`$[1][0].k`, mustParseBinaryFromString(c, `"10"`)},
+			{`$[1][1]`, mustParseBinaryFromString(c, `"def"`)},
+			{`$[2]`, mustParseBinaryFromString(c, `{"x":"abc"}`)},
+			{`$[2].x`, mustParseBinaryFromString(c, `"abc"`)},
+			{`$[3]`, mustParseBinaryFromString(c, `{"y":"bcd"}`)},
+			{`$[3].y`, mustParseBinaryFromString(c, `"bcd"`)},
+		}},
+		{bj1, `$[1]`, []ExpectedPair{
+			{`$[1]`, mustParseBinaryFromString(c, `[{"k": "10"}, "def"]`)},
+			{`$[1][0]`, mustParseBinaryFromString(c, `{"k": "10"}`)},
+			{`$[1][0].k`, mustParseBinaryFromString(c, `"10"`)},
+			{`$[1][1]`, mustParseBinaryFromString(c, `"def"`)},
+		}},
+		{bj1, `$.m`, []ExpectedPair{}},
+		{bj2, ``, []ExpectedPair{
+			{`$`, mustParseBinaryFromString(c, `{}`)},
+		}},
+	}
+
+	for _, tt := range tests {
+		count := 0
+		cb := func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error) {
+			c.Assert(count, Less, len(tt.expected))
+			if count < len(tt.expected) {
+				c.Assert(fullpath.String(), Equals, tt.expected[count].path)
+				c.Assert(bj.String(), Equals, tt.expected[count].bj.String())
+			}
+			count++
+			return false, nil
+		}
+
+		var err error
+		if len(tt.pathExpr) > 0 {
+			pe, errPath := ParseJSONPathExpr(tt.pathExpr)
+			c.Assert(errPath, IsNil)
+
+			err = tt.bj.Walk(cb, pe)
+		} else {
+			err = tt.bj.Walk(cb)
+		}
 		c.Assert(err, IsNil)
 		c.Assert(count, Equals, len(tt.expected))
 	}

@@ -624,3 +624,74 @@ func (s *testEvaluatorSuite) TestJSONDepth(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONSearch]
+	jsonString := `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`
+	jsonString2 := `["abc", [{"k": "10"}, "def"], {"x":"ab%d"}, {"y":"abcd"}]`
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// simple case
+		{[]interface{}{jsonString, `one`, `abc`}, `"$[0]"`, true},
+		{[]interface{}{jsonString, `all`, `abc`}, `["$[0]", "$[2].x"]`, true},
+		{[]interface{}{jsonString, `all`, `ghi`}, nil, true},
+		{[]interface{}{jsonString, `all`, `10`}, `"$[1][0].k"`, true},
+		{[]interface{}{jsonString, `all`, `10`, nil, `$`}, `"$[1][0].k"`, true},
+		{[]interface{}{jsonString, `all`, `10`, nil, `$[*]`}, `"$[1][0].k"`, true},
+		{[]interface{}{jsonString, `all`, `10`, nil, `$**.k`}, `"$[1][0].k"`, true},
+		{[]interface{}{jsonString, `all`, `10`, nil, `$[*][0].k`}, `"$[1][0].k"`, true},
+		{[]interface{}{jsonString, `all`, `10`, nil, `$[1]`}, `"$[1][0].k"`, true},
+		{[]interface{}{jsonString, `all`, `10`, nil, `$[1][0]`}, `"$[1][0].k"`, true},
+		{[]interface{}{jsonString, `all`, `abc`, nil, `$[2]`}, `"$[2].x"`, true},
+
+		// search pattern
+		{[]interface{}{jsonString, `all`, `%a%`}, `["$[0]", "$[2].x"]`, true},
+		{[]interface{}{jsonString, `all`, `%b%`}, `["$[0]", "$[2].x", "$[3].y"]`, true},
+		{[]interface{}{jsonString, `all`, `%b%`, nil, `$[0]`}, `"$[0]"`, true},
+		{[]interface{}{jsonString, `all`, `%b%`, nil, `$[2]`}, `"$[2].x"`, true},
+		{[]interface{}{jsonString, `all`, `%b%`, nil, `$[1]`}, nil, true},
+		{[]interface{}{jsonString, `all`, `%b%`, ``, `$[1]`}, nil, true},
+		{[]interface{}{jsonString, `all`, `%b%`, nil, `$[3]`}, `"$[3].y"`, true},
+		{[]interface{}{jsonString2, `all`, `ab_d`}, `["$[2].x", "$[3].y"]`, true},
+
+		// escape char
+		{[]interface{}{jsonString2, `all`, `ab%d`}, `["$[2].x", "$[3].y"]`, true},
+		{[]interface{}{jsonString2, `all`, `ab\%d`}, `"$[2].x"`, true},
+		{[]interface{}{jsonString2, `all`, `ab|%d`, `|`}, `"$[2].x"`, true},
+
+		// error handle
+		{[]interface{}{nil, `all`, `abc`}, nil, true},                     // NULL json
+		{[]interface{}{`a`, `all`, `abc`}, nil, false},                    // non json
+		{[]interface{}{jsonString, `wrong`, `abc`}, nil, false},           // wrong one_or_all
+		{[]interface{}{jsonString, `all`, nil}, nil, true},                // NULL search_str
+		{[]interface{}{jsonString, `all`, `abc`, `??`}, nil, false},       // wrong escape_char
+		{[]interface{}{jsonString, `all`, `abc`, nil, nil}, nil, true},    // NULL path
+		{[]interface{}{jsonString, `all`, `abc`, nil, `$xx`}, nil, false}, // wrong path
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+			switch x := t.expected.(type) {
+			case string:
+				j1, err := json.ParseBinaryFromString(x)
+				c.Assert(err, IsNil)
+				j2 := d.GetMysqlJSON()
+				cmp := json.CompareBinary(j1, j2)
+				//fmt.Println(j1, j2)
+				c.Assert(cmp, Equals, 0)
+			case nil:
+				c.Assert(d.IsNull(), IsTrue)
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}

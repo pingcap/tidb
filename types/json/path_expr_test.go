@@ -71,6 +71,7 @@ func (s *testJSONSuite) TestPathExprToString(c *C) {
 		{"$.a[*]"},
 		{"$.*[2]"},
 		{"$**.a[3]"},
+		{`$."\"hello\""`},
 	}
 	for _, tt := range tests {
 		pe, err := ParseJSONPathExpr(tt.exprString)

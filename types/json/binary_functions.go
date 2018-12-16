@@ -141,6 +141,67 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	return
 }
 
+// quoteString escape spe for JSON_QUOTE
+// https://dev.mysql.com/doc/refman/5.7/en/json-creation-functions.html#function_json-quote
+// TODO: add JSON_QUOTE builtin
+func quoteString(s string) string {
+	var escapeByteMap = map[byte]string{
+		'\\': "\\\\",
+		'"':  "\\\"",
+		'\b': "\\b",
+		'\f': "\\f",
+		'\n': "\\n",
+		'\r': "\\r",
+		'\t': "\\t",
+	}
+
+	ret := new(bytes.Buffer)
+	ret.WriteByte('"')
+
+	start := 0
+	hasEscaped := false
+
+	for i := 0; i < len(s); {
+		if b := s[i]; b < utf8.RuneSelf {
+			escaped, ok := escapeByteMap[b]
+			if ok {
+				if start < i {
+					ret.WriteString(s[start:i])
+				}
+				hasEscaped = true
+				ret.WriteString(escaped)
+				i++
+				start = i
+			} else {
+				i++
+			}
+		} else {
+			c, size := utf8.DecodeRune([]byte(s[i:]))
+			if c == utf8.RuneError && size == 1 { // refer to codes of `binary.marshalStringTo`
+				if start < i {
+					ret.WriteString(s[start:i])
+				}
+				hasEscaped = true
+				ret.WriteString(`\ufffd`)
+				i += size
+				start = i
+				continue
+			}
+			i += size
+		}
+	}
+
+	if start < len(s) {
+		ret.WriteString(s[start:])
+	}
+
+	if hasEscaped {
+		ret.WriteByte('"')
+		return ret.String()
+	}
+	return ret.String()[1:]
+}
+
 // Extract receives several path expressions as arguments, matches them in bj, and returns:
 //  ret: target JSON matched any path expressions. maybe autowrapped as an array.
 //  found: true if any path expressions matched.
