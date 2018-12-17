@@ -60,6 +60,11 @@ func (st *TxnState) Valid() bool {
 	return st.Transaction != nil && st.Transaction.Valid()
 }
 
+// Fail returns st.fail, TODO: remove this func after we removed the st.fail.
+func (st *TxnState) Fail() error {
+	return st.fail
+}
+
 func (st *TxnState) pending() bool {
 	return st.Transaction == nil && st.txnFuture != nil
 }

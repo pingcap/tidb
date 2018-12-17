@@ -52,3 +52,9 @@ type SQLExecutor interface {
 type SQLParser interface {
 	ParseSQL(sql, charset, collation string) ([]ast.StmtNode, error)
 }
+
+// Failer is temporary interface to use Fail method
+// TODO: remove this after we remove TxnState.fail.
+type Failer interface {
+	Fail() error
+}

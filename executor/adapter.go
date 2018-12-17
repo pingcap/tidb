@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -256,6 +257,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		}
 		txn := sctx.Txn(true)
 		if !txn.Valid() {
+			if failer, ok := txn.(sqlexec.Failer); ok && failer.Fail() != nil {
+				return nil, failer.Fail()
+			}
 			return nil, errors.New("active transaction fail")
 		}
 	}
