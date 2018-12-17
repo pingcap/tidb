@@ -81,11 +81,6 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
-
-		if s.cfg.RunPromsExporter {
-			prometheus.Register(newTiDBPromsExporter(tikvHandlerTool))
-			log.Info("run TiDB Prometheus Exporter on current server")
-		}
 	}
 	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {

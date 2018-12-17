@@ -369,8 +369,9 @@ func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, er
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	timeout, _ := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
+	cancelFunc()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
