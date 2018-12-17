@@ -38,7 +38,16 @@ type Node interface {
 }
 ```
 
-In order to output sql text in different formats, I introduced nine flags:
+In order to output sql text in different formats, I introduced nine flags, There are mutually exclusive group of `RestoreFlags`:  
+
+[RestoreStringSingleQuotes, RestoreStringDoubleQuotes]  
+[RestoreStringEscapeBackslash]  
+[RestoreKeyWordUppercase, RestoreKeyWordLowercase]  
+[RestoreNameUppercase, RestoreNameLowercase]  
+[RestoreNameDoubleQuotes, RestoreNameBackQuotes]  
+The flag with the left position in each group has a higher priority.  
+
+This is `RestoreCtx` struct: 
 
 ```go
 // RestoreCtx is Restore context to hold flags and writer
@@ -46,26 +55,6 @@ type RestoreCtx struct {
 	Flags RestoreFlags
 	In    io.Writer
 }
-
-// Mutually exclusive group of `RestoreFlags`:
-// [RestoreStringSingleQuotes, RestoreStringDoubleQuotes]
-// [RestoreKeyWordUppercase, RestoreKeyWordLowercase]
-// [RestoreNameUppercase, RestoreNameLowercase]
-// [RestoreNameDoubleQuotes, RestoreNameBackQuotes]
-// The flag with the left position in each group has a higher priority.
-const (
-	RestoreStringSingleQuotes RestoreFlags = 1 << iota
-	RestoreStringDoubleQuotes
-	RestoreStringEscapeBackslash
-
-	RestoreKeyWordUppercase
-	RestoreKeyWordLowercase
-
-	RestoreNameUppercase
-	RestoreNameLowercase
-	RestoreNameDoubleQuotes
-	RestoreNameBackQuotes
-)
 ```
 
 ## Rationale
