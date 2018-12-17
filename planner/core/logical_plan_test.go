@@ -421,6 +421,34 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql      string
+		best     string
+		joinType string
+	}{
+		{
+			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
+			best:     "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			joinType: "anti semi join",
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, err = logicalOptimize(flagDecorrelate|flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(p), Equals, ca.best, comment)
+		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		joinType := fmt.Sprintf("%s", join.JoinType.String())
+		c.Assert(joinType, Equals, ca.joinType, comment)
+	}
+}
+
 func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
 	tableInfo := *MockTable()
 	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))

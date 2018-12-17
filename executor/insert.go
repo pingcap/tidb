@@ -128,7 +128,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 	return nil
 }
 
-// Next implements Exec Next interface.
+// Next implements the Executor Next interface.
 func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("insert.Next", opentracing.ChildOf(span.Context()))
@@ -151,7 +151,7 @@ func (e *InsertExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Close interface.
+// Open implements the Executor Open interface.
 func (e *InsertExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)
