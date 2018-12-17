@@ -254,6 +254,10 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
+		txn := sctx.Txn(true)
+		if !txn.Valid() {
+			return nil, errors.New("active transaction fail")
+		}
 	}
 
 	var err error
