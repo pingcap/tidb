@@ -107,7 +107,7 @@ func (n *DropDatabaseStmt) Restore(ctx *RestoreCtx) error {
 ```
 
 **There are other examples which include complete implementation and test:  
-[parser#62](https://github.com/pingcap/parser/pull/62) [parser#63](https://github.com/pingcap/parser/pull/63)**
+[parser#71](https://github.com/pingcap/parser/pull/71)**
 
 ### Note
 
