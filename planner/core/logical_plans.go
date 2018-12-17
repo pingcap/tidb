@@ -250,7 +250,12 @@ func (p *LogicalSelection) extractCorrelatedCols() []*expression.CorrelatedColum
 type LogicalApply struct {
 	LogicalJoin
 
-	corCols           []*expression.CorrelatedColumn
+	corCols []*expression.CorrelatedColumn
+	// For LogicalApply generated from `not in` or `!= all`, if column from any side is possible to be null,
+	// we cannot decorrelate this apply, because during decorrelation, we may pull up equal conditions from
+	// descendant nodes, these conditions should have various behaviors against the equal conditions from
+	// `not in / != all` regarding null input, since we don't differentiate these conditions now, decorrelation
+	// can lead to wrong results.
 	cannotDecorrelate bool
 }
 
