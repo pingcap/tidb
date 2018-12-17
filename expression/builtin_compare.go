@@ -1113,7 +1113,7 @@ func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Ex
 	if tp == types.ETJson {
 		// In compare, if we cast string to JSON, we shouldn't parse it.
 		for i := range args {
-			args[i].GetType().Flag &= ^mysql.ParseToJSONFlag
+			DisableParseJSONFlag4Expr(args[i])
 		}
 	}
 	bf.tp.Flen = 1

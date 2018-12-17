@@ -316,6 +316,7 @@ func (t *testExecInfo) execSQL(idx int) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		c.session.StmtCommit()
 		err = c.session.CommitTxn(context.TODO())
 		if err != nil {
 			return errors.Trace(err)
