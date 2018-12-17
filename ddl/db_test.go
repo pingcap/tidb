@@ -640,7 +640,7 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 		}
 		changeWorkerNumEnable = true
 	}
-	originHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
