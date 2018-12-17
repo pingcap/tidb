@@ -2048,15 +2048,19 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	return ap
 }
 
-func cannotDecorrelate(fromNotIn bool, innerPlan LogicalPlan, condition []expression.Expression) bool {
+func cannotDecorrelate(fromNotIn bool, outerPlan, innerPlan LogicalPlan, condition []expression.Expression) bool {
 	if !fromNotIn {
 		return false
 	}
+	outerSchema := outerPlan.Schema()
 	innerSchema := innerPlan.Schema()
 	cols := make([]*expression.Column, 0, 2*len(condition))
 	cols = expression.ExtractColumnsFromExpressions(cols, condition, nil)
 	for _, col := range cols {
 		if innerCol := innerSchema.RetrieveColumn(col); innerCol != nil && !mysql.HasNotNullFlag(innerCol.RetType.Flag) {
+			return true
+		}
+		if outerCol := outerSchema.RetrieveColumn(col); outerCol != nil && !mysql.HasNotNullFlag(outerCol.RetType.Flag) {
 			return true
 		}
 	}
@@ -2068,7 +2072,7 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	asScalar, not bool, fromNotIn bool) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	if !cannotDecorrelate(fromNotIn, innerPlan, condition) {
+	if !cannotDecorrelate(fromNotIn, outerPlan, innerPlan, condition) {
 		b.optFlag = b.optFlag | flagDecorrelate
 	}
 

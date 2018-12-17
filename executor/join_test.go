@@ -1065,4 +1065,7 @@ func (s *testSuite) TestNotInAntiJoin(c *C) {
 	tk.MustQuery("select * from t t1 where not exists (select * from t t2 where t1.a = t2.a)").Check(testkit.Rows(
 		"<nil> 2",
 	))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1, null), (2, null)")
+	tk.MustQuery("select * from t t1 where b not in (select a from t t2)").Check(testkit.Rows())
 }
