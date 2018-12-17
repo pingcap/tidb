@@ -215,6 +215,22 @@ func (st *TxnState) cleanup() {
 	}
 }
 
+// SetOption implement the kv.Transaction interface.
+func (st *TxnState) SetOption(opt kv.Option, val interface{}) {
+	if st.fail != nil {
+		return
+	}
+	st.Transaction.SetOption(opt, val)
+}
+
+// DelOption implement the kv.Transaction interface.
+func (st *TxnState) DelOption(opt kv.Option) {
+	if st.fail != nil {
+		return
+	}
+	st.Transaction.DelOption(opt)
+}
+
 func getBinlogMutation(ctx sessionctx.Context, tableID int64) *binlog.TableMutation {
 	bin := binloginfo.GetPrewriteValue(ctx, true)
 	for i := range bin.Mutations {
