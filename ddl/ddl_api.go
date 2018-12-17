@@ -1006,7 +1006,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
-	if is.TableExists(ident.Schema, ident.Name) && !s.OrReplace {
+	if is.TableExists(ident.Schema, ident.Name) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {

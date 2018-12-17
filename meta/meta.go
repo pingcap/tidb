@@ -296,28 +296,6 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
-// CreateView creates a view with tableInfo in database.
-func (m *Meta) CreateView(dbID int64, tableInfo *model.TableInfo) error {
-	// Check if db exists.
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return errors.Trace(err)
-	}
-
-	// Check if table exists.
-	tableKey := m.tableKey(tableInfo.ID)
-	if err := m.checkTableNotExists(dbKey, tableKey); err != nil {
-		return errors.Trace(err)
-	}
-
-	data, err := json.Marshal(tableInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return m.txn.HSet(dbKey, tableKey, data)
-}
-
 // DropDatabase drops whole database.
 func (m *Meta) DropDatabase(dbID int64) error {
 	// Check if db exists.

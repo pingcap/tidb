@@ -95,7 +95,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = t.CreateView(schemaID, tbInfo)
+		err = t.CreateTable(schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
