@@ -129,7 +129,7 @@ func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]
 
 // optimize implements logicalOptRule interface.
 func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
-	if apply, ok := p.(*LogicalApply); ok {
+	if apply, ok := p.(*LogicalApply); ok && !apply.cannotDecorrelate {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1]
 		apply.extractCorColumnsBySchema()
