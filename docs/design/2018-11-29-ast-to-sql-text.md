@@ -47,7 +47,7 @@ In order to output sql text in different formats, I introduced nine flags. There
 [RestoreNameDoubleQuotes, RestoreNameBackQuotes]  
 The flag with the left position in each group has a higher priority.  
 
-This is `RestoreCtx` struct: 
+This is `RestoreCtx` struct and `DefaultRestoreFlags` definition: 
 
 ```go
 // RestoreCtx is Restore context to hold flags and writer
@@ -55,6 +55,8 @@ type RestoreCtx struct {
 	Flags RestoreFlags
 	In    io.Writer
 }
+
+const DefaultRestoreFlags = RestoreStringSingleQuotes | RestoreKeyWordUppercase | RestoreNameBackQuotes
 ```
 
 ## Rationale
