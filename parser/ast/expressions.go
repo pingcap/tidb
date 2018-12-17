@@ -81,7 +81,22 @@ type BetweenExpr struct {
 
 // Restore implements Node interface.
 func (n *BetweenExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Expr")
+	}
+	if n.Not {
+		ctx.WriteKeyWord(" NOT BETWEEN ")
+	} else {
+		ctx.WriteKeyWord(" BETWEEN ")
+	}
+	if err := n.Left.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Left")
+	}
+	ctx.WriteKeyWord(" AND ")
+	if err := n.Right.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore BetweenExpr.Right ")
+	}
+	return nil
 }
 
 // Format the ExprNode into a Writer.
