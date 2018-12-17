@@ -300,6 +300,7 @@ type propOuterJoinConstSolver struct {
 	filterConds []Expression
 	outerSchema *Schema
 	innerSchema *Schema
+	isAntiJoin  bool
 }
 
 func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
@@ -474,7 +475,12 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			s.unionSet.Union(outerID, innerID)
 			visited[i] = true
 			// Generate `innerCol is not null` from `outerCol = innerCol`. Note that `outerCol is not null`
-			// does not hold since we are in outer join.
+			// does not hold since we are in outer join. For AntiLeftOuterSemiJoin, this does not work.
+			// For example:
+			// `select *, t1.a not in (select t2.b from t t2) from t t1` does not imply `t2.b is not null`.
+			if s.isAntiJoin {
+				continue
+			}
 			childCol := s.innerSchema.RetrieveColumn(innerCol)
 			if !mysql.HasNotNullFlag(childCol.RetType.Flag) {
 				notNullExpr := BuildNotNullExpr(s.ctx, childCol)
@@ -545,10 +551,12 @@ func propagateConstantDNF(ctx sessionctx.Context, conds []Expression) []Expressi
 // Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
-func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Expression, outerSchema, innerSchema *Schema) ([]Expression, []Expression) {
+func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Expression,
+	outerSchema, innerSchema *Schema, isAntiJoin bool) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
 		outerSchema: outerSchema,
 		innerSchema: innerSchema,
+		isAntiJoin:  isAntiJoin,
 	}
 	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx

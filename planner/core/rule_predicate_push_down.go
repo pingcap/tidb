@@ -413,7 +413,7 @@ func deriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (l
 			if leftRelaxedCond != nil {
 				leftCond = append(leftCond, leftRelaxedCond)
 			}
-			notNullExpr := deriveNotNullExpr(expr, leftPlan.Schema())
+			notNullExpr := deriveNotNullExpr(p, expr, leftPlan.Schema())
 			if notNullExpr != nil {
 				leftCond = append(leftCond, notNullExpr)
 			}
@@ -423,7 +423,7 @@ func deriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (l
 			if rightRelaxedCond != nil {
 				rightCond = append(rightCond, rightRelaxedCond)
 			}
-			notNullExpr := deriveNotNullExpr(expr, rightPlan.Schema())
+			notNullExpr := deriveNotNullExpr(p, expr, rightPlan.Schema())
 			if notNullExpr != nil {
 				rightCond = append(rightCond, notNullExpr)
 			}
@@ -435,7 +435,10 @@ func deriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (l
 // deriveNotNullExpr generates a new expression `not(isnull(col))` given `col1 op col2`,
 // in which `col` is in specified schema. Caller guarantees that only one of `col1` or
 // `col2` is in schema.
-func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) expression.Expression {
+func deriveNotNullExpr(p *LogicalJoin, expr expression.Expression, schema *expression.Schema) expression.Expression {
+	if p.JoinType == AntiLeftOuterSemiJoin {
+		return nil
+	}
 	binop, ok := expr.(*expression.ScalarFunction)
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
@@ -493,7 +496,8 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.LeftConditions = nil
 	p.RightConditions = nil
 	p.OtherConditions = nil
-	joinConds, predicates = expression.PropConstOverOuterJoin(p.ctx, joinConds, predicates, outerTable.Schema(), innerTable.Schema())
+	isAntiJoin := p.JoinType == AntiLeftOuterSemiJoin
+	joinConds, predicates = expression.PropConstOverOuterJoin(p.ctx, joinConds, predicates, outerTable.Schema(), innerTable.Schema(), isAntiJoin)
 	p.attachOnConds(joinConds)
 	return predicates
 }
