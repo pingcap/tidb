@@ -289,6 +289,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
+	ts.se.StmtCommit()
 	c.Assert(ts.se.Txn(true).Commit(context.Background()), IsNil)
 }
 
