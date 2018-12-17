@@ -38,14 +38,14 @@ type Node interface {
 }
 ```
 
-In order to output sql text in different formats, I introduced nine flags. There are mutually exclusive group of `RestoreFlags`:  
+In order to output the SQL text in different formats, I introduced nine flags. There are mutually exclusive groups of `RestoreFlags`:  
 
 [RestoreStringSingleQuotes, RestoreStringDoubleQuotes]  
 [RestoreStringEscapeBackslash]  
 [RestoreKeyWordUppercase, RestoreKeyWordLowercase]  
 [RestoreNameUppercase, RestoreNameLowercase]  
 [RestoreNameDoubleQuotes, RestoreNameBackQuotes]  
-The flag with the left position in each group has a higher priority.  
+The flag in the left position in each group has a higher priority.  
 
 This is `RestoreCtx` struct and `DefaultRestoreFlags` definition: 
 
@@ -117,7 +117,7 @@ func (n *DropDatabaseStmt) Restore(ctx *RestoreCtx) error {
 }
 ```
 
-**There is other example which includes complete implementation and test:  
+**There is another example which includes complete implementation and test:  
 [parser#71](https://github.com/pingcap/parser/pull/71)**
 
 ### Note
