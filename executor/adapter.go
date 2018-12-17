@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -256,6 +257,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		}
 		txn := sctx.Txn(true)
 		if !txn.Valid() {
+			if txnState, ok := txn.(*session.TxnState); ok && txnState.Fail() != nil {
+				return nil, txnState.Fail()
+			}
 			return nil, errors.New("active transaction fail")
 		}
 	}
