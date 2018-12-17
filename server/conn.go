@@ -440,7 +440,6 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run() {
 	const size = 4096
-	closedOutside := false
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -450,7 +449,7 @@ func (cc *clientConn) Run() {
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if !closedOutside {
+		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
 			err := cc.Close()
 			terror.Log(errors.Trace(err))
 		}
@@ -463,9 +462,6 @@ func (cc *clientConn) Run() {
 	// by CAS operation, it would then take some actions accordingly.
 	for {
 		if atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) == false {
-			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
-				closedOutside = true
-			}
 			return
 		}
 
@@ -492,9 +488,6 @@ func (cc *clientConn) Run() {
 		}
 
 		if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) == false {
-			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
-				closedOutside = true
-			}
 			return
 		}
 

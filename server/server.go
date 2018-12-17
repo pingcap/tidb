@@ -29,6 +29,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -387,21 +388,50 @@ func (s *Server) KillAllConnections() {
 	}
 }
 
+var gracefulCloseConnectionsTimeout = 15 * time.Second
+
+// TryGracefulDown will try graceful close all connection first with timeout. if timeout, will close all connection directly.
+func (s *Server) TryGracefulDown() {
+	ctx, cancel := context.WithCancel(context.Background())
+	timeout := time.Tick(gracefulCloseConnectionsTimeout)
+	ch := make(chan struct{})
+	go func() {
+		s.GracefulDown(ctx)
+		close(ch)
+	}()
+	select {
+	case <-timeout:
+		cancel()
+		s.KillAllConnections()
+	case <-ch:
+		cancel()
+		return
+	}
+}
+
 // GracefulDown waits all clients to close.
-func (s *Server) GracefulDown() {
+func (s *Server) GracefulDown(ctx context.Context) {
 	log.Info("[server] graceful shutdown.")
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventGracefulDown).Inc()
 
 	count := s.ConnectionCount()
 	for i := 0; count > 0; i++ {
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
 		s.kickIdleConnection()
 
 		count = s.ConnectionCount()
+		if count == 0 {
+			break
+		}
 		// Print information for every 30s.
 		if i%30 == 0 {
 			log.Infof("graceful shutdown...connection count %d\n", count)
 		}
+		time.Sleep(time.Second)
 	}
 }
 
