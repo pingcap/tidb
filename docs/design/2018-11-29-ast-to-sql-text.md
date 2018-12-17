@@ -38,7 +38,7 @@ type Node interface {
 }
 ```
 
-In order to output sql text in different formats, I introduced nine flags, There are mutually exclusive group of `RestoreFlags`:  
+In order to output sql text in different formats, I introduced nine flags. There are mutually exclusive group of `RestoreFlags`:  
 
 [RestoreStringSingleQuotes, RestoreStringDoubleQuotes]  
 [RestoreStringEscapeBackslash]  
