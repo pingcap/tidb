@@ -791,8 +791,9 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 		}
 		changeWorkerNumEnable = true
 	}
+	originHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
 
 	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 

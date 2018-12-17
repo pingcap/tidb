@@ -1046,9 +1046,23 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 	return nil, nil
 }
 
-// buildIndexForReorgInfo build backfilling tasks from [reorgInfo.StartHandle, reorgInfo.EndHandle),
-// and send these tasks to add index workers, till we finish adding the indices.
-func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, indexInfo *model.IndexInfo, job *model.Job, reorgInfo *reorgInfo) error {
+// addPhysicalTableIndex handles the add index reorganization state for a non-partitioned table or a partition.
+// For a partitioned table, it should be handled partition by partition.
+//
+// How to add index in reorganization state?
+// Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
+// The handle range is split from PD regions now. Each worker deal with a region table key range one time.
+// Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
+// The operation flow is as follows:
+//	1. Open numbers of defaultWorkers goroutines.
+//	2. Split table key range from PD regions.
+//	3. Send tasks to running workers by workers's task channel. Each task deals with a region key ranges.
+//	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
+// The above operations are completed in a transaction.
+// Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
+func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+	job := reorgInfo.Job
+	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	totalAddedCount := job.GetRowCount()
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
@@ -1111,27 +1125,6 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, indexInfo *model.
 		}
 	}
 	return nil
-}
-
-// addPhysicalTableIndex handles the add index reorganization state for a non-partitioned table or a partition.
-// For a partitioned table, it should be handled partition by partition.
-//
-// How to add index in reorganization state?
-// Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
-// The handle range is split from PD regions now. Each worker deal with a region table key range one time.
-// Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
-// The operation flow is as follows:
-//	1. Open numbers of defaultWorkers goroutines.
-//	2. Split table key range from PD regions.
-//	3. Send tasks to running workers by workers's task channel. Each task deals with a region key ranges.
-//	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
-// The above operations are completed in a transaction.
-// Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
-	job := reorgInfo.Job
-	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
-	err := w.buildIndexForReorgInfo(t, indexInfo, job, reorgInfo)
-	return errors.Trace(err)
 }
 
 // addTableIndex handles the add index reorganization state for a table.
