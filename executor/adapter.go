@@ -29,12 +29,12 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -257,8 +257,8 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		}
 		txn := sctx.Txn(true)
 		if !txn.Valid() {
-			if txnState, ok := txn.(*session.TxnState); ok && txnState.Fail() != nil {
-				return nil, txnState.Fail()
+			if failer, ok := txn.(sqlexec.Failer); ok && failer.Fail() != nil {
+				return nil, failer.Fail()
 			}
 			return nil, errors.New("active transaction fail")
 		}
