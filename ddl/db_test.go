@@ -1472,10 +1472,10 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	s.tk.MustExec("create table if not exists t1 (c1 int, c2 int)")
 	if isAlterTable {
 		s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
-		s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.t1"))
+		s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.T1"))
 	} else {
 		s.testErrorCode(c, fmt.Sprintf(sql, "test1.t", "t"), tmysql.ErrTableExists)
-		s.testErrorCode(c, fmt.Sprintf(sql, "test1.t1", "test1.t1"), tmysql.ErrTableExists)
+		s.testErrorCode(c, fmt.Sprintf(sql, "test1.t1", "test1.T1"), tmysql.ErrTableExists)
 	}
 
 	s.tk.MustExec("drop database test1")
