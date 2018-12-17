@@ -474,7 +474,8 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 			datum := chunkRow.GetDatum(0, retFieldTypes[0])
 			h := datum.GetInt64()
 			if _, ok := handles[h]; ok {
-				err = errors.Errorf("admin check table %s, index %s handle %d more than one", e.tblInfo.Name, e.indices[num].Meta().Name, h)
+				err = errors.Errorf("admin check table %s, index %s, at least two indices have the same handle %d more than one",
+					e.tblInfo.Name, e.indices[num].Meta().Name, h)
 				e.retCh <- errors.Trace(err)
 				return errors.Trace(err)
 			}
@@ -507,12 +508,10 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		log.Warnf("check table %v, greater %v index %s err: %v", e.tblInfo.Name, greater, idxNames[idxOffset], errors.ErrorStack(err))
 		tbl := e.srcs[idxOffset].table
 		txn := e.ctx.Txn(true)
-		switch greater {
-		case admin.IdxCntGreater:
+		if greater == admin.IdxCntGreater {
 			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
-		case admin.TblCntGreater:
+		} else if greater == admin.TblCntGreater {
 			err = e.checkTableRecord(txn, tbl, e.indices[idxOffset])
-		default:
 		}
 		if err != nil && admin.ErrDataInConsistent.Equal(err) {
 			return ErrAdminCheckTable.GenWithStack("%v err:%v", tbl.Meta().Name, err)

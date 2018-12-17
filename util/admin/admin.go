@@ -250,7 +250,6 @@ func getCount(ctx sessionctx.Context, sql string) (int64, error) {
 
 // Count greater Types
 const (
-	InvalidGreater byte = 0
 	// TblCntGreater means that the number of table rows is more than the number of index rows.
 	TblCntGreater byte = 1
 	// IdxCntGreater means that the number of index rows is more than the number of table rows.
@@ -258,8 +257,9 @@ const (
 )
 
 // CheckIndicesCount compares indices count with table count.
+// It returns the count greater type, the index offset and an error.
 // It returns nil if the count from the index is equal to the count from the table columns,
-// otherwise it returns an error with a different information.
+// otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
@@ -267,12 +267,11 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
 	for i, idx := range indices {
 		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
-			return InvalidGreater, i, errors.Trace(err)
+			return 0, i, errors.Trace(err)
 		}
 		log.Infof("check indices count, table %s cnt %d, index %s cnt %d", tableName, tblCnt, idx, idxCnt)
 		if tblCnt == idxCnt {

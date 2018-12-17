@@ -458,7 +458,7 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "admin check table admin_test, index c2 handle 2 more than one")
+	c.Assert(err.Error(), Equals, "admin check table admin_test, index c2, at least two indices have the same handle 2 more than one")
 
 	// Table count = index count.
 	txn, err = s.store.Begin()
@@ -470,7 +470,7 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "admin check table admin_test, index c2 handle 1 more than one")
+	c.Assert(err.Error(), Equals, "admin check table admin_test, index c2, at least two indices have the same handle 1 more than one")
 
 	// Recover records.
 	txn, err = s.store.Begin()
