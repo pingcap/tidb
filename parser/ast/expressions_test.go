@@ -141,3 +141,17 @@ func (tc *testExpressionsSuite) TestIsNullExprRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
 }
+
+func (tc *testExpressionsSuite) TestBetweenExprRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"b between 1 and 2", "`b` BETWEEN 1 AND 2"},
+		{"b not between 1 and 2", "`b` NOT BETWEEN 1 AND 2"},
+		{"b between a and b", "`b` BETWEEN `a` AND `b`"},
+		{"b between '' and 'b'", "`b` BETWEEN '' AND 'b'"},
+		{"b between '2018-11-01' and '2018-11-02'", "`b` BETWEEN '2018-11-01' AND '2018-11-02'"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Fields.Fields[0].Expr
+	}
+	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+}
