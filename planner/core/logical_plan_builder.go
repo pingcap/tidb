@@ -2072,16 +2072,15 @@ func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	asScalar, not bool, fromNotIn bool) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPredicatePushDown
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	if !cannotDecorrelate(fromNotIn, outerPlan, innerPlan, condition) {
-		b.optFlag = b.optFlag | flagDecorrelate
-	}
+	b.optFlag = b.optFlag | flagDecorrelate
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	ap := &LogicalApply{LogicalJoin: *join}
+	cannot := cannotDecorrelate(fromNotIn, outerPlan, innerPlan, condition)
+	ap := &LogicalApply{LogicalJoin: *join, cannotDecorrelate: cannot}
 	ap.tp = TypeApply
 	ap.self = ap
 	return ap, nil

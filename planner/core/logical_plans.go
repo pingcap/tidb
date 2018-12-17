@@ -250,7 +250,8 @@ func (p *LogicalSelection) extractCorrelatedCols() []*expression.CorrelatedColum
 type LogicalApply struct {
 	LogicalJoin
 
-	corCols []*expression.CorrelatedColumn
+	corCols           []*expression.CorrelatedColumn
+	cannotDecorrelate bool
 }
 
 func (la *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
