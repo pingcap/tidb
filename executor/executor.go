@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -421,6 +422,12 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		for _, idx := range tb.Indices() {
 			txn := e.ctx.Txn(true)
+			if !txn.Valid() {
+				if failer, ok := txn.(sqlexec.Failer); ok && failer.Fail() != nil {
+					return failer.Fail()
+				}
+				return errors.New("active transaction fail")
+			}
 			err = admin.CompareIndexData(e.ctx, txn, tb, idx)
 			if err != nil {
 				return errors.Errorf("%v err:%v", t.Name, err)
