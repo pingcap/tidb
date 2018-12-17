@@ -1613,8 +1613,9 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 		outerCtx: outerCtx{
-			rowTypes: outerTypes,
-			filter:   outerFilter,
+			rowTypes:  outerTypes,
+			filter:    outerFilter,
+			keepOrder: v.KeepOuterOrder,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{innerPlan, b},
@@ -1637,7 +1638,10 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = e.newFirstChunk()
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
-	return &IndexLookUpHash{IndexLookUpJoin:*e}
+	if !v.KeepOuterOrder {
+		return &IndexLookUpHash{IndexLookUpJoin: *e}
+	}
+	return e
 }
 
 // containsLimit tests if the execs contains Limit because we do not know whether `Limit` has consumed all of its' source,
