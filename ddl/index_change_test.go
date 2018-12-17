@@ -95,7 +95,6 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 		}
 		ctx1 := testNewContext(d)
 		prevState = job.SchemaState
-		var err error
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			deleteOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)

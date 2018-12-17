@@ -272,7 +272,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 		return errors.Trace(err)
 	}
 	defer func() {
-		if txn, err := ctx.Txn(true); err == nil {
+		if txn, err1 := ctx.Txn(true); err1 == nil {
 			txn.Commit(context.Background())
 		}
 	}()

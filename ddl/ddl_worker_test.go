@@ -423,9 +423,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			checkErr = errors.Trace(err1)
 			return
 		}
-		txn, err2 := hookCtx.Txn(true)
-		if err2 != nil {
-			checkErr = errors.Trace(err2)
+		txn, err1 = hookCtx.Txn(true)
+		if err1 != nil {
+			checkErr = errors.Trace(err1)
 			return
 		}
 		checkErr = checkCancelState(txn, job, test)

@@ -468,7 +468,7 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 		c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 		rid, err = tb.AddRecord(ts.se, types.MakeDatums(-i), false)
 		c.Assert(err, IsNil)
-		txn, err := ts.se.Txn(true)
+		txn, err = ts.se.Txn(true)
 		c.Assert(err, IsNil)
 		val, err = txn.Get(tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid))
 		c.Assert(err, IsNil)

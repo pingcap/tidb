@@ -1040,9 +1040,8 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			log.Error("active transaction fail, err = ", err)
 			s.txn.cleanup()
 			return &s.txn, errors.Trace(err)
-		} else {
-			s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		}
+		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}

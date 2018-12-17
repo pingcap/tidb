@@ -1017,7 +1017,7 @@ LOOP:
 	j := 0
 	ctx.NewTxn(context.Background())
 	defer func() {
-		if txn, err := ctx.Txn(true); err == nil {
+		if txn, err1 := ctx.Txn(true); err1 == nil {
 			txn.Rollback()
 		}
 	}()
