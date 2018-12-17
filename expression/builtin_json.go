@@ -773,13 +773,15 @@ func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	// json_doc
-	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	var obj json.BinaryJSON
+	obj, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
 
 	// one_or_all
-	containType, isNull, err := b.args[1].EvalString(b.ctx, row)
+	var containType string
+	containType, isNull, err = b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
@@ -788,13 +790,15 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 	}
 
 	// search_str & escape_char
-	searchStr, isNull, err := b.args[2].EvalString(b.ctx, row)
+	var searchStr string
+	searchStr, isNull, err = b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
 	escape := byte('\\')
 	if len(b.args) >= 4 {
-		escapeStr, isNull, err := b.args[3].EvalString(b.ctx, row)
+		var escapeStr string
+		escapeStr, isNull, err = b.args[3].EvalString(b.ctx, row)
 		if err != nil {
 			return res, isNull, errors.Trace(err)
 		}

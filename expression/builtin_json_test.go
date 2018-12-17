@@ -647,6 +647,8 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 		{[]interface{}{jsonString, `all`, `10`, nil, `$[1]`}, `"$[1][0].k"`, true},
 		{[]interface{}{jsonString, `all`, `10`, nil, `$[1][0]`}, `"$[1][0].k"`, true},
 		{[]interface{}{jsonString, `all`, `abc`, nil, `$[2]`}, `"$[2].x"`, true},
+		{[]interface{}{jsonString, `all`, `abc`, nil, `$[2]`, `$[0]`}, `["$[2].x", "$[0]"]`, true},
+		{[]interface{}{jsonString, `all`, `abc`, nil, `$[2]`, `$[2]`}, `"$[2].x"`, true},
 
 		// search pattern
 		{[]interface{}{jsonString, `all`, `%a%`}, `["$[0]", "$[2].x"]`, true},
@@ -681,9 +683,10 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 			c.Assert(err, IsNil)
 			switch x := t.expected.(type) {
 			case string:
-				j1, err := json.ParseBinaryFromString(x)
+				var j1, j2 json.BinaryJSON
+				j1, err = json.ParseBinaryFromString(x)
 				c.Assert(err, IsNil)
-				j2 := d.GetMysqlJSON()
+				j2 = d.GetMysqlJSON()
 				cmp := json.CompareBinary(j1, j2)
 				//fmt.Println(j1, j2)
 				c.Assert(cmp, Equals, 0)

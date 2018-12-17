@@ -141,7 +141,7 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	return
 }
 
-// quoteString escape spe for JSON_QUOTE
+// quoteString escapes interior quote and other characters for JSON_QUOTE
 // https://dev.mysql.com/doc/refman/5.7/en/json-creation-functions.html#function_json-quote
 // TODO: add JSON_QUOTE builtin
 func quoteString(s string) string {
@@ -959,7 +959,8 @@ func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...PathExpress
 	fullpath := PathExpression{legs: make([]pathLeg, 0, 32), flags: pathExpressionFlag(0)}
 	if len(pathExprList) > 0 {
 		for _, pathExpr := range pathExprList {
-			stop, err := bj.extractToCallback(pathExpr, doWalk, fullpath)
+			var stop bool
+			stop, err = bj.extractToCallback(pathExpr, doWalk, fullpath)
 			if stop || err != nil {
 				return err
 			}
