@@ -1930,6 +1930,15 @@ func (s *testPlanSuite) TestNotInDecorrelate(c *C) {
 			sql:  "select * from t t1 where a != all (select b from t t2)",
 			best: "Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.b)->Sel([5_aux_0])->Projection",
 		},
+		// Column `e` doesn't have NotNull flag, so we cannot decorrelate `not in`.
+		{
+			sql:  "select * from t t1 where e not in (select a from t t2)",
+			best: "Apply{DataScan(t1)->DataScan(t2)}->Projection",
+		},
+		{
+			sql:  "select * from t t1 where e != all (select a from t t2)",
+			best: "Apply{DataScan(t1)->DataScan(t2)}->Sel([5_aux_0])->Projection",
+		},
 	}
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
