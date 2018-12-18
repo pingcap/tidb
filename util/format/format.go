@@ -193,3 +193,27 @@ func OutputFormat(s string) string {
 
 	return buf.String()
 }
+
+// OutputFormat output escape character with backslash.
+func OutputFormatForEnmu(s string) string {
+	var buf bytes.Buffer
+	for _, old := range s {
+		if newVal, ok := replace[old]; ok {
+			buf.WriteString(newVal)
+			continue
+		}
+		buf.WriteRune(old)
+	}
+	raw, lim := []rune(buf.String()), -1
+	buf.Reset()
+	for i := len(raw) - 1; i >= 0; i-- {
+		if raw[i] != ' ' {
+			lim = i + 1
+			break
+		}
+	}
+	for i := 0; i < lim; i++ {
+		buf.WriteRune(raw[i])
+	}
+	return buf.String()
+}

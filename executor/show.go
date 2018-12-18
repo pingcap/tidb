@@ -600,7 +600,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(&buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
 					} else {
-						fmt.Fprintf(&buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
+						fmt.Fprintf(&buf, " DEFAULT '%s'", format.OutputFormatForEnmu(defaultValStr))
 					}
 				}
 			}
