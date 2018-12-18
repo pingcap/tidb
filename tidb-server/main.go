@@ -69,7 +69,6 @@ const (
 	nmCors             = "cors"
 	nmSocket           = "socket"
 	nmEnableBinlog     = "enable-binlog"
-	nmBinlogSocket     = "binlog-socket"
 	nmRunDDL           = "run-ddl"
 	nmLogLevel         = "L"
 	nmLogFile          = "log-file"
@@ -98,7 +97,6 @@ var (
 	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
 	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
 	enableBinlog     = flagBoolean(nmEnableBinlog, false, "enable generate binlog")
-	binlogSocket     = flag.String(nmBinlogSocket, "", "use socket file to write binlog, for compatible with kafka version tidb-binlog")
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
@@ -314,9 +312,6 @@ func overrideConfig() {
 	}
 	if actualFlags[nmEnableBinlog] {
 		cfg.Binlog.Enable = *enableBinlog
-	}
-	if actualFlags[nmBinlogSocket] {
-		cfg.Binlog.BinlogSocket = *binlogSocket
 	}
 	if actualFlags[nmRunDDL] {
 		cfg.RunDDL = *runDDL
