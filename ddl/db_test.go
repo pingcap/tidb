@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -83,7 +84,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	session.SetStatsLease(0)
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
-	autoid.SetStep(5000)
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 
 	s.cluster = mocktikv.NewCluster()
@@ -112,7 +112,6 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
-	autoid.SetStep(s.autoIDStep)
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -122,19 +121,6 @@ func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
 	tErr, ok := originErr.(*terror.Error)
 	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
 	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
-}
-
-func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0')")
-	s.tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2)")
-	s.tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
-	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
-	s.testErrorCode(c, sql, tmysql.ErrDupEntry)
-	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
-	s.testErrorCode(c, sql, tmysql.ErrTooManyKeyParts)
 }
 
 func (s *testDBSuite) TestAddIndexWithPK(c *C) {
@@ -288,11 +274,9 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	// let hook.OnJobUpdatedExported has chance to cancel the job.
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	var checkErr error
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.s.(sessionctx.Context), hook)
 	originalHook := s.dom.DDL().GetHook()
@@ -337,7 +321,6 @@ LOOP:
 	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
-	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -354,9 +337,6 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 	}
 
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
@@ -426,9 +406,6 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 	}
 
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]
@@ -900,7 +877,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	count := ddl.TableColumnCountLimit - 1
+	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)
 	var cols []string
 	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
@@ -1248,107 +1225,6 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk.MustExec("drop table t3")
 }
 
-func (s *testDBSuite) TestAlterColumn(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.mustExec(c, "create table test_alter_column (a int default 111, b varchar(8), c varchar(8) not null, d timestamp on update current_timestamp)")
-	s.mustExec(c, "insert into test_alter_column set b = 'a', c = 'aa'")
-	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
-	ctx := s.tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
-	c.Assert(err, IsNil)
-	tblInfo := tbl.Meta()
-	colA := tblInfo.Columns[0]
-	hasNoDefault := tmysql.HasNoDefaultValueFlag(colA.Flag)
-	c.Assert(hasNoDefault, IsFalse)
-	s.mustExec(c, "alter table test_alter_column alter column a set default 222")
-	s.mustExec(c, "insert into test_alter_column set b = 'b', c = 'bb'")
-	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
-	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
-	c.Assert(err, IsNil)
-	tblInfo = tbl.Meta()
-	colA = tblInfo.Columns[0]
-	hasNoDefault = tmysql.HasNoDefaultValueFlag(colA.Flag)
-	c.Assert(hasNoDefault, IsFalse)
-	s.mustExec(c, "alter table test_alter_column alter column b set default null")
-	s.mustExec(c, "insert into test_alter_column set c = 'cc'")
-	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
-	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
-	c.Assert(err, IsNil)
-	tblInfo = tbl.Meta()
-	colC := tblInfo.Columns[2]
-	hasNoDefault = tmysql.HasNoDefaultValueFlag(colC.Flag)
-	c.Assert(hasNoDefault, IsTrue)
-	s.mustExec(c, "alter table test_alter_column alter column c set default 'xx'")
-	s.mustExec(c, "insert into test_alter_column set a = 123")
-	s.tk.MustQuery("select c from test_alter_column").Check(testkit.Rows("aa", "bb", "cc", "xx"))
-	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
-	c.Assert(err, IsNil)
-	tblInfo = tbl.Meta()
-	colC = tblInfo.Columns[2]
-	hasNoDefault = tmysql.HasNoDefaultValueFlag(colC.Flag)
-	c.Assert(hasNoDefault, IsFalse)
-	// TODO: After fix issue 2606.
-	// s.mustExec(c, "alter table test_alter_column alter column d set default null")
-	s.mustExec(c, "alter table test_alter_column alter column a drop default")
-	s.mustExec(c, "insert into test_alter_column set b = 'd', c = 'dd'")
-	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
-
-	// for failing tests
-	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
-	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
-	sql = "alter table test_not_exist alter column b set default 'c'"
-	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
-	sql = "alter table test_alter_column alter column col_not_exist set default 'c'"
-	s.testErrorCode(c, sql, tmysql.ErrBadField)
-	sql = "alter table test_alter_column alter column c set default null"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
-
-	// The followings tests whether adding constraints via change / modify column
-	// is forbidden as expected.
-	s.mustExec(c, "drop table if exists mc")
-	s.mustExec(c, "create table mc(a int key, b int, c int)")
-	_, err = s.tk.Exec("alter table mc modify column a int key") // Adds a new primary key
-	c.Assert(err, NotNil)
-	_, err = s.tk.Exec("alter table mc modify column c int unique") // Adds a new unique key
-	c.Assert(err, NotNil)
-	result := s.tk.MustQuery("show create table mc")
-	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	c.Assert(createSQL, Equals, expected)
-
-	// Change / modify column should preserve index options.
-	s.mustExec(c, "drop table if exists mc")
-	s.mustExec(c, "create table mc(a int key, b int, c int unique)")
-	s.mustExec(c, "alter table mc modify column a bigint") // NOT NULL & PRIMARY KEY should be preserved
-	s.mustExec(c, "alter table mc modify column b bigint")
-	s.mustExec(c, "alter table mc modify column c bigint") // Unique should be preserved
-	result = s.tk.MustQuery("show create table mc")
-	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	c.Assert(createSQL, Equals, expected)
-
-	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
-	s.mustExec(c, "drop table if exists mc")
-	s.mustExec(c, "create table mc(a int key auto_increment, b int)")
-	s.mustExec(c, "alter table mc modify column a bigint auto_increment") // Keeps auto_increment
-	result = s.tk.MustQuery("show create table mc")
-	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	s.mustExec(c, "alter table mc modify column a bigint") // Drops auto_increment
-	result = s.tk.MustQuery("show create table mc")
-	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	c.Assert(createSQL, Equals, expected)
-	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
-	c.Assert(err, NotNil)
-}
-
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
 	s.tk.MustExec(query, args...)
 }
@@ -1372,28 +1248,6 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
 	}
-}
-
-func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-
-	sql := "create table t_too_large ("
-	cnt := 3000
-	for i := 1; i <= cnt; i++ {
-		sql += fmt.Sprintf("a%d double, b%d double, c%d double, d%d double", i, i, i, i)
-		if i != cnt {
-			sql += ","
-		}
-	}
-	sql += ");"
-	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
-
-	originLimit := ddl.TableColumnCountLimit
-	ddl.TableColumnCountLimit = cnt * 4
-	_, err := s.tk.Exec(sql)
-	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
-	ddl.TableColumnCountLimit = originLimit
 }
 
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
@@ -1662,62 +1516,6 @@ out:
 	s.tk.MustExec("drop table tnn")
 }
 
-func (s *testDBSuite) TestChangeColumnPosition(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.tk.MustExec("create table position (a int default 1, b int default 2)")
-	s.tk.MustExec("insert into position value ()")
-	s.tk.MustExec("insert into position values (3,4)")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("1 2", "3 4"))
-	s.tk.MustExec("alter table position modify column b int first")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3"))
-	s.tk.MustExec("insert into position value ()")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3", "<nil> 1"))
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int, b int, c double, d varchar(5))")
-	s.tk.MustExec(`insert into position value (1, 2, 3.14, 'TiDB')`)
-	s.tk.MustExec("alter table position modify column d varchar(5) after a")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("1 TiDB 2 3.14"))
-	s.tk.MustExec("alter table position modify column a int after c")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("TiDB 2 3.14 1"))
-	s.tk.MustExec("alter table position modify column c double first")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("3.14 TiDB 2 1"))
-	s.testErrorCode(c, "alter table position modify column b int after b", tmysql.ErrBadField)
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int, b int)")
-	s.tk.MustExec("alter table position add index t(a, b)")
-	s.tk.MustExec("alter table position modify column b int first")
-	s.tk.MustExec("insert into position value (3, 5)")
-	s.tk.MustQuery("select a from position where a = 3").Check(testkit.Rows())
-
-	s.tk.MustExec("alter table position change column b c int first")
-	s.tk.MustQuery("select * from position where c = 3").Check(testkit.Rows("3 5"))
-	s.testErrorCode(c, "alter table position change column c b int after c", tmysql.ErrBadField)
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int default 2)")
-	s.tk.MustExec("alter table position modify column a int default 5 first")
-	s.tk.MustExec("insert into position value ()")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("5"))
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int, b int)")
-	s.tk.MustExec("alter table position add index t(b)")
-	s.tk.MustExec("alter table position change column b c int first")
-	createSQL := s.tk.MustQuery("show create table position").Rows()[0][1]
-	exceptedSQL := []string{
-		"CREATE TABLE `position` (",
-		"  `c` int(11) DEFAULT NULL,",
-		"  `a` int(11) DEFAULT NULL,",
-		"  KEY `t` (`c`)",
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	}
-	c.Assert(createSQL, Equals, strings.Join(exceptedSQL, "\n"))
-}
-
 func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
@@ -1867,7 +1665,6 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	s.testErrorCode(c, "create table text_default_blob(c1 blob not null default 'scds54');", tmysql.ErrBlobCantHaveDefault)
 
 	s.tk.MustExec("set sql_mode='';")
-	s.tk.MustExec("drop table if exists text_default_text;")
 	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
 	s.tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
 		"text_default_text CREATE TABLE `text_default_text` (\n"+
@@ -1880,7 +1677,6 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
-	s.tk.MustExec("drop table if exists text_default_blob;")
 	s.tk.MustExec("create table text_default_blob(c1 blob not null default '');")
 	s.tk.MustQuery(`show create table text_default_blob`).Check(testutil.RowsWithSep("|",
 		"text_default_blob CREATE TABLE `text_default_blob` (\n"+
@@ -1892,7 +1688,6 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
-	s.tk.MustExec("drop table if exists text_default_json;")
 	s.tk.MustExec("create table text_default_json(c1 json not null default '');")
 	s.tk.MustQuery(`show create table text_default_json`).Check(testutil.RowsWithSep("|",
 		"text_default_json CREATE TABLE `text_default_json` (\n"+
@@ -1907,35 +1702,24 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 
 func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("drop database if exists varchar_test;")
 	s.tk.MustExec("create database varchar_test;")
+	defer s.tk.MustExec("drop database varchar_test;")
 	s.tk.MustExec("use varchar_test")
-	s.tk.MustExec("drop table if exists t")
 	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8mb4'").Check(testkit.Rows("0"))
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8mb4'").Check(testkit.Rows("2"))
 
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=UTF8;")
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=BINARY;")
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=LATIN1;")
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=ASCII;")
-	s.tk.MustExec("drop table if exists t5")
+	s.tk.MustExec("create table t1(id int) charset=UTF8;")
+	s.tk.MustExec("create table t2(id int) charset=BINARY;")
+	s.tk.MustExec("create table t3(id int) charset=LATIN1;")
+	s.tk.MustExec("create table t4(id int) charset=ASCII;")
 	s.tk.MustExec("create table t5(id int) charset=UTF8MB4;")
 
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=utf8;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=binary;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=latin1;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=ascii;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=utf8mb4;")
+	s.tk.MustExec("create table t11(id int) charset=utf8;")
+	s.tk.MustExec("create table t12(id int) charset=binary;")
+	s.tk.MustExec("create table t13(id int) charset=latin1;")
+	s.tk.MustExec("create table t14(id int) charset=ascii;")
+	s.tk.MustExec("create table t15(id int) charset=utf8mb4;")
 }
 
 func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
@@ -1967,121 +1751,6 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	close(closeCh)
 	wg.Wait()
 	c.Assert(tk2Err, IsNil)
-}
-
-type testMaxTableRowIDContext struct {
-	c   *C
-	d   ddl.DDL
-	tbl table.Table
-}
-
-func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContext {
-	return &testMaxTableRowIDContext{
-		c:   c,
-		d:   d,
-		tbl: tbl,
-	}
-}
-
-func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bool) {
-	c := ctx.c
-	d := ctx.d
-	tbl := ctx.tbl
-	curVer, err := s.store.CurrentVersion()
-	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.(table.PhysicalTable))
-	c.Assert(err, IsNil)
-	return maxID, emptyTable
-}
-
-func (s *testDBSuite) checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, expectEmpty bool, expectMaxID int64) {
-	c := ctx.c
-	maxID, emptyTable := s.getMaxTableRowID(ctx)
-	c.Assert(emptyTable, Equals, expectEmpty)
-	c.Assert(maxID, Equals, expectMaxID)
-}
-
-func (s *testDBSuite) TestGetTableEndHandle(c *C) {
-	// TestGetTableEndHandle test ddl.GetTableMaxRowID method, which will return the max row id of the table.
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_get_endhandle")
-	tk.MustExec("create database test_get_endhandle")
-	tk.MustExec("use test_get_endhandle")
-	// Test PK is handle.
-	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-
-	is := s.dom.InfoSchema()
-	d := s.dom.DDL()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-
-	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
-	// test empty table
-	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
-
-	tk.MustExec("insert into t values(-1, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(-1))
-
-	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775806))
-
-	tk.MustExec("insert into t values(9223372036854775807, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
-
-	tk.MustExec("insert into t values(10, 1)")
-	tk.MustExec("insert into t values(102149142, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
-
-	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
-
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
-	}
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	s.checkGetMaxTableRowID(testCtx, false, int64(999))
-
-	// Test PK is not handle
-	tk.MustExec("create table t2(a varchar(255))")
-
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
-
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
-	}
-
-	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable := s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec("insert into t2 values(100000)")
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec("insert into t2 values(100)")
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
 }
 
 func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
@@ -2117,8 +1786,6 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 
 	var c2 *table.Column
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -2189,5 +1856,4 @@ LOOP:
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(c, "drop table t1")
-	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }

@@ -54,21 +54,21 @@ const (
 	ddlPrompt   = "ddl"
 
 	shardRowIDBitsMax = 15
-)
-
-var (
-	// TableColumnCountLimit is limit of the number of columns in a table.
-	// It's exported for testing.
-	TableColumnCountLimit = 512
-	// EnableSplitTableRegion is a flag to decide whether to split a new region for
-	// a newly created table. It takes effect only if the Storage supports split
-	// region.
-	EnableSplitTableRegion = false
 
 	// PartitionCountLimit is limit of the number of partitions in a table.
 	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
 	PartitionCountLimit = 1024
+)
+
+var (
+	// TableColumnCountLimit is limit of the number of columns in a table.
+	// It's exported for testing.
+	TableColumnCountLimit = uint32(512)
+	// EnableSplitTableRegion is a flag to decide whether to split a new region for
+	// a newly created table. It takes effect only if the Storage supports split
+	// region.
+	EnableSplitTableRegion = uint32(0)
 )
 
 var (

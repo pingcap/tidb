@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
@@ -88,7 +89,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	}
 }
 
-// TestLeakCheckCnt is the check count in the pacakge of ddl.
+// TestLeakCheckCnt is the check count in the package of ddl.
 // In this package CustomParallelSuiteFlag is true, so we need to increase check count.
 const TestLeakCheckCnt = 1000
 
@@ -100,6 +101,8 @@ func TestT(t *testing.T) {
 		Level:  logLevel,
 		Format: "highlight",
 	})
+	autoid.SetStep(5000)
+	ReorgWaitTimeout = 30 * time.Millisecond
 	TestingT(t)
 }
 

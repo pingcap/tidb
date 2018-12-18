@@ -24,7 +24,7 @@ func (s *testCascadesSuite) TestGetEnforcerRules(c *C) {
 	enforcers := GetEnforcerRules(prop)
 	c.Assert(enforcers, IsNil)
 	col := &expression.Column{}
-	prop.Cols = append(prop.Cols, col)
+	prop.Items = append(prop.Items, property.Item{Col: col})
 	enforcers = GetEnforcerRules(prop)
 	c.Assert(enforcers, NotNil)
 	c.Assert(len(enforcers), Equals, 1)
@@ -35,9 +35,9 @@ func (s *testCascadesSuite) TestGetEnforcerRules(c *C) {
 func (s *testCascadesSuite) TestNewProperties(c *C) {
 	prop := &property.PhysicalProperty{}
 	col := &expression.Column{}
-	prop.Cols = append(prop.Cols, col)
+	prop.Items = append(prop.Items, property.Item{Col: col})
 	enforcers := GetEnforcerRules(prop)
 	orderEnforcer, _ := enforcers[0].(*OrderEnforcer)
 	newProp := orderEnforcer.NewProperty(prop)
-	c.Assert(newProp.Cols, IsNil)
+	c.Assert(newProp.Items, IsNil)
 }
