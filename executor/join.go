@@ -83,9 +83,10 @@ type HashJoinExec struct {
 	// tables. If the complete inner relation can be hold in L2Cache in which
 	// case radixBits will be 1, we can skip the partition phase.
 	// Note: We actually check whether `size of sub inner relation < 3/4 * L2
-	// cache size` to make sure the complete inner relation, hash table, outer
-	// table and join result can be totally loaded in L2 cache size. `3/4` is a
-	// magic number, we may adjust it after benchmark.
+	// cache size` to make sure one inner sub-relation, hash table, one outer
+	// sub-relation and join result of the sub-relations can be totally loaded
+	// in L2 cache size. `3/4` is a magic number, we may adjust it after
+	// benchmark.
 	radixBits  uint32
 	innerParts []partition
 	// innerRowPrts indicates the position in corresponding partition of every
@@ -388,13 +389,13 @@ func (e *HashJoinExec) getPartition(idx uint32) partition {
 }
 
 // evalRadixBit evaluates the radix bit numbers.
+// To ensure that one partition of inner relation, one hash table, one partition
+// of outer relation and the join result of these two partitions fit into the L2
+// cache when the input data obeys the uniform distribution, we suppose every
+// sub-partition of inner relation using three quarters of the L2 cache size.
 func (e *HashJoinExec) evalRadixBit() (needPartition bool) {
 	sv := e.ctx.GetSessionVars()
 	innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
-	// To ensure that one partition of inner relation, one hash table and one
-	// partition of outer relation fit into the L2 cache when the input data
-	// obeys the uniform distribution, we suppose every sub-partition of inner
-	// relation using three quarters of the L2 cache size.
 	l2CacheSize := float64(sv.L2CacheSize) * 3 / 4
 	radixBitsNum := uint(math.Ceil(math.Log2(innerResultSize / l2CacheSize)))
 	if radixBitsNum <= 0 {
