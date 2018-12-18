@@ -216,7 +216,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	var sizeFunc = c.keySize
 	if action == actionPrewrite {
 		sizeFunc = c.keyValueSize
-		c.detail.PrewriteRegionNum = len(groups)
+		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
 	}
 	// Make sure the group that contains primary key goes first.
 	batches = appendBatchBySize(batches, firstRegion, groups[firstRegion], sizeFunc, txnCommitBatchSize)
@@ -246,7 +246,6 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
 	}
-	c.detail.TotalBackoffTime += time.Duration(bo.totalSleep) * time.Millisecond
 	return errors.Trace(err)
 }
 
@@ -255,28 +254,20 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	if len(batches) == 0 {
 		return nil
 	}
-	var (
-		singleBatchActionFunc func(bo *Backoffer, batch batchKeys) error
-		actionDuration        *time.Duration
-	)
+	var singleBatchActionFunc func(bo *Backoffer, batch batchKeys) error
 	switch action {
 	case actionPrewrite:
 		singleBatchActionFunc = c.prewriteSingleBatch
-		actionDuration = &c.detail.PrewriteTime
 	case actionCommit:
 		singleBatchActionFunc = c.commitSingleBatch
-		actionDuration = &c.detail.CommitTime
 	case actionCleanup:
 		singleBatchActionFunc = c.cleanupSingleBatch
-		actionDuration = &c.detail.CleanupTime
 	}
 	if len(batches) == 1 {
-		start := time.Now()
 		e := singleBatchActionFunc(bo, batches[0])
 		if e != nil {
 			log.Debugf("con:%d 2PC doActionOnBatches %s failed: %v, tid: %d", c.connID, action, e, c.startTS)
 		}
-		*actionDuration = time.Since(start)
 		return errors.Trace(e)
 	}
 
@@ -288,7 +279,6 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	}
 
 	// Concurrently do the work for each batch.
-	start := time.Now()
 	ch := make(chan error, len(batches))
 	for _, batch1 := range batches {
 
@@ -325,7 +315,6 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 			}
 		}
 	}
-	*actionDuration = time.Since(start)
 	return errors.Trace(err)
 }
 
@@ -403,7 +392,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		c.detail.ResolveLockTime += time.Since(start)
+		atomic.AddInt64(&c.detail.ResolveLockTime, int64(time.Since(start)))
 		if !ok {
 			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
@@ -609,7 +598,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}()
 
 	binlogChan := c.prewriteBinlog()
-	err := c.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars), c.keys)
+	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
+	start := time.Now()
+	err := c.prewriteKeys(prewriteBo, c.keys)
+	c.detail.PrewriteTime = time.Since(start)
+	c.detail.TotalBackoffTime += time.Duration(prewriteBo.totalSleep) * time.Millisecond
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
@@ -621,7 +614,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	start := time.Now()
+	start = time.Now()
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
 	if err != nil {
 		log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
@@ -646,7 +639,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Annotate(err, txnRetryableMark)
 	}
 
-	err = c.commitKeys(NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars), c.keys)
+	start = time.Now()
+	commitBo := NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars)
+	err = c.commitKeys(commitBo, c.keys)
+	c.detail.CommitTime = time.Since(start)
+	c.detail.TotalBackoffTime += time.Duration(commitBo.totalSleep) * time.Millisecond
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			log.Warnf("con:%d 2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", c.connID, err, undeterminedErr, c.startTS)
