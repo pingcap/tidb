@@ -35,14 +35,15 @@ var (
 // joiner is used to generate join results according to the join type.
 // A typical instruction flow is:
 //
-//     hasMatch := false
+//     hasMatch, hasNull := false, false
 //     for innerIter.Current() != innerIter.End() {
-//         matched, err := j.tryToMatch(outer, innerIter, chk)
+//         matched, isNull, err := j.tryToMatch(outer, innerIter, chk)
 //         // handle err
 //         hasMatch = hasMatch || matched
+//         hasNull = hasNull || isNull
 //     }
 //     if !hasMatch {
-//         j.onMissMatch(outer)
+//         j.onMissMatch(hasNull, outer, chk)
 //     }
 //
 // NOTE: This interface is **not** thread-safe.
@@ -76,7 +77,11 @@ type joiner interface {
 	//   6. 'RightOuterJoin': concats the unmatched outer row with a row of NULLs
 	//      and appends it to the result buffer.
 	//   7. 'InnerJoin': ignores the unmatched outer row.
-	onMissMatch(isnull bool, outer chunk.Row, chk *chunk.Chunk)
+	// Not that, for anti join, we need to know the reason of outer row treated as
+	// unmatched: whether the join condition returns false, or returns null, because
+	// it decides if this outer row should be outputed, hence we have a `hasNull`
+	// parameter passed to `onMissMatch`.
+	onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk)
 }
 
 func newJoiner(ctx sessionctx.Context, joinType plannercore.JoinType,
@@ -176,7 +181,7 @@ type semiJoiner struct {
 	baseJoiner
 }
 
-func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, isnull bool, err error) {
+func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -203,7 +208,7 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 	return false, false, nil
 }
 
-func (j *semiJoiner) onMissMatch(isnull bool, outer chunk.Row, chk *chunk.Chunk) {
+func (j *semiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
 }
 
 type antiSemiJoiner struct {
@@ -211,7 +216,7 @@ type antiSemiJoiner struct {
 }
 
 // tryToMatch implements joiner interface.
-func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, isnull bool, err error) {
+func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -232,13 +237,13 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 			inners.ReachEnd()
 			return true, false, nil
 		}
-		isnull = isnull || isNull
+		hasNull = hasNull || isNull
 	}
-	return false, isnull, nil
+	return false, hasNull, nil
 }
 
-func (j *antiSemiJoiner) onMissMatch(isnull bool, outer chunk.Row, chk *chunk.Chunk) {
-	if !isnull {
+func (j *antiSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
+	if !hasNull {
 		chk.AppendRow(outer)
 	}
 }
@@ -248,7 +253,7 @@ type leftOuterSemiJoiner struct {
 }
 
 // tryToMatch implements joiner interface.
-func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, isnull bool, err error) {
+func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -280,7 +285,7 @@ func (j *leftOuterSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendInt64(outer.Len(), 1)
 }
 
-func (j *leftOuterSemiJoiner) onMissMatch(isnull bool, outer chunk.Row, chk *chunk.Chunk) {
+func (j *leftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
 	chk.AppendInt64(outer.Len(), 0)
 }
@@ -290,7 +295,7 @@ type antiLeftOuterSemiJoiner struct {
 }
 
 // tryToMatch implements joiner interface.
-func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, isnull bool, err error) {
+func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, hasNull bool, err error) {
 	if inners.Len() == 0 {
 		return false, false, nil
 	}
@@ -313,9 +318,9 @@ func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Itera
 			inners.ReachEnd()
 			return true, false, nil
 		}
-		isnull = isnull || isNull
+		hasNull = hasNull || isNull
 	}
-	return false, isnull, nil
+	return false, hasNull, nil
 }
 
 func (j *antiLeftOuterSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
@@ -323,9 +328,9 @@ func (j *antiLeftOuterSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendInt64(outer.Len(), 0)
 }
 
-func (j *antiLeftOuterSemiJoiner) onMissMatch(isnull bool, outer chunk.Row, chk *chunk.Chunk) {
+func (j *antiLeftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
-	if isnull {
+	if hasNull {
 		chk.AppendInt64(outer.Len(), 0)
 	} else {
 		chk.AppendInt64(outer.Len(), 1)
@@ -364,7 +369,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	return matched, false, nil
 }
 
-func (j *leftOuterJoiner) onMissMatch(isnull bool, outer chunk.Row, chk *chunk.Chunk) {
+func (j *leftOuterJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
 	chk.AppendPartialRow(outer.Len(), j.defaultInner)
 }
@@ -401,7 +406,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 	return matched, false, nil
 }
 
-func (j *rightOuterJoiner) onMissMatch(isnull bool, outer chunk.Row, chk *chunk.Chunk) {
+func (j *rightOuterJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, j.defaultInner)
 	chk.AppendPartialRow(j.defaultInner.Len(), outer)
 }
@@ -441,5 +446,5 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 
 }
 
-func (j *innerJoiner) onMissMatch(isnull bool, outer chunk.Row, chk *chunk.Chunk) {
+func (j *innerJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
 }
