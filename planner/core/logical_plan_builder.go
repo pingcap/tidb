@@ -1902,6 +1902,10 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
+	if tableInfo.IsView() {
+		return b.buildDataSourceFromView(dbName, tableInfo)
+	}
+
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
 	}
@@ -1992,6 +1996,44 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 		result = proj
 	}
 	return result, nil
+}
+
+func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	var (
+		selectNode        ast.StmtNode
+		selectLogicalPlan Plan
+		err               error
+	)
+	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	selectNode, err = parser.New().ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
+	if err != nil {
+		return nil, err
+	}
+	selectLogicalPlan, err = b.Build(selectNode)
+	if err != nil {
+		return nil, err
+	}
+	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
+	for i := range tableInfo.View.Cols {
+		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
+		if col == nil {
+			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		}
+		projSchema.Append(&expression.Column{
+			UniqueID:    col.UniqueID,
+			TblName:     col.TblName,
+			OrigTblName: col.OrigTblName,
+			ColName:     tableInfo.Cols()[i].Name,
+			OrigColName: tableInfo.View.Cols[i],
+			DBName:      col.DBName,
+			RetType:     col.GetType(),
+		})
+	}
+
+	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(projSchema.Columns)}.Init(b.ctx)
+	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
+	projUponView.SetSchema(projSchema)
+	return projUponView, nil
 }
 
 // projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
