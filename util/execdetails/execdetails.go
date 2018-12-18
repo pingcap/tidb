@@ -21,6 +21,9 @@ import (
 	"time"
 )
 
+// CommitDetailCtxKey presents CommitDetail info key in context.
+const CommitDetailCtxKey = "commitDetail"
+
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	ProcessTime   time.Duration
@@ -29,6 +32,22 @@ type ExecDetails struct {
 	RequestCount  int
 	TotalKeys     int64
 	ProcessedKeys int64
+	CommitDetail  *CommitDetails
+}
+
+// CommitDetails contains commit detail information.
+type CommitDetails struct {
+	GetCommitTsTime   time.Duration
+	PrewriteTime      time.Duration
+	CommitTime        time.Duration
+	CleanupTime       time.Duration
+	LocalLatchTime    time.Duration
+	TotalBackoffTime  time.Duration
+	ResolveLockTime   time.Duration
+	WriteKeys         int
+	WriteSize         int
+	PrewriteRegionNum int
+	TxnRetry          int
 }
 
 // String implements the fmt.Stringer interface.
@@ -51,6 +70,42 @@ func (d ExecDetails) String() string {
 	}
 	if d.ProcessedKeys > 0 {
 		parts = append(parts, fmt.Sprintf("processed_keys:%d", d.ProcessedKeys))
+	}
+	commitDetails := d.CommitDetail
+	if commitDetails != nil {
+		if commitDetails.PrewriteTime > 0 {
+			parts = append(parts, fmt.Sprintf("prewrite_time:%v", commitDetails.PrewriteTime))
+		}
+		if commitDetails.CommitTime > 0 {
+			parts = append(parts, fmt.Sprintf("commit_time:%v", commitDetails.CommitTime))
+		}
+		if commitDetails.CleanupTime > 0 {
+			parts = append(parts, fmt.Sprintf("cleanup_time:%v", commitDetails.CleanupTime))
+		}
+		if commitDetails.GetCommitTsTime > 0 {
+			parts = append(parts, fmt.Sprintf("get_commit_ts_time:%v", commitDetails.GetCommitTsTime))
+		}
+		if commitDetails.TotalBackoffTime > 0 {
+			parts = append(parts, fmt.Sprintf("total_backoff_time:%v", commitDetails.TotalBackoffTime))
+		}
+		if commitDetails.ResolveLockTime > 0 {
+			parts = append(parts, fmt.Sprintf("resolve_lock_time:%d", commitDetails.TxnRetry))
+		}
+		if commitDetails.LocalLatchTime > 0 {
+			parts = append(parts, fmt.Sprintf("local_latch_wait_time:%v", commitDetails.LocalLatchTime))
+		}
+		if commitDetails.WriteKeys > 0 {
+			parts = append(parts, fmt.Sprintf("write_keys:%d", commitDetails.WriteKeys))
+		}
+		if commitDetails.WriteSize > 0 {
+			parts = append(parts, fmt.Sprintf("write_size:%d", commitDetails.WriteSize))
+		}
+		if commitDetails.PrewriteRegionNum > 0 {
+			parts = append(parts, fmt.Sprintf("prewrite_region:%d", commitDetails.PrewriteRegionNum))
+		}
+		if commitDetails.TxnRetry > 0 {
+			parts = append(parts, fmt.Sprintf("txn_retry:%d", commitDetails.TxnRetry))
+		}
 	}
 	return strings.Join(parts, " ")
 }

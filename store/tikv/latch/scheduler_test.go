@@ -42,7 +42,7 @@ func (s *testSchedulerSuite) TestWithConcurrency(c *C) {
 	for i := 0; i < workerCount; i++ {
 		go func(ch <-chan [][]byte, wg *sync.WaitGroup) {
 			for txn := range ch {
-				lock := sched.Lock(getTso(), txn)
+				lock, _ := sched.Lock(getTso(), txn)
 				if lock.IsStale() {
 					// Should restart the transaction or return error
 				} else {

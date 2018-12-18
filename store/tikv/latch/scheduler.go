@@ -92,16 +92,19 @@ func (scheduler *LatchesScheduler) Close() {
 // Lock acquire the lock for transaction with startTS and keys. The caller goroutine
 // would be blocked if the lock can't be obtained now. When this function returns,
 // the lock state would be either success or stale(call lock.IsStale)
-func (scheduler *LatchesScheduler) Lock(startTS uint64, keys [][]byte) *Lock {
+func (scheduler *LatchesScheduler) Lock(startTS uint64, keys [][]byte) (*Lock, time.Duration) {
+	var waitTime time.Duration
 	lock := scheduler.latches.genLock(startTS, keys)
 	lock.wg.Add(1)
 	if scheduler.latches.acquire(lock) == acquireLocked {
+		start := time.Now()
 		lock.wg.Wait()
+		waitTime = time.Since(start)
 	}
 	if lock.isLocked() {
 		panic("should never run here")
 	}
-	return lock
+	return lock, waitTime
 }
 
 // UnLock unlocks a lock.
