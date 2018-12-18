@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/spaolacci/murmur3"
-	"golang.org/x/net/context"
 )
 
 var (

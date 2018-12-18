@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/spaolacci/murmur3"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&pkgTestSuite{})
