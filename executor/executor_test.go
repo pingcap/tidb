@@ -3367,9 +3367,9 @@ func (s *testSuite) TestTSOFail(c *C) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int)`)
 
-	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail")
-	_, err := tk.Exec(`select * from t`)
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
+	_, err := tk.Se.Execute(ctx, `select * from t`)
 	c.Assert(err, NotNil)
 }
 
