@@ -111,16 +111,19 @@ func (e CNFExprs) Clone() CNFExprs {
 	return cnf
 }
 
-// EvalBool evaluates expression list to a boolean value.
+// EvalBool evaluates expression list to a boolean value. The first returned value
+// indicates bool result of the expression list, the second returned value indicates
+// whether the result of the expression list is null, it can only be true when the
+// first returned values is false.
 func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
-	isnull := false
+	hasNull := false
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {
 			return false, false, err
 		}
 		if data.IsNull() {
-			isnull = true
+			hasNull = true
 			continue
 		}
 
@@ -132,7 +135,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			return false, false, nil
 		}
 	}
-	if isnull {
+	if hasNull {
 		return false, true, nil
 	}
 	return true, false, nil
