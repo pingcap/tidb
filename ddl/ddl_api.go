@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/schemautil"
+	"github.com/pingcap/tidb/util/set"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -568,14 +570,22 @@ func checkColumnValueConstraint(col *table.Column) error {
 	return nil
 }
 
-func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
-	colNames := map[string]bool{}
-	for _, colDef := range colDefs {
-		nameLower := colDef.Name.Name.L
-		if colNames[nameLower] {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(colDef.Name.Name)
+func checkDuplicateColumn(cols []interface{}) error {
+	colNames := set.StringSet{}
+	var nameLower string
+	for _, col := range cols {
+		switch x := col.(type) {
+		case *ast.ColumnDef:
+			nameLower = x.Name.Name.L
+		case model.CIStr:
+			nameLower = x.L
+		default:
+			nameLower = ""
 		}
-		colNames[nameLower] = true
+		if colNames.Exist(nameLower) {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(nameLower)
+		}
+		colNames.Insert(nameLower)
 	}
 	return nil
 }
@@ -606,17 +616,26 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
-	for _, colDef := range colDefs {
-		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.GenWithStackByArgs(colDef.Name.Name)
+func checkTooLongColumn(cols []interface{}) error {
+	var colName string
+	for _, col := range cols {
+		switch x := col.(type) {
+		case *ast.ColumnDef:
+			colName = x.Name.Name.O
+		case model.CIStr:
+			colName = x.O
+		default:
+			colName = ""
+		}
+		if len(colName) > mysql.MaxColumnNameLength {
+			return ErrTooLongIdent.GenWithStackByArgs(colName)
 		}
 	}
 	return nil
 }
 
 func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
-	if len(colDefs) > TableColumnCountLimit {
+	if uint32(len(colDefs)) > atomic.LoadUint32(&TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil
@@ -887,16 +906,21 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		}
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
+
+	var colObjects []interface{}
+	for _, col := range colDefs {
+		colObjects = append(colObjects, col)
+	}
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkDuplicateColumn(colDefs); err != nil {
+	if err = checkDuplicateColumn(colObjects); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkGeneratedColumn(colDefs); err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkTooLongColumn(colDefs); err != nil {
+	if err = checkTooLongColumn(colObjects); err != nil {
 		return errors.Trace(err)
 	}
 	if err = checkTooManyColumns(colDefs); err != nil {
@@ -980,6 +1004,89 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
+func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
+	ident := ast.Ident{Name: s.ViewName.Name, Schema: s.ViewName.Schema}
+	is := d.GetInformationSchema(ctx)
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+	if is.TableExists(ident.Schema, ident.Name) {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+	}
+	if err = checkTooLongTable(ident.Name); err != nil {
+		return err
+	}
+	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
+
+	var colObjects []interface{}
+	for _, col := range viewInfo.Cols {
+		colObjects = append(colObjects, col)
+	}
+
+	if err = checkTooLongColumn(colObjects); err != nil {
+		return err
+	}
+	if err = checkDuplicateColumn(colObjects); err != nil {
+		return err
+	}
+
+	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, nil)
+	if err != nil {
+		return err
+	}
+	tbInfo.View = viewInfo
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo, s.OrReplace},
+	}
+	err = d.doDDLJob(ctx, job)
+
+	return d.callHookOnChanged(err)
+}
+
+func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
+	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
+		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
+
+	if s.Definer.CurrentUser {
+		viewInfo.Definer = ctx.GetSessionVars().User
+	}
+
+	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
+	viewInfo.Cols = make([]model.CIStr, len(schemaCols))
+	for i, v := range schemaCols {
+		viewInfo.Cols[i] = v.AsName
+	}
+
+	var tableColumns = make([]*table.Column, len(schemaCols))
+	if s.Cols == nil {
+		for i, v := range schemaCols {
+			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
+				Name:   v.AsName,
+				ID:     int64(i),
+				Offset: i,
+				State:  model.StatePublic,
+			})
+		}
+	} else {
+		for i, v := range s.Cols {
+			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
+				Name:   v,
+				ID:     int64(i),
+				Offset: i,
+				State:  model.StatePublic,
+			})
+		}
+	}
+
+	return viewInfo, tableColumns
+}
+
 func checkPartitionByHash(pi *model.PartitionInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return errors.Trace(err)
@@ -1025,7 +1132,7 @@ func checkCharsetAndCollation(cs string, co string) error {
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
 func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
-	alloc := autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID))
+	alloc := autoid.NewAllocator(d.store, tbInfo.GetDBID(schemaID), tbInfo.IsAutoIncColUnsigned())
 	tbInfo.State = model.StatePublic
 	tb, err := table.TableFromMeta(alloc, tbInfo)
 	if err != nil {

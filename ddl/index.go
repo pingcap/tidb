@@ -416,7 +416,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 			job.Args[0] = indexInfo.ID
-			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compability,
+			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
