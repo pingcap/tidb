@@ -19,7 +19,6 @@ package session
 
 import (
 	"context"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -90,7 +89,6 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-	stores = make(map[string]kv.Driver)
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped     = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex
@@ -168,6 +166,18 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 			}
 		}
 	}
+
+	// There are two known cases that the s.txn.fail is not nil:
+	// 1. active transaction fail, can't get start ts for example
+	// 2. transaction too large and StmtCommit fail
+	// On both cases, we can return error in advance.
+	if se.txn.fail != nil {
+		err = se.txn.fail
+		se.txn.cleanup()
+		se.txn.fail = nil
+		return nil, errors.Trace(err)
+	}
+
 	if !sessVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
@@ -245,52 +255,6 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
-}
-
-// RegisterStore registers a kv storage with unique name and its associated Driver.
-func RegisterStore(name string, driver kv.Driver) error {
-	name = strings.ToLower(name)
-
-	if _, ok := stores[name]; ok {
-		return errors.Errorf("%s is already registered", name)
-	}
-
-	stores[name] = driver
-	return nil
-}
-
-// NewStore creates a kv Storage with path.
-//
-// The path must be a URL format 'engine://path?params' like the one for
-// session.Open() but with the dbname cut off.
-// Examples:
-//    goleveldb://relative/path
-//    boltdb:///absolute/path
-//
-// The engine should be registered before creating storage.
-func NewStore(path string) (kv.Storage, error) {
-	return newStoreWithRetry(path, util.DefaultMaxRetries)
-}
-
-func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
-	storeURL, err := url.Parse(path)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	name := strings.ToLower(storeURL.Scheme)
-	d, ok := stores[name]
-	if !ok {
-		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
-	}
-
-	var s kv.Storage
-	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
-		log.Infof("new store")
-		s, err = d.Open(path)
-		return kv.IsRetryableError(err), err
-	})
-	return s, errors.Trace(err)
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
