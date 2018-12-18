@@ -186,9 +186,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 			}
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
-		}
-
-		if width > 3 && col.Charset == mysql.UTF8Charset {
+		} else if width > 3 && col.Charset == mysql.UTF8Charset {
 			// Handle non-BMP characters.
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
