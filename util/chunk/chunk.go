@@ -315,12 +315,13 @@ func (c *Chunk) PreAlloc(row Row) (rowIdx uint32) {
 		if needCap > doubleCap {
 			newCap = needCap
 		} else {
+			avgElemLen := elemLen
 			if !srcCol.isFixed() {
-				elemLen = len(dstCol.data) / len(dstCol.offsets)
+				avgElemLen = len(dstCol.data) / len(dstCol.offsets)
 			}
 			// slowIncThreshold indicates the threshold exceeding which the
 			// dstCol.data capacity increase fold decreases from 2 to 1.5.
-			slowIncThreshold := 1024 * elemLen
+			slowIncThreshold := 1024 * avgElemLen
 			if len(dstCol.data) < slowIncThreshold {
 				newCap = doubleCap
 			} else {
