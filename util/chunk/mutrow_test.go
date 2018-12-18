@@ -78,6 +78,13 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 	row = mutRow.ToRow()
 	c.Assert(row.GetJSON(0), check.DeepEquals, j)
 	c.Assert(row.GetTime(1), check.DeepEquals, t)
+
+	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
+	chk := New(retTypes, 1, 1)
+	chk.AppendMyDecimal(0, types.NewDecFromFloatForTest(1.123))
+	mutRow = MutRowFromTypes(retTypes)
+	mutRow.SetDatum(0, types.NewDecimalDatum(types.NewDecFromFloatForTest(1.123)))
+	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
 }
 
 func BenchmarkMutRowSetRow(b *testing.B) {
