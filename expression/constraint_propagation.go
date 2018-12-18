@@ -90,8 +90,8 @@ func (s pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expres
 // fixPoint is the core of the constant propagation algorithm.
 // It will iterate the expression set over and over again, pick two expressions,
 // apply one to another.
-// If new conditions can be infered, they will be append into the expression set.
-// Until no more conditions can be infered from the set, the algorithm finish.
+// If new conditions can be inferred, they will be append into the expression set.
+// Until no more conditions can be inferred from the set, the algorithm finish.
 func (s pgSolver2) fixPoint(ctx sessionctx.Context, exprs *exprSet) {
 	for {
 		saveLen := len(exprs.data)
