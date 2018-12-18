@@ -806,7 +806,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		if len(sortColOffsets) != len(la.groupByCols) {
 			continue
 		}
-
+		//Prefix's order can be permitted by group by item, the left needed to pass to child
 		childProp.Cols = possibleChildProperty[:len(sortColOffsets)]
 		if !prop.IsPrefix(childProp) {
 			continue
@@ -817,6 +817,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
 			copiedChildProperty := new(property.PhysicalProperty)
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+			//TaskType is also kind of property passed to child
 			copiedChildProperty.TaskTp = taskTp
 
 			agg := basePhysicalAgg{

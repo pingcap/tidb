@@ -112,6 +112,10 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// Next, get the bestTask with enforced prop
 		prop.Cols = []*expression.Column{}
 	}
+	/*
+	     *	For every props（passed from caller)，we need to combine it with a certain physical plan's props
+		 *  and compute what props is needed to pass to child
+	*/
 	physicalPlans := p.self.exhaustPhysicalPlans(prop)
 	prop.Cols = oldPropCols
 
@@ -350,12 +354,13 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	}
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
+	//Check whether the index column cover output column first
 	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
 			return invalidTask, nil
 		}
-		// On this way, it's double read case.
+		// If index column doesn't cover the output column, it's double read case.
 		ts := PhysicalTableScan{
 			Columns:         ds.Columns,
 			Table:           is.Table,
@@ -365,18 +370,20 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
 	} else if prop.TaskTp == property.CopDoubleReadTaskType {
-		// If it's parent requires double read task, return max cost.
+		// If index column cover output column and it's parent requires double read task, return max cost.
 		return invalidTask, nil
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Check if this plan matches the property.
 	matchProperty := false
 	if !prop.IsEmpty() {
+		//this is used for  multi_index
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.Cols[0].ColName.L {
 				matchProperty = matchIndicesProp(idx.Columns[i:], prop.Cols)
 				break
+				//this means skipping eqCondCount's column, what is the first eqCondCount column in our idx.Column?
 			} else if i >= path.eqCondCount {
 				break
 			}
@@ -418,6 +425,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
+	//Return a RootTask/CopSingleReadTask/CopDoubleReadTask
 	return task, nil
 }
 
@@ -568,6 +576,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
+	//Return a RootTask/CopSingleReadTask
 	return task, nil
 }
 

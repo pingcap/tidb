@@ -70,6 +70,7 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 	}
 }
 
+//may be we can spare the idle physicalPlan into free pool rather than throwing it to gc
 func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	for i, child := range p.Children() {
 		p.Children()[i] = doPhysicalProjectionElimination(child)
