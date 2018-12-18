@@ -523,7 +523,15 @@ type DefaultExpr struct {
 
 // Restore implements Node interface.
 func (n *DefaultExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("DEFAULT")
+	if n.Name != nil {
+		ctx.WritePlain("(")
+		if err := n.Name.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore DefaultExpr.Name")
+		}
+		ctx.WritePlain(")")
+	}
+	return nil
 }
 
 // Format the ExprNode into a Writer.
