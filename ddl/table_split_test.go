@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"bytes"
 	"context"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -37,11 +38,11 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	defer store.Close()
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
-	ddl.EnableSplitTableRegion = true
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer dom.Close()
-	ddl.EnableSplitTableRegion = false
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	infoSchema := dom.InfoSchema()
 	c.Assert(infoSchema, NotNil)
 	t, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"))
