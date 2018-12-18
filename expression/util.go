@@ -594,3 +594,40 @@ func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
 	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
 	return notNull
 }
+
+// isMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
+func isMutableEffectsExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if isMutableEffectsExpr(arg) {
+				return true
+			}
+		}
+	case *Column:
+	case *Constant:
+		if x.DeferredExpr != nil {
+			return isMutableEffectsExpr(x.DeferredExpr)
+		}
+	}
+	return false
+}
+
+// RemoveDupExprs removes identical exprs. Not that if expr contains functions which
+// are mutable or have side effects, we cannot remove it even if it has duplicates.
+func RemoveDupExprs(exprs []Expression) []Expression {
+	res := make([]Expression, 0, len(exprs))
+	exists := make(map[string]struct{}, len(exprs))
+	for _, expr := range exprs {
+		key := string(expr.HashCode(nil))
+		if _, ok := exists[key]; !ok || isMutableEffectsExpr(expr) {
+			res = append(res, expr)
+			exists[key] = struct{}{}
+			continue
+		}
+	}
+	return res
+}

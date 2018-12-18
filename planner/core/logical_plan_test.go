@@ -285,6 +285,12 @@ func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 			left:  "[]",
 			right: "[or(or(eq(t2.a, 3), eq(t2.a, 4)), eq(t2.a, 2))]",
 		},
+		// Duplicate condition would be removed.
+		{
+			sql:   "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1",
+			left:  "[gt(t1.a, 1)]",
+			right: "[]",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -548,6 +554,26 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 		c.Assert(leftConds, Equals, ca.left, comment)
 		c.Assert(rightConds, Equals, ca.right, comment)
 	}
+}
+
+func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
+	sql := "select * from t as t1 join t t2 on t1.a > rand() and t1.a > rand()"
+	comment := Commentf("for %s", sql)
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil, comment)
+	p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+	c.Assert(err, IsNil, comment)
+	p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan))
+	c.Assert(err, IsNil, comment)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue, comment)
+	join, ok := proj.children[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue, comment)
+	leftPlan, ok := join.children[0].(*LogicalSelection)
+	c.Assert(ok, IsTrue, comment)
+	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
+	// Condition with mutable function cannot be de-duplicated when push down join conds.
+	c.Assert(leftCond, Equals, "[gt(cast(t1.a), rand()) gt(cast(t1.a), rand())]", comment)
 }
 
 func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
