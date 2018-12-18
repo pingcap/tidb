@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -132,6 +133,54 @@ func (s *testSuite) TestCreateTable(c *C) {
 	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
+}
+
+func (s *testSuite) TestCreateView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	//create an source table
+	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+	//test create a exist view
+	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
+	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
+	//create view on nonexistent table
+	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.t1' doesn't exist")
+	//simple view
+	tk.MustExec("create table t1 (a int ,b int)")
+	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
+	//view with colList and SelectFieldExpr
+	_, err = tk.Exec("create view v1 (c) as select b+1 from t1")
+	c.Assert(err, IsNil)
+	//view with SelectFieldExpr
+	_, err = tk.Exec("create view v2 as select b+1 from t1")
+	c.Assert(err, IsNil)
+	//view with SelectFieldExpr and AsName
+	_, err = tk.Exec("create view v3 as select b+1 as c from t1")
+	c.Assert(err, IsNil)
+	//view with colList , SelectField and AsName
+	_, err = tk.Exec("create view v4 (c) as select b+1 as d from t1")
+	c.Assert(err, IsNil)
+	//view with select wild card
+	_, err = tk.Exec("create view v5 as select * from t1")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("create view v6 (c,d) as select * from t1")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	tk.MustExec("drop table v1,v2,v3,v4,v5,v6")
+	//view with variable
+	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
+	tk.MustExec("drop table v1")
+	//view with different col counts
+	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 }
 
 func (s *testSuite) TestCreateDropDatabase(c *C) {
