@@ -138,17 +138,16 @@ func prepare4RadixPartition(sctx sessionctx.Context, rowCount int) *HashJoinExec
 	col1 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
 	joinSchema := expression.NewSchema(col0, col1)
 	hashJoinExec := &HashJoinExec{
-		baseExecutor:    newBaseExecutor(sctx, joinSchema, "HashJoin", childExec0, childExec1),
-		partConcurrency: 4,
-		joinConcurrency: 4,
-		joinType:        0, // InnerJoin
-		innerIdx:        0,
-		innerKeys:       []*expression.Column{{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}},
-		innerKeyColIdx:  []int{0},
-		outerKeys:       []*expression.Column{{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}},
-		outerKeyColIdx:  []int{0},
-		innerExec:       childExec0,
-		outerExec:       childExec1,
+		baseExecutor:   newBaseExecutor(sctx, joinSchema, "HashJoin", childExec0, childExec1),
+		concurrency:    4,
+		joinType:       0, // InnerJoin
+		innerIdx:       0,
+		innerKeys:      []*expression.Column{{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}},
+		innerKeyColIdx: []int{0},
+		outerKeys:      []*expression.Column{{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}},
+		outerKeyColIdx: []int{0},
+		innerExec:      childExec0,
+		outerExec:      childExec1,
 	}
 	return hashJoinExec
 }
@@ -170,7 +169,7 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	err := hashJoinExec.Open(ctx)
 	c.Assert(err, IsNil)
 
-	innerResultCh := make(chan *chunk.Chunk, hashJoinExec.joinConcurrency)
+	innerResultCh := make(chan *chunk.Chunk, hashJoinExec.concurrency)
 	doneCh := make(chan struct{})
 	go func() {
 		for range innerResultCh {
@@ -192,8 +191,8 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 		if part == nil {
 			continue
 		}
-		totalRowCnt += part.Len()
-		iter := chunk.NewIterator4List(part)
+		totalRowCnt += part.NumRows()
+		iter := chunk.NewIterator4Chunk(part)
 		hasNull, keyBuf := false, make([]byte, 0, 64)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			hasNull, keyBuf, err = hashJoinExec.getJoinKeyFromChkRow(false, row, keyBuf)
@@ -260,7 +259,7 @@ func BenchmarkPartitionInnerRows(b *testing.B) {
 
 	ctx := context.Background()
 	hashJoinExec.Open(ctx)
-	innerResultCh := make(chan *chunk.Chunk, hashJoinExec.joinConcurrency)
+	innerResultCh := make(chan *chunk.Chunk, hashJoinExec.concurrency)
 	doneCh := make(chan struct{})
 	go func() {
 		for range innerResultCh {
@@ -270,7 +269,7 @@ func BenchmarkPartitionInnerRows(b *testing.B) {
 	hashJoinExec.fetchInnerRows(ctx, innerResultCh, doneCh)
 	hashJoinExec.evalRadixBit()
 	b.ResetTimer()
-	hashJoinExec.partConcurrency = 16
+	hashJoinExec.concurrency = 16
 	hashJoinExec.maxChunkSize = 1024
 	hashJoinExec.initCap = 1024
 	for i := 0; i < b.N; i++ {
