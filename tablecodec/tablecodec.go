@@ -305,10 +305,10 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 		row = make(map[int64]types.Datum, len(cols))
 	}
 	if b == nil {
-		return nil, nil
+		return row, nil
 	}
 	if len(b) == 1 && b[0] == codec.NilFlag {
-		return nil, nil
+		return row, nil
 	}
 	cnt := 0
 	var (
