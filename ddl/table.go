@@ -119,7 +119,7 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 	if gcEnable {
 		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("can not found gc enable variable in mysql.tidb")
+		return ver, errors.Errorf("can not restore deleted table when gc is enable")
 	}
 
 	schemaID := job.SchemaID
@@ -631,4 +631,3 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 	}
 	return nil
 }
-
