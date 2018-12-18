@@ -84,8 +84,9 @@ func (d ExecDetails) String() string {
 		if commitDetails.TotalBackoffTime > 0 {
 			parts = append(parts, fmt.Sprintf("total_backoff_time:%v", commitDetails.TotalBackoffTime))
 		}
-		if commitDetails.ResolveLockTime > 0 {
-			parts = append(parts, fmt.Sprintf("resolve_lock_time:%d", commitDetails.TxnRetry))
+		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
+		if resolveLockTime > 0 {
+			parts = append(parts, fmt.Sprintf("resolve_lock_time:%d", time.Duration(resolveLockTime)))
 		}
 		if commitDetails.LocalLatchTime > 0 {
 			parts = append(parts, fmt.Sprintf("local_latch_wait_time:%v", commitDetails.LocalLatchTime))
@@ -96,8 +97,9 @@ func (d ExecDetails) String() string {
 		if commitDetails.WriteSize > 0 {
 			parts = append(parts, fmt.Sprintf("write_size:%d", commitDetails.WriteSize))
 		}
-		if commitDetails.PrewriteRegionNum > 0 {
-			parts = append(parts, fmt.Sprintf("prewrite_region:%d", commitDetails.PrewriteRegionNum))
+		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
+		if prewriteRegionNum > 0 {
+			parts = append(parts, fmt.Sprintf("prewrite_region:%d", prewriteRegionNum))
 		}
 		if commitDetails.TxnRetry > 0 {
 			parts = append(parts, fmt.Sprintf("txn_retry:%d", commitDetails.TxnRetry))
