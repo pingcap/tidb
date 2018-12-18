@@ -154,7 +154,17 @@ type BinaryOperationExpr struct {
 
 // Restore implements Node interface.
 func (n *BinaryOperationExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.L.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.L")
+	}
+	if err := n.Op.Restore(ctx.In); err != nil {
+		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.Op")
+	}
+	if err := n.R.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred when restore BinaryOperationExpr.R")
+	}
+
+	return nil
 }
 
 // Format the ExprNode into a Writer.
@@ -200,7 +210,15 @@ type WhenClause struct {
 
 // Restore implements Node interface.
 func (n *WhenClause) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("WHEN ")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore WhenClauses.Expr")
+	}
+	ctx.WriteKeyWord(" THEN ")
+	if err := n.Result.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore WhenClauses.Result")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -238,7 +256,28 @@ type CaseExpr struct {
 
 // Restore implements Node interface.
 func (n *CaseExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("CASE")
+	if n.Value != nil {
+		ctx.WritePlain(" ")
+		if err := n.Value.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CaseExpr.Value")
+		}
+	}
+	for _, clause := range n.WhenClauses {
+		ctx.WritePlain(" ")
+		if err := clause.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CaseExpr.WhenClauses")
+		}
+	}
+	if n.ElseClause != nil {
+		ctx.WriteKeyWord(" ELSE ")
+		if err := n.ElseClause.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CaseExpr.ElseClause")
+		}
+	}
+	ctx.WriteKeyWord(" END")
+
+	return nil
 }
 
 // Format the ExprNode into a Writer.
@@ -777,7 +816,12 @@ type ParenthesesExpr struct {
 
 // Restore implements Node interface.
 func (n *ParenthesesExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WritePlain("(")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred when restore ParenthesesExpr.Expr")
+	}
+	ctx.WritePlain(")")
+	return nil
 }
 
 // Format the ExprNode into a Writer.
