@@ -844,6 +844,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		return nil
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
+	// TaskType is also a kind of property, as a result, you may get a cop/root task return.
 	for _, taskTp := range wholeTaskTypes {
 		agg := basePhysicalAgg{
 			GroupByItems: la.GroupByItems,

@@ -107,6 +107,8 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		// Next, get the bestTask with enforced prop
 		prop.Items = []property.Item{}
 	}
+	// For props passed down from caller, we need to combine it with the a certain physical plan's props
+	// and compute what props needed to pass to child.
 	physicalPlans := p.self.exhaustPhysicalPlans(prop)
 	prop.Items = oldPropCols
 
@@ -368,6 +370,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	matchProperty := false
 	all, desc := prop.AllSameOrder()
 	if !prop.IsEmpty() && all {
+		// this is used for multi index
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.Items[0].Col.ColName.L {
@@ -414,6 +417,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
+	// May return rootTask/CopTask(CopSingleReadTaskType, CopDoubleReadTaskType).
 	return task, nil
 }
 
@@ -564,6 +568,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
+	// May return rootTask/CopTask(CopSingleReadTaskType).
 	return task, nil
 }
 
