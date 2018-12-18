@@ -655,7 +655,11 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	// innerResultCh transfers inner chunk from inner fetch to build hash table.
 	innerResultCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
-	// TODO: just for test used in test now, thus we return directly in this if-branch.
+	// TODO: just used in test now, thus we return directly in this if-branch.
+	// Remained work:
+	// 1. parallel build hash tables for the inner sub-partitions
+	// 2. partition the outer relation into sub-partitions
+	// 3. parallel join corresponded inner-partitions with outer-partitions
 	if e.ctx.GetSessionVars().EnableRadixJoin {
 		go util.WithRecovery(func() {
 			e.fetchInnerRows(ctx, innerResultCh, doneCh)
