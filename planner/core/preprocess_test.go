@@ -197,6 +197,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
+		{"select cast(1 as binary(1024));", false, errors.New("[types:1074]Field length too big for target type (max = 255)")},
 	}
 
 	store, dom, err := newStoreWithBootstrap()

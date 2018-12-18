@@ -126,6 +126,11 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if len(p.tableAliasInJoin) > 0 {
 			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
 		}
+	case *ast.FuncCastExpr:
+		tp := x.Tp
+		if tp.Tp == mysql.TypeString && tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
+			p.err = types.ErrTooBigFieldLength.GenWithStack("Field length too big for target type (max = %d)", mysql.MaxFieldCharLength)
+		}
 	}
 
 	return in, p.err == nil
