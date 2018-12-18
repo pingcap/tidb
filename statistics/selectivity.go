@@ -160,10 +160,16 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 
 	// Deal with the correlated column.
 	for _, expr := range exprs {
-		if c := isColEqCorCol(expr); c != nil && !coll.ColumnIsInvalid(sc, c.UniqueID) {
-			colHist := coll.Columns[c.UniqueID]
-			if colHist.NDV > 0 {
-				ret *= 1 / float64(colHist.NDV)
+		if c := isColEqCorCol(expr); c != nil {
+			if !coll.ColumnIsInvalid(sc, c.UniqueID) {
+				colHist := coll.Columns[c.UniqueID]
+				if colHist.NDV > 0 {
+					ret *= 1 / float64(colHist.NDV)
+				} else {
+					ret *= 1 / pseudoEqualRate
+				}
+			} else {
+				ret *= 1 / pseudoEqualRate
 			}
 		} else {
 			remainedExprs = append(remainedExprs, expr)
