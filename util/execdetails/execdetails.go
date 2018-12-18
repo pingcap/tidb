@@ -40,13 +40,12 @@ type CommitDetails struct {
 	GetCommitTsTime   time.Duration
 	PrewriteTime      time.Duration
 	CommitTime        time.Duration
-	CleanupTime       time.Duration
 	LocalLatchTime    time.Duration
 	TotalBackoffTime  time.Duration
-	ResolveLockTime   time.Duration
+	ResolveLockTime   int64
 	WriteKeys         int
 	WriteSize         int
-	PrewriteRegionNum int
+	PrewriteRegionNum int32
 	TxnRetry          int
 }
 
@@ -78,9 +77,6 @@ func (d ExecDetails) String() string {
 		}
 		if commitDetails.CommitTime > 0 {
 			parts = append(parts, fmt.Sprintf("commit_time:%v", commitDetails.CommitTime))
-		}
-		if commitDetails.CleanupTime > 0 {
-			parts = append(parts, fmt.Sprintf("cleanup_time:%v", commitDetails.CleanupTime))
 		}
 		if commitDetails.GetCommitTsTime > 0 {
 			parts = append(parts, fmt.Sprintf("get_commit_ts_time:%v", commitDetails.GetCommitTsTime))

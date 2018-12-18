@@ -211,6 +211,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// for transactions which need to acquire latches
 	var lock *latch.Lock
 	lock, committer.detail.CommitTime = txn.store.txnLatches.Lock(committer.startTS, committer.keys)
+	if committer.detail.CommitTime > 0 {
+		metrics.TiKVLocalLatchWaitTimeHistogram.Observe(committer.detail.CommitTime.Seconds())
+	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
 		err = errors.Errorf("startTS %d is stale", txn.startTS)
