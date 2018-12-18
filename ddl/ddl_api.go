@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -616,7 +617,7 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 }
 
 func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
-	if len(colDefs) > TableColumnCountLimit {
+	if uint32(len(colDefs)) > atomic.LoadUint32(&TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil

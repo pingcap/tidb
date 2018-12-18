@@ -56,12 +56,12 @@ func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *p
 // OnEnforce adds sort operator to satisfy required order property.
 func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation) {
 	sort := &plannercore.PhysicalSort{
-		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Cols)),
+		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Items)),
 	}
-	for _, col := range reqProp.Cols {
+	for _, item := range reqProp.Items {
 		item := &plannercore.ByItems{
-			Expr: col,
-			Desc: reqProp.Desc,
+			Expr: item.Col,
+			Desc: item.Desc,
 		}
 		sort.ByItems = append(sort.ByItems, item)
 	}
