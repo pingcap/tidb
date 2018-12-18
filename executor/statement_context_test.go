@@ -81,4 +81,19 @@ func (s *testSuite) TestStatementContext(c *C) {
 	tk.MustExec("set @@tidb_skip_utf8_check = '0'")
 	runeErrStr := string(utf8.RuneError)
 	tk.MustExec(fmt.Sprintf("insert sc2 values ('%s')", runeErrStr))
+
+	// Test non-BMP characters.
+	tk.MustExec(nonStrictModeSQL)
+	tk.MustExec("truncate table sc2")
+	tk.MustExec("insert sc2 values (unhex('f09f8c80'))")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
+	tk.MustQuery("select * from sc2").Check(testkit.Rows(""))
+	tk.MustExec("insert sc2 values (unhex('4040f09f8c80'))")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
+	tk.MustQuery("select * from sc2").Check(testkit.Rows("", "@@"))
+	tk.MustQuery("select length(a) from sc2").Check(testkit.Rows("0", "2"))
+	tk.MustExec(strictModeSQL)
+	tk.MustExec("insert sc2 values (unhex('f09f8c80'))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
 }
