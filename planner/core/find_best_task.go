@@ -30,7 +30,7 @@ const (
 	netWorkFactor      = 1.5
 	netWorkStartFactor = 20.0
 	scanFactor         = 2.0
-	descScanFactor     = 2 * scanFactor //Because the overhead of descanning is twice that of  sequential scanning
+	descScanFactor     = 2 * scanFactor //Because the overhead of desc scanning is twice that of sequential scanning
 	memoryFactor       = 5.0
 	// 0.5 is the looking up agg context factor.
 	hashAggFactor      = 1.2 + 0.5
