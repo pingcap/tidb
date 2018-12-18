@@ -135,6 +135,7 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		job.State = model.JobStateCancelled
 		ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
+	originalState := colInfo.State
 	switch colInfo.State {
 	// In the state of drop column `write only -> delete only -> reorganization`,
 	// We can not rollback now, so just continue to drop column.
@@ -147,8 +148,6 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	default:
 		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
-	originalState := colInfo.State
-	job.State = model.JobStateRollbackDone
 	job.Args = []interface{}{colInfo.Name}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	if err != nil {
