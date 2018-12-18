@@ -107,6 +107,7 @@ type lookUpJoinTask struct {
 	hasMatch bool
 
 	memTracker *memory.Tracker // track memory usage.
+	buildError error
 }
 
 type outerWorker struct {
@@ -407,6 +408,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	for task.outerResult.NumRows() < ow.batchSize {
 		err := ow.executor.Next(ctx, chunk.NewRecordBatch(ow.executorChk))
 		if err != nil {
+			task.buildError = err
 			return task, errors.Trace(err)
 		}
 		if ow.executorChk.NumRows() == 0 {
@@ -859,17 +861,27 @@ func (iw *innerHashWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		select {
 		case <-iw.closeCh:
 			return
-		case task, ok = <-iw.taskCh:
-			if !ok {
-				return
-			}
 		case <-ctx.Done():
 			return
+		case task, ok = <-iw.taskCh:
+		}
+		if !ok {
+			break
+		}
+		if task.buildError != nil {
+			joinResult.err = errors.Trace(task.buildError)
+			break
 		}
 		err := iw.handleTask(ctx, task, joinResult)
 		if err != nil {
-			return
+			joinResult.err = err
+			break
 		}
+	}
+	if joinResult == nil {
+		return
+	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
+		iw.joinResultCh <- joinResult
 	}
 }
 
@@ -897,6 +909,9 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask,
 	}
 	var ok bool
 	ok, joinResult = iw.join2Chunk(joinResult, task)
+	if !ok {
+		return errors.New("join2Chunk failed")
+	}
 	it := task.lookupMap.NewIterator()
 	for i := 0; i < task.outerResult.NumRows(); i++ {
 		key, rowPtr := it.Next()
@@ -909,16 +924,16 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask,
 			misMatchedRow := task.outerResult.GetRow(int(ptr.RowIdx))
 			iw.joiner.onMissMatch(misMatchedRow, joinResult.chk)
 		}
+		if joinResult.chk.NumRows() == iw.maxChunkSize {
+			ok := true
+			iw.joinResultCh <- joinResult
+			ok, joinResult = iw.getNewJoinResult()
+			if !ok {
+				return errors.New("getNewJoinResult failed")
+			}
+		}
 	}
 
-	if joinResult == nil {
-		return nil
-	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		iw.joinResultCh <- joinResult
-	}
-	if !ok {
-		return errors.New("join2Chunk failed")
-	}
 	return nil
 
 }
