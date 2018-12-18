@@ -806,7 +806,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		if len(sortColOffsets) != len(la.groupByCols) {
 			continue
 		}
-		//Prefix's order can be permitted by group by item, the left needed to pass to child
+		//Prefix's order can be permitted by group by item, and the left needed to pass to child
 		childProp.Cols = possibleChildProperty[:len(sortColOffsets)]
 		if !prop.IsPrefix(childProp) {
 			continue
@@ -815,6 +815,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		// The table read of "CopDoubleReadTaskType" can't promises the sort
 		// property that the stream aggregation required, no need to consider.
 		for _, taskTp := range []property.TaskType{property.CopSingleReadTaskType, property.RootTaskType} {
+			//Add taskTp in childrenReqProps, it will pass to it's child in findBestTask
 			copiedChildProperty := new(property.PhysicalProperty)
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
 			//TaskType is also kind of property passed to child
@@ -836,6 +837,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		return nil
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(wholeTaskTypes))
+	//Add taskTp in childrenReqProps, it will pass to it's child in findBestTask
 	for _, taskTp := range wholeTaskTypes {
 		agg := basePhysicalAgg{
 			GroupByItems: la.GroupByItems,
