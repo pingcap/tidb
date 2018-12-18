@@ -1784,6 +1784,14 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"CREATE INDEX idx USING BTREE ON t (a) USING HASH COMMENT 'foo'", true, ""},
 		{"CREATE INDEX idx USING BTREE ON t (a)", true, ""},
 
+		//For dorp index statement
+		{"drop index a on t", true, "DROP INDEX `a` ON `t`"},
+		{"drop index a on db.t", true, "DROP INDEX `a` ON `db`.`t`"},
+		{"drop index a on db.`tb-ttb`", true, "DROP INDEX `a` ON `db`.`tb-ttb`"},
+		{"drop index if exists a on t", true, "DROP INDEX IF EXISTS `a` ON `t`"},
+		{"drop index if exists a on db.t", true, "DROP INDEX IF EXISTS `a` ON `db`.`t`"},
+		{"drop index if exists a on db.`tb-ttb`", true, "DROP INDEX IF EXISTS `a` ON `db`.`tb-ttb`"},
+
 		// for rename table statement
 		{"RENAME TABLE t TO t1", true, ""},
 		{"RENAME TABLE t t1", false, ""},
