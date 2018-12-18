@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -903,11 +904,11 @@ func (s *testIntegrationSuite) TestCreateTableTooLarge(c *C) {
 	sql += ");"
 	s.testErrorCode(c, s.tk, sql, tmysql.ErrTooManyFields)
 
-	originLimit := ddl.TableColumnCountLimit
-	ddl.TableColumnCountLimit = cnt * 4
+	originLimit := atomic.LoadUint32(&ddl.TableColumnCountLimit)
+	atomic.StoreUint32(&ddl.TableColumnCountLimit, uint32(cnt*4))
 	_, err := s.tk.Exec(sql)
 	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
-	ddl.TableColumnCountLimit = originLimit
+	atomic.StoreUint32(&ddl.TableColumnCountLimit, originLimit)
 }
 
 func (s *testIntegrationSuite) TestChangeColumnPosition(c *C) {
@@ -1027,7 +1028,7 @@ func (s *testIntegrationSuite) TestAddAnonymousIndex(c *C) {
 func (s *testIntegrationSuite) TestAddColumnTooMany(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	count := ddl.TableColumnCountLimit - 1
+	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)
 	var cols []string
 	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
