@@ -113,7 +113,9 @@ explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest:
+	@rm -rf $GOPATH/bin/gofail
 	$(GO) get github.com/pingcap/gofail
+	@which gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
