@@ -145,18 +145,6 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	rs.Close()
 }
 
-func (s *seqTestSuite) TestTSOFail(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(a int)`)
-
-	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail")
-	err := tk.ExecNoRes(`select * from t`)
-	c.Assert(err, NotNil)
-}
-
 type stats struct {
 }
 
