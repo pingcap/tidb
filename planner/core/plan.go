@@ -49,10 +49,10 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		return tsk
 	}
 	tsk = finishCopTask(ctx, tsk)
-	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.Cols, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Cols))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
-	for _, col := range p.Cols {
-		sort.ByItems = append(sort.ByItems, &ByItems{col, p.Desc})
+	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
+	for _, col := range p.Items {
+		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
 	}
 	return sort.attach2Task(tsk)
 }
