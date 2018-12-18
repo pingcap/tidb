@@ -377,7 +377,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	// Check if this plan matches the property.
 	matchProperty := false
 	if !prop.IsEmpty() {
-		//This is used for  multi_index
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.Cols[0].ColName.L {

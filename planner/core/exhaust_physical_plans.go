@@ -806,7 +806,6 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		if len(sortColOffsets) != len(la.groupByCols) {
 			continue
 		}
-		//Prefix's order can be permitted by group by item, and the left needed to pass to child
 		childProp.Cols = possibleChildProperty[:len(sortColOffsets)]
 		if !prop.IsPrefix(childProp) {
 			continue
