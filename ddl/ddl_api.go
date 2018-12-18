@@ -578,6 +578,8 @@ func checkDuplicateColumn(cols []interface{}) error {
 			nameLower = x.Name.Name.L
 		case model.CIStr:
 			nameLower = x.L
+		default:
+			nameLower = ""
 		}
 		if colNames.Exist(nameLower) {
 			return infoschema.ErrColumnExists.GenWithStackByArgs(nameLower)
@@ -621,6 +623,8 @@ func checkTooLongColumn(cols []interface{}) error {
 			colName = x.Name.Name.O
 		case model.CIStr:
 			colName = x.O
+		default:
+			colName = ""
 		}
 		if len(colName) > mysql.MaxColumnNameLength {
 			return ErrTooLongIdent.GenWithStackByArgs(colName)
@@ -1053,23 +1057,30 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	}
 
 	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
-	if s.Cols != nil {
-		viewInfo.Cols = s.Cols
-	} else {
-		viewInfo.Cols = make([]model.CIStr, len(schemaCols))
-		for i, v := range schemaCols {
-			viewInfo.Cols[i] = v.AsName
-		}
+	viewInfo.Cols = make([]model.CIStr, len(schemaCols))
+	for i, v := range schemaCols {
+		viewInfo.Cols[i] = v.AsName
 	}
 
 	var tableColumns = make([]*table.Column, len(schemaCols))
-	for i, v := range schemaCols {
-		tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-			Name:   v.AsName,
-			ID:     int64(i),
-			Offset: i,
-			State:  model.StatePublic,
-		})
+	if s.Cols == nil {
+		for i, v := range schemaCols {
+			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
+				Name:   v.AsName,
+				ID:     int64(i),
+				Offset: i,
+				State:  model.StatePublic,
+			})
+		}
+	} else {
+		for i, v := range s.Cols {
+			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
+				Name:   v,
+				ID:     int64(i),
+				Offset: i,
+				State:  model.StatePublic,
+			})
+		}
 	}
 
 	return viewInfo, tableColumns
