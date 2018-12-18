@@ -3,7 +3,7 @@ language: go
 go_import_path: github.com/pingcap/tidb
 
 go:
-  - "1.11.x"
+  - "1.11.2"
 
 env:
     - TRAVIS_COVERAGE=0
@@ -16,5 +16,3 @@ before_install:
   - bash gitcookie.sh
 script:
   - make dev
-  - ./hack/check-tidy.sh
-  - ./hack/check_parser_replace.sh

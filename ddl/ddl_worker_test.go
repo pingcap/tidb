@@ -42,13 +42,14 @@ const testLease = 5 * time.Millisecond
 
 func (s *testDDLSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	// set ReorgWaitTimeout to small value, make test to be faster.
-	ReorgWaitTimeout = 50 * time.Millisecond
 	WaitTimeWhenErrorOccured = 1 * time.Microsecond
+
+	// We hope that this test is serially executed. So put it here.
+	s.testRunWorker(c)
 }
 
 func (s *testDDLSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {
@@ -63,8 +64,8 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	c.Assert(d1.GetLease(), Equals, testLease)
 }
 
-// TestRunWorker tests no job is handled when the value of RunWorker is false.
-func (s *testDDLSuite) TestRunWorker(c *C) {
+// testRunWorker tests no job is handled when the value of RunWorker is false.
+func (s *testDDLSuite) testRunWorker(c *C) {
 	store := testCreateStore(c, "test_run_worker")
 	defer store.Close()
 
@@ -267,7 +268,7 @@ func testCheckJobCancelled(c *C, d *ddl, job *model.Job, state *model.SchemaStat
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
-		c.Assert(historyJob.IsCancelled() || historyJob.IsRollbackDone(), IsTrue, Commentf("histroy job %s", historyJob))
+		c.Assert(historyJob.IsCancelled() || historyJob.IsRollbackDone(), IsTrue, Commentf("history job %s", historyJob))
 		if state != nil {
 			c.Assert(historyJob.SchemaState, Equals, *state)
 		}
@@ -784,7 +785,6 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 	store := testCreateStore(c, "test_run_sql")
 	defer store.Close()
 
-	RunWorker = true
 	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	testCheckOwner(c, d, true)
 	defer d.Stop()

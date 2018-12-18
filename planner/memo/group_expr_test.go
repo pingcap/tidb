@@ -11,21 +11,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package memo
 
 import (
 	. "github.com/pingcap/check"
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
-func (s *testCascadesSuite) TestBaseImplementation(c *C) {
-	p := &plannercore.PhysicalLimit{}
-	impl := &baseImplementation{plan: p}
-	c.Assert(impl.getPlan(), Equals, p)
-	childCosts := []float64{5.0}
-	cost := impl.calcCost(10, childCosts, nil)
-	c.Assert(cost, Equals, 5.0)
-	c.Assert(impl.getCost(), Equals, 5.0)
-	impl.setCost(6.0)
-	c.Assert(impl.getCost(), Equals, 6.0)
+func (s *testMemoSuite) TestNewGroupExpr(c *C) {
+	p := &plannercore.LogicalLimit{}
+	expr := NewGroupExpr(p)
+	c.Assert(expr.ExprNode, Equals, p)
+	c.Assert(expr.Children, IsNil)
+	c.Assert(expr.Explored, IsFalse)
+}
+
+func (s *testMemoSuite) TestGroupExprFingerprint(c *C) {
+	p := &plannercore.LogicalLimit{}
+	expr := NewGroupExpr(p)
+
+	// we haven't set the id of the created LogicalLimit, so the result is 0.
+	c.Assert(expr.FingerPrint(), Equals, "0")
 }

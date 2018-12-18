@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -59,7 +60,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if EnableSplitTableRegion {
+		if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			// TODO: Add restrictions to this operation.
 			go splitTableRegion(d.store, tbInfo.ID)
 		}

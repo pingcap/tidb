@@ -486,7 +486,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
-		e.ctx.GetSessionVars().InsertID = uint64(recordID)
+		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 		retryInfo.AddAutoIncrementID(recordID)
 		d.SetAutoID(recordID, c.Flag)
 		return d, nil

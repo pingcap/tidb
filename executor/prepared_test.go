@@ -748,3 +748,40 @@ func (s *testSuite) TestPreparedIssue8153(c *C) {
 		c.Assert(err.Error(), Equals, "[planner:1056]Can't group on 'sum(a)'")
 	}
 }
+
+func (s *testSuite) TestPreparedIssue8644(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(data mediumblob)")
+
+		tk.MustExec(`prepare stmt1 from 'insert t (data) values (?)'`)
+
+		tk.MustExec(`set @a = 'a'`)
+		tk.MustExec(`execute stmt1 using @a;`)
+
+		tk.MustExec(`set @b = 'aaaaaaaaaaaaaaaaaa'`)
+		tk.MustExec(`execute stmt1 using @b;`)
+
+		r := tk.MustQuery(`select * from t`)
+		r.Check(testkit.Rows("a", "aaaaaaaaaaaaaaaaaa"))
+	}
+}

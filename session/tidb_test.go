@@ -23,7 +23,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -49,12 +48,6 @@ type testMainSuite struct {
 	dbName string
 	store  kv.Storage
 	dom    *domain.Domain
-}
-
-type brokenStore struct{}
-
-func (s *brokenStore) Open(schema string) (kv.Storage, error) {
-	return nil, errors.New("try again later")
 }
 
 func (s *testMainSuite) SetUpSuite(c *C) {
@@ -109,18 +102,6 @@ func (s *testMainSuite) TestTrimSQL(c *C) {
 	for _, t := range tbl {
 		c.Assert(trimSQL(t.sql), Equals, t.target, Commentf(t.sql))
 	}
-}
-
-func (s *testMainSuite) TestRetryOpenStore(c *C) {
-	begin := time.Now()
-	RegisterStore("dummy", &brokenStore{})
-	store, err := newStoreWithRetry("dummy://dummy-store", 3)
-	if store != nil {
-		defer store.Close()
-	}
-	c.Assert(err, NotNil)
-	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }
 
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {

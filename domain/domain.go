@@ -430,7 +430,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
-			// The etcd is responsible for schema synchronization, we should ensure there is at most two diffrent schema version
+			// The etcd is responsible for schema synchronization, we should ensure there is at most two different schema version
 			// in the TiDB cluster, to make the data/schema be consistent. If we lost connection/session to etcd, the cluster
 			// will treats this TiDB as a down instance, and etcd will remove the key of `/tidb/ddl/all_schema_versions/tidb-id`.
 			// Say the schema version now is 1, the owner is changing the schema version to 2, it will not wait for this down TiDB syncing the schema,
@@ -480,7 +480,7 @@ func (do *Domain) mustRestartSyncer() error {
 }
 
 // mustReload tries to Reload the schema, it returns until it's successful or the domain is closed.
-// it returns false when it is sucessful, returns true when the domain is closed.
+// it returns false when it is successful, returns true when the domain is closed.
 func (do *Domain) mustReload() (exitLoop bool) {
 	for {
 		err := do.Reload()
