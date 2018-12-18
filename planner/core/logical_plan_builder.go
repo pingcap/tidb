@@ -1901,6 +1901,38 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
+	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	if tableInfo.IsView() {
+		var (
+			selectNode        ast.StmtNode
+			selectLogicalPlan Plan
+		)
+		selectNode, err = parser.New().ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
+		if err != nil {
+			return nil, err
+		}
+		selectLogicalPlan, err = b.Build(selectNode)
+		if err != nil {
+			return nil, err
+		}
+		var viewCols []*expression.Column
+		var selectSchema = selectLogicalPlan.Schema()
+		if len(selectSchema.Columns) != len(tableInfo.View.Cols) {
+			return nil, errors.New(fmt.Sprintf("View %s's UnderTable has changed with different column count", tableInfo.Name.L))
+		}
+		for i := range tableInfo.View.Cols {
+			if selectSchema.Columns[i].ColName != tableInfo.View.Cols[i] {
+				return nil, ErrUnknownColumn.GenWithStackByArgs(tableInfo.View.Cols[i].O, "field_list")
+			}
+			selectSchema.Columns[i].ColName = tableInfo.Cols()[i].Name
+			selectSchema.Columns[i].OrigColName = tableInfo.View.Cols[i]
+			viewCols = append(viewCols, selectSchema.Columns[i])
+		}
+		selectProjection := LogicalProjection{Exprs: expression.Column2Exprs(viewCols)}.Init(b.ctx)
+		selectProjection.SetChildren(selectLogicalPlan.(LogicalPlan))
+		selectProjection.SetSchema(selectLogicalPlan.Schema())
+		return selectProjection, nil
+	}
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
