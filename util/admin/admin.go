@@ -711,7 +711,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	return nil
 }
 
-// CheckGCEnableStatus is
+// CheckGCEnableStatus is use to check whether gc is enable.
 func CheckGCEnableStatus(ctx sessionctx.Context) (enable bool, err error) {
 	sql := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, "tikv_gc_enable")
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
@@ -724,7 +724,7 @@ func CheckGCEnableStatus(ctx sessionctx.Context) (enable bool, err error) {
 	return rows[0].GetString(0) == "true", nil
 }
 
-// DisableGCForRecover is
+// DisableGCForRecover will disable gc enable variable.
 func DisableGCForRecover(ctx sessionctx.Context) error {
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 			       ON DUPLICATE KEY
@@ -734,7 +734,7 @@ func DisableGCForRecover(ctx sessionctx.Context) error {
 	return errors.Trace(err)
 }
 
-// EnableGCAfterRecover is
+// EnableGCAfterRecover will enable gc enable variable.
 func EnableGCAfterRecover(ctx sessionctx.Context) error {
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 			       ON DUPLICATE KEY

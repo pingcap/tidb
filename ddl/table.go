@@ -74,6 +74,42 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 }
 
+func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	tbInfo := &model.TableInfo{}
+	var orReplace bool
+	if err := job.DecodeArgs(tbInfo, &orReplace); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tbInfo.State = model.StateNone
+	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	switch tbInfo.State {
+	case model.StateNone:
+		// none -> public
+		tbInfo.State = model.StatePublic
+		tbInfo.UpdateTS = t.StartTS
+		err = t.CreateTable(schemaID, tbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateView, TableInfo: tbInfo})
+		return ver, nil
+	default:
+		return ver, ErrInvalidTableState.GenWithStack("invalid view state %v", tbInfo.State)
+	}
+}
+
 func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// check gc enable status again.
 	gcEnable, err := checkGCEnable(w)
@@ -127,6 +163,26 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, nil
+}
+
+func enableGC(w *worker) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return admin.EnableGCAfterRecover(ctx)
+}
+
+func checkGCEnable(w *worker) (enable bool, err error) {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return admin.CheckGCEnableStatus(ctx)
 }
 
 func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -184,26 +240,6 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	return ver, errors.Trace(err)
-}
-
-func enableGC(w *worker) error {
-	ctx, err := w.sessPool.get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer w.sessPool.put(ctx)
-
-	return admin.EnableGCAfterRecover(ctx)
-}
-
-func checkGCEnable(w *worker) (enable bool, err error) {
-	ctx, err := w.sessPool.get()
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	defer w.sessPool.put(ctx)
-
-	return admin.CheckGCEnableStatus(ctx)
 }
 
 type splitableStore interface {
@@ -595,3 +631,4 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 	}
 	return nil
 }
+

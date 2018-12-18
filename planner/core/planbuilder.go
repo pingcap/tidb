@@ -198,7 +198,7 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt:
 		return b.buildSimple(node.(ast.StmtNode)), nil
 	case ast.DDLNode:
-		return b.buildDDL(x), nil
+		return b.buildDDL(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -1394,7 +1394,7 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
+func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
@@ -1424,6 +1424,30 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 				privilege: mysql.SelectPriv,
 				db:        v.ReferTable.Schema.L,
 				table:     v.ReferTable.Name.L,
+			})
+		}
+	case *ast.CreateViewStmt:
+		plan, err := b.Build(v.Select)
+		if err != nil {
+			return nil, err
+		}
+		schema := plan.Schema()
+		if v.Cols != nil && len(v.Cols) != schema.Len() {
+			return nil, ddl.ErrViewWrongList
+		}
+		// we use fieldList to store schema.Columns temporary
+		var fieldList = make([]*ast.SelectField, schema.Len())
+		for i, col := range schema.Columns {
+			fieldList[i] = &ast.SelectField{AsName: col.ColName}
+		}
+		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
+		if _, ok := plan.(LogicalPlan); ok {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				// TODO: We should check CreateViewPriv instead of CreatePriv.
+				// See https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_create-view.
+				privilege: mysql.CreatePriv,
+				db:        v.ViewName.Schema.L,
+				table:     v.ViewName.Name.L,
 			})
 		}
 	case *ast.DropDatabaseStmt:
@@ -1465,7 +1489,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 	}
 
 	p := &DDL{Statement: node}
-	return p
+	return p, nil
 }
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the
