@@ -89,7 +89,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	}
 }
 
-// TestLeakCheckCnt is the check count in the pacakge of ddl.
+// TestLeakCheckCnt is the check count in the package of ddl.
 // In this package CustomParallelSuiteFlag is true, so we need to increase check count.
 const TestLeakCheckCnt = 1000
 
