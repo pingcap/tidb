@@ -1033,7 +1033,9 @@ func (s *session) Txn(active bool) kv.Transaction {
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
+			log.Error("active transaction fail, err = ", err)
 			s.txn.fail = errors.Trace(err)
+			s.txn.cleanup()
 		} else {
 			s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		}
@@ -1387,6 +1389,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TimeZone + quoteCommaQuote +
 	variable.BlockEncryptionMode + quoteCommaQuote +
 	variable.WaitTimeout + quoteCommaQuote +
+	variable.InteractiveTimeout + quoteCommaQuote +
 	variable.MaxPreparedStmtCount + quoteCommaQuote +
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check + quoteCommaQuote +
@@ -1449,6 +1452,14 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			}
 		}
 	}
+
+	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
+	if vars.ClientCapability&mysql.ClientInteractive > 0 {
+		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
+			vars.SetSystemVar(variable.WaitTimeout, varVal)
+		}
+	}
+
 	vars.CommonGlobalLoaded = true
 	return nil
 }
