@@ -618,15 +618,15 @@ func isMutableEffectsExpr(expr Expression) bool {
 
 // RemoveDupExprs removes identical exprs. Not that if expr contains functions which
 // are mutable or have side effects, we cannot remove it even if it has duplicates.
-func RemoveDupExprs(exprs []Expression) []Expression {
+func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 	res := make([]Expression, 0, len(exprs))
 	exists := make(map[string]struct{}, len(exprs))
+	sc := ctx.GetSessionVars().StmtCtx
 	for _, expr := range exprs {
-		key := string(expr.HashCode(nil))
+		key := string(expr.HashCode(sc))
 		if _, ok := exists[key]; !ok || isMutableEffectsExpr(expr) {
 			res = append(res, expr)
 			exists[key] = struct{}{}
-			continue
 		}
 	}
 	return res
