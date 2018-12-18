@@ -124,11 +124,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		// Only derive left where condition, because right where condition cannot be pushed down
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, true, false)
-		leftCond = expression.RemoveDupExprs(leftPushCond)
+		leftCond = leftPushCond
 		// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
 		_, derivedRightJoinCond := deriveOtherConditions(p, false, true)
 		rightCond = append(p.RightConditions, derivedRightJoinCond...)
-		rightCond = expression.RemoveDupExprs(rightCond)
 		p.RightConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
@@ -142,11 +141,10 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		// Only derive right where condition, because left where condition cannot be pushed down
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(predicates, false, true)
-		rightCond = expression.RemoveDupExprs(rightPushCond)
+		rightCond = rightPushCond
 		// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
 		derivedLeftJoinCond, _ := deriveOtherConditions(p, true, false)
 		leftCond = append(p.LeftConditions, derivedLeftJoinCond...)
-		leftCond = expression.RemoveDupExprs(leftCond)
 		p.LeftConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
@@ -172,9 +170,11 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
 		p.OtherConditions = otherCond
-		leftCond = expression.RemoveDupExprs(leftPushCond)
-		rightCond = expression.RemoveDupExprs(rightPushCond)
+		leftCond = leftPushCond
+		rightCond = rightPushCond
 	}
+	leftCond = expression.RemoveDupExprs(leftCond)
+	rightCond = expression.RemoveDupExprs(rightCond)
 	leftRet, lCh := p.children[0].PredicatePushDown(leftCond)
 	rightRet, rCh := p.children[1].PredicatePushDown(rightCond)
 	addSelection(p, lCh, leftRet, 0)
