@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/latch"
+	"github.com/pingcap/tidb/util/execdetails"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -187,6 +189,17 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if err != nil || committer == nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
+		if ctxValue != nil {
+			commitDetail := ctxValue.(**execdetails.CommitDetails)
+			if *commitDetail != nil {
+				(*commitDetail).TxnRetry += 1
+			} else {
+				*commitDetail = committer.detail
+			}
+		}
+	}()
 	// latches disabled
 	if txn.store.txnLatches == nil {
 		err = committer.executeAndWriteFinishBinlog(ctx)
@@ -196,7 +209,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 	// latches enabled
 	// for transactions which need to acquire latches
-	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
+	var lock *latch.Lock
+	lock, committer.detail.CommitTime = txn.store.txnLatches.Lock(committer.startTS, committer.keys)
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
 		err = errors.Errorf("startTS %d is stale", txn.startTS)
