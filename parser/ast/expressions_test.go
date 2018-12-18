@@ -208,3 +208,14 @@ func (tc *testExpressionsSuite) TestWhenClause(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select case %s end", extractNodeFunc)
 }
+
+func (tc *testExpressionsSuite) TestDefaultExpr(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"default", "DEFAULT"},
+		{"default(i)", "DEFAULT(`i`)"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*InsertStmt).Lists[0][0]
+	}
+	RunNodeRestoreTest(c, testCases, "insert into t values(%s)", extractNodeFunc)
+}
