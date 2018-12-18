@@ -96,4 +96,7 @@ func (s *testSuite) TestStatementContext(c *C) {
 	tk.MustExec("insert sc2 values (unhex('f09f8c80'))")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
+	tk.MustExec("insert sc2 values (unhex('F0A48BAE'))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
 }
