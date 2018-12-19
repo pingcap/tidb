@@ -500,6 +500,10 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 	if e.Tp == ast.ShowGrants && e.User == nil {
 		e.User = e.ctx.GetSessionVars().User
 	}
+	if e.Tp == ast.ShowMasterStatus {
+		// show master status need start ts.
+		e.ctx.Txn(true)
+	}
 	if len(v.Conditions) == 0 {
 		return e
 	}
@@ -1015,6 +1019,7 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 
 	return &ProjectionExec{
 		baseExecutor:  newBaseExecutor(b.ctx, expression.NewSchema(projSchemaCols...), projFromID, src),
+		numWorkers:    b.ctx.GetSessionVars().ProjectionConcurrency,
 		evaluatorSuit: expression.NewEvaluatorSuite(projExprs, false),
 	}
 }

@@ -167,7 +167,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		for _, arg := range x.GetArgs() {
 			newArg, err := SubstituteCorCol2Constant(arg)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			_, ok := newArg.(*Constant)
 			newArgs = append(newArgs, newArg)
@@ -176,7 +176,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		if allConstant {
 			val, err := x.Eval(chunk.Row{})
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			return &Constant{Value: val, RetType: x.GetType()}, nil
 		}
@@ -208,9 +208,9 @@ func timeZone2Duration(tz string) time.Duration {
 
 	i := strings.Index(tz, ":")
 	h, err := strconv.Atoi(tz[1:i])
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	m, err := strconv.Atoi(tz[i+1:])
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
@@ -448,7 +448,7 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 			return args[1], nil
 		}
 		ret, err = NewFunction(ctx, ast.RowFunc, f.GetType(), args[1:]...)
-		return ret, errors.Trace(err)
+		return ret, err
 	}
 	return
 }
@@ -520,12 +520,24 @@ func GetParamExpression(ctx sessionctx.Context, v *driver.ParamMarkerExpr) (Expr
 		f, err := NewFunctionBase(ctx, ast.GetParam, &v.Type,
 			DatumToConstant(types.NewIntDatum(int64(v.Order)), mysql.TypeLonglong))
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		f.GetType().Tp = v.Type.Tp
 		value.DeferredExpr = f
 	}
 	return value, nil
+}
+
+// DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
+// We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
+// is 0 for JSON column yet, so we can skip it. Moreover, Column.RetType refers
+// to the infoschema, if we modify it, data race may happen if another goroutine
+// read from the infoschema at the same time.
+func DisableParseJSONFlag4Expr(expr Expression) {
+	if _, isColumn := expr.(*Column); isColumn {
+		return
+	}
+	expr.GetType().Flag &= ^mysql.ParseToJSONFlag
 }
 
 // ConstructPositionExpr constructs PositionExpr with the given ParamMarkerExpr.
@@ -544,7 +556,7 @@ func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool
 	}
 	pos, isNull, err := GetIntFromConstant(ctx, value)
 	if err != nil || isNull {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 	return pos, false, nil
 }
@@ -554,11 +566,11 @@ func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bo
 	con, ok := value.(*Constant)
 	if !ok {
 		err := errors.Errorf("Not a Constant expression %+v", value)
-		return "", true, errors.Trace(err)
+		return "", true, err
 	}
 	str, isNull, err := con.EvalString(ctx, chunk.Row{})
 	if err != nil || isNull {
-		return "", true, errors.Trace(err)
+		return "", true, err
 	}
 	return str, false, nil
 }
@@ -567,7 +579,7 @@ func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bo
 func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, error) {
 	str, isNull, err := GetStringFromConstant(ctx, value)
 	if err != nil || isNull {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 	intNum, err := strconv.Atoi(str)
 	if err != nil {

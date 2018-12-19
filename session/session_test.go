@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -678,7 +679,7 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 	tk.MustExec("execute stmt1 using @v1")
 	tk.MustExec("execute stmt1 using @v2")
 	tk.MustExec("deallocate prepare stmt1")
-	currLastInsertID := tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID := tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	tk.MustQuery("select c1 from t where c2 = 20").Check(testkit.Rows(fmt.Sprint(currLastInsertID)))
 	c.Assert(lastInsertID+2, Equals, currLastInsertID)
 }
@@ -756,6 +757,58 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 
 	tk.MustQuery("select last_insert_id(20)").Check(testkit.Rows(fmt.Sprint(20)))
 	tk.MustQuery("select last_insert_id()").Check(testkit.Rows(fmt.Sprint(20)))
+
+	// Corner cases for unsigned bigint auto_increment Columns.
+	tk.MustExec("drop table if exists autoid")
+	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
+	tk.MustExec("insert into autoid values(9223372036854775808);")
+	tk.MustExec("insert into autoid values();")
+	tk.MustExec("insert into autoid values();")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9223372036854775808", "9223372036854775810", "9223372036854775812"))
+	tk.MustExec("insert into autoid values(18446744073709551614);")
+	_, err := tk.Exec("insert into autoid values()")
+	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
+	// FixMe: MySQL works fine with the this sql.
+	_, err = tk.Exec("insert into autoid values(18446744073709551615)")
+	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
+
+	tk.MustExec("drop table if exists autoid")
+	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
+	tk.MustExec("insert into autoid values()")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1"))
+	tk.MustExec("insert into autoid values(5000)")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000"))
+	tk.MustExec("insert into autoid values()")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000", "9001"))
+
+	// Corner cases for signed bigint auto_increment Columns.
+	tk.MustExec("drop table if exists autoid")
+	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
+	tk.MustExec("insert into autoid values(9223372036854775806);")
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+	_, err = tk.Exec("insert into autoid values();")
+	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index(auto_inc_id)").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+
+	tk.MustExec("drop table if exists autoid")
+	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
+	tk.MustExec("insert into autoid values()")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1"))
+	tk.MustExec("insert into autoid values(5000)")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000"))
+	tk.MustExec("insert into autoid values()")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000", "9001"))
 }
 
 func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
@@ -779,7 +832,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 11").Check(testkit.Rows("6"))
-	currLastInsertID := tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID := tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+5, Equals, currLastInsertID)
 
 	// insert set
@@ -794,7 +847,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 31").Check(testkit.Rows("9"))
-	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID = tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// replace
@@ -809,7 +862,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 21").Check(testkit.Rows("10"))
-	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID = tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+1, Equals, currLastInsertID)
 
 	// update
@@ -825,7 +878,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 41").Check(testkit.Rows("0"))
-	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID = tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 
 	// prepare
@@ -847,7 +900,7 @@ func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
 	tk.MustExec("commit")
 
 	tk.MustQuery("select c1 from t where c2 = 12").Check(testkit.Rows("7"))
-	currLastInsertID = tk.Se.GetSessionVars().PrevLastInsertID
+	currLastInsertID = tk.Se.GetSessionVars().StmtCtx.PrevLastInsertID
 	c.Assert(lastInsertID+3, Equals, currLastInsertID)
 }
 
@@ -1305,6 +1358,36 @@ func (s *testSessionSuite) TestDelete(c *C) {
 	tk.MustExec("insert into t (F1) values ('1'), ('2');")
 	tk.MustExec("delete test1.t from test1.t inner join test.t where test1.t.F1 > test.t.F1")
 	tk1.MustQuery("select * from t;").Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestResetCtx(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t (i int auto_increment not null key);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (10);")
+	tk.MustExec("update t set i = i + row_count();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2", "11"))
+
+	tk1.MustExec("update t set i = 0 where i = 1;")
+	tk1.MustQuery("select * from t;").Check(testkit.Rows("0"))
+
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "11"))
+
+	tk.MustExec("delete from t where i = 11;")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("update t set i = i + last_insert_id() + 1;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("14", "25"))
+
+	tk1.MustExec("update t set i = 0 where i = 1;")
+	tk1.MustQuery("select * from t;").Check(testkit.Rows("0"))
+
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("13", "25"))
 }
 
 func (s *testSessionSuite) TestUnique(c *C) {
@@ -2000,6 +2083,63 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSessionSuite) TestBatchCommit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_batch_commit = 1")
+	tk.MustExec("create table t (id int)")
+	saved := config.GetGlobalConfig().Performance
+	config.GetGlobalConfig().Performance.StmtCountLimit = 3
+	defer func() {
+		config.GetGlobalConfig().Performance = saved
+	}()
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("SET SESSION autocommit = 1")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (2)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("rollback")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+
+	// The above rollback will not make the session in transaction.
+	tk.MustExec("insert into t values (1)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustExec("delete from t")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (5)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (6)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values (7)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+
+	// The session is still in transaction.
+	tk.MustExec("insert into t values (8)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into t values (9)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("insert into t values (10)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7"))
+	tk.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7", "8", "9", "10"))
+
+	// The above commit will not make the session in transaction.
+	tk.MustExec("insert into t values (11)")
+	tk1.MustQuery("select * from t").Check(testkit.Rows("5", "6", "7", "8", "9", "10", "11"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("SET SESSION autocommit = 0")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("insert into t values (3)")
+	tk.MustExec("rollback")
+	tk1.MustExec("insert into t values (4)")
+	tk1.MustExec("insert into t values (5)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("4", "5"))
+}
+
 func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '-8:00'")
@@ -2021,8 +2161,8 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 
 	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
-	// With the existence of global variable cache, it have to sleep a while here.
-	time.Sleep(3 * time.Second)
+	// Disable global variable cache, so load global session variable take effect immediate.
+	s.dom.GetGlobalVarsCache().Disable()
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
 }
@@ -2165,7 +2305,7 @@ func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
 	// session 1 starts a transaction early.
 	// execute a select statement to clear retry history.
 	tk1.MustExec("select 1")
-	tk1.Se.NewTxn()
+	tk1.Se.NewTxn(context.Background())
 	// session 2 update the value.
 	tk2.MustExec("update no_retry set id = 4")
 	// Autocommit update will retry, so it would not fail.

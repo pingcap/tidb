@@ -67,7 +67,7 @@ func (ts *testSuite) TearDownSuite(c *C) {
 func (ts *testSuite) TestBasic(c *C) {
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
@@ -225,7 +225,7 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	sctx := ts.se
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
-	c.Assert(sctx.NewTxn(), IsNil)
+	c.Assert(sctx.NewTxn(ctx), IsNil)
 	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil), false)
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(sctx, types.MakeDatums(2, nil), false)
@@ -282,13 +282,14 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
 	row, err := tb.Row(ts.se, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
+	ts.se.StmtCommit()
 	c.Assert(ts.se.Txn(true).Commit(context.Background()), IsNil)
 }
 
@@ -298,7 +299,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	c.Assert(err, IsNil)
 	totalCount := 0
@@ -315,7 +316,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 func (ts *testSuite) TestTableFromMeta(c *C) {
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.meta (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
@@ -339,18 +340,19 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 )`
-	_, err := ts.se.Execute(context.Background(), "use test")
+	ctx := context.Background()
+	_, err := ts.se.Execute(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
+	_, err = ts.se.Execute(ctx, "drop table if exists t1, t2;")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), createTable1)
+	_, err = ts.se.Execute(ctx, createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	c.Assert(p0.Name, Equals, model.NewCIStr("p0"))
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1), false)
 	c.Assert(err, IsNil)
 
@@ -392,7 +394,7 @@ PARTITION BY RANGE ( id ) (
 )`
 	_, err = ts.se.Execute(context.Background(), createTable2)
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 	tbInfo = tb.Meta()
@@ -413,7 +415,7 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(8), false)
 	c.Assert(err, IsNil)
 
@@ -450,7 +452,7 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo = tb.Meta()
 	for i := 0; i < 11; i++ {
-		c.Assert(ts.se.NewTxn(), IsNil)
+		c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 		rid, err = tb.AddRecord(ts.se, types.MakeDatums(-i), false)
 		c.Assert(err, IsNil)
 		txn = ts.se.Txn(true)

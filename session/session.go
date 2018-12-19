@@ -198,10 +198,10 @@ func (s *session) Status() uint16 {
 }
 
 func (s *session) LastInsertID() uint64 {
-	if s.sessionVars.LastInsertID > 0 {
-		return s.sessionVars.LastInsertID
+	if s.sessionVars.StmtCtx.LastInsertID > 0 {
+		return s.sessionVars.StmtCtx.LastInsertID
 	}
-	return s.sessionVars.InsertID
+	return s.sessionVars.StmtCtx.InsertID
 }
 
 func (s *session) AffectedRows() uint64 {
@@ -462,8 +462,8 @@ func (s *session) String() string {
 	if sessVars.SnapshotTS != 0 {
 		data["snapshotTS"] = sessVars.SnapshotTS
 	}
-	if sessVars.LastInsertID > 0 {
-		data["lastInsertID"] = sessVars.LastInsertID
+	if sessVars.StmtCtx.LastInsertID > 0 {
+		data["lastInsertID"] = sessVars.StmtCtx.LastInsertID
 	}
 	if len(sessVars.PreparedStmts) > 0 {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
@@ -521,6 +521,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if st.IsReadOnly() {
 				continue
 			}
+			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StmtCtx.ResetForRetry()
+			s.sessionVars.PreparedParams = s.sessionVars.PreparedParams[:0]
 			schemaVersion, err = st.RebuildPlan()
 			if err != nil {
 				return errors.Trace(err)
@@ -534,8 +537,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			} else {
 				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d", connID, schemaVersion, retryCnt, i)
 			}
-			s.sessionVars.StmtCtx = sr.stmtCtx
-			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(ctx)
 			if err != nil {
 				s.StmtRollback()
@@ -1032,7 +1033,9 @@ func (s *session) Txn(active bool) kv.Transaction {
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
+			log.Error("active transaction fail, err = ", err)
 			s.txn.fail = errors.Trace(err)
+			s.txn.cleanup()
 		} else {
 			s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		}
@@ -1043,10 +1046,9 @@ func (s *session) Txn(active bool) kv.Transaction {
 	return &s.txn
 }
 
-func (s *session) NewTxn() error {
+func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		ctx := context.TODO()
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -1387,6 +1389,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TimeZone + quoteCommaQuote +
 	variable.BlockEncryptionMode + quoteCommaQuote +
 	variable.WaitTimeout + quoteCommaQuote +
+	variable.InteractiveTimeout + quoteCommaQuote +
 	variable.MaxPreparedStmtCount + quoteCommaQuote +
 	/* TiDB specific global variables: */
 	variable.TiDBSkipUTF8Check + quoteCommaQuote +
@@ -1449,6 +1452,14 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 			}
 		}
 	}
+
+	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
+	if vars.ClientCapability&mysql.ClientInteractive > 0 {
+		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
+			vars.SetSystemVar(variable.WaitTimeout, varVal)
+		}
+	}
+
 	vars.CommonGlobalLoaded = true
 	return nil
 }
@@ -1476,7 +1487,7 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(s.NewTxn())
+	return errors.Trace(s.NewTxn(ctx))
 }
 
 // InitTxnWithStartTS create a transaction with startTS.

@@ -285,7 +285,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition:
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
 		}
 		if err != nil {
@@ -468,10 +468,14 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
+	case model.ActionCreateView:
+		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable:
 		ver, err = onDropTable(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = onDropTablePartition(t, job)
+	case model.ActionTruncateTablePartition:
+		ver, err = onTruncateTablePartition(t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
 	case model.ActionDropColumn:
@@ -502,6 +506,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifyTableComment(t, job)
 	case model.ActionAddTablePartition:
 		ver, err = onAddTablePartition(t, job)
+	case model.ActionModifyTableCharsetAndCollate:
+		ver, err = onModifyTableCharsetAndCollate(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

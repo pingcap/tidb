@@ -287,11 +287,11 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
-	c.Assert(s.ctx.NewTxn(), IsNil)
+	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
 	c.Assert(err, IsNil)
 	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
@@ -304,7 +304,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
-	c.Assert(s.ctx.NewTxn(), IsNil)
+	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	_, err = tb.AddRecord(s.ctx, record2.Values, false)
 	c.Assert(err, IsNil)
 	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
@@ -346,7 +346,7 @@ func (s *testSuite) TestScan(c *C) {
 	ctx := se.(sessionctx.Context)
 	s.testIndex(c, ctx, db.L, tb, tb.Indices()[0])
 
-	c.Assert(s.ctx.NewTxn(), IsNil)
+	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	err = tb.RemoveRecord(s.ctx, 1, record1.Values)
 	c.Assert(err, IsNil)
 	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
