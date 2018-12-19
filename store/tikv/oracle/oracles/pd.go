@@ -14,6 +14,7 @@
 package oracles
 
 import (
+	"context"
 	"sync/atomic"
 	"time"
 
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var _ oracle.Oracle = &pdOracle{}

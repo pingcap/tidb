@@ -14,6 +14,9 @@
 package executor
 
 import (
+	"context"
+
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -23,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // InsertExec represents an insert executor.
@@ -33,7 +35,7 @@ type InsertExec struct {
 	Priority    mysql.PriorityEnum
 }
 
-func (e *InsertExec) exec(rows [][]types.Datum) error {
+func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -126,13 +128,18 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 	return nil
 }
 
-// Next implements Exec Next interface.
+// Next implements the Executor Next interface.
 func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("insert.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	chk.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
 		return e.insertRowsFromSelect(ctx, e.exec)
 	}
-	return e.insertRows(e.exec)
+	return e.insertRows(ctx, e.exec)
 }
 
 // Close implements the Executor Close interface.
@@ -144,7 +151,7 @@ func (e *InsertExec) Close() error {
 	return nil
 }
 
-// Open implements the Executor Close interface.
+// Open implements the Executor Open interface.
 func (e *InsertExec) Open(ctx context.Context) error {
 	if e.SelectExec != nil {
 		return e.SelectExec.Open(ctx)

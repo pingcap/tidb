@@ -21,6 +21,7 @@ Writing a design document can promote us to think deliberately and gather knowle
 ### Proposed
 
 - [Proposal: A new command to restore dropped table](./2018-08-10-restore-dropped-table.md)
+- [Proposal: Support SQL Plan Management](./2018-12-11-sql-plan-management.md)
 
 ### In Progress
 

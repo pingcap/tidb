@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
@@ -132,6 +133,54 @@ func (s *testSuite) TestCreateTable(c *C) {
 	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
+}
+
+func (s *testSuite) TestCreateView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	//create an source table
+	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
+	//test create a exist view
+	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
+	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
+	//create view on nonexistent table
+	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.t1' doesn't exist")
+	//simple view
+	tk.MustExec("create table t1 (a int ,b int)")
+	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
+	//view with colList and SelectFieldExpr
+	_, err = tk.Exec("create view v1 (c) as select b+1 from t1")
+	c.Assert(err, IsNil)
+	//view with SelectFieldExpr
+	_, err = tk.Exec("create view v2 as select b+1 from t1")
+	c.Assert(err, IsNil)
+	//view with SelectFieldExpr and AsName
+	_, err = tk.Exec("create view v3 as select b+1 as c from t1")
+	c.Assert(err, IsNil)
+	//view with colList , SelectField and AsName
+	_, err = tk.Exec("create view v4 (c) as select b+1 as d from t1")
+	c.Assert(err, IsNil)
+	//view with select wild card
+	_, err = tk.Exec("create view v5 as select * from t1")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("create view v6 (c,d) as select * from t1")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	tk.MustExec("drop table v1,v2,v3,v4,v5,v6")
+	//view with variable
+	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
+	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
+	tk.MustExec("drop table v1")
+	//view with different col counts
+	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
+	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 }
 
 func (s *testSuite) TestCreateDropDatabase(c *C) {
@@ -385,7 +434,7 @@ func (s *testSuite) TestShardRowIDBits(c *C) {
 	c.Assert(err, IsNil)
 	var hasShardedID bool
 	var count int
-	c.Assert(tk.Se.NewTxn(), IsNil)
+	c.Assert(tk.Se.NewTxn(context.Background()), IsNil)
 	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
 		c.Assert(h, GreaterEqual, int64(0))
 		first8bits := h >> 56
@@ -449,4 +498,33 @@ func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
+}
+
+func (s *testSuite) TestSetDDLReorgBatchSize(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.DefTiDBDDLReorgBatchSize))
+
+	tk.MustExec("set tidb_ddl_reorg_batch_size = 1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MinDDLReorgBatchSize))
+	tk.MustExec(fmt.Sprintf("set tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MaxDDLReorgBatchSize))
+	_, err := tk.Exec("set tidb_ddl_reorg_batch_size = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set tidb_ddl_reorg_batch_size = 100")
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
+	tk.MustExec("set tidb_ddl_reorg_batch_size = -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
+
+	tk.MustExec("set tidb_ddl_reorg_batch_size = 100")
+	res := tk.MustQuery("select @@tidb_ddl_reorg_batch_size")
+	res.Check(testkit.Rows("100"))
+
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgBatchSize)))
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
+	res.Check(testkit.Rows("1000"))
 }

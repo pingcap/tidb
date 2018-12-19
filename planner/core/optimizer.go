@@ -43,6 +43,7 @@ const (
 	flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
+	flagJoinReOrderGreedy
 )
 
 var optRuleList = []logicalOptRule{
@@ -57,6 +58,7 @@ var optRuleList = []logicalOptRule{
 	&partitionProcessor{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
+	&joinReOrderGreedySolver{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.

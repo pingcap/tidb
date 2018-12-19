@@ -14,19 +14,21 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -34,6 +36,12 @@ const (
 	testCount  = 2
 	indexStep  = 2
 )
+
+type brokenStore struct{}
+
+func (s *brokenStore) Open(schema string) (kv.Storage, error) {
+	return nil, errors.New("try again later")
+}
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -636,4 +644,16 @@ func (s *testKVSuite) TestIsolationMultiInc(c *C) {
 		return nil
 	})
 	c.Assert(err, IsNil)
+}
+
+func (s *testKVSuite) TestRetryOpenStore(c *C) {
+	begin := time.Now()
+	Register("dummy", &brokenStore{})
+	store, err := newStoreWithRetry("dummy://dummy-store", 3)
+	if store != nil {
+		defer store.Close()
+	}
+	c.Assert(err, NotNil)
+	elapse := time.Since(begin)
+	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }
