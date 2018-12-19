@@ -654,7 +654,8 @@ func (r *Region) Contains(key []byte) bool {
 		(bytes.Compare(key, r.meta.GetEndKey()) < 0 || len(r.meta.GetEndKey()) == 0)
 }
 
-// ContainsByEnd checks whether the key is in the region, for the maximum region endKey is empty.
+// ContainsByEnd check the region contains the greatest key that is less than key.
+// for the maximum region endKey is empty.
 // startKey < key <= endKey.
 func (r *Region) ContainsByEnd(key []byte) bool {
 	return bytes.Compare(r.meta.GetStartKey(), key) < 0 &&
