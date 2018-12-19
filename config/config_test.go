@@ -35,6 +35,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf := new(Config)
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
+	conf.Binlog.BinlogSocket = "/tmp/socket"
 	conf.TiKVClient.CommitTimeout = "10s"
 
 	configFile := "config.toml"
@@ -53,6 +54,7 @@ commit-timeout="41s"`)
 
 	// Test that the original value will not be clear by load the config file that does not contain the option.
 	c.Assert(conf.Binlog.Enable, Equals, true)
+	c.Assert(conf.Binlog.BinlogSocket, Equals, "/tmp/socket")
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(f.Close(), IsNil)
