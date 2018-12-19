@@ -343,6 +343,21 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 	return buffer, nil
 }
 
+func lengthEncodedIntSize(n uint64) int {
+	switch {
+	case n <= 250:
+		return 1
+
+	case n <= 0xffff:
+		return 3
+
+	case n <= 0xffffff:
+		return 4
+	}
+
+	return 9
+}
+
 const (
 	expFormatBig   = 1e15
 	expFormatSmall = 1e-15
