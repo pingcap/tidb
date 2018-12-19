@@ -466,6 +466,9 @@ func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) err
 
 func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
 	for _, idx := range tbl.Indices() {
+		if idx.Meta().State != model.StatePublic {
+			continue
+		}
 		txn := e.ctx.Txn(true)
 		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.genExprs)
 		if err != nil {
