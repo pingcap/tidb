@@ -324,10 +324,11 @@ func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
 }
 
 type testCase struct {
-	data1    []byte
-	data2    []byte
-	expected []string
-	restData []byte
+	data1       []byte
+	data2       []byte
+	expected    []string
+	restData    []byte
+	expectedMsg string
 }
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
@@ -348,12 +349,14 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
+		ld.SetMessage()
+		tk.CheckLastMessage(tt.expectedMsg)
 		err := ctx.StmtCommit()
 		c.Assert(err, IsNil)
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
-		err1 = txn.Commit(context.Background())
-		c.Assert(err1, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)

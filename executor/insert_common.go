@@ -61,7 +61,7 @@ type InsertValues struct {
 
 type defaultVal struct {
 	val types.Datum
-	// We evaluate the default value lazily. The valid indicates whether the val is evaluated.
+	// valid indicates whether the val is evaluated. We evaluate the default value lazily.
 	valid bool
 }
 
@@ -556,6 +556,7 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
 		if rows[i] != nil {
+			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
 			_, err = addRecord(rows[i])
 			if err != nil {
 				return errors.Trace(err)
