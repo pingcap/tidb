@@ -287,10 +287,7 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(arg)...)
 	}
 	for _, by := range p.ByItems {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(by.Expr)...)
-	}
-	for _, expr := range p.PartitionBy {
-		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(expr)...)
+		parentUsedCols = append(parentUsedCols, by.Col)
 	}
 	return parentUsedCols
 }

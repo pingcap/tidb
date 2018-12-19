@@ -380,5 +380,4 @@ type PhysicalWindow struct {
 	physicalSchemaProducer
 
 	WindowFuncDesc *aggregation.WindowFuncDesc
-	PartitionBy    []expression.Expression
 }

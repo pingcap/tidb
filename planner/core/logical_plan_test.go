@@ -1881,16 +1881,24 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		result string
 	}{
 		{
-			sql:    "select a, avg(a) over() from t",
-			result: "DataScan(t)->WindowFunc(avg(test.t.a))->Projection",
+			sql:    "select a, avg(a) over(partition by a) from t",
+			result: "TableReader(Table(t))->WindowFunc(avg(test.t.a))->Projection",
 		},
 		{
-			sql:    "select a, avg(a) over(partition by a) from t",
-			result: "DataScan(t)->Sort->WindowFunc(avg(test.t.a))->Projection",
+			sql:    "select a, avg(a) over(partition by b) from t",
+			result: "TableReader(Table(t))->Sort->WindowFunc(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(partition by (a+1)) from t",
+			result: "TableReader(Table(t))->Projection->Sort->WindowFunc(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
+			result: "TableReader(Table(t))->Sort->WindowFunc(avg(test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, b as a, avg(a) over(partition by a) from t",
-			result: "DataScan(t)->Sort->WindowFunc(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->WindowFunc(avg(test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, b as z, sum(z) over() from t",
@@ -1898,27 +1906,27 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, b as z from t order by (sum(z) over())",
-			result: "DataScan(t)->WindowFunc(sum(test.t.z))->Sort->Projection",
+			result: "TableReader(Table(t))->WindowFunc(sum(test.t.z))->Sort->Projection",
 		},
 		{
 			sql:    "select sum(avg(a)) over() from t",
-			result: "DataScan(t)->Aggr(avg(test.t.a))->WindowFunc(sum(sel_agg_2))->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->WindowFunc(sum(sel_agg_2))->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over())",
-			result: "DataScan(t)->WindowFunc(sum(test.t.a))->Sort->Projection",
+			result: "TableReader(Table(t))->WindowFunc(sum(test.t.a))->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over(partition by a))",
-			result: "DataScan(t)->Sort->WindowFunc(sum(test.t.a))->Sort->Projection",
+			result: "TableReader(Table(t))->WindowFunc(sum(test.t.a))->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(avg(a)) over())",
-			result: "DataScan(t)->Aggr(avg(test.t.a),firstrow(test.t.b))->WindowFunc(sum(sel_agg_2))->Sort->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->WindowFunc(sum(sel_agg_2))->Sort->Projection",
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
-			result: "Apply{DataScan(t)->DataScan(tt)->WindowFunc(sum(tt.a))->MaxOneRow->Sel([w])}->Projection",
+			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->WindowFunc(sum(tt.a))->MaxOneRow->Sel([w])}->Projection",
 		},
 		{
 			sql:    "select avg(a) over() as w from t having w > 1",
@@ -1948,6 +1956,9 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
+		lp, ok := p.(LogicalPlan)
+		c.Assert(ok, IsTrue)
+		p, err = physicalOptimize(lp)
 		c.Assert(ToString(p), Equals, tt.result, comment)
 	}
 }

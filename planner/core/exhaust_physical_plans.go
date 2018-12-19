@@ -786,13 +786,13 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	if !matchItems(prop, p.ByItems) {
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: p.ByItems, Enforced: true}
+	if !prop.IsPrefix(childProperty) {
 		return nil
 	}
 	window := PhysicalWindow{
 		WindowFuncDesc: p.WindowFuncDesc,
-		PartitionBy:    p.PartitionBy,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
 	window.SetSchema(p.Schema())
 	return []PhysicalPlan{window}
 }

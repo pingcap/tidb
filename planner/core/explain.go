@@ -300,5 +300,6 @@ func (p *PhysicalTopN) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalWindow) ExplainInfo() string {
+	// TODO: Add explain info for partition by, order by and frame.
 	return p.WindowFuncDesc.String()
 }

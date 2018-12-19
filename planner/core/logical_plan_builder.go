@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -596,17 +597,27 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
-func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int, error) {
+func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, considerWindow bool) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
-	for _, field := range fields {
-		// Window functions that exists in field list could only be processed after having,
-		// so we add a fake placeholder here.
-		if ast.HasWindowFlag(field.Expr) {
-			expr := expression.Zero
+	for i, field := range fields {
+		if !field.Auxiliary {
+			oldLen++
+		}
+
+		hasWindow := ast.HasWindowFlag(field.Expr)
+		// When `considerWindow` is false, we will only build fields for non-window functions, so we add fake placeholders.
+		// When `considerWindow` is true, all the non-window fields have been built, so we just use the schema columns.
+		if (considerWindow && !hasWindow) || (!considerWindow && hasWindow) {
+			var expr expression.Expression
+			if hasWindow {
+				expr = expression.Zero
+			} else {
+				expr = p.Schema().Columns[i]
+			}
 			proj.Exprs = append(proj.Exprs, expr)
 			col := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
 			schema.Append(col)
@@ -622,10 +633,6 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 
 		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
 		schema.Append(col)
-
-		if !field.Auxiliary {
-			oldLen++
-		}
 	}
 	proj.SetSchema(schema)
 	proj.SetChildren(p)
@@ -1853,7 +1860,8 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	}
 
 	var oldLen int
-	p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, totalMap)
+	// `considerWindow` is false now because we can only process window functions after having clause.
+	p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, totalMap, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1867,7 +1875,8 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	}
 
 	if hasWindow {
-		p, oldLen, err = b.buildWindowFunctions(p, sel, windowMap)
+		// Now we build the window function fields.
+		p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, windowMap, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2484,66 +2493,59 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	return del, nil
 }
 
-func (b *PlanBuilder) buildWindowFunctions(p LogicalPlan, sel *ast.SelectStmt, windowMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, int, error) {
+func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, byItems []*ast.ByItem, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, error) {
 	b.optFlag |= flagEliminateProjection
-	b.curClause = fieldList
-	fields := sel.Fields.Fields
-	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
-	oldLen := 0
-	for i, field := range fields {
-		if !field.Auxiliary {
-			oldLen++
+	exprs := make([]property.Item, 0, len(byItems))
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)+len(byItems))}.Init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(p.Schema().Columns)+len(byItems))...)
+	for _, col := range p.Schema().Columns {
+		proj.Exprs = append(proj.Exprs, col)
+		schema.Append(col)
+	}
+	transformer := &itemTransformer{}
+	for _, item := range byItems {
+		newExpr, _ := item.Expr.Accept(transformer)
+		item.Expr = newExpr.(ast.ExprNode)
+		it, np, err := b.rewrite(item.Expr, p, aggMap, true)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
-		// it has been built in previous projection
-		if !ast.HasWindowFlag(field.Expr) {
-			col := p.Schema().Columns[i]
-			proj.Exprs = append(proj.Exprs, col)
-			newCol := b.buildProjectionField(proj.id, schema.Len()+1, field, col)
-			schema.Append(newCol)
+		p = np
+		if col, ok := it.(*expression.Column); ok {
+			exprs = append(exprs, property.Item{Col: col, Desc: item.Desc})
 			continue
 		}
-		newExpr, np, err := b.rewrite(field.Expr, p, windowMap, true)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
+		proj.Exprs = append(proj.Exprs, it)
+		col := &expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), schema.Len())),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  it.GetType(),
 		}
-
-		p = np
-		proj.Exprs = append(proj.Exprs, newExpr)
-
-		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
 		schema.Append(col)
+		exprs = append(exprs, property.Item{Col: col, Desc: item.Desc})
 	}
 	proj.SetSchema(schema)
 	proj.SetChildren(p)
-	return proj, oldLen, nil
+	return proj, exprs, nil
 }
 
 func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
 	spec := expr.Spec
 	// Add sort for partition by and order by
-	var byItems []*ast.ByItem
+	var items []*ast.ByItem
 	if spec.PartitionBy != nil {
-		byItems = append(byItems, spec.PartitionBy.Items...)
+		items = append(items, spec.PartitionBy.Items...)
 	}
 	if spec.OrderBy != nil {
-		byItems = append(byItems, spec.OrderBy.Items...)
+		items = append(items, spec.OrderBy.Items...)
 	}
-	var partitionBy []expression.Expression
-	var orderByItems []*ByItems
-	if len(byItems) > 0 {
-		s, err := b.buildSort(p, byItems, nil)
+	var byItems []property.Item
+	if len(items) > 0 {
+		var err error
+		p, byItems, err = b.buildProjectionForWindow(p, items, aggMap)
 		if err != nil {
 			return nil, err
 		}
-		if spec.PartitionBy != nil {
-			partitionBy = make([]expression.Expression, 0, len(spec.PartitionBy.Items))
-			for i := 0; i < len(spec.PartitionBy.Items); i++ {
-				partitionBy = append(partitionBy, s.ByItems[i].Expr)
-			}
-		}
-		orderByItems = s.ByItems
-		p = s
 	}
 
 	newArgList := make([]expression.Expression, 0, len(expr.Args))
@@ -2559,8 +2561,7 @@ func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExp
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, newArgList)
 	window := LogicalWindow{
 		WindowFuncDesc: desc,
-		PartitionBy:    partitionBy,
-		ByItems:        orderByItems,
+		ByItems:        byItems,
 	}.Init(b.ctx)
 	schema := p.Schema().Clone()
 	schema.Append(&expression.Column{
