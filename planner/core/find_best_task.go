@@ -370,7 +370,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	matchProperty := false
 	all, desc := prop.AllSameOrder()
 	if !prop.IsEmpty() && all {
-		// this is used for multi index
+		// Check whether the prop matches the index.
 		for i, col := range idx.Columns {
 			// not matched
 			if col.Name.L == prop.Items[0].Col.ColName.L {
