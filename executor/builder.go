@@ -1212,6 +1212,9 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 		startTS = txn.StartTS()
 	}
 	b.startTS = startTS
+	if b.startTS == 0 {
+		return 0, errors.Trace(ErrGetStartTS)
+	}
 	return startTS, nil
 }
 
