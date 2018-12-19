@@ -108,8 +108,8 @@ github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e h1:P73/4dPCL96rG
 github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26 h1:JK4VLNYbSn36QSbCnqALi2ySXdH0DfcMssT/zmLf4Ls=
 github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
-github.com/pingcap/parser v0.0.0-20181214132045-732efe993f70 h1:18cirMLfudQucdZM5keSuhUFculJ2xOQb9hqKd4O8wQ=
-github.com/pingcap/parser v0.0.0-20181214132045-732efe993f70/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20181218071912-deacf026787e h1:jKibIs55HR7OMo62uhjA6Bfx3GK+rbHK4Gfd4/8aTzk=
+github.com/pingcap/parser v0.0.0-20181218071912-deacf026787e/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/tidb-tools v0.0.0-20181112132202-4860a0d5de03 h1:xVuo5U+l6XAWHsb+xhkZ8zz3jerIwDfCHAO6kR2Kaog=
