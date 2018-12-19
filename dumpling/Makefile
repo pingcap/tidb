@@ -113,7 +113,9 @@ explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest:
-	$(GO) get github.com/etcd-io/gofail
+	@rm -rf $GOPATH/bin/gofail
+	$(GO) get github.com/pingcap/gofail
+	@which gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
@@ -130,21 +132,21 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race:
-	$(GO) get github.com/etcd-io/gofail
+	$(GO) get github.com/pingcap/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 leak:
-	$(GO) get github.com/etcd-io/gofail
+	$(GO) get github.com/pingcap/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test:
-	$(GO) get github.com/etcd-io/gofail
+	$(GO) get github.com/pingcap/gofail
 	@$(GOFAIL_ENABLE)
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
