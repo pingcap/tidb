@@ -2974,20 +2974,29 @@ func (b *builtinFormatSig) Clone() builtinFunc {
 	return newSig
 }
 
+const formatMaxDecimals int64 = 30
+
 // evalString evals FORMAT(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
 func (b *builtinFormatSig) evalString(row chunk.Row) (string, bool, error) {
-	x, isNull, err := b.args[0].EvalString(b.ctx, row)
+	x, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
+	xStr := strconv.FormatFloat(x, 'f', -1, 64)
 
-	d, isNull, err := b.args[1].EvalString(b.ctx, row)
+	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
+	if d < 0 {
+		d = 0
+	} else if d > formatMaxDecimals {
+		d = formatMaxDecimals
+	}
+	dStr := strconv.FormatInt(d, 10)
 
-	formatString, err := mysql.GetLocaleFormatFunction("en_US")(x, d)
+	formatString, err := mysql.GetLocaleFormatFunction("en_US")(xStr, dStr)
 	return formatString, err != nil, err
 }
 

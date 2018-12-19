@@ -1606,31 +1606,35 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		number    interface{}
 		precision interface{}
 		ret       interface{}
+		warnings  int
 	}{
-		{12332.123456, 4, "12,332.1234"},
-		{12332.123456, 0, "12,332"},
-		{12332.123456, -4, "12,332"},
-		{-12332.123456, 4, "-12,332.1234"},
-		{-12332.123456, 0, "-12,332"},
-		{-12332.123456, -4, "-12,332"},
-		{"12332.123456", "4", "12,332.1234"},
-		{"12332.123456A", "4", "12,332.1234"},
-		{"-12332.123456", "4", "-12,332.1234"},
-		{"-12332.123456A", "4", "-12,332.1234"},
-		{"A123345", "4", "0.0000"},
-		{"-A123345", "4", "0.0000"},
-		{"-12332.123456", "A", "-12,332"},
-		{"12332.123456", "A", "12,332"},
-		{"-12332.123456", "4A", "-12,332.1234"},
-		{"12332.123456", "4A", "12,332.1234"},
-		{"-A12332.123456", "A", "0"},
-		{"A12332.123456", "A", "0"},
-		{"-A12332.123456", "4A", "0.0000"},
-		{"A12332.123456", "4A", "0.0000"},
-		{"-.12332.123456", "4A", "-0.1233"},
-		{".12332.123456", "4A", "0.1233"},
-		{"12332.1234567890123456789012345678901", 22, "12,332.1234567890123456789012"},
-		{nil, 22, nil},
+		{12332.123444, 4, "12,332.1234", 0},
+		{12332.123444, 0, "12,332", 0},
+		{12332.123444, -4, "12,332", 0},
+		{-12332.123444, 4, "-12,332.1234", 0},
+		{-12332.123444, 0, "-12,332", 0},
+		{-12332.123444, -4, "-12,332", 0},
+		{"12332.123444", "4", "12,332.1234", 0},
+		{"12332.123444A", "4", "12,332.1234", 1},
+		{"-12332.123444", "4", "-12,332.1234", 0},
+		{"-12332.123444A", "4", "-12,332.1234", 1},
+		{"A123345", "4", "0.0000", 1},
+		{"-A123345", "4", "0.0000", 1},
+		{"-12332.123444", "A", "-12,332", 1},
+		{"12332.123444", "A", "12,332", 1},
+		{"-12332.123444", "4A", "-12,332.1234", 1},
+		{"12332.123444", "4A", "12,332.1234", 1},
+		{"-A12332.123444", "A", "0", 2},
+		{"A12332.123444", "A", "0", 2},
+		{"-A12332.123444", "4A", "0.0000", 2},
+		{"A12332.123444", "4A", "0.0000", 2},
+		{"-.12332.123444", "4A", "-0.1233", 2},
+		{".12332.123444", "4A", "0.1233", 2},
+		{"12332.1234567890123456789012345678901", 22, "12,332.1234567890110000000000", 0},
+		{nil, 22, nil, 0},
+		{1, 1024, "1.000000000000000000000000000000", 0},
+		{"", 1, "0.0", 1},
+		{1, "", "1", 1},
 	}
 	formatTests2 := struct {
 		number    interface{}
@@ -1655,6 +1659,8 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
 	}
 
+	origConfig := s.ctx.GetSessionVars().StmtCtx.TruncateAsWarning
+	s.ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
 	for _, tt := range formatTests1 {
 		fc := funcs[ast.Format]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
@@ -1662,8 +1668,17 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		c.Assert(f, NotNil)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret))
+		if tt.warnings > 0 {
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(warnings), Equals, tt.warnings, Commentf("test %v", tt))
+			for i := 0; i < tt.warnings; i++ {
+				c.Assert(terror.ErrorEqual(types.ErrTruncated, warnings[i].Err), IsTrue, Commentf("test %v", tt))
+			}
+			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+		}
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret), Commentf("test %v", tt))
 	}
+	s.ctx.GetSessionVars().StmtCtx.TruncateAsWarning = origConfig
 
 	fc2 := funcs[ast.Format]
 	f2, err := fc2.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
