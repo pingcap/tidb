@@ -92,7 +92,7 @@ check-slow:
 
 lint:
 	@echo "linting"
-	@$(GO) get github.com/mgechev/revive
+	@$(GO) install github.com/mgechev/revive
 	@CGO_ENABLED=0 revive -formatter friendly -config revive.toml ./...
 
 vet:
