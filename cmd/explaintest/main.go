@@ -26,7 +26,7 @@ import (
 
 	"flag"
 	"github.com/go-sql-driver/mysql"
-	_ "github.com/mgechev/revive/fixtures"
+	_ "github.com/mgechev/revive/lint"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/session"
