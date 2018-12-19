@@ -226,41 +226,42 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 
 	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(action.MetricsTag()).Observe(float64(len(groups)))
 
-	var batches []batchKeys
 	var sizeFunc = c.keySize
 	if action == actionPrewrite {
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.detail.PrewriteRegionNum, int32(len(groups)))
 	}
+
+	var primary batchKeys
+	var others, batches []batchKeys
 	// Make sure the group that contains primary key goes first.
 	if len(groups[primaryRegion]) > 0 {
 		batches = appendBatchBySize(batches, primaryRegion, groups[primaryRegion], sizeFunc, txnCommitBatchSize)
-		markBatchAsPrimary(batches, c.primary())
+		primary, others = markBatchAsPrimary(batches, c.primary())
 		delete(groups, primaryRegion)
 	}
 	for id, g := range groups {
-		batches = appendBatchBySize(batches, id, g, sizeFunc, txnCommitBatchSize)
+		others = appendBatchBySize(others, id, g, sizeFunc, txnCommitBatchSize)
 	}
 
-	if batches[0].primary && (action == actionCommit || action == actionCleanup) {
+	if len(primary.keys) > 0 && (action == actionCommit || action == actionCleanup) {
 		// primary should be committed/cleanup first
-		err = c.doActionOnBatches(bo, action, batches[:1])
+		err = c.doActionOnBatches(bo, action, []batchKeys{primary})
 		if err != nil {
 			return errors.Trace(err)
 		}
-		batches = batches[1:]
 	}
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
 		go func() {
-			e := c.doActionOnBatches(bo, action, batches)
+			e := c.doActionOnBatches(bo, action, others)
 			if e != nil {
 				log.Debugf("con:%d 2PC async doActionOnBatches %s err: %v", c.connID, action, e)
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
 			}
 		}()
 	} else {
-		err = c.doActionOnBatches(bo, action, batches)
+		err = c.doActionOnBatches(bo, action, others)
 	}
 	return errors.Trace(err)
 }
@@ -751,14 +752,17 @@ func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn 
 	return b
 }
 
-// markBatchAsPrimary marks the batch that contains the primaryKey as primary
-func markBatchAsPrimary(batches []batchKeys, primaryKey []byte) {
+// markBatchAsPrimary marks the batch that contains the primaryKey as primary and return it
+func markBatchAsPrimary(batches []batchKeys, primaryKey []byte) (primary batchKeys, others []batchKeys) {
 	for i := range batches {
 		for _, k := range batches[i].keys {
 			if bytes.Compare(k, primaryKey) == 0 {
 				batches[i].primary = true
-				return
+				primary = batches[i]
+				break
 			}
 		}
+		others = append(others, batches[i])
 	}
+	return primary, others
 }
