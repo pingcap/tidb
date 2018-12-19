@@ -557,10 +557,19 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
+<<<<<<< HEAD
 func (b *planBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
 	origColName, tblName, dbName = colNameField.Name.Name, colNameField.Name.Table, colNameField.Name.Schema
 	if origField.AsName.L != "" {
 		colName = origField.AsName
+=======
+func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
+	if astCol, ok := getInnerFromParenthesesAndUnaryPlus(field.Expr).(*ast.ColumnNameExpr); ok {
+		origColName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
+	}
+	if field.AsName.L != "" {
+		colName = field.AsName
+>>>>>>> 29c17a1... planner/core: correct column name with unary plus sign (#8702)
 	} else {
 		colName = origColName
 	}
@@ -580,7 +589,7 @@ func (b *planBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
 	}
 
-	innerExpr := getInnerFromParentheses(field.Expr)
+	innerExpr := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
@@ -2576,9 +2585,12 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 	})
 }
 
-func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
+func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
-		return getInnerFromParentheses(pexpr.Expr)
+		return getInnerFromParenthesesAndUnaryPlus(pexpr.Expr)
+	}
+	if uexpr, ok := expr.(*ast.UnaryOperationExpr); ok && uexpr.Op == opcode.Plus {
+		return getInnerFromParenthesesAndUnaryPlus(uexpr.V)
 	}
 	return expr
 }
