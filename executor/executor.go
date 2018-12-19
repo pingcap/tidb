@@ -478,6 +478,9 @@ func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
 		return errors.Trace(err)
 	}
 	for _, idx := range tbl.Indices() {
+		if idx.Meta().State != model.StatePublic {
+			continue
+		}
 		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.genExprs)
 		if err != nil {
 			return errors.Trace(err)
