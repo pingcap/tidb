@@ -341,7 +341,9 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	sessVars := e.ctx.GetSessionVars()
-	e.ctx.StmtCommit()
+	if err := e.ctx.StmtCommit(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := e.ctx.NewTxn(ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)

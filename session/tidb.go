@@ -158,16 +158,18 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
-		txn, err1 := sctx.Txn(false)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
-		}
-		if txn.Valid() {
-			if err != nil {
-				sctx.StmtRollback()
-			} else {
-				err = sctx.StmtCommit()
+		if txn, err1 := sctx.Txn(false); err1 == nil {
+			if txn.Valid() {
+				if err != nil {
+					sctx.StmtRollback()
+				} else {
+					if err2 := sctx.StmtCommit(); err2 != nil {
+						log.Error(err2)
+					}
+				}
 			}
+		} else {
+			log.Error(err1)
 		}
 	}
 

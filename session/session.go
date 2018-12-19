@@ -547,7 +547,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 				s.StmtRollback()
 				break
 			}
-			s.StmtCommit()
+			err = s.StmtCommit()
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		log.Warnf("con:%d retrying_txn_start_ts:%d original_txn_start_ts:(%d)",
 			connID, s.GetSessionVars().TxnCtx.StartTS, orgStartTS)
