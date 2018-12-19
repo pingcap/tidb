@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	gofail "github.com/etcd-io/gofail/runtime"
@@ -928,7 +929,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	count := ddl.TableColumnCountLimit - 1
+	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)
 	var cols []string
 	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
