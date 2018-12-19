@@ -163,9 +163,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 				if err != nil {
 					sctx.StmtRollback()
 				} else {
-					if err2 := sctx.StmtCommit(); err2 != nil {
-						log.Error(err2)
-					}
+					err = sctx.StmtCommit()
 				}
 			}
 		} else {
@@ -181,7 +179,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		} else {
 			err = se.CommitTxn(ctx)
 		}
-	} else {
+	} else if err == nil {
 		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 		// So we limit the statement count in a transaction here.
 		history := GetHistory(sctx)
