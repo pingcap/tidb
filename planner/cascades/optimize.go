@@ -127,7 +127,7 @@ func findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error)
 	return eraseCur, nil
 }
 
-// onPhaseImplementation starts implementating physical operators from given root Group.
+// onPhaseImplementation starts implementation physical operators from given root Group.
 func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.Plan, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
