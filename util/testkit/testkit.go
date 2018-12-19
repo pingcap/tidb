@@ -161,6 +161,11 @@ func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
 	tk.c.Assert(insertID, check.Equals, int64(tk.Se.LastInsertID()))
 }
 
+// CheckLastMessage checks last message after executing MustExec
+func (tk *TestKit) CheckLastMessage(msg string) {
+	tk.c.Assert(tk.Se.LastMessage(), check.Equals, msg)
+}
+
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	res, err := tk.Exec(sql, args...)
