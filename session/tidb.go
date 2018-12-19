@@ -141,33 +141,39 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 }
 
 func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
-	err := meetsErr
-	if !sessVars.InTxn() {
-		if meetsErr != nil {
+	if meetsErr != nil {
+		if !sessVars.InTxn() {
 			log.Info("RollbackTxn for ddl/autocommit error.")
+			terror.Log(se.RollbackTxn(ctx))
+		}
+		return meetsErr
+	}
+
+	if !sessVars.InTxn() {
+		return se.CommitTxn(ctx)
+	}
+
+	return checkStmtLimit(ctx, sctx, se, sessVars)
+}
+
+func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars) error {
+	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
+	// So we limit the statement count in a transaction here.
+	var err error
+	history := GetHistory(sctx)
+	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
+		if !sessVars.BatchCommit {
 			err1 := se.RollbackTxn(ctx)
 			terror.Log(errors.Trace(err1))
-		} else {
-			err = se.CommitTxn(ctx)
+			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+				history.Count(), sctx.GetSessionVars().IsAutocommit())
 		}
-	} else if meetsErr == nil {
-		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
-		// So we limit the statement count in a transaction here.
-		history := GetHistory(sctx)
-		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
-			if !sessVars.BatchCommit {
-				err1 := se.RollbackTxn(ctx)
-				terror.Log(errors.Trace(err1))
-				return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-					history.Count(), sctx.GetSessionVars().IsAutocommit())
-			}
-			err = se.NewTxn(ctx)
-			// The transaction does not committed yet, we need to keep it in transaction.
-			// The last history could not be "commit"/"rollback" statement.
-			// It means it is impossible to start a new transaction at the end of the transaction.
-			// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
-			se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-		}
+		err = se.NewTxn(ctx)
+		// The transaction does not committed yet, we need to keep it in transaction.
+		// The last history could not be "commit"/"rollback" statement.
+		// It means it is impossible to start a new transaction at the end of the transaction.
+		// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
+		se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 	}
 	return err
 }

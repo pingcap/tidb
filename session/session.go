@@ -1040,13 +1040,14 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if s.txn.pending() && active {
-		// Transaction is lazy intialized.
+		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
 			log.Error("active transaction fail, err = ", err)
 			s.txn.cleanup()
+			s.sessionVars.TxnCtx.StartTS = 0
 			return &s.txn, errors.Trace(err)
 		}
 		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()

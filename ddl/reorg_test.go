@@ -58,6 +58,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
 	txn.Set([]byte("a"), []byte("b"))
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)

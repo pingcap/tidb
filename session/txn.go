@@ -157,11 +157,6 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	return errors.Trace(st.Transaction.Commit(ctx))
 }
 
-// Rollback overrides the Transaction interface.
-func (st *TxnState) Rollback() error {
-	return errors.Trace(st.Transaction.Rollback())
-}
-
 // Get overrides the Transaction interface.
 func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 	val, err := st.buf.Get(k)
