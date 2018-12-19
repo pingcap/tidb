@@ -58,7 +58,7 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
@@ -945,6 +945,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 func (s *testColumnSuite) TestFieldCase(c *C) {
 	var fields = []string{"field", "Field"}
 	var colDefs = make([]*ast.ColumnDef, len(fields))
+	var colObjects []interface{}
 	for i, name := range fields {
 		colDefs[i] = &ast.ColumnDef{
 			Name: &ast.ColumnName{
@@ -953,6 +954,7 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 				Name:   model.NewCIStr(name),
 			},
 		}
+		colObjects = append(colObjects, colDefs[i])
 	}
-	c.Assert(checkDuplicateColumn(colDefs), NotNil)
+	c.Assert(checkDuplicateColumn(colObjects), NotNil)
 }

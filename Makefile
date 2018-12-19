@@ -40,7 +40,7 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser
+.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser tidy
 
 default: server buildsucc
 
@@ -64,7 +64,7 @@ check-setup:
 	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
 	@GO111MODULE=off retool sync
 
-check: check-setup fmt lint vet
+check: check-setup fmt lint vet tidy
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -98,6 +98,10 @@ vet:
 	@echo "vet"
 	$(GO) vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
+tidy:
+	@echo "go mod tidy"
+	./hack/check-tidy.sh
+
 clean:
 	$(GO) clean -i ./...
 	rm -rf *.out
@@ -109,7 +113,9 @@ explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest:
-	$(GO) get github.com/etcd-io/gofail
+	@rm -rf $GOPATH/bin/gofail
+	$(GO) get github.com/pingcap/gofail
+	@which gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
@@ -126,21 +132,21 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race:
-	$(GO) get github.com/etcd-io/gofail
+	$(GO) get github.com/pingcap/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 leak:
-	$(GO) get github.com/etcd-io/gofail
+	$(GO) get github.com/pingcap/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test:
-	$(GO) get github.com/etcd-io/gofail
+	$(GO) get github.com/pingcap/gofail
 	@$(GOFAIL_ENABLE)
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)

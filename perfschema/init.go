@@ -16,6 +16,8 @@ package perfschema
 import (
 	"sync"
 
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
@@ -35,10 +37,16 @@ var once sync.Once
 // The initialize order is a problem if init() is used as the function name.
 func Init() {
 	initOnce := func() {
+		p := parser.New()
 		tbls := make([]*model.TableInfo, 0)
 		dbID := autoid.GenLocalSchemaID()
+
 		for _, sql := range perfSchemaTables {
-			meta, err := ddl.BuildTableInfoFromSQL(sql)
+			stmt, err := p.ParseOneStmt(sql, "", "")
+			if err != nil {
+				panic(err)
+			}
+			meta, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
 			if err != nil {
 				panic(err)
 			}
