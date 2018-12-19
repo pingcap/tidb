@@ -138,6 +138,30 @@ func (s *testDDLSuite) TestTableError(c *C) {
 
 }
 
+func (s *testDDLSuite) TestViewError(c *C) {
+	store := testCreateStore(c, "test_view_error")
+	defer store.Close()
+
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	defer d.Stop()
+	ctx := testNewContext(d)
+	dbInfo := testSchemaInfo(c, d, "test")
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
+
+	// Table ID or schema ID is wrong, so getting table is failed.
+	tblInfo := testViewInfo(c, d, "t", 3)
+	testCreateView(c, ctx, d, dbInfo, tblInfo)
+
+	// Args is wrong, so creating view is failed.
+	doDDLJobErr(c, 1, 1, model.ActionCreateView, []interface{}{1}, ctx, d)
+	// Schema ID is wrong and orReplace is false, so creating view is failed.
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
+	// View exists and orReplace is false, so creating view is failed.
+	tblInfo.ID = tblInfo.ID + 1
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
+
+}
+
 func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 	store := testCreateStore(c, "test_invalid_ddl_job_type_error")
 	defer store.Close()
