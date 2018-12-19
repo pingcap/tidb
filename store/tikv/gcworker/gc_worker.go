@@ -944,7 +944,7 @@ func (w *GCWorker) loadTime(key string) (*time.Time, error) {
 	if str == "" {
 		return nil, nil
 	}
-	t, err := time.Parse(gcTimeFormat, str)
+	t, err := tidbutil.ParseTimeFromPrefix(gcTimeFormat, str)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1082,29 +1082,4 @@ func NewMockGCWorker(store tikv.Storage) (*MockGCWorker, error) {
 func (w *MockGCWorker) DeleteRanges(ctx context.Context, safePoint uint64) error {
 	log.Errorf("deleteRanges is called")
 	return w.worker.deleteRanges(ctx, safePoint)
-}
-
-// ParseTime parses a time string to time.Time.
-// We used to use "20060102-15:04:05 -0700 MST" as the time format to save safe point and last gc run time. However, we
-// found that in some environments, it can't correctly print a time zone name like "CST", but producing something like
-// "+08". Since the information of time zone is already represented in the field "-0700", it's ok to remove "MST". Then,
-// we need to accept both new format and old format for compatibility.
-func CompatibleParseTime(value string) (time.Time, error) {
-	t, err := time.Parse(gcTimeFormat, value)
-
-	if err != nil {
-		// Cut from the last space
-		i := len(value)
-		for i > 0 {
-			i--
-			if value[i] == ' ' {
-				break
-			}
-		}
-
-		// It doesn't matter if `value` is empty or contains no space character. `time.Parse` will return the error.
-		t, err = time.Parse(gcTimeFormat, value[0:i])
-	}
-
-	return t, err
 }

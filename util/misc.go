@@ -72,3 +72,28 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 	}()
 	exec()
 }
+
+// ParseTimeFromPrefix tries to parse time from a prefix of `value`. The formatted time should be separated from
+// other texts. For example, you can parse "20060102-15:04:05 -0700" from a string like "20060102-15:04:05 -0700 FOO"
+// but you can't parse from a string like "20060102-15:04:05 -0700FOO".
+func ParseTimeFromPrefix(format string, value string) (time.Time, error) {
+	t, err := time.Parse(format, value)
+
+	i := len(value)
+	for err != nil && i > 0 {
+		// Cut from the last space
+		for i > 0 {
+			i--
+			if value[i] == ' ' {
+				break
+			}
+		}
+
+		t, err = time.Parse(format, value[0:i])
+	}
+
+	if err != nil {
+		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\"", value, format)
+	}
+	return t, err
+}
