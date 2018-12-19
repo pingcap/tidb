@@ -489,8 +489,8 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	cardinality := p.statsInfo().RowCount
 	t := tasks[0].copy()
-	// Since we may get a cop task from child (identified in child props), because we wanna push agg down to cop.
-	// So we got a copTask here to add partialAgg in the physical plan and finally convert it to a rootTask.
+	// If the child is still a copTask, we can try to push the aggregation down to it.
+	// Whatever the partial aggregation is successfully pushed down or not, we'll convert the copTask to rootTask since no more plan can be attached to it.
 	if cop, ok := t.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()
 		if partialAgg != nil {
