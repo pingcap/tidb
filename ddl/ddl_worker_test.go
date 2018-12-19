@@ -42,9 +42,10 @@ const testLease = 5 * time.Millisecond
 
 func (s *testDDLSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	// set ReorgWaitTimeout to small value, make test to be faster.
-	ReorgWaitTimeout = 50 * time.Millisecond
 	WaitTimeWhenErrorOccured = 1 * time.Microsecond
+
+	// We hope that this test is serially executed. So put it here.
+	s.testRunWorker(c)
 }
 
 func (s *testDDLSuite) TearDownSuite(c *C) {
@@ -63,8 +64,8 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	c.Assert(d1.GetLease(), Equals, testLease)
 }
 
-// TestRunWorker tests no job is handled when the value of RunWorker is false.
-func (s *testDDLSuite) TestRunWorker(c *C) {
+// testRunWorker tests no job is handled when the value of RunWorker is false.
+func (s *testDDLSuite) testRunWorker(c *C) {
 	store := testCreateStore(c, "test_run_worker")
 	defer store.Close()
 
@@ -134,6 +135,30 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Table exists, so creating table is failed.
 	tblInfo.ID = tblInfo.ID + 1
 	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
+
+}
+
+func (s *testDDLSuite) TestViewError(c *C) {
+	store := testCreateStore(c, "test_view_error")
+	defer store.Close()
+
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	defer d.Stop()
+	ctx := testNewContext(d)
+	dbInfo := testSchemaInfo(c, d, "test")
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
+
+	// Table ID or schema ID is wrong, so getting table is failed.
+	tblInfo := testViewInfo(c, d, "t", 3)
+	testCreateView(c, ctx, d, dbInfo, tblInfo)
+
+	// Args is wrong, so creating view is failed.
+	doDDLJobErr(c, 1, 1, model.ActionCreateView, []interface{}{1}, ctx, d)
+	// Schema ID is wrong and orReplace is false, so creating view is failed.
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
+	// View exists and orReplace is false, so creating view is failed.
+	tblInfo.ID = tblInfo.ID + 1
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
 
 }
 
@@ -819,7 +844,6 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 	store := testCreateStore(c, "test_run_sql")
 	defer store.Close()
 
-	RunWorker = true
 	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	testCheckOwner(c, d, true)
 	defer d.Stop()

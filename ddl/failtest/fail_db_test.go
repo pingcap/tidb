@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
@@ -229,6 +229,11 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	defer tk.MustExec("drop table if exists t")
+	originalRetryTimes := domain.SchemaOutOfDateRetryTimes
+	domain.SchemaOutOfDateRetryTimes = 1
+	defer func() {
+		domain.SchemaOutOfDateRetryTimes = originalRetryTimes
+	}()
 	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
 	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
 	c.Assert(ok, IsTrue)
