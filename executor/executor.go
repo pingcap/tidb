@@ -421,6 +421,9 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		for _, idx := range tb.Indices() {
+			if idx.Meta().State != model.StatePublic {
+				continue
+			}
 			txn := e.ctx.Txn(true)
 			if !txn.Valid() {
 				if failer, ok := txn.(sqlexec.Failer); ok && failer.Fail() != nil {
