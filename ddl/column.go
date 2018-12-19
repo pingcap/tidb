@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -482,7 +483,7 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkAddColumnTooManyColumns(oldCols int) error {
-	if oldCols > TableColumnCountLimit {
+	if uint32(oldCols) > atomic.LoadUint32(&TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil

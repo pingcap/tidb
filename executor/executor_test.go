@@ -26,10 +26,10 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	gofail "github.com/pingcap/gofail/runtime"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -324,10 +324,11 @@ func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
 }
 
 type testCase struct {
-	data1    []byte
-	data2    []byte
-	expected []string
-	restData []byte
+	data1       []byte
+	data2       []byte
+	expected    []string
+	restData    []byte
+	expectedMsg string
 }
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
@@ -348,6 +349,8 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
+		ld.SetMessage()
+		tk.CheckLastMessage(tt.expectedMsg)
 		ctx.StmtCommit()
 		err1 = ctx.Txn(true).Commit(context.Background())
 		c.Assert(err1, IsNil)
@@ -2848,7 +2851,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 
@@ -3367,9 +3370,9 @@ func (s *testSuite) TestTSOFail(c *C) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int)`)
 
-	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail")
-	_, err := tk.Exec(`select * from t`)
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
+	_, err := tk.Se.Execute(ctx, `select * from t`)
 	c.Assert(err, NotNil)
 }
 
