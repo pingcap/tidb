@@ -64,7 +64,7 @@ check-setup:
 	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
 	@GO111MODULE=off retool sync
 
-check: check-setup fmt lint vet tidy
+check: fmt lint tidy
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -92,7 +92,8 @@ check-slow:
 
 lint:
 	@echo "linting"
-	@CGO_ENABLED=0 retool do revive -formatter friendly -config revive.toml $(PACKAGES)
+	@$(GO) get github.com/mgechev/revive
+	@CGO_ENABLED=0 revive -formatter friendly -config revive.toml ./...
 
 vet:
 	@echo "vet"
