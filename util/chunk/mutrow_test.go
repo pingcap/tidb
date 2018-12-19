@@ -81,9 +81,13 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
 	chk := New(retTypes, 1, 1)
-	chk.AppendMyDecimal(0, types.NewDecFromFloatForTest(1.123))
+	dur, err := types.ParseDuration(sc, "01:23:45", 0)
+	c.Assert(err, check.IsNil)
+	chk.AppendDuration(0, dur)
 	mutRow = MutRowFromTypes(retTypes)
-	mutRow.SetDatum(0, types.NewDecimalDatum(types.NewDecFromFloatForTest(1.123)))
+	mutRow.SetValue(0, dur)
+	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
+	mutRow.SetDatum(0, types.NewDurationDatum(dur))
 	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
 }
 
