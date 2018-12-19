@@ -902,17 +902,16 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	for _, col := range colDefs {
 		colObjects = append(colObjects, col)
 	}
-	var err error
-	if err = checkTooLongTable(ident.Name); err != nil {
+	if err := checkTooLongTable(ident.Name); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = checkDuplicateColumn(colObjects); err != nil {
+	if err := checkDuplicateColumn(colObjects); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := checkGeneratedColumn(colDefs); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = checkTooLongColumn(colObjects); err != nil {
+	if err := checkTooLongColumn(colObjects); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if err := checkTooManyColumns(colDefs); err != nil {
