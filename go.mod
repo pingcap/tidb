@@ -17,7 +17,7 @@ require (
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385 // indirect
-	github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a
+	github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-ole/go-ole v1.2.1 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
@@ -45,6 +45,7 @@ require (
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20181213055612-5c2b07721bdb
 	github.com/pingcap/errors v0.11.0
+	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20181105061835-1b5d69cd1d26
 	github.com/pingcap/parser v0.0.0-20181218071912-deacf026787e
