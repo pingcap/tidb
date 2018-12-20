@@ -3435,7 +3435,7 @@ func (s *testSuite) TestSelectView(c *C) {
 	_, err = tk.Exec("select * from view2")
 	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view2").Error())
 	_, err = tk.Exec("select * from view3")
-	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view3").Error())
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'field list'")
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(a int,b int,c int)")
 	tk.MustExec("insert into view_t values(1,2,3)")
