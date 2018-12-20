@@ -244,7 +244,7 @@ func (s *testSuite) TestAdmin(c *C) {
 
 	if config.CheckTableBeforeDrop {
 		r, err = tk.Exec("drop table admin_test")
-		c.Assert(err.Error(), Equals, err_admin.Error())
+		c.Assert(err.Error(), Equals, errAdmin.Error())
 
 		// Drop inconsistency index.
 		tk.MustExec("alter table admin_test drop index c1")

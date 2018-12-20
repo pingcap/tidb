@@ -16,6 +16,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -24,9 +25,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"flag"
 	"github.com/go-sql-driver/mysql"
-	_ "github.com/mgechev/revive/lint"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/session"
