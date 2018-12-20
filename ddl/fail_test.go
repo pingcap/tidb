@@ -36,7 +36,9 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
