@@ -2009,19 +2009,25 @@ func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 	if err != nil {
 		return nil, err
 	}
-	var viewCols []*expression.Column
+	var projExprs []*expression.Column
 	for i := range tableInfo.View.Cols {
 		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
 		if col == nil {
-			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.L, tableInfo.Name.L)
+			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
-		col.ColName = tableInfo.Cols()[i].Name
-		col.OrigColName = tableInfo.View.Cols[i]
-		viewCols = append(viewCols, col)
+		projExprs = append(projExprs, &expression.Column{
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			TblName:     col.TblName,
+			OrigTblName: col.OrigTblName,
+			ColName:     tableInfo.Cols()[i].Name,
+			OrigColName: tableInfo.View.Cols[i],
+			DBName:      dbName,
+			RetType:     col.GetType(),
+		})
 	}
-	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(viewCols)}.Init(b.ctx)
+	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(projExprs)}.Init(b.ctx)
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
-	projUponView.SetSchema(expression.NewSchema(viewCols...))
+	projUponView.SetSchema(expression.NewSchema(projExprs...))
 	return projUponView, nil
 }
 

@@ -3448,6 +3448,6 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
-	defer tk.MustExec("drop table view_t;")
-	defer tk.MustExec("drop view view1,view2,view3;")
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("drop view view1,view2,view3;")
 }
