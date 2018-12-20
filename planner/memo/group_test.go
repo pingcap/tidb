@@ -125,7 +125,7 @@ func (impl *fakeImpl) GetPlan() plannercore.PhysicalPlan              { return i
 func (s *testMemoSuite) TestGetInsertGroupImpl(c *C) {
 	g := NewGroup(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx)))
 	emptyProp := &property.PhysicalProperty{}
-	orderProp := &property.PhysicalProperty{Cols: []*expression.Column{{}}}
+	orderProp := &property.PhysicalProperty{Items: []property.Item{{Col: &expression.Column{}}}}
 
 	impl := g.GetImpl(emptyProp)
 	c.Assert(impl, IsNil)
