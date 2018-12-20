@@ -63,19 +63,20 @@ func Enable(failpath, inTerms string) error {
 
 // enableAndLock enables a failpoint and returns a function to unlock it
 func enableAndLock(failpath, inTerms string) (func(), error) {
-	t, err := newTerms(failpath, inTerms)
-	if err != nil {
-		fmt.Printf("failed to enable \"%s=%s\" (%v)\n", failpath, inTerms, err)
-		return nil, err
-	}
 	failpointsMu.RLock()
 	fp := failpoints[failpath]
 	failpointsMu.RUnlock()
 	if fp == nil {
 		return nil, ErrNoExist
 	}
+	t, err := newTerms(failpath, inTerms, fp)
+	if err != nil {
+		fmt.Printf("failed to enable \"%s=%s\" (%v)\n", failpath, inTerms, err)
+		return nil, err
+	}
 	fp.mu.Lock()
 	fp.t = t
+	fp.waitChan = make(chan struct{})
 	return func() { fp.mu.Unlock() }, nil
 }
 
@@ -87,6 +88,7 @@ func Disable(failpath string) error {
 	if fp == nil {
 		return ErrNoExist
 	}
+	close(fp.waitChan)
 	fp.mu.Lock()
 	defer fp.mu.Unlock()
 	if fp.t == nil {
