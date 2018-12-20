@@ -239,8 +239,8 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	r, err_admin := tk.Exec("admin check table admin_test")
-	c.Assert(err_admin, NotNil)
+	r, errAdmin := tk.Exec("admin check table admin_test")
+	c.Assert(errAdmin, NotNil)
 
 	if config.CheckTableBeforeDrop {
 		r, err = tk.Exec("drop table admin_test")
