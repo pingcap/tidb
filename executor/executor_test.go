@@ -1958,6 +1958,15 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "")
 	c.Check(fields[0].TableAsName.L, Equals, "")
 	c.Check(fields[0].DBName.L, Equals, "")
+	// Test case for query a column wrapped with parentheses and unary plus.
+	// In this case, the column name should be its original name.
+	rs, err = tk.Exec("select (c), (+c), +(c), +(+(c)), ++c from t")
+	c.Check(err, IsNil)
+	fields = rs.Fields()
+	for i := 0; i < 5; i++ {
+		c.Check(fields[0].Column.Name.L, Equals, "c")
+		c.Check(fields[0].ColumnAsName.L, Equals, "c")
+	}
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
