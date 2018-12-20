@@ -2010,9 +2010,8 @@ func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 		return nil, err
 	}
 	var viewCols []*expression.Column
-	var selectSchema = selectLogicalPlan.Schema()
 	for i := range tableInfo.View.Cols {
-		col := selectSchema.FindColumnByName(tableInfo.View.Cols[i].L)
+		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
 		if col == nil {
 			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.L, tableInfo.Name.L)
 		}
