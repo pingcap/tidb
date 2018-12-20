@@ -2009,25 +2009,26 @@ func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 	if err != nil {
 		return nil, err
 	}
-	var projExprs []*expression.Column
+	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
 	for i := range tableInfo.View.Cols {
 		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
 		if col == nil {
 			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
-		projExprs = append(projExprs, &expression.Column{
-			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+		projSchema.Append(&expression.Column{
+			UniqueID:    col.UniqueID,
 			TblName:     col.TblName,
 			OrigTblName: col.OrigTblName,
 			ColName:     tableInfo.Cols()[i].Name,
 			OrigColName: tableInfo.View.Cols[i],
-			DBName:      dbName,
+			DBName:      col.DBName,
 			RetType:     col.GetType(),
 		})
 	}
-	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(projExprs)}.Init(b.ctx)
+
+	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(projSchema.Columns)}.Init(b.ctx)
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
-	projUponView.SetSchema(expression.NewSchema(projExprs...))
+	projUponView.SetSchema(projSchema)
 	return projUponView, nil
 }
 
