@@ -2021,7 +2021,7 @@ func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 	}
 	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(viewCols)}.Init(b.ctx)
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
-	projUponView.SetSchema(selectLogicalPlan.Schema())
+	projUponView.SetSchema(expression.NewSchema(viewCols...))
 	return projUponView, nil
 }
 
