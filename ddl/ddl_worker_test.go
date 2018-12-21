@@ -495,6 +495,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		Options: []*ast.ColumnOption{},
 	}
 	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil)
+	c.Assert(err, IsNil)
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
