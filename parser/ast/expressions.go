@@ -941,7 +941,21 @@ type PatternRegexpExpr struct {
 
 // Restore implements Node interface.
 func (n *PatternRegexpExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore PatternRegexpExpr.Expr")
+	}
+
+	if n.Not {
+		ctx.WriteKeyWord(" NOT REGEXP ")
+	} else {
+		ctx.WriteKeyWord(" REGEXP ")
+	}
+
+	if err := n.Pattern.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore PatternRegexpExpr.Pattern")
+	}
+
+	return nil
 }
 
 // Format the ExprNode into a Writer.
