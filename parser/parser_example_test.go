@@ -32,7 +32,7 @@ func Example_parseSQL() {
 	p := parser.New()
 
 	// 2. Parse a text SQL into AST([]ast.StmtNode).
-	stmtNodes, err := p.Parse("select * from tbl where id = 1", "", "")
+	stmtNodes, _, err := p.Parse("select * from tbl where id = 1", "", "")
 
 	// 3. Use AST to do cool things.
 	fmt.Println(stmtNodes[0], err)
