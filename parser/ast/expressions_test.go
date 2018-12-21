@@ -260,3 +260,20 @@ func (tc *testExpressionsSuite) TestValuesExpr(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "insert into t values (1,2,3) on duplicate key update c=%s", extractNodeFunc)
 }
+
+func (tc *testExpressionsSuite) TestPatternRegexpExprRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"a regexp 't1'", "`a` REGEXP 't1'"},
+		{"a regexp '^[abc][0-9]{11}|ok$'", "`a` REGEXP '^[abc][0-9]{11}|ok$'"},
+		{"a rlike 't1'", "`a` REGEXP 't1'"},
+		{"a rlike '^[abc][0-9]{11}|ok$'", "`a` REGEXP '^[abc][0-9]{11}|ok$'"},
+		{"a not regexp 't1'", "`a` NOT REGEXP 't1'"},
+		{"a not regexp '^[abc][0-9]{11}|ok$'", "`a` NOT REGEXP '^[abc][0-9]{11}|ok$'"},
+		{"a not rlike 't1'", "`a` NOT REGEXP 't1'"},
+		{"a not rlike '^[abc][0-9]{11}|ok$'", "`a` NOT REGEXP '^[abc][0-9]{11}|ok$'"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Fields.Fields[0].Expr
+	}
+	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+}
