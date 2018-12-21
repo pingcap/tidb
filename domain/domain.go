@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/infobind"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -68,6 +70,8 @@ type Domain struct {
 	slowQuery       *topNSlowQueries
 
 	MockReloadFailed MockFailure // It mocks reload failed.
+
+	bindHandle *infobind.Handle
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -769,6 +773,42 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 // PrivilegeHandle returns the MySQLPrivilege.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
+}
+
+// BindHandle returns the BindInfo.
+func (do *Domain) BindHandle() *infobind.Handle {
+	return do.bindHandle
+}
+
+// LoadBindLoop create a goroutine loads BindInfo in a loop, it
+// should be called only once in BootstrapSession.
+func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	do.bindHandle = infobind.NewHandle()
+
+	err := do.bindHandle.Update(ctx, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	duration := 3 * time.Second
+	go func() {
+		defer recoverInDomain("loadBindInLoop", false)
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-time.After(duration):
+			}
+			err := do.bindHandle.Update(ctx, false)
+			if err != nil {
+				log.Error("[domain] load bindinfo fail:", errors.ErrorStack(err))
+			} else {
+				log.Info("[domain] reload bindinfo success.")
+			}
+		}
+	}()
+	return nil
 }
 
 // StatsHandle returns the statistic handle.

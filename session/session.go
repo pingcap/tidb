@@ -148,6 +148,8 @@ type session struct {
 	statsCollector *statistics.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
+
+	localBindCache *kvcache.SimpleMap
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -860,7 +862,88 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 	return
 }
+func (s *session) ResultSetNodeBind(node ast.ResultSetNode) (n ast.StmtNode, err error) {
+	switch x := node.(type) {
+	//case *ast.Join:
+	//	return b.buildJoin(x)
+	case *ast.TableSource:
+		switch v := x.Source.(type) {
+		case *ast.SelectStmt:
+			n, err = s.selectBind(v, v)
+		case *ast.UnionStmt:
+			//p, err = b.buildUnion(v)
+		case *ast.TableName:
+			//p, err = b.buildDataSource(v)
+		default:
+			//err = ErrUnsupportedType.GenWithStackByArgs(v)
+		}
+		//if err != nil {
+		//	return nil, errors.Trace(err)
+		//}
+		//
+		//if v, ok := p.(*DataSource); ok {
+		//	v.TableAsName = &x.AsName
+		//}
+		//for _, col := range p.Schema().Columns {
+		//	col.OrigTblName = col.TblName
+		//	if x.AsName.L != "" {
+		//		col.TblName = x.AsName
+		//		col.DBName = model.NewCIStr("")
+		//	}
+		//}
+		//// Duplicate column name in one table is not allowed.
+		//// "select * from (select 1, 1) as a;" is duplicate
+		//dupNames := make(map[string]struct{}, len(p.Schema().Columns))
+		//for _, col := range p.Schema().Columns {
+		//	name := col.ColName.O
+		//	if _, ok := dupNames[name]; ok {
+		//		return nil, ErrDupFieldName.GenWithStackByArgs(name)
+		//	}
+		//	dupNames[name] = struct{}{}
+		//}
+		//return p, nil
+	//case *ast.SelectStmt:
+	//	return b.buildSelect(x)
+	//case *ast.UnionStmt:
+	//	return b.buildUnion(x)
+	default:
+		return nil, nil
+		//return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.ResultSetNode(%T) for buildResultSetNode()", x)
+	}
+	return nil, nil
+}
 
+func (s *session) selectBind(sel, hintedsel *ast.SelectStmt) (node ast.StmtNode, err error) {
+
+	if hintedsel.TableHints != nil {
+		copy(sel.TableHints, hintedsel.TableHints)
+	}
+	if sel.From != nil {
+		node, err = s.ResultSetNodeBind(sel.From.TableRefs)
+		//if b.pushTableHints(sel.TableHints) {
+		//	// table hints are only visible in the current SELECT statement.
+		//	defer b.popTableHints()
+		//}
+		//if sel.SelectStmtOpts != nil {
+		//	origin := b.inStraightJoin
+		//	b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
+		//	defer func() { b.inStraightJoin = origin }()
+	}
+	return nil, nil
+
+}
+
+func (s *session) hintMatch(node ast.Node) (ast.StmtNode, error) {
+
+	switch x := node.(type) {
+	//case *ast.DeleteStmt:
+	//case *ast.InsertStmt:
+	//case ast.UpdateStmt:
+	case *ast.SelectStmt:
+		return s.selectBind(x, node.(*ast.SelectStmt))
+	}
+	return nil, nil
+}
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
 	connID := s.sessionVars.ConnectionID
@@ -879,9 +962,11 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
 		return nil, errors.Trace(err)
 	}
+
 	label := s.getSQLLabel()
 	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
-
+	dig := parser.Digest(sql)
+	log.Infof("%s %s", sql, dig)
 	compiler := executor.Compiler{Ctx: s}
 	for _, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
@@ -1233,6 +1318,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	dom := domain.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	err = dom.LoadBindInfoLoop(se)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

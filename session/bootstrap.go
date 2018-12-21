@@ -209,6 +209,17 @@ const (
 		feedback blob NOT NULL,
 		index hist(table_id, is_index, hist_id)
 	);`
+
+	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache
+	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bindsql_info (
+		original_sql VARCHAR(4096) NOT NULL,
+		bind_sql VARCHAR(4096) NOT NULL,
+		db VARCHAR(4096) NOT NULL,
+		status BOOL,
+		create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE index orisql (original_sql)
+	); `
 )
 
 // bootstrap initiates system DB for a store.
@@ -720,6 +731,9 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
 	mustExecute(s, CreateStatsFeedbackTable)
+	// Create bind_info table.
+	mustExecute(s, CreateBindInfoTable)
+
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
