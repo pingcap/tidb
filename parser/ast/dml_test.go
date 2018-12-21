@@ -126,3 +126,16 @@ func (tc *testDMLSuite) TestTableNameIndexHintsRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "SELECT * FROM %s", extractNodeFunc)
 }
+
+func (tc *testDMLSuite) TestLimitRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"limit 10", "LIMIT 10"},
+		{"limit 10,20", "LIMIT 10,20"},
+		{"limit 20 offset 10", "LIMIT 10,20"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Limit
+	}
+	RunNodeRestoreTest(c, testCases, "SELECT 1 %s", extractNodeFunc)
+}
+
