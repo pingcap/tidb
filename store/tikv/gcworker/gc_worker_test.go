@@ -86,6 +86,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare()
 	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 	c.Assert(err, IsNil)
 	c.Assert(lastRun, NotNil)
