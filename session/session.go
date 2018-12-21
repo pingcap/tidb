@@ -799,9 +799,9 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 
 	if planCacheEnabled {
 		schemaVersion := domain.GetDomain(s).InfoSchema().SchemaMetaVersion()
-		txn, err := s.Txn(true)
-		if err != nil {
-			return nil, errors.Trace(err)
+		txn, err1 := s.Txn(true)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
 		}
 		readOnly := !txn.Valid() || txn.IsReadOnly()
 
