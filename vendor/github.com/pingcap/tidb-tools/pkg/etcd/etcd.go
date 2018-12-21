@@ -14,6 +14,7 @@
 package etcd
 
 import (
+	"context"
 	"crypto/tls"
 	"path"
 	"strings"
@@ -21,7 +22,6 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
-	"golang.org/x/net/context"
 )
 
 // Node organizes the ectd query result as a Trie tree

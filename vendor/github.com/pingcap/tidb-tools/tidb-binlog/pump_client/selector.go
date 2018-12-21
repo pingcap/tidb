@@ -30,6 +30,9 @@ const (
 
 	// Score means choose pump by it's score.
 	Score = "score"
+
+	// LocalUnix means will only use the local pump by unix socket.
+	LocalUnix = "local unix"
 )
 
 // PumpSelector selects pump for sending binlog.
@@ -224,6 +227,46 @@ func (r *RangeSelector) Next(binlog *pb.Binlog, retryTime int) *PumpStatus {
 	return nextPump
 }
 
+// LocalUnixSelector will always select the local pump, used for compatible with kafka version tidb-binlog.
+type LocalUnixSelector struct {
+	sync.RWMutex
+
+	// the pump to be selected.
+	Pump *PumpStatus
+}
+
+// NewLocalUnixSelector returns a new LocalUnixSelector.
+func NewLocalUnixSelector() PumpSelector {
+	return &LocalUnixSelector{}
+}
+
+// SetPumps implement PumpSelector.SetPumps.
+func (u *LocalUnixSelector) SetPumps(pumps []*PumpStatus) {
+	u.Lock()
+	if len(pumps) == 0 {
+		u.Pump = nil
+	} else {
+		u.Pump = pumps[0]
+	}
+	u.Unlock()
+}
+
+// Select implement PumpSelector.Select.
+func (u *LocalUnixSelector) Select(binlog *pb.Binlog) *PumpStatus {
+	u.RLock()
+	defer u.RUnlock()
+
+	return u.Pump
+}
+
+// Next implement PumpSelector.Next. Only for Prewrite binlog.
+func (u *LocalUnixSelector) Next(binlog *pb.Binlog, retryTime int) *PumpStatus {
+	u.RLock()
+	defer u.RUnlock()
+
+	return u.Pump
+}
+
 // ScoreSelector select a pump by pump's score.
 type ScoreSelector struct{}
 
@@ -259,6 +302,8 @@ func NewSelector(algorithm string) PumpSelector {
 		selector = NewHashSelector()
 	case Score:
 		selector = NewScoreSelector()
+	case LocalUnix:
+		selector = NewLocalUnixSelector()
 	default:
 		Logger.Warnf("unknow algorithm %s, use range as default", algorithm)
 		selector = NewRangeSelector()
