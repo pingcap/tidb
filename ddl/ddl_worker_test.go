@@ -138,6 +138,30 @@ func (s *testDDLSuite) TestTableError(c *C) {
 
 }
 
+func (s *testDDLSuite) TestViewError(c *C) {
+	store := testCreateStore(c, "test_view_error")
+	defer store.Close()
+
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	defer d.Stop()
+	ctx := testNewContext(d)
+	dbInfo := testSchemaInfo(c, d, "test")
+	testCreateSchema(c, testNewContext(d), d, dbInfo)
+
+	// Table ID or schema ID is wrong, so getting table is failed.
+	tblInfo := testViewInfo(c, d, "t", 3)
+	testCreateView(c, ctx, d, dbInfo, tblInfo)
+
+	// Args is wrong, so creating view is failed.
+	doDDLJobErr(c, 1, 1, model.ActionCreateView, []interface{}{1}, ctx, d)
+	// Schema ID is wrong and orReplace is false, so creating view is failed.
+	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
+	// View exists and orReplace is false, so creating view is failed.
+	tblInfo.ID = tblInfo.ID + 1
+	doDDLJobErr(c, dbInfo.ID, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
+
+}
+
 func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 	store := testCreateStore(c, "test_invalid_ddl_job_type_error")
 	defer store.Close()
@@ -396,7 +420,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
@@ -421,11 +447,16 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			checkErr = errors.Trace(err1)
 			return
 		}
-		checkErr = checkCancelState(hookCtx.Txn(true), job, test)
+		txn, err1 = hookCtx.Txn(true)
+		if err1 != nil {
+			checkErr = errors.Trace(err1)
+			return
+		}
+		checkErr = checkCancelState(txn, job, test)
 		if checkErr != nil {
 			return
 		}
-		err1 = hookCtx.Txn(true).Commit(context.Background())
+		err1 = txn.Commit(context.Background())
 		if err1 != nil {
 			checkErr = errors.Trace(err1)
 			return
@@ -458,7 +489,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	test = &tests[3]
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	c.Assert(ctx.Txn(true).Commit(context.Background()), IsNil)
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 	s.checkAddIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
 
 	// for add column

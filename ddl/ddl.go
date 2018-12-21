@@ -54,21 +54,21 @@ const (
 	ddlPrompt   = "ddl"
 
 	shardRowIDBitsMax = 15
-)
-
-var (
-	// TableColumnCountLimit is limit of the number of columns in a table.
-	// It's exported for testing.
-	TableColumnCountLimit = 512
-	// EnableSplitTableRegion is a flag to decide whether to split a new region for
-	// a newly created table. It takes effect only if the Storage supports split
-	// region.
-	EnableSplitTableRegion = false
 
 	// PartitionCountLimit is limit of the number of partitions in a table.
 	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
 	PartitionCountLimit = 1024
+)
+
+var (
+	// TableColumnCountLimit is limit of the number of columns in a table.
+	// It's exported for testing.
+	TableColumnCountLimit = uint32(512)
+	// EnableSplitTableRegion is a flag to decide whether to split a new region for
+	// a newly created table. It takes effect only if the Storage supports split
+	// region.
+	EnableSplitTableRegion = uint32(0)
 )
 
 var (
@@ -201,6 +201,8 @@ var (
 	ErrWarnDataTruncated = terror.ClassDDL.New(codeWarnDataTruncated, mysql.MySQLErrName[mysql.WarnDataTruncated])
 	// ErrCoalesceOnlyOnHashPartition returns coalesce partition can only be used on hash/key partitions.
 	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
+	// ErrViewWrongList returns create view must include all columns in the select clause
+	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -208,6 +210,7 @@ type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
@@ -621,6 +624,7 @@ const (
 	codeWrongKeyColumn                         = 1167
 	codeBlobKeyWithoutLength                   = 1170
 	codeInvalidOnUpdate                        = 1294
+	codeViewWrongList                          = 1353
 	codeUnsupportedOnGeneratedColumn           = 3106
 	codeGeneratedColumnNonPrior                = 3107
 	codeDependentByGeneratedColumn             = 3108
@@ -679,6 +683,7 @@ func init() {
 		codeTableMustHaveColumns:                   mysql.ErrTableMustHaveColumns,
 		codeTooManyFields:                          mysql.ErrTooManyFields,
 		codeErrTooLongIndexComment:                 mysql.ErrTooLongIndexComment,
+		codeViewWrongList:                          mysql.ErrViewWrongList,
 		codeUnknownCharacterSet:                    mysql.ErrUnknownCharacterSet,
 		codePartitionsMustBeDefined:                mysql.ErrPartitionsMustBeDefined,
 		codePartitionMgmtOnNonpartitioned:          mysql.ErrPartitionMgmtOnNonpartitioned,
