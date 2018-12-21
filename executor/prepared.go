@@ -112,7 +112,11 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if sqlParser, ok := e.ctx.(sqlexec.SQLParser); ok {
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
-		stmts, err = parser.New().Parse(e.sqlText, charset, collation)
+		var warns []error
+		stmts, warns, err = parser.New().Parse(e.sqlText, charset, collation)
+		for _, warn := range warns {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		}
 	}
 	if err != nil {
 		return errors.Trace(err)
