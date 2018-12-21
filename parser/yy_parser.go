@@ -90,7 +90,7 @@ func New() *Parser {
 
 // Parse parses a query string to raw ast.StmtNode.
 // If charset or collation is "", default charset and collation will be used.
-func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, error) {
+func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode, warns []error, err error) {
 	if charset == "" {
 		charset = mysql.DefaultCharset
 	}
@@ -107,19 +107,33 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	l = &parser.lexer
 	yyParse(l, parser)
 
-	if len(l.Errors()) != 0 {
-		return nil, errors.Trace(l.Errors()[0])
+	warns, errs := l.Errors()
+	if len(warns) > 0 {
+		warns = append([]error(nil), warns...)
+	} else {
+		warns = nil
+	}
+	if len(errs) != 0 {
+		return nil, warns, errors.Trace(errs[0])
 	}
 	for _, stmt := range parser.result {
 		ast.SetFlag(stmt)
 	}
-	return parser.result, nil
+	return parser.result, warns, nil
+}
+
+func (parser *Parser) lastErrorAsWarn() {
+	if len(parser.lexer.errs) == 0 {
+		return
+	}
+	parser.lexer.warns = append(parser.lexer.warns, parser.lexer.errs[len(parser.lexer.errs)-1])
+	parser.lexer.errs = parser.lexer.errs[:len(parser.lexer.errs)-1]
 }
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.
 // The query must have one statement, otherwise ErrSyntax is returned.
 func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
-	stmts, err := parser.Parse(sql, charset, collation)
+	stmts, _, err := parser.Parse(sql, charset, collation)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

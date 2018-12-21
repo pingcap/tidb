@@ -116,7 +116,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	// Testcase for -- Comment and unary -- operator
 	src = "CREATE TABLE foo (a SMALLINT UNSIGNED, b INT UNSIGNED); -- foo\nSelect --1 from foo;"
-	stmts, err := parser.Parse(src, "", "")
+	stmts, _, err := parser.Parse(src, "", "")
 	c.Assert(err, IsNil)
 	c.Assert(stmts, HasLen, 2)
 
@@ -124,7 +124,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	// See http://dev.mysql.com/doc/refman/5.7/en/comments.html
 	// Fix: https://github.com/pingcap/tidb/issues/971
 	src = "/*!40101 SET character_set_client = utf8 */;"
-	stmts, err = parser.Parse(src, "", "")
+	stmts, _, err = parser.Parse(src, "", "")
 	c.Assert(err, IsNil)
 	c.Assert(stmts, HasLen, 1)
 	stmt := stmts[0]
@@ -256,7 +256,7 @@ func (s *testParserSuite) RunTest(c *C, table []testCase) {
 	parser := New()
 	parser.EnableWindowFunc(s.enableWindowFunc)
 	for _, t := range table {
-		_, err := parser.Parse(t.src, "", "")
+		_, _, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
 		if !t.ok {
 			c.Assert(err, NotNil, comment)
@@ -274,7 +274,7 @@ func (s *testParserSuite) RunRestoreTest(c *C, sourceSQLs, expectSQLs string) {
 	var sb strings.Builder
 	parser := New()
 	comment := Commentf("source %v", sourceSQLs)
-	stmts, err := parser.Parse(sourceSQLs, "", "")
+	stmts, _, err := parser.Parse(sourceSQLs, "", "")
 	c.Assert(err, IsNil, comment)
 	restoreSQLs := ""
 	for _, stmt := range stmts {
@@ -299,7 +299,7 @@ func (s *testParserSuite) RunRestoreTest(c *C, sourceSQLs, expectSQLs string) {
 func (s *testParserSuite) RunErrMsgTest(c *C, table []testErrMsgCase) {
 	parser := New()
 	for _, t := range table {
-		_, err := parser.Parse(t.src, "", "")
+		_, _, err := parser.Parse(t.src, "", "")
 		comment := Commentf("source %v", t.src)
 		if t.err != nil {
 			c.Assert(terror.ErrorEqual(err, t.err), IsTrue, comment)
@@ -680,7 +680,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 
 func (s *testParserSuite) TestFlushTable(c *C) {
 	parser := New()
-	stmt, err := parser.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
+	stmt, _, err := parser.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
 	c.Assert(err, IsNil)
 	flushTable := stmt[0].(*ast.FlushStmt)
 	c.Assert(flushTable.Tp, Equals, ast.FlushTables)
@@ -692,7 +692,7 @@ func (s *testParserSuite) TestFlushTable(c *C) {
 
 func (s *testParserSuite) TestFlushPrivileges(c *C) {
 	parser := New()
-	stmt, err := parser.Parse("flush privileges", "", "")
+	stmt, _, err := parser.Parse("flush privileges", "", "")
 	c.Assert(err, IsNil)
 	flushPrivilege := stmt[0].(*ast.FlushStmt)
 	c.Assert(flushPrivilege.Tp, Equals, ast.FlushPrivileges)
@@ -1820,9 +1820,29 @@ func (s *testParserSuite) TestDDL(c *C) {
 	s.RunTest(c, table)
 }
 
+func (s *testParserSuite) TestHintError(c *C) {
+	parser := New()
+	stmt, warns, err := parser.Parse("select /*+ tidb_unknow(T1,t2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	c.Assert(len(warns), Equals, 1)
+	c.Assert(warns[0].Error(), Equals, "line 1 column 32 near \" c1, c2 from t1, t2 where t1.c1 = t2.c1\" (total length 71)")
+	c.Assert(len(stmt[0].(*ast.SelectStmt).TableHints), Equals, 0)
+	stmt, warns, err = parser.Parse("select /*+ tidb_unknow(T1,t2, 1) TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(len(stmt[0].(*ast.SelectStmt).TableHints), Equals, 0)
+	c.Assert(err, IsNil)
+	c.Assert(len(warns), Equals, 1)
+	c.Assert(warns[0].Error(), Equals, "line 1 column 53 near \" c1, c2 from t1, t2 where t1.c1 = t2.c1\" (total length 92)")
+	stmt, _, err = parser.Parse("select c1, c2 from /*+ tidb_unknow(T1,t2) */ t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, NotNil)
+	stmt, _, err = parser.Parse("select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, NotNil)
+	stmt, _, err = parser.Parse("select /*+ TIDB_INLJ(t1, T2) */ c1, c2 fromt t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, NotNil)
+}
+
 func (s *testParserSuite) TestOptimizerHints(c *C) {
 	parser := New()
-	stmt, err := parser.Parse("select /*+ tidb_SMJ(T1,t2) tidb_smj(T3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err := parser.Parse("select /*+ tidb_SMJ(T1,t2) tidb_smj(T3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, IsNil)
 	selectStmt := stmt[0].(*ast.SelectStmt)
 
@@ -1839,7 +1859,7 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 
 	c.Assert(len(selectStmt.TableHints), Equals, 2)
 
-	stmt, err = parser.Parse("select /*+ TIDB_INLJ(t1, T2) tidb_inlj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = parser.Parse("select /*+ TIDB_INLJ(t1, T2) tidb_inlj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, IsNil)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
@@ -1854,7 +1874,7 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[1].Tables[0].L, Equals, "t3")
 	c.Assert(hints[1].Tables[1].L, Equals, "t4")
 
-	stmt, err = parser.Parse("select /*+ TIDB_HJ(t1, T2) tidb_hj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = parser.Parse("select /*+ TIDB_HJ(t1, T2) tidb_hj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, IsNil)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
@@ -1869,7 +1889,7 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[1].Tables[0].L, Equals, "t3")
 	c.Assert(hints[1].Tables[1].L, Equals, "t4")
 
-	stmt, err = parser.Parse("SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = parser.Parse("SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1", "", "")
 	c.Assert(err, IsNil)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 	hints = selectStmt.TableHints
@@ -2108,7 +2128,7 @@ func (s *testParserSuite) TestUnionOrderBy(c *C) {
 	}
 
 	for _, t := range tests {
-		stmt, err := parser.Parse(t.src, "", "")
+		stmt, _, err := parser.Parse(t.src, "", "")
 		c.Assert(err, IsNil)
 		us, ok := stmt[0].(*ast.UnionStmt)
 		if ok {
@@ -2193,7 +2213,7 @@ func (s *testParserSuite) TestPriority(c *C) {
 	s.RunTest(c, table)
 
 	parser := New()
-	stmt, err := parser.Parse("select HIGH_PRIORITY * from t", "", "")
+	stmt, _, err := parser.Parse("select HIGH_PRIORITY * from t", "", "")
 	c.Assert(err, IsNil)
 	sel := stmt[0].(*ast.SelectStmt)
 	c.Assert(sel.SelectStmtOpts.Priority, Equals, mysql.HighPriority)
@@ -2208,7 +2228,7 @@ func (s *testParserSuite) TestSQLNoCache(c *C) {
 
 	parser := New()
 	for _, tt := range table {
-		stmt, err := parser.Parse(tt.src, "", "")
+		stmt, _, err := parser.Parse(tt.src, "", "")
 		c.Assert(err, IsNil)
 
 		sel := stmt[0].(*ast.SelectStmt)
@@ -2285,7 +2305,7 @@ func (s *testParserSuite) TestView(c *C) {
 
 	// Test case for the text of the select statement in create view statement.
 	p := New()
-	sms, err := p.Parse("create view v as select * from t", "", "")
+	sms, _, err := p.Parse("create view v as select * from t", "", "")
 	c.Assert(err, IsNil)
 	v, ok := sms[0].(*ast.CreateViewStmt)
 	c.Assert(ok, IsTrue)
@@ -2320,7 +2340,7 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	// Test case for timestampdiff unit.
 	// TimeUnit should be unified to upper case.
 	parser := New()
-	stmt, err := parser.Parse("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(month,'2003-02-01','2003-05-01');", "", "")
+	stmt, _, err := parser.Parse("SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01'), TIMESTAMPDIFF(month,'2003-02-01','2003-05-01');", "", "")
 	c.Assert(err, IsNil)
 	ss := stmt[0].(*ast.SelectStmt)
 	fields := ss.Fields.Fields
@@ -2376,7 +2396,7 @@ func (s *testParserSuite) TestSQLModeANSIQuotes(c *C) {
 		`select * from t "tt"`,
 	}
 	for _, test := range tests {
-		_, err := parser.Parse(test, "", "")
+		_, _, err := parser.Parse(test, "", "")
 		c.Assert(err, IsNil)
 	}
 }
@@ -2388,7 +2408,7 @@ func (s *testParserSuite) TestDDLStatements(c *C) {
 		a varchar(64) binary,
 		b char(10) charset utf8 collate utf8_general_ci,
 		c text charset latin1) ENGINE=innoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin`
-	stmts, err := parser.Parse(createTableStr, "", "")
+	stmts, _, err := parser.Parse(createTableStr, "", "")
 	c.Assert(err, IsNil)
 	stmt := stmts[0].(*ast.CreateTableStmt)
 	c.Assert(mysql.HasBinaryFlag(stmt.Cols[0].Tp.Flag), IsTrue)
@@ -2407,7 +2427,7 @@ func (s *testParserSuite) TestDDLStatements(c *C) {
 		a varbinary(64),
 		b binary(10),
 		c blob)`
-	stmts, err = parser.Parse(createTableStr, "", "")
+	stmts, _, err = parser.Parse(createTableStr, "", "")
 	c.Assert(err, IsNil)
 	stmt = stmts[0].(*ast.CreateTableStmt)
 	for _, colDef := range stmt.Cols {
@@ -2446,7 +2466,7 @@ func (s *testParserSuite) TestGeneratedColumn(c *C) {
 	}
 	parser := New()
 	for _, tt := range tests {
-		stmtNodes, err := parser.Parse(tt.input, "", "")
+		stmtNodes, _, err := parser.Parse(tt.input, "", "")
 		if tt.ok {
 			c.Assert(err, IsNil)
 			stmtNode := stmtNodes[0]
@@ -2554,7 +2574,7 @@ func (s *testParserSuite) TestNotExistsSubquery(c *C) {
 
 	parser := New()
 	for _, tt := range table {
-		stmt, err := parser.Parse(tt.src, "", "")
+		stmt, _, err := parser.Parse(tt.src, "", "")
 		c.Assert(err, IsNil)
 
 		sel := stmt[0].(*ast.SelectStmt)
@@ -2704,7 +2724,7 @@ func (s *testParserSuite) TestVisitFrameBound(c *C) {
 
 func (s *testParserSuite) TestFieldText(c *C) {
 	parser := New()
-	stmts, err := parser.Parse("select a from t", "", "")
+	stmts, _, err := parser.Parse("select a from t", "", "")
 	c.Assert(err, IsNil)
 	tmp := stmts[0].(*ast.SelectStmt)
 	c.Assert(tmp.Fields.Fields[0].Text(), Equals, "a")
@@ -2715,7 +2735,7 @@ func (s *testParserSuite) TestFieldText(c *C) {
 		"trace format = 'json' select a from t",
 	}
 	for _, sql := range sqls {
-		stmts, err = parser.Parse(sql, "", "")
+		stmts, _, err = parser.Parse(sql, "", "")
 		c.Assert(err, IsNil)
 		traceStmt := stmts[0].(*ast.TraceStmt)
 		c.Assert(traceStmt.Text(), Equals, sql)

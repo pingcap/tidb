@@ -90,7 +90,7 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 	for _, tt := range testcases {
 		expr := fmt.Sprintf("select %s", tt.input)
 		charset, collation := getDefaultCharsetAndCollate()
-		stmts, err := parser.New().Parse(expr, charset, collation)
+		stmts, _, err := parser.New().Parse(expr, charset, collation)
 		node := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 		c.Assert(err, IsNil)
 

@@ -79,7 +79,7 @@
 //	type yyLexer interface {
 //		Lex(lval *yySymType) int
 //		Errorf(format string,  a ...interface{})
-//		Errors() []error
+//		Errors() (warns []error, errs []error)
 //	}
 //
 // Optionally the argument to yyParse may implement the following interface:
@@ -517,7 +517,7 @@ var %[1]sDebug = 0
 type %[1]sLexer interface {
 	Lex(lval *%[1]sSymType) int
 	Errorf(format string, a ...interface{})
-	Errors() []error
+	Errors() (warns []error, errs []error) 
 }
 
 type %[1]sLexerEx interface {
