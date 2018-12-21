@@ -249,3 +249,14 @@ func (tc *testExpressionsSuite) TestPatternLikeExprRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
 }
+
+func (tc *testExpressionsSuite) TestValuesExpr(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"values(a)", "VALUES(`a`)"},
+		{"values(a)+values(b)", "VALUES(`a`)+VALUES(`b`)"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*InsertStmt).OnDuplicate[0].Expr
+	}
+	RunNodeRestoreTest(c, testCases, "insert into t values (1,2,3) on duplicate key update c=%s", extractNodeFunc)
+}
