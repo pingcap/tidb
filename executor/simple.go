@@ -114,8 +114,7 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	e.ctx.Txn(true)
-	return nil
+	return e.ctx.Txn(true)
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
