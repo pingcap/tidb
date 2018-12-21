@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -181,11 +182,23 @@ func setupBinlogClient() {
 		binloginfo.SetIgnoreError(true)
 	}
 
-	client, err := pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), pd.SecurityOption{
+	var (
+		client *pumpcli.PumpsClient
+		err    error
+	)
+
+	securityOption := pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	})
+	}
+
+	if len(cfg.Binlog.BinlogSocket) == 0 {
+		client, err = pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+	} else {
+		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+	}
+
 	terror.MustNil(err)
 
 	binloginfo.SetPumpsClient(client)
@@ -399,7 +412,9 @@ func setGlobalVars() {
 	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
 	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
-	ddl.EnableSplitTableRegion = cfg.SplitTable
+	if cfg.SplitTable {
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	}
 	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	variable.ForcePriority = int32(mysql.Str2Priority(cfg.Performance.ForcePriority))

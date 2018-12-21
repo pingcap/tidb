@@ -61,7 +61,7 @@ type InsertValues struct {
 
 type defaultVal struct {
 	val types.Datum
-	// We evaluate the default value lazily. The valid indicates whether the val is evaluated.
+	// valid indicates whether the val is evaluated. We evaluate the default value lazily.
 	valid bool
 }
 
@@ -341,13 +341,19 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	sessVars := e.ctx.GetSessionVars()
-	e.ctx.StmtCommit()
+	if err := e.ctx.StmtCommit(); err != nil {
+		return errors.Trace(err)
+	}
 	if err := e.ctx.NewTxn(ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	if !sessVars.LightningMode {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
+		txn, err := e.ctx.Txn(true)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	}
 	return nil
 }
@@ -473,10 +479,12 @@ func (e *InsertValues) adjustAutoIncrementDatum(d types.Datum, hasValue bool, c 
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID, err = d.ToInt64(e.ctx.GetSessionVars().StmtCtx)
-		if e.filterErr(err) != nil {
-			return types.Datum{}, errors.Trace(err)
+		sc := e.ctx.GetSessionVars().StmtCtx
+		datum, err1 := d.ConvertTo(sc, &c.FieldType)
+		if e.filterErr(err1) != nil {
+			return types.Datum{}, err1
 		}
+		recordID = datum.GetInt64()
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
@@ -550,6 +558,7 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
 		if rows[i] != nil {
+			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
 			_, err = addRecord(rows[i])
 			if err != nil {
 				return errors.Trace(err)
@@ -566,11 +575,15 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 }
 
 func (e *InsertValues) addRecord(row []types.Datum) (int64, error) {
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
-		e.ctx.Txn(true).SetOption(kv.PresumeKeyNotExists, nil)
+		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
 	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn(true).DelOption(kv.PresumeKeyNotExists)
+	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

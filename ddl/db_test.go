@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -348,7 +349,12 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -359,7 +365,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 				return
 			}
 
-			checkErr = hookCtx.Txn(true).Commit(context.Background())
+			checkErr = txn.Commit(context.Background())
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
@@ -420,7 +426,12 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -431,7 +442,7 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 				return
 			}
 
-			checkErr = hookCtx.Txn(true).Commit(context.Background())
+			checkErr = txn.Commit(context.Background())
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
@@ -750,12 +761,14 @@ LOOP:
 	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
-	ctx.Txn(true).Rollback()
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	txn.Rollback()
 
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
-	defer ctx.Txn(true).Rollback()
+	defer txn.Rollback()
 
-	it, err := nidx.SeekFirst(ctx.Txn(true))
+	it, err := nidx.SeekFirst(txn)
 	c.Assert(err, IsNil)
 	defer it.Close()
 
@@ -850,9 +863,13 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 		handles := make(map[int64]struct{})
 
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
-		defer ctx.Txn(true).Rollback()
+		txn, err := ctx.Txn(true)
+		c.Assert(err, IsNil)
+		defer txn.Rollback()
 
-		it, err := idx.SeekFirst(ctx.Txn(true))
+		txn, err = ctx.Txn(true)
+		c.Assert(err, IsNil)
+		it, err := idx.SeekFirst(txn)
 		c.Assert(err, IsNil)
 		defer it.Close()
 
@@ -933,7 +950,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	count := ddl.TableColumnCountLimit - 1
+	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)
 	var cols []string
 	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
@@ -1057,7 +1074,11 @@ LOOP:
 	i := 0
 	j := 0
 	ctx.NewTxn(context.Background())
-	defer ctx.Txn(true).Rollback()
+	defer func() {
+		if txn, err1 := ctx.Txn(true); err1 == nil {
+			txn.Rollback()
+		}
+	}()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
@@ -1868,7 +1889,12 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 		}
 
 		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+		txn, err := hookCtx.Txn(true)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		errs, err := admin.CancelJobs(txn, jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -1879,7 +1905,12 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 			return
 		}
 
-		err = hookCtx.Txn(true).Commit(context.Background())
+		txn, err = hookCtx.Txn(true)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		err = txn.Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}

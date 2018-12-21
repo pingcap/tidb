@@ -78,6 +78,17 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 	row = mutRow.ToRow()
 	c.Assert(row.GetJSON(0), check.DeepEquals, j)
 	c.Assert(row.GetTime(1), check.DeepEquals, t)
+
+	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDuration)}
+	chk := New(retTypes, 1, 1)
+	dur, err := types.ParseDuration(sc, "01:23:45", 0)
+	c.Assert(err, check.IsNil)
+	chk.AppendDuration(0, dur)
+	mutRow = MutRowFromTypes(retTypes)
+	mutRow.SetValue(0, dur)
+	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
+	mutRow.SetDatum(0, types.NewDurationDatum(dur))
+	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
 }
 
 func BenchmarkMutRowSetRow(b *testing.B) {
