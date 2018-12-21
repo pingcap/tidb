@@ -93,6 +93,8 @@ var (
 		"unsupported drop integer primary key")
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
+	errInvalidDefaultValue = terror.ClassDDL.New(codeInvalidDefaultValue, "Invalid default value for '%s'")
+
 	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
 
 	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
@@ -203,6 +205,8 @@ var (
 	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
 	// ErrViewWrongList returns create view must include all columns in the select clause
 	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
+	// ErrInvalidDefaultValue returns invalid default value
+	ErrInvalidDefaultValue = terror.ClassDDL.New(codeInvalidDefaultValue, mysql.MySQLErrName[mysql.ErrInvalidDefault])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -610,6 +614,7 @@ const (
 	codeBadField                               = 1054
 	codeTooLongIdent                           = 1059
 	codeDupKeyName                             = 1061
+	codeInvalidDefaultValue                    = 1067
 	codeTooLongKey                             = 1071
 	codeKeyColumnDoesNotExits                  = mysql.ErrKeyColumnDoesNotExits
 	codeIncorrectPrefixKey                     = 1089
@@ -677,6 +682,7 @@ func init() {
 		codeDependentByGeneratedColumn:             mysql.ErrDependentByGeneratedColumn,
 		codeJSONUsedAsKey:                          mysql.ErrJSONUsedAsKey,
 		codeBlobCantHaveDefault:                    mysql.ErrBlobCantHaveDefault,
+		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
 		codeWrongColumnName:                        mysql.ErrWrongColumnName,
 		codeWrongKeyColumn:                         mysql.ErrWrongKeyColumn,
 		codeWrongNameForIndex:                      mysql.ErrWrongNameForIndex,

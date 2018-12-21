@@ -112,6 +112,25 @@ func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION';")
+
+	_, err := tk.Exec("create table t(agent_start_time date NOT NULL DEFAULT '0000-00-00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrInvalidDefaultValue), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table t(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrInvalidDefaultValue), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table t(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrInvalidDefaultValue), IsTrue, Commentf("err %v", err))
+}
+
 // for issue #3848
 func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
