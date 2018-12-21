@@ -277,11 +277,18 @@ type txnFuture struct {
 	mockFail bool
 }
 
+var mockGetTSErrorInRetryOnce = true
+
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	if tf.mockFail {
 		return nil, errors.New("mock get timestamp fail")
 	}
 
+	// gofail: var mockGetTSErrorInRetry bool
+	// if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockStmtCommitErrorOnce {
+	// 	 mockGetTSErrorInRetryOnce = false
+	//	 return nil, errors.Errorf("PD server timeout[try again later]")
+	// }
 	startTS, err := tf.future.Wait()
 	tf.span.Finish()
 	if err == nil {

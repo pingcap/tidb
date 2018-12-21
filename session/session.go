@@ -282,6 +282,8 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 	return domain.ErrInfoSchemaExpired
 }
 
+var mockStmtCommitErrorOnce = true
+
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
@@ -290,6 +292,13 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+
+	// gofail: var mockCommitError bool
+	// if mockCommitError && mockStmtCommitErrorOnce {
+	//	 mockStmtCommitErrorOnce = false
+	// 	return kv.ErrRetryable
+	// }
+
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
