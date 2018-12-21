@@ -252,6 +252,7 @@ func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 // checkColumnDefaultValue checks the default value of the column.
 // In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
 // In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
+// In NO_ZERO_DATE SQL mode, TIMESTAMP/DATE/DATETIME type can't have zero date like '0000-00-00' or '0000-00-00 00:00:00'.
 func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, interface{}, error) {
 	hasDefaultValue := true
 	if value != nil && (col.Tp == mysql.TypeJSON ||
@@ -273,6 +274,14 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 		}
 		// In strict SQL mode or default value is not an empty string.
 		return hasDefaultValue, value, errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
+	}
+	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (col.Tp == mysql.TypeTimestamp ||
+		col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeDate) {
+		if vv, ok := value.(string); ok {
+			if vv == types.ZeroDatetimeStr || vv == types.ZeroDateStr {
+				return hasDefaultValue, value, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+			}
+		}
 	}
 	return hasDefaultValue, value, nil
 }
