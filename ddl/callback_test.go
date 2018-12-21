@@ -40,12 +40,11 @@ func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema
 type TestDDLCallback struct {
 	*BaseCallback
 
-	onJobRunBefore                   func(*model.Job)
-	OnJobRunBeforeExported           func(*model.Job)
-	onJobUpdated                     func(*model.Job)
-	OnJobUpdatedExported             func(*model.Job)
-	onWatched                        func(ctx context.Context)
-	OnIndexWorkerReorgBeforeExported func(workerNum, rangesNum int)
+	onJobRunBefore         func(*model.Job)
+	OnJobRunBeforeExported func(*model.Job)
+	onJobUpdated           func(*model.Job)
+	OnJobUpdatedExported   func(*model.Job)
+	onWatched              func(ctx context.Context)
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
@@ -83,15 +82,6 @@ func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	}
 
 	tc.BaseCallback.OnWatched(ctx)
-}
-
-func (tc *TestDDLCallback) OnIndexWorkerReorgBefore(workerNum, rangesNum int) {
-	if tc.OnIndexWorkerReorgBeforeExported != nil {
-		tc.OnIndexWorkerReorgBeforeExported(workerNum, rangesNum)
-		return
-	}
-
-	tc.BaseCallback.OnIndexWorkerReorgBefore(workerNum, rangesNum)
 }
 
 func (s *testDDLSuite) TestCallback(c *C) {

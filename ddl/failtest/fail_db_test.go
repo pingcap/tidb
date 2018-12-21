@@ -16,8 +16,12 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"math"
 	"math/rand"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -310,4 +314,116 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	}
 	tk.MustExec("admin check table t1")
 	tk.MustExec("admin check table t2")
+}
+
+func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_db")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_add_index")
+	tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+
+	done := make(chan error, 1)
+	start := -10
+	defaultBatchSize := 2048
+	num := defaultBatchSize
+	// first add some rows
+	for i := start; i < num; i++ {
+		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
+		tk.MustExec(sql)
+	}
+	// Add some discrete rows.
+	maxBatch := 20
+	batchCnt := 100
+	otherKeys := make([]int, 0, batchCnt*maxBatch)
+	// Make sure there are no duplicate keys.
+	base := defaultBatchSize * 20
+	for i := 1; i < batchCnt; i++ {
+		n := base + i*defaultBatchSize + i
+		for j := 0; j < rand.Intn(maxBatch); j++ {
+			n += j
+			sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", n, n, n)
+			tk.MustExec(sql)
+			otherKeys = append(otherKeys, n)
+		}
+	}
+	// Encounter the value of math.MaxInt64 in middle of
+	v := math.MaxInt64 - defaultBatchSize/2
+	sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", v, v, v)
+	tk.MustExec(sql)
+	otherKeys = append(otherKeys, v)
+
+	is := s.dom.InfoSchema()
+	schemaName := model.NewCIStr("test_db")
+	tableName := model.NewCIStr("test_add_index")
+	tbl, err := is.TableByName(schemaName, tableName)
+	c.Assert(err, IsNil)
+
+	splitCount := 100
+	// Split table to multi region.
+	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, splitCount)
+
+	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
+	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
+	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
+	defer variable.SetDDLReorgWorkerCounter(originDDLAddIndexWorkerCnt)
+
+	gofail.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum")
+
+	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
+
+	checkNum := 0
+
+LOOP:
+	for {
+		select {
+		case err = <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		case <-ddl.TestCheckWorkerNumCh:
+			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
+			tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
+			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+			checkNum++
+		}
+	}
+	c.Assert(checkNum, Greater, 5)
+	tk.MustExec("admin check table test_add_index")
+	tk.MustExec("drop table test_add_index")
+}
+
+func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
+	execMultiSQLInGoroutine(c, s, "test_db", []string{sql}, done)
+}
+
+func execMultiSQLInGoroutine(c *C, s kv.Storage, dbName string, multiSQL []string, done chan error) {
+	go func() {
+		se, err := session.CreateSession4Test(s)
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		defer se.Close()
+		_, err = se.Execute(context.Background(), "use "+dbName)
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		for _, sql := range multiSQL {
+			rs, err := se.Execute(context.Background(), sql)
+			if err != nil {
+				done <- errors.Trace(err)
+				return
+			}
+			if rs != nil {
+				done <- errors.Errorf("RecordSet should be empty.")
+				return
+			}
+			done <- nil
+		}
+	}()
 }

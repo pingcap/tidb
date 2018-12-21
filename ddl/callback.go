@@ -45,8 +45,6 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
-	// OnIndexWorkerReorgBefore is called before add index worker running reorganization.
-	OnIndexWorkerReorgBefore(workerNum, rangesNum int)
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -70,10 +68,5 @@ func (c *BaseCallback) OnJobUpdated(job *model.Job) {
 
 // OnWatched implements Callback.OnWatched interface.
 func (c *BaseCallback) OnWatched(ctx context.Context) {
-	// Nothing to do.
-}
-
-// OnIndexWorkerReorgBefore implements Callback.OnIndexWorkerReorgBefore interface.
-func (c *BaseCallback) OnIndexWorkerReorgBefore(workerNum, rangesNum int) {
 	// Nothing to do.
 }
