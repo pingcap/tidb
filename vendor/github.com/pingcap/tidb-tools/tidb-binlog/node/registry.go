@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"encoding/json"
 	"path"
 	"strings"
@@ -10,7 +11,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // EtcdRegistry wraps the reactions with etcd
