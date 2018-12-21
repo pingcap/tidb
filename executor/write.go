@@ -104,6 +104,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 
+	sc.AddTouchedRows(1)
 	// If no changes, nothing to do, return directly.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
@@ -160,6 +161,8 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			sc.AddAffectedRows(1)
 		}
 	}
+	sc.AddUpdatedRows(1)
+	sc.AddCopiedRows(1)
 
 	return true, handleChanged, newHandle, nil
 }
