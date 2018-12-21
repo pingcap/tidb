@@ -215,8 +215,8 @@ const plan3 = `[[TableScan_12 {
 } ]]`
 
 func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
-	explainedSql := "explain " + sql
-	result := tk.MustQuery(explainedSql)
+	explainedSQL := "explain " + sql
+	result := tk.MustQuery(explainedSQL)
 	resultStr := fmt.Sprintf("%v", result.Rows())
 	if !strings.ContainsAny(resultStr, "MergeJoin") {
 		c.Error("Expected MergeJoin in plannercore.")
@@ -225,8 +225,8 @@ func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
 }
 
 func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testkit.Result {
-	explainedSql := "explain " + sql
-	result := tk.MustQuery(explainedSql)
+	explainedSQL := "explain " + sql
+	result := tk.MustQuery(explainedSQL)
 	resultStr := fmt.Sprintf("%v", result.Rows())
 	if plan != resultStr {
 		// TODO: Reopen it after refactoring explain.

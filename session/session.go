@@ -547,7 +547,10 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 				s.StmtRollback()
 				break
 			}
-			s.StmtCommit()
+			err = s.StmtCommit()
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		log.Warnf("con:%d retrying_txn_start_ts:%d original_txn_start_ts:(%d)",
 			connID, s.GetSessionVars().TxnCtx.StartTS, orgStartTS)
@@ -631,7 +634,11 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
-	if s.Txn(false).Valid() {
+	txn, err := s.Txn(false)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if txn.Valid() {
 		snapshot = s.txn.StartTS()
 	}
 	if s.sessionVars.SnapshotTS != 0 {
@@ -803,7 +810,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	return errors.Trace(err)
 }
 
-func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, error) {
+func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -878,7 +885,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
-	stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
@@ -914,6 +921,10 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
 		// return the first recordset if client doesn't support ClientMultiResults.
 		recordSets = recordSets[:1]
+	}
+
+	for _, warn := range warns {
+		s.sessionVars.StmtCtx.AppendWarning(warn)
 	}
 	return recordSets, nil
 }
@@ -1031,24 +1042,24 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn(active bool) kv.Transaction {
+func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if s.txn.pending() && active {
-		// Transaction is lazy intialized.
+		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
 			log.Error("active transaction fail, err = ", err)
-			s.txn.fail = errors.Trace(err)
 			s.txn.cleanup()
-		} else {
-			s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
+			s.sessionVars.TxnCtx.StartTS = 0
+			return &s.txn, errors.Trace(err)
 		}
+		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 	}
-	return &s.txn
+	return &s.txn, nil
 }
 
 func (s *session) NewTxn(ctx context.Context) error {
