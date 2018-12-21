@@ -68,7 +68,12 @@ type DropStatsStmt struct {
 
 // Restore implements Node interface.
 func (n *DropStatsStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("DROP STATS ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while add table")
+	}
+
+	return nil
 }
 
 // Accept implements Node Accept interface.
