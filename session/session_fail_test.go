@@ -50,12 +50,13 @@ func (s *testSessionSuite) TestGetTSFailDirtyState(c *C) {
 
 func (s *testSessionSuite) TestGetTSFailDirtyStateInretry(c *C) {
 	defer gofail.Disable("github.com/pingcap/tidb/session/mockCommitError")
-	defer gofail.Disable("github.com/pingcap/tidb/session/mockGetTSErrorInRetryOnce")
+	defer gofail.Disable("github.com/pingcap/tidb/session/mockGetTSErrorInRetry")
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
+
 	gofail.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`)
-	gofail.Enable("github.com/pingcap/tidb/session/mockGetTSErrorInRetryOnce", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/session/mockGetTSErrorInRetry", `return(true)`)
 	tk.MustExec("insert into t values (2)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
 }
