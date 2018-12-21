@@ -285,10 +285,10 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	}
 
 	// gofail: var mockGetTSErrorInRetry bool
-	// if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockStmtCommitErrorOnce {
-	// 	 mockGetTSErrorInRetryOnce = false
+	//if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
+	//	 mockGetTSErrorInRetryOnce = false
 	//	 return nil, errors.Errorf("PD server timeout[try again later]")
-	// }
+	//}
 	startTS, err := tf.future.Wait()
 	tf.span.Finish()
 	if err == nil {
