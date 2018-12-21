@@ -766,7 +766,21 @@ type PatternLikeExpr struct {
 
 // Restore implements Node interface.
 func (n *PatternLikeExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore PatternLikeExpr.Expr")
+	}
+
+	if n.Not {
+		ctx.WriteKeyWord(" NOT LIKE ")
+	} else {
+		ctx.WriteKeyWord(" LIKE ")
+	}
+
+	if err := n.Pattern.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore PatternLikeExpr.Pattern")
+	}
+
+	return nil
 }
 
 // Format the ExprNode into a Writer.
