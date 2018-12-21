@@ -37,7 +37,10 @@ type simpleRewriter struct {
 // The expression string must only reference the column in table Info.
 func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, err := parser.New().Parse(exprStr, "", "")
+	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +75,10 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 // The expression string must only reference the column in the given schema.
 func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, err := parser.New().Parse(exprStr, "", "")
+	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
 	if err != nil {
 		return nil, err
 	}
