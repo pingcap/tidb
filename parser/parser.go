@@ -8575,7 +8575,6 @@ yynewstate:
 	case 341:
 		{
 			parser.yyVAL.item = &ast.IndexOption{
-				// TODO bug should be fix here!
 				KeyBlockSize: yyS[yypt-0].item.(uint64),
 			}
 		}
