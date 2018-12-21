@@ -219,3 +219,20 @@ func (tc *testExpressionsSuite) TestDefaultExpr(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "insert into t values(%s)", extractNodeFunc)
 }
+
+func (tc *testExpressionsSuite) TestPatternLikeExprRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"a like 't1'", "`a` LIKE 't1'"},
+		{"a like 't1%'", "`a` LIKE 't1%'"},
+		{"a like '%t1%'", "`a` LIKE '%t1%'"},
+		{"a like '%t1_|'", "`a` LIKE '%t1_|'"},
+		{"a not like 't1'", "`a` NOT LIKE 't1'"},
+		{"a not like 't1%'", "`a` NOT LIKE 't1%'"},
+		{"a not like '%D%v%'", "`a` NOT LIKE '%D%v%'"},
+		{"a not like '%t1_|'", "`a` NOT LIKE '%t1_|'"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Fields.Fields[0].Expr
+	}
+	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+}
