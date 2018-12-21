@@ -1106,9 +1106,12 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			closeAddIndexWorkers(workers)
 		}
 
-		reorgInfo.d.mu.Lock()
-		reorgInfo.d.mu.hook.OnIndexWorkerReorgBefore(len(idxWorkers), len(kvRanges))
-		reorgInfo.d.mu.Unlock()
+		// gofail: var checkIndexWorker bool
+		//if checkIndexWorker {
+		//	reorgInfo.d.mu.Lock()
+		//	reorgInfo.d.mu.hook.OnIndexWorkerReorgBefore(len(idxWorkers), len(kvRanges))
+		//	reorgInfo.d.mu.Unlock()
+		//}
 
 		log.Infof("[ddl-reorg] start %d workers to reorg index of %v region ranges, handle range:[%v, %v).", len(idxWorkers), len(kvRanges), startHandle, endHandle)
 		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges)
