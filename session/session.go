@@ -523,6 +523,13 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			// For testing purpose.
 			hook.(func())()
 		}
+
+		if err == nil && s.txn.fail != nil {
+			err = s.txn.fail
+			s.txn.cleanup()
+			s.txn.fail = nil
+		}
+
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {
