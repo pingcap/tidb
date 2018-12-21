@@ -26,10 +26,10 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	gofail "github.com/pingcap/gofail/runtime"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -239,12 +239,12 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	r, err_admin := tk.Exec("admin check table admin_test")
-	c.Assert(err_admin, NotNil)
+	r, errAdmin := tk.Exec("admin check table admin_test")
+	c.Assert(errAdmin, NotNil)
 
 	if config.CheckTableBeforeDrop {
 		r, err = tk.Exec("drop table admin_test")
-		c.Assert(err.Error(), Equals, err_admin.Error())
+		c.Assert(err.Error(), Equals, errAdmin.Error())
 
 		// Drop inconsistency index.
 		tk.MustExec("alter table admin_test drop index c1")
@@ -324,10 +324,11 @@ func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
 }
 
 type testCase struct {
-	data1    []byte
-	data2    []byte
-	expected []string
-	restData []byte
+	data1       []byte
+	data2       []byte
+	expected    []string
+	restData    []byte
+	expectedMsg string
 }
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
@@ -348,9 +349,14 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
-		ctx.StmtCommit()
-		err1 = ctx.Txn(true).Commit(context.Background())
-		c.Assert(err1, IsNil)
+		ld.SetMessage()
+		tk.CheckLastMessage(tt.expectedMsg)
+		err := ctx.StmtCommit()
+		c.Assert(err, IsNil)
+		txn, err := ctx.Txn(true)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
@@ -1846,7 +1852,8 @@ func (s *testSuite) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		p, err := planner.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
 }
@@ -1951,6 +1958,15 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "")
 	c.Check(fields[0].TableAsName.L, Equals, "")
 	c.Check(fields[0].DBName.L, Equals, "")
+	// Test case for query a column wrapped with parentheses and unary plus.
+	// In this case, the column name should be its original name.
+	rs, err = tk.Exec("select (c), (+c), +(c), +(+(c)), ++c from t")
+	c.Check(err, IsNil)
+	fields = rs.Fields()
+	for i := 0; i < 5; i++ {
+		c.Check(fields[0].Column.Name.L, Equals, "c")
+		c.Check(fields[0].ColumnAsName.L, Equals, "c")
+	}
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
@@ -2142,16 +2158,20 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	tk.MustExec("begin")
 	rows := tk.MustQuery("select @@tidb_current_ts").Rows()
 	tsStr := rows[0][0].(string)
-	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn(true).StartTS()))
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(tsStr, Equals, fmt.Sprintf("%d", txn.StartTS()))
 	tk.MustExec("begin")
 	rows = tk.MustQuery("select @@tidb_current_ts").Rows()
 	newTsStr := rows[0][0].(string)
-	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn(true).StartTS()))
+	txn, err = tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", txn.StartTS()))
 	c.Assert(newTsStr, Not(Equals), tsStr)
 	tk.MustExec("commit")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
-	_, err := tk.Exec("set @@tidb_current_ts = '1'")
+	_, err = tk.Exec("set @@tidb_current_ts = '1'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
 }
 
@@ -2165,7 +2185,9 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 
 	tk.MustExec("drop table if exists t, t1")
 
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 	tk.MustExec("insert t values (12, 2, 3)")
@@ -2182,7 +2204,7 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk2.MustExec("update t set c2=211 where c1=11")
 	tk2.MustExec("commit")
 
-	_, err := tk1.Exec("commit")
+	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 
 	// no conflict for subquery.
@@ -2848,7 +2870,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 
@@ -2868,7 +2890,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(s.ctx, recordVal2, false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
+	txn, err := s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]
@@ -2880,7 +2904,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	txn, err := s.store.Begin()
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
@@ -3367,9 +3391,9 @@ func (s *testSuite) TestTSOFail(c *C) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int)`)
 
-	gofail.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/mockGetTSFail")
-	_, err := tk.Exec(`select * from t`)
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
+	_, err := tk.Se.Execute(ctx, `select * from t`)
 	c.Assert(err, NotNil)
 }
 

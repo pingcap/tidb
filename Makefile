@@ -64,7 +64,7 @@ check-setup:
 	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
 	@GO111MODULE=off retool sync
 
-check: check-setup fmt lint vet tidy
+check: fmt lint tidy
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -92,7 +92,8 @@ check-slow:
 
 lint:
 	@echo "linting"
-	@CGO_ENABLED=0 retool do revive -formatter friendly -config revive.toml $(PACKAGES)
+	@$(GO) install github.com/mgechev/revive
+	@CGO_ENABLED=0 revive -formatter friendly -config revive.toml $(FILES)
 
 vet:
 	@echo "vet"
@@ -113,7 +114,9 @@ explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest:
-	$(GO) get github.com/etcd-io/gofail
+	@rm -rf $GOPATH/bin/gofail
+	$(GO) get github.com/pingcap/gofail
+	@which gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
@@ -130,21 +133,21 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race:
-	$(GO) get github.com/etcd-io/gofail
+	$(GO) get github.com/pingcap/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 leak:
-	$(GO) get github.com/etcd-io/gofail
+	$(GO) get github.com/pingcap/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test:
-	$(GO) get github.com/etcd-io/gofail
+	$(GO) get github.com/pingcap/gofail
 	@$(GOFAIL_ENABLE)
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)

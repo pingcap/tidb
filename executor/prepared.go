@@ -114,7 +114,11 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	} else {
 		p := parser.New()
 		p.EnableWindowFunc(vars.EnableWindowFunction)
-		stmts, err = p.Parse(e.sqlText, charset, collation)
+		var warns []error
+		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
+		for _, warn := range warns {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		}
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -204,8 +208,11 @@ func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
-	var err error
-	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan) {
+	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
 		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
 	}
 	if err != nil {

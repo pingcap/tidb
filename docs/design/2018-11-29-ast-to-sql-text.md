@@ -30,12 +30,33 @@ I recommend adding a `Restore()` method to ast.Node. This is the function define
 
 ```go
 type Node interface {
-	// Restore AST to SQL text and append them to `sb`.
+	// Restore AST to SQL text and append them to `ctx`.
 	// return error when the AST is invalid.
-	Restore(sb *strings.Builder) error
+	Restore(ctx *RestoreCtx) error
 	
 	...
 }
+```
+
+In order to output the SQL text in different formats, I introduced nine flags. There are mutually exclusive groups of `RestoreFlags`:  
+
+[RestoreStringSingleQuotes, RestoreStringDoubleQuotes]  
+[RestoreStringEscapeBackslash]  
+[RestoreKeyWordUppercase, RestoreKeyWordLowercase]  
+[RestoreNameUppercase, RestoreNameLowercase]  
+[RestoreNameDoubleQuotes, RestoreNameBackQuotes]  
+The flag in the left position in each group has a higher priority.  
+
+This is `RestoreCtx` struct and `DefaultRestoreFlags` definition: 
+
+```go
+// RestoreCtx is Restore context to hold flags and writer
+type RestoreCtx struct {
+	Flags RestoreFlags
+	In    io.Writer
+}
+
+const DefaultRestoreFlags = RestoreStringSingleQuotes | RestoreKeyWordUppercase | RestoreNameBackQuotes
 ```
 
 ## Rationale
@@ -62,19 +83,21 @@ Detailed list at [pingcap/tidb#8532](https://github.com/pingcap/tidb/issues/8532
 
 ### Example
 
-I implemented the `Restore` function of [ast.CreateDatabasesStmt](https://github.com/pingcap/parser/blob/ce4d755a8937ee6bc0e851fafdcd042ab5b1a1c1/ast/ddl.go#L69) 
-and [ast.DropDatabaseStmt](https://github.com/pingcap/parser/blob/ce4d755a8937ee6bc0e851fafdcd042ab5b1a1c1/ast/ddl.go#L130) for examples.
+I implemented the `Restore` function of [ast.CreateDatabasesStmt](https://github.com/pingcap/parser/blob/ce5a9247faef2b6876054935a0b0ed3771edf86d/ast/ddl.go#L67) 
+and [ast.DropDatabaseStmt](https://github.com/pingcap/parser/blob/ce5a9247faef2b6876054935a0b0ed3771edf86d/ast/ddl.go#L130) for examples.
 
 ```go
-// Restore implements Recoverable interface.
-func (n *DatabaseOption) Restore(sb *strings.Builder) error {
+// Restore implements Node interface.
+func (n *DatabaseOption) Restore(ctx *RestoreCtx) error {
 	switch n.Tp {
 	case DatabaseOptionCharset:
-		sb.WriteString("CHARACTER SET = ")
-		sb.WriteString(n.Value)
+		ctx.WriteKeyWord("CHARACTER SET")
+		ctx.WritePlain(" = ")
+		ctx.WritePlain(n.Value)
 	case DatabaseOptionCollate:
-		sb.WriteString("COLLATE = ")
-		sb.WriteString(n.Value)
+		ctx.WriteKeyWord("COLLATE")
+		ctx.WritePlain(" = ")
+		ctx.WritePlain(n.Value)
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
@@ -83,25 +106,23 @@ func (n *DatabaseOption) Restore(sb *strings.Builder) error {
 ```
 
 ```go
-// Restore implements Recoverable interface.
-func (n *DropDatabaseStmt) Restore(sb *strings.Builder) error {
-	sb.WriteString("DROP DATABASE ")
+// Restore implements Node interface.
+func (n *DropDatabaseStmt) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("DROP DATABASE ")
 	if n.IfExists {
-		sb.WriteString("IF EXISTS ")
+		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	WriteName(sb, n.Name)
+	ctx.WriteName(n.Name)
 	return nil
 }
 ```
 
-**There are other examples which include complete implementation and test:  
-[parser#62](https://github.com/pingcap/parser/pull/62) [parser#63](https://github.com/pingcap/parser/pull/63)**
+**There is another example which includes complete implementation and test:  
+[parser#71](https://github.com/pingcap/parser/pull/71)**
 
 ### Note
 
-* Table name, column name, etc... use back quotes to wrap
-
-We can use `WriteName(sb, n.Name)` to append name to strings.Builder
+* Don't depend on `exprNode.Format()`
 
 * Don't depend on `node.Text()`
 
