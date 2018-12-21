@@ -142,6 +142,19 @@ func (tc *testExpressionsSuite) TestIsNullExprRestore(c *C) {
 	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
 }
 
+func (tc *testExpressionsSuite) TestIsTruthRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"a is true", "`a` IS TRUE"},
+		{"a is not true", "`a` IS NOT TRUE"},
+		{"a is FALSE", "`a` IS FALSE"},
+		{"a is not false", "`a` IS NOT FALSE"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Fields.Fields[0].Expr
+	}
+	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+}
+
 func (tc *testExpressionsSuite) TestBetweenExprRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"b between 1 and 2", "`b` BETWEEN 1 AND 2"},

@@ -715,7 +715,20 @@ type IsTruthExpr struct {
 
 // Restore implements Node interface.
 func (n *IsTruthExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if n.Not {
+		ctx.WriteKeyWord(" IS NOT")
+	} else {
+		ctx.WriteKeyWord(" IS")
+	}
+	if n.True > 0 {
+		ctx.WriteKeyWord(" TRUE")
+	} else {
+		ctx.WriteKeyWord(" FALSE")
+	}
+	return nil
 }
 
 // Format the ExprNode into a Writer.
