@@ -959,7 +959,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
-			log.Error("active transaction fail, err = ", err)
+			log.Errorf("active transaction fail, err = %+v", err)
 			s.txn.cleanup()
 			s.sessionVars.TxnCtx.StartTS = 0
 			return &s.txn, errors.Trace(err)
