@@ -293,6 +293,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
 
+	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	// gofail: var mockCommitError bool
 	//if mockCommitError && mockCommitErrorOnce {
 	//	mockCommitErrorOnce = false
