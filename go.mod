@@ -35,7 +35,6 @@ require (
 	github.com/jonboulle/clockwork v0.1.0 // indirect
 	github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
-	github.com/mgechev/revive v0.0.0-20181210140514-b4cc152955fb
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
 	github.com/myesui/uuid v1.0.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
@@ -53,6 +52,7 @@ require (
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v2.1.1-0.20181218072513-b2235d442b06+incompatible
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
+	github.com/pkg/errors v0.8.0 // indirect
 	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
@@ -80,6 +80,7 @@ require (
 	golang.org/x/net v0.0.0-20181029044818-c44066c5c816
 	golang.org/x/text v0.3.0
 	golang.org/x/time v0.0.0-20181108054448-85acf8d2951c // indirect
+	golang.org/x/tools v0.0.0-20180911133044-677d2ff680c1 // indirect
 	google.golang.org/grpc v1.16.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect

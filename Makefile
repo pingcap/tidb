@@ -59,10 +59,8 @@ dev: checklist test check
 build:
 	$(GOBUILD)
 
-# The retool tools.json is setup from hack/retool-install.sh
-check-setup:
-	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
-	@GO111MODULE=off retool sync
+# Install the check tools.
+check-setup:_tools/bin/megacheck _tools/bin/revive _tools/bin/goword _tools/bin/gometalinter _tools/bin/gosec
 
 check: fmt lint tidy
 
@@ -73,27 +71,28 @@ fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-goword:
-	retool do goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
+goword:_tools/bin/goword
+	_tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-check-static:
+gosec:_tools/bin/gosec
+	_tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
+
+check-static:_tools/bin/gometalinter
 	@ # vet and fmt have problems with vendor when ran through metalinter
-	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all --deadline 120s \
+	_tools/bin/gometalinter --disable-all --deadline 120s \
 	  --enable misspell \
 	  --enable megacheck \
 	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
 
-check-slow:
-	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all \
+check-slow:_tools/bin/gometalinter _tools/bin/gosec
+	_tools/bin/gometalinter --disable-all \
 	  --enable errcheck \
 	  $$($(PACKAGE_DIRECTORIES))
-	CGO_ENABLED=0 retool do gosec $$($(PACKAGE_DIRECTORIES))
 
-lint:
+lint:_tools/bin/revive
 	@echo "linting"
-	@$(GO) install github.com/mgechev/revive
-	@CGO_ENABLED=0 revive -formatter friendly -config revive.toml $(FILES)
+	@_tools/bin/revive -formatter friendly -config revive.toml $(FILES)
 
 vet:
 	@echo "vet"
@@ -202,3 +201,23 @@ gofail-disable:
 
 checkdep:
 	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
+
+_tools/bin/megacheck:
+	cd _tools; \
+	$go build -o bin/megacheck honnef.co/go/tools/cmd/megacheck
+
+_tools/bin/revive:
+	cd _tools; \
+	$(GO) build -o bin/revive github.com/mgechev/revive
+
+_tools/bin/goword:
+	cd _tools; \
+	$(GO) build -o bin/goword github.com/chzchzchz/goword
+
+_tools/bin/gometalinter:
+	cd _tools; \
+	$(GO) build -o bin/gometalinter gopkg.in/alecthomas/gometalinter.v2
+
+_tools/bin/gosec:
+	cd _tools; \
+	$(GO) build -o bin/gosec github.com/securego/gosec/cmd/gosec
