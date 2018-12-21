@@ -1084,7 +1084,17 @@ type Limit struct {
 
 // Restore implements Node interface.
 func (n *Limit) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("LIMIT ")
+	if n.Offset != nil {
+		if err := n.Offset.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore Limit.Offset")
+		}
+		ctx.WritePlain(",")
+	}
+	if err := n.Count.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore Limit.Count")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
