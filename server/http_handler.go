@@ -396,11 +396,10 @@ func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, er
 }
 
 func (t *tikvHandlerTool) fetchRegionTableIndex(metrics map[uint64]regionMetric) (map[tblIndex]regionMetric, error) {
-	s, err := session.CreateSession(t.store.(kv.Storage))
+	schema, err := t.schema()
 	if err != nil {
 		return nil, err
 	}
-	schema := domain.GetDomain(s.(sessionctx.Context)).InfoSchema()
 
 	idxMetrics := make(map[tblIndex]regionMetric)
 	for regionID, regionMetric := range metrics {
