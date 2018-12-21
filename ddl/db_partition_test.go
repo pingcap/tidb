@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testIntegrationSuite) TestCreateTableWithPartition(c *C) {
@@ -952,7 +953,7 @@ func (s *testIntegrationSuite) TestPartitionDropIndex(c *C) {
 	}
 	c.Assert(idx1, NotNil)
 
-	sessionExecInGoroutine(c, s.store, "drop index idx1 on partition_drop_idx;", done)
+	testutil.SessionExecInGoroutine(c, s.store, "drop index idx1 on partition_drop_idx;", done)
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 LOOP:

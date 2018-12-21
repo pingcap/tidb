@@ -16,9 +16,6 @@ package ddl_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"math"
 	"math/rand"
 	"os"
 	"sync/atomic"
@@ -26,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
@@ -33,11 +31,13 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func TestT(t *testing.T) {
@@ -325,33 +325,12 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 
 	done := make(chan error, 1)
 	start := -10
-	defaultBatchSize := 2048
-	num := defaultBatchSize
+	num := 4096
 	// first add some rows
 	for i := start; i < num; i++ {
 		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
 		tk.MustExec(sql)
 	}
-	// Add some discrete rows.
-	maxBatch := 20
-	batchCnt := 100
-	otherKeys := make([]int, 0, batchCnt*maxBatch)
-	// Make sure there are no duplicate keys.
-	base := defaultBatchSize * 20
-	for i := 1; i < batchCnt; i++ {
-		n := base + i*defaultBatchSize + i
-		for j := 0; j < rand.Intn(maxBatch); j++ {
-			n += j
-			sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", n, n, n)
-			tk.MustExec(sql)
-			otherKeys = append(otherKeys, n)
-		}
-	}
-	// Encounter the value of math.MaxInt64 in middle of
-	v := math.MaxInt64 - defaultBatchSize/2
-	sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", v, v, v)
-	tk.MustExec(sql)
-	otherKeys = append(otherKeys, v)
 
 	is := s.dom.InfoSchema()
 	schemaName := model.NewCIStr("test_db")
@@ -372,8 +351,7 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	gofail.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum")
 
-	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
-
+	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 	checkNum := 0
 
 LOOP:
@@ -394,36 +372,4 @@ LOOP:
 	c.Assert(checkNum, Greater, 5)
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
-}
-
-func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
-	execMultiSQLInGoroutine(c, s, "test_db", []string{sql}, done)
-}
-
-func execMultiSQLInGoroutine(c *C, s kv.Storage, dbName string, multiSQL []string, done chan error) {
-	go func() {
-		se, err := session.CreateSession4Test(s)
-		if err != nil {
-			done <- errors.Trace(err)
-			return
-		}
-		defer se.Close()
-		_, err = se.Execute(context.Background(), "use "+dbName)
-		if err != nil {
-			done <- errors.Trace(err)
-			return
-		}
-		for _, sql := range multiSQL {
-			rs, err := se.Execute(context.Background(), sql)
-			if err != nil {
-				done <- errors.Trace(err)
-				return
-			}
-			if rs != nil {
-				done <- errors.Errorf("RecordSet should be empty.")
-				return
-			}
-			done <- nil
-		}
-	}()
 }

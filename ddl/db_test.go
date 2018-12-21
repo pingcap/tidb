@@ -608,7 +608,7 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 	s.mustExec(c, sql)
 	otherKeys = append(otherKeys, v)
 
-	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
+	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
 	deletedKeys := make(map[int]struct{})
 
@@ -753,7 +753,7 @@ func (s *testDBSuite) TestDropIndex(c *C) {
 	}
 	c.Assert(c3idx, NotNil)
 
-	sessionExecInGoroutine(c, s.store, "drop index c3_index on test_drop_index", done)
+	testutil.SessionExecInGoroutine(c, s.store, "drop index c3_index on test_drop_index", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -915,38 +915,6 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	se.Close()
 }
 
-func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
-	execMultiSQLInGoroutine(c, s, "test_db", []string{sql}, done)
-}
-
-func execMultiSQLInGoroutine(c *C, s kv.Storage, dbName string, multiSQL []string, done chan error) {
-	go func() {
-		se, err := session.CreateSession4Test(s)
-		if err != nil {
-			done <- errors.Trace(err)
-			return
-		}
-		defer se.Close()
-		_, err = se.Execute(context.Background(), "use "+dbName)
-		if err != nil {
-			done <- errors.Trace(err)
-			return
-		}
-		for _, sql := range multiSQL {
-			rs, err := se.Execute(context.Background(), sql)
-			if err != nil {
-				done <- errors.Trace(err)
-				return
-			}
-			if rs != nil {
-				done <- errors.Errorf("RecordSet should be empty.")
-				return
-			}
-			done <- nil
-		}
-	}()
-}
-
 func (s *testDBSuite) testAddColumn(c *C) {
 	done := make(chan error, 1)
 
@@ -956,7 +924,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
 	}
 
-	sessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
+	testutil.SessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -1091,7 +1059,7 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	}
 
 	// get c4 column id
-	sessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
+	testutil.SessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -1516,7 +1484,7 @@ func (s *testDBSuite) TestAddNotNullColumn(c *C) {
 	s.tk.MustExec("create table tnn (c1 int primary key auto_increment, c2 int)")
 	s.tk.MustExec("insert tnn (c2) values (0)" + strings.Repeat(",(0)", 99))
 	done := make(chan error, 1)
-	sessionExecInGoroutine(c, s.store, "alter table tnn add column c3 int not null default 3", done)
+	testutil.SessionExecInGoroutine(c, s.store, "alter table tnn add column c3 int not null default 3", done)
 	updateCnt := 0
 out:
 	for {

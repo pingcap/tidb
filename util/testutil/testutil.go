@@ -14,10 +14,14 @@
 package testutil
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -107,4 +111,37 @@ func RowsWithSep(sep string, args ...string) [][]interface{} {
 		rows[i] = row
 	}
 	return rows
+}
+
+// SessionExecInGoroutine export for testing
+func SessionExecInGoroutine(c *check.C, s kv.Storage, sql string, done chan error) {
+	execMultiSQLInGoroutine(c, s, "test_db", []string{sql}, done)
+}
+
+func execMultiSQLInGoroutine(c *check.C, s kv.Storage, dbName string, multiSQL []string, done chan error) {
+	go func() {
+		se, err := session.CreateSession4Test(s)
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		defer se.Close()
+		_, err = se.Execute(context.Background(), "use "+dbName)
+		if err != nil {
+			done <- errors.Trace(err)
+			return
+		}
+		for _, sql := range multiSQL {
+			rs, err := se.Execute(context.Background(), sql)
+			if err != nil {
+				done <- errors.Trace(err)
+				return
+			}
+			if rs != nil {
+				done <- errors.Errorf("RecordSet should be empty.")
+				return
+			}
+			done <- nil
+		}
+	}()
 }
