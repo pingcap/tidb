@@ -1060,7 +1060,14 @@ type ValuesExpr struct {
 
 // Restore implements Node interface.
 func (n *ValuesExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("VALUES")
+	ctx.WritePlain("(")
+	if err := n.Column.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore ValuesExpr.Column")
+	}
+	ctx.WritePlain(")")
+
+	return nil
 }
 
 // Format the ExprNode into a Writer.
