@@ -392,7 +392,6 @@ func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, er
 			metric[region.RegionID] = regionMetric{FlowBytes: region.FlowBytes, MaxHotDegree: region.HotDegree}
 		}
 	}
-	// TODO: not leader peer....
 	return metric, nil
 }
 

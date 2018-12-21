@@ -23,7 +23,7 @@
 1. Get the table/index of hot regions
 
     ```shell
-    curl http://0.0.0.0:10080/regions/hot
+    curl http://{TiDBIP}:10080/regions/hot
     ```    
 
 1. Get the information of a specific region by ID
