@@ -205,7 +205,7 @@ type DDL interface {
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
-	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
+	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
