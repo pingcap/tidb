@@ -100,7 +100,7 @@ github.com/pingcap/parser/charset
 github.com/pingcap/parser/format
 # github.com/pingcap/pd v2.1.0-rc.4+incompatible
 github.com/pingcap/pd/client
-# github.com/pingcap/tidb-tools v0.0.0-20181112132202-4860a0d5de03
+# github.com/pingcap/tidb-tools v2.1.1-0.20181218072513-b2235d442b06+incompatible
 github.com/pingcap/tidb-tools/tidb-binlog/pump_client
 github.com/pingcap/tidb-tools/tidb-binlog/node
 github.com/pingcap/tidb-tools/pkg/etcd

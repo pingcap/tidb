@@ -15,6 +15,7 @@ package session
 
 import (
 	"fmt"
+	"runtime/debug"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -45,10 +46,6 @@ type TxnState struct {
 	buf          kv.MemBuffer
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
-
-	// If StmtCommit meets error (which should not happen, just in case), mark it.
-	// And rollback the whole transaction when it commit.
-	fail error
 }
 
 func (st *TxnState) init() {
@@ -98,10 +95,6 @@ func (st *TxnState) GoString() string {
 		s.WriteString("state=invalid")
 	}
 
-	if st.fail != nil {
-		s.WriteString(", fail=")
-		s.WriteString(st.fail.Error())
-	}
 	s.WriteString("}")
 	return s.String()
 }
@@ -150,22 +143,17 @@ type dirtyTableOperation struct {
 
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
-	if st.fail != nil {
-		// If any error happen during StmtCommit, don't commit this transaction.
-		err := st.fail
-		st.fail = nil
-		return errors.Trace(err)
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
+			st,
+			st.mutations,
+			st.dirtyTableOP,
+			st.buf,
+			debug.Stack())
+		st.cleanup()
+		return errors.New("invalid transaction")
 	}
 	return errors.Trace(st.Transaction.Commit(ctx))
-}
-
-// Rollback overrides the Transaction interface.
-func (st *TxnState) Rollback() error {
-	if st.fail != nil {
-		log.Error(errors.Trace(st.fail))
-		st.fail = nil
-	}
-	return errors.Trace(st.Transaction.Rollback())
 }
 
 // Get overrides the Transaction interface.
@@ -291,11 +279,7 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() {
-	if s.txn.fail != nil {
-		return
-	}
-
+func (s *session) StmtCommit() error {
 	defer s.txn.cleanup()
 	st := &s.txn
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
@@ -309,8 +293,7 @@ func (s *session) StmtCommit() {
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
 	if err != nil {
-		s.txn.fail = errors.Trace(err)
-		return
+		return errors.Trace(err)
 	}
 
 	// Need to flush binlog.
@@ -325,6 +308,7 @@ func (s *session) StmtCommit() {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.
