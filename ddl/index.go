@@ -1114,7 +1114,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 		}
 
 		// gofail: var checkIndexWorkerNum bool
-		//if checkIndexWorkerNum {
+		// if checkIndexWorkerNum {
 		//	num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
 		//	if num != 0 {
 		//		if num > len(kvRanges) {
