@@ -775,18 +775,18 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDefault,                        // COLUMN_DEFAULT
 			columnDesc.Null,                      // IS_NULLABLE
 			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
-			colLen,                            // CHARACTER_MAXIMUM_LENGTH
-			colLen,                            // CHARACTER_OCTET_LENGTH
-			decimal,                           // NUMERIC_PRECISION
-			0,                                 // NUMERIC_SCALE
-			0,                                 // DATETIME_PRECISION
-			col.Charset,                       // CHARACTER_SET_NAME
-			col.Collate,                       // COLLATION_NAME
-			columnType,                        // COLUMN_TYPE
-			columnDesc.Key,                    // COLUMN_KEY
-			columnDesc.Extra,                  // EXTRA
-			"select,insert,update,references", // PRIVILEGES
-			columnDesc.Comment,                // COLUMN_COMMENT
+			colLen,                               // CHARACTER_MAXIMUM_LENGTH
+			colLen,                               // CHARACTER_OCTET_LENGTH
+			decimal,                              // NUMERIC_PRECISION
+			0,                                    // NUMERIC_SCALE
+			0,                                    // DATETIME_PRECISION
+			col.Charset,                          // CHARACTER_SET_NAME
+			col.Collate,                          // COLLATION_NAME
+			columnType,                           // COLUMN_TYPE
+			columnDesc.Key,                       // COLUMN_KEY
+			columnDesc.Extra,                     // EXTRA
+			"select,insert,update,references",    // PRIVILEGES
+			columnDesc.Comment,                   // COLUMN_COMMENT
 		)
 		// In mysql, 'character_set_name' and 'collation_name' are setted to null when column type is non-varchar or non-blob in information_schema.
 		if col.Tp != mysql.TypeVarchar && col.Tp != mysql.TypeBlob {
@@ -930,24 +930,24 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 func dataForPseudoProfiling() [][]types.Datum {
 	var rows [][]types.Datum
 	row := types.MakeDatums(
-		0,  // QUERY_ID
-		0,  // SEQ
-		"", // STATE
+		0,                      // QUERY_ID
+		0,                      // SEQ
+		"",                     // STATE
 		types.NewDecFromInt(0), // DURATION
 		types.NewDecFromInt(0), // CPU_USER
 		types.NewDecFromInt(0), // CPU_SYSTEM
-		0, // CONTEXT_VOLUNTARY
-		0, // CONTEXT_INVOLUNTARY
-		0, // BLOCK_OPS_IN
-		0, // BLOCK_OPS_OUT
-		0, // MESSAGES_SENT
-		0, // MESSAGES_RECEIVED
-		0, // PAGE_FAULTS_MAJOR
-		0, // PAGE_FAULTS_MINOR
-		0, // SWAPS
-		0, // SOURCE_FUNCTION
-		0, // SOURCE_FILE
-		0, // SOURCE_LINE
+		0,                      // CONTEXT_VOLUNTARY
+		0,                      // CONTEXT_INVOLUNTARY
+		0,                      // BLOCK_OPS_IN
+		0,                      // BLOCK_OPS_OUT
+		0,                      // MESSAGES_SENT
+		0,                      // MESSAGES_RECEIVED
+		0,                      // PAGE_FAULTS_MAJOR
+		0,                      // PAGE_FAULTS_MINOR
+		0,                      // SWAPS
+		0,                      // SOURCE_FUNCTION
+		0,                      // SOURCE_FILE
+		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)
 	return rows
