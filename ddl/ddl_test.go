@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
+	"go.etcd.io/etcd/clientv3"
 )
 
 type DDLForTest interface {
