@@ -700,7 +700,11 @@ func (s *testDBSuite) TestCancelCreateTable(c *C) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -709,7 +713,7 @@ func (s *testDBSuite) TestCancelCreateTable(c *C) {
 				checkErr = errors.Trace(errs[0])
 				return
 			}
-			checkErr = hookCtx.Txn(true).Commit(context.Background())
+			checkErr = txn.Commit(context.Background())
 		}
 	}
 	originHook := s.dom.DDL().GetHook()

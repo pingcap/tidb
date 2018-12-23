@@ -78,7 +78,11 @@ func (e *DDLExec) toErr(err error) error {
 
 // Open implements the Executor Open interface.
 func (e *DDLExec) Open(context.Context) error {
-	e.originalStartTS = e.ctx.Txn(true).StartTS()
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	e.originalStartTS = txn.StartTS()
 	return nil
 }
 
@@ -102,17 +106,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 	case *ast.CreateDatabaseStmt:
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
-		var tableID int64
-		tableID, err = e.executeCreateTable(x)
-		if err != nil {
-			return errors.Trace(e.toErr(err))
-		}
-		if tableID != 0 {
-			err = e.executeSelectInsert(ctx, chk, x, tableID)
-			if err != nil {
-				return errors.Trace(e.toErr(err))
-			}
-		}
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(x)

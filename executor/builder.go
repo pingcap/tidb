@@ -713,7 +713,12 @@ func (b *executorBuilder) buildCreateTableInsert(v *plannercore.DDL, tableID int
 	}
 	selectExec := b.build(v.InsertPlan.SelectPlan)
 
-	m := meta.NewMeta(b.ctx.Txn(true))
+	txn, err := b.ctx.Txn(true)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	m := meta.NewMeta(txn)
 	dbInfo, ok := b.is.SchemaByName(stmt.Table.Schema)
 	if !ok {
 		b.err = infoschema.ErrDatabaseNotExists.GenWithStackByArgs(stmt.Table.Schema.L)
@@ -726,7 +731,7 @@ func (b *executorBuilder) buildCreateTableInsert(v *plannercore.DDL, tableID int
 	}
 
 	// We have to create an allocator here, which is not the one created by InfoSchema, but it should be fine.
-	alloc := autoid.NewAllocator(b.ctx.GetStore(), tbInfo.GetDBID(dbInfo.ID))
+	alloc := autoid.NewAllocator(b.ctx.GetStore(), tbInfo.GetDBID(dbInfo.ID), tbInfo.IsAutoIncColUnsigned())
 	tbl, err := tables.TableFromMeta(alloc, tbInfo)
 	if err != nil {
 		b.err = errors.Trace(err)

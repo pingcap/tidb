@@ -95,7 +95,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err erro
 			// TODO: Add restrictions to this operation.
 			go splitTableRegion(d.store, tbInfo.ID)
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
 	case model.StateWriteReorganization:
 		// reorganization -> public (insert data before we make the table public)
 		err = doCreateTableInsert(d, t, job, tbInfo, snapshotTS)

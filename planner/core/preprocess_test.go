@@ -191,10 +191,10 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
-		{"CREATE TABLE t SELECT * FROM u FOR UPDATE;", false, errors.New("[planner:1746]Can't update table 'u' while 't' is being created.")},
-		{"CREATE TABLE t SELECT * FROM u FOR UPDATE UNION SELECT * FROM v;", false, errors.New("[planner:1746]Can't update table 'u' while 't' is being created.")},
+		{"CREATE TABLE t SELECT * FROM u FOR UPDATE;", false, core.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs("u", "t")},
+		{"CREATE TABLE t SELECT * FROM u FOR UPDATE UNION SELECT * FROM v;", false, core.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs("u", "t")},
 		{"CREATE TABLE t SELECT u.a FROM u JOIN v ON u.a = v.a FOR UPDATE;", false, core.ErrCantUpdateTableInCreateTableSelect},
-		{"CREATE TABLE t SELECT a FROM (SELECT 1 AS a, 2 AS b) AS temp FOR UPDATE;", false, errors.New("[planner:1746]Can't update table 'temp' while 't' is being created.")},
+		{"CREATE TABLE t SELECT a FROM (SELECT 1 AS a, 2 AS b) AS temp FOR UPDATE;", false, core.ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs("temp", "t")},
 		{"CREATE TABLE t SELECT a FROM (SELECT 1 AS a, 2 AS b FOR UPDATE) AS temp;", false, nil},
 	}
 
