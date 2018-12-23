@@ -124,42 +124,6 @@ func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 	return job
 }
 
-func testCreateTableWithSelect(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo, true /*withSelect*/},
-	}
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-
-	v := getSchemaVer(c, ctx)
-	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	tblInfo.State = model.StateNone
-	return job
-}
-
-func testRevealTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionRevealTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
-	}
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-
-	v := getSchemaVer(c, ctx)
-	tblInfo.State = model.StatePublic
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	tblInfo.State = model.StateNone
-	return job
-}
-
 func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
