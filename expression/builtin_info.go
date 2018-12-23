@@ -419,9 +419,7 @@ func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	default:
 		return nil, errors.New("FUNCTION benchmark has wrong arg2")
 	}
-
 	return sig, nil
-
 }
 
 type builtinBenchmarkStringSig struct {

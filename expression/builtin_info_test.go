@@ -149,7 +149,6 @@ func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v.GetInt64(), Equals, test.expected)
 	}
-
 }
 
 func (s *testEvaluatorSuite) TestCharset(c *C) {
