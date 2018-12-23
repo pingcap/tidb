@@ -215,8 +215,8 @@ const plan3 = `[[TableScan_12 {
 } ]]`
 
 func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
-	explainedSql := "explain " + sql
-	result := tk.MustQuery(explainedSql)
+	explainedSQL := "explain " + sql
+	result := tk.MustQuery(explainedSQL)
 	resultStr := fmt.Sprintf("%v", result.Rows())
 	if !strings.ContainsAny(resultStr, "MergeJoin") {
 		c.Error("Expected MergeJoin in plannercore.")
@@ -225,8 +225,8 @@ func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
 }
 
 func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testkit.Result {
-	explainedSql := "explain " + sql
-	result := tk.MustQuery(explainedSql)
+	explainedSQL := "explain " + sql
+	result := tk.MustQuery(explainedSQL)
 	resultStr := fmt.Sprintf("%v", result.Rows())
 	if plan != resultStr {
 		// TODO: Reopen it after refactoring explain.
@@ -289,6 +289,18 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
 	result = tk.MustQuery("select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
+	// Test LogicalSelection under LogicalJoin.
+	result = tk.MustQuery("select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 and b.c1 is not null order by b.c1;")
+	result.Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("begin;")
+	// Test LogicalLock under LogicalJoin.
+	result = tk.MustQuery("select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 for update) b where a.c1 = b.c1 order by a.c1;")
+	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	// Test LogicalUnionScan under LogicalJoin.
+	tk.MustExec("insert into t1 values(8);")
+	result = tk.MustQuery("select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , t1 b where a.c1 = b.c1;")
+	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
+	tk.MustExec("rollback;")
 
 	plannercore.AllowCartesianProduct = false
 	_, err := tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t, t1")

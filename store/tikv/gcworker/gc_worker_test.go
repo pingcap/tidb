@@ -14,20 +14,20 @@
 package gcworker
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

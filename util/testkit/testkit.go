@@ -15,6 +15,7 @@ package testkit
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"sync/atomic"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 // TestKit is a utility to run sql test.
@@ -159,6 +159,11 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
 	tk.c.Assert(affectedRows, check.Equals, int64(tk.Se.AffectedRows()))
 	tk.c.Assert(insertID, check.Equals, int64(tk.Se.LastInsertID()))
+}
+
+// CheckLastMessage checks last message after executing MustExec
+func (tk *TestKit) CheckLastMessage(msg string) {
+	tk.c.Assert(tk.Se.LastMessage(), check.Equals, msg)
 }
 
 // MustExec executes a sql statement and asserts nil error.

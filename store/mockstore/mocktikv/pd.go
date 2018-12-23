@@ -14,13 +14,13 @@
 package mocktikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
-	"golang.org/x/net/context"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -47,11 +47,6 @@ func (c *pdClient) GetClusterID(ctx context.Context) uint64 {
 }
 
 func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
-	// gofail: var mockGetTSFail bool
-	// if mockGetTSFail {
-	// 	return 0, 0, errors.New("mock get timestamp fail")
-	// }
-
 	tsMu.Lock()
 	defer tsMu.Unlock()
 

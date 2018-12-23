@@ -14,19 +14,19 @@
 package tikv_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	. "github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(new(testSQLSuite))

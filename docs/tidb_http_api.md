@@ -20,6 +20,12 @@
     curl http://{TiDBIP}:10080/regions/meta
     ```
 
+1. Get the table/index of hot regions
+
+    ```shell
+    curl http://{TiDBIP}:10080/regions/hot
+    ```    
+
 1. Get the information of a specific region by ID
 
     ```shell
@@ -159,4 +165,13 @@ timezone.*
     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
     
+1. Get all TiDB DDL job history information.
+	```shell
+	curl http://{TiDBIP}:10080/ddl/history
+	```
+
+1. Get count {number} TiDB DDL job history information.
+	```shell
+	curl http://{TiDBIP}:10080/ddl/history?limit={number}
+	```
     **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`

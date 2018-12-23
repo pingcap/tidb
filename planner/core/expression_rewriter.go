@@ -642,6 +642,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection
+		er.b.optFlag |= flagJoinReOrderGreedy
 		// Build distinct for the inner query.
 		agg := er.b.buildDistinct(np, np.Schema().Len())
 		for _, col := range agg.schema.Columns {
@@ -1241,8 +1242,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
 		function, er.err = expression.NewFunctionBase(er.ctx, v.FnName.L, &v.Type, args...)
-		c := &expression.Constant{Value: types.NewDatum(nil), RetType: &v.Type, DeferredExpr: function}
-		c.GetType().Tp = function.GetType().Tp
+		c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
 		er.ctxStack = append(er.ctxStack, c)
 	} else {
 		function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)
