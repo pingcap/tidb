@@ -25,8 +25,8 @@ PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
 
-GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs gofail enable)
-GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs gofail disable)
+GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs gofail enable)
+GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs gofail disable)
 
 LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
@@ -60,7 +60,7 @@ build:
 	$(GOBUILD)
 
 # Install the check tools.
-check-setup:_tools/bin/megacheck _tools/bin/revive _tools/bin/goword _tools/bin/gometalinter _tools/bin/gosec
+check-setup:tools/bin/megacheck tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
 check: fmt lint tidy
 
@@ -71,28 +71,28 @@ fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-goword:_tools/bin/goword
-	_tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
+goword:tools/bin/goword
+	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-gosec:_tools/bin/gosec
-	_tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
+gosec:tools/bin/gosec
+	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
-check-static:_tools/bin/gometalinter
+check-static:tools/bin/gometalinter
 	@ # vet and fmt have problems with vendor when ran through metalinter
-	_tools/bin/gometalinter --disable-all --deadline 120s \
+	tools/bin/gometalinter --disable-all --deadline 120s \
 	  --enable misspell \
 	  --enable megacheck \
 	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
 
-check-slow:_tools/bin/gometalinter _tools/bin/gosec
-	_tools/bin/gometalinter --disable-all \
+check-slow:tools/bin/gometalinter tools/bin/gosec
+	tools/bin/gometalinter --disable-all \
 	  --enable errcheck \
 	  $$($(PACKAGE_DIRECTORIES))
 
-lint:_tools/bin/revive
+lint:tools/bin/revive
 	@echo "linting"
-	@_tools/bin/revive -formatter friendly -config revive.toml $(FILES)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES)
 
 vet:
 	@echo "vet"
@@ -100,7 +100,7 @@ vet:
 
 tidy:
 	@echo "go mod tidy"
-	./hack/check-tidy.sh
+	./tools/check/check-tidy.sh
 
 clean:
 	$(GO) clean -i ./...
@@ -202,22 +202,22 @@ gofail-disable:
 checkdep:
 	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
 
-_tools/bin/megacheck:
-	cd _tools; \
-	$go build -o bin/megacheck honnef.co/go/tools/cmd/megacheck
+tools/bin/megacheck:
+	cd tools/check; \
+	$go build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
 
-_tools/bin/revive:
-	cd _tools; \
-	$(GO) build -o bin/revive github.com/mgechev/revive
+tools/bin/revive:
+	cd tools/check; \
+	$(GO) build -o ../bin/revive github.com/mgechev/revive
 
-_tools/bin/goword:
-	cd _tools; \
-	$(GO) build -o bin/goword github.com/chzchzchz/goword
+tools/bin/goword:
+	cd tools/check; \
+	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
 
-_tools/bin/gometalinter:
-	cd _tools; \
-	$(GO) build -o bin/gometalinter gopkg.in/alecthomas/gometalinter.v2
+tools/bin/gometalinter:
+	cd tools/check; \
+	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v2
 
-_tools/bin/gosec:
-	cd _tools; \
-	$(GO) build -o bin/gosec github.com/securego/gosec/cmd/gosec
+tools/bin/gosec:
+	cd tools/check; \
+	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
