@@ -279,6 +279,19 @@ func (tc *testExpressionsSuite) TestPatternRegexpExprRestore(c *C) {
 	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
 }
 
+func (tc *testExpressionsSuite) TestRowExprRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"(1,2)", "ROW(1,2)"},
+		{"(col1,col2)", "ROW(`col1`,`col2`)"},
+		{"row(1,2)", "ROW(1,2)"},
+		{"row(col1,col2)", "ROW(`col1`,`col2`)"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Where.(*BinaryOperationExpr).L
+	}
+	RunNodeRestoreTest(c, testCases, "select 1 from t1 where %s = row(1,2)", extractNodeFunc)
+}
+
 func (tc *testExpressionsSuite) TestMaxValueExprRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"maxvalue", "MAXVALUE"},

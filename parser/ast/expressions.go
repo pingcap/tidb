@@ -999,7 +999,18 @@ type RowExpr struct {
 
 // Restore implements Node interface.
 func (n *RowExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("ROW")
+	ctx.WritePlain("(")
+	for i, v := range n.Values {
+		if i != 0 {
+			ctx.WritePlain(",")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred when restore RowExpr.Values[%v]", i)
+		}
+	}
+	ctx.WritePlain(")")
+	return nil
 }
 
 // Format the ExprNode into a Writer.
