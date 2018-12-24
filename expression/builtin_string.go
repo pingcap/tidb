@@ -2974,6 +2974,8 @@ func (b *builtinFormatSig) Clone() builtinFunc {
 	return newSig
 }
 
+// formatMaxDecimals limits the maximum number of decimal digits for result of
+// function `format`, this value is same as `FORMAT_MAX_DECIMALS` in MySQL source code.
 const formatMaxDecimals int64 = 30
 
 // evalString evals FORMAT(X,D).
