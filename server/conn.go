@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
@@ -243,6 +244,7 @@ type handshakeResponse41 struct {
 	DBName     string
 	Auth       []byte
 	Attrs      map[string]string
+	AuthPlugin string
 }
 
 // parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
@@ -313,8 +315,8 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 	}
 
 	if packet.Capability&mysql.ClientPluginAuth > 0 {
-		// TODO: Support mysql.ClientPluginAuth, skip it now
 		idx := bytes.IndexByte(data[offset:], 0)
+		packet.AuthPlugin = string(data[offset : offset+idx])
 		offset = offset + idx + 1
 	}
 
@@ -416,7 +418,6 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	host := variable.DefHostname
 	if !cc.server.isUnixSocket() {
 		addr := cc.bufReadConn.RemoteAddr().String()
-		// Do Auth.
 		host, _, err = net.SplitHostPort(addr)
 		if err != nil {
 			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
@@ -455,6 +456,16 @@ func (cc *clientConn) Run() {
 			terror.Log(errors.Trace(err))
 		}
 	}()
+
+	audits := plugin.GetByKind(plugin.Audit)
+	if len(audits) > 0 {
+		ip := cc.bufReadConn.RemoteAddr().String()
+		for _, p := range audits {
+			plugin.DeclareAuditManifest(p.Manifest).NotifyEvent(
+				context.WithValue(context.Background(), "ip", ip),
+			)
+		}
+	}
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting

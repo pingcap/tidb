@@ -74,6 +74,7 @@ type Config struct {
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 }
 
 // Log is the log section of config.
@@ -253,6 +254,12 @@ type Binlog struct {
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+}
+
+// Plugin is the config for plugin
+type Plugin struct {
+	Dir  string `toml:"dir" json:"dir"`
+	Load string `toml:"load" json:"load"`
 }
 
 var defaultConf = Config{
