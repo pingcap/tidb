@@ -15,7 +15,9 @@ package ddl
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -25,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -242,6 +246,19 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		colInfo.State = model.StateWriteOnly
 		// Set this column's offset to the last and reset all following columns' offsets.
 		adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
+		// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
+		// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
+		if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
+			zeroVal := table.GetZeroValue(colInfo)
+			colInfo.OriginDefaultValue, err = zeroVal.ToString()
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			if colInfo.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
+				(colInfo.Tp == mysql.TypeTimestamp || colInfo.Tp == mysql.TypeDatetime) {
+				colInfo.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+			}
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only

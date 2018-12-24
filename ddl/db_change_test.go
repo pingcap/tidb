@@ -113,6 +113,61 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	c.Assert(checkErr, IsNil)
 }
 
+// TestDropNotNullColumn is used to test issue #8654.
+func (s *testStateChangeSuite) TestDropNotNullColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, a int not null)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table t1 (id int, b varchar(255) not null)")
+	tk.MustExec("insert into t1 values(2, '')")
+	tk.MustExec("create table t2 (id int, c time not null)")
+	tk.MustExec("insert into t2 values(3, '11:22:33')")
+	tk.MustExec("create table t3 (id int, d json not null)")
+	tk.MustExec("insert into t3 values(4, d)")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	var checkErr error
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &ddl.TestDDLCallback{}
+	sqlNum := 0
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateWriteOnly {
+			switch sqlNum {
+			case 0:
+				_, checkErr = tk1.Exec("insert into t set id = 1")
+			case 1:
+				_, checkErr = tk1.Exec("insert into t1 set id = 2")
+			case 2:
+				_, checkErr = tk1.Exec("insert into t2 set id = 3")
+			case 3:
+				_, checkErr = tk1.Exec("insert into t3 set id = 4")
+			}
+		}
+	}
+
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
+	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t drop column a")
+	c.Assert(checkErr, IsNil)
+	sqlNum++
+	tk.MustExec("alter table t1 drop column b")
+	c.Assert(checkErr, IsNil)
+	sqlNum++
+	tk.MustExec("alter table t2 drop column c")
+	c.Assert(checkErr, IsNil)
+	sqlNum++
+	tk.MustExec("alter table t3 drop column d")
+	c.Assert(checkErr, IsNil)
+	tk.MustExec("drop table t, t1, t2, t3")
+}
+
 func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	cnt := 5
 	// New the testExecInfo.
