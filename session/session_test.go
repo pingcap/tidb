@@ -2473,3 +2473,15 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 	tk.MustExec("rollback")
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
 }
+
+func (s *testSessionSuite) TestXXX(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("CREATE TABLE `b1` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `split_job_id` varchar(30) DEFAULT NULL, PRIMARY KEY (`id`), KEY `b1` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `b2` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `batch_class` varchar(20) DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `bu` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
+	tk.MustExec("insert into b2 (job_id, batch_class) values (2, 'TEST');")
+	tk.MustExec("insert into b1 (job_id) values (2);")
+
+	fmt.Println("++++++++++++++++++++++++++++++")
+	tk.MustExec("delete from b1 where job_id in (select job_id from b2 where batch_class = 'TEST') or split_job_id in (select job_id from b2 where batch_class = 'TEST');")
+	fmt.Println("-------------------------------")
+}
