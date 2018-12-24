@@ -133,7 +133,10 @@ func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
 }
 
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
-	txn := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
 		return txn.Get(key)
 	}
