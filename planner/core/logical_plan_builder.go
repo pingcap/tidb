@@ -2020,7 +2020,7 @@ func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		projSchema.Append(&expression.Column{
-			UniqueID:    col.UniqueID,
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 			TblName:     col.TblName,
 			OrigTblName: col.OrigTblName,
 			ColName:     tableInfo.Cols()[i].Name,
@@ -2030,7 +2030,7 @@ func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 		})
 	}
 
-	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(projSchema.Columns)}.Init(b.ctx)
+	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(selectLogicalPlan.Schema().Columns)}.Init(b.ctx)
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
 	projUponView.SetSchema(projSchema)
 	return projUponView, nil
