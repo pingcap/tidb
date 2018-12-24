@@ -2014,6 +2014,7 @@ func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 		return nil, err
 	}
 	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
+	projUponCols := make([]*expression.Column, 0, len(tableInfo.View.Cols))
 	for i := range tableInfo.View.Cols {
 		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
 		if col == nil {
@@ -2028,9 +2029,10 @@ func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 			DBName:      col.DBName,
 			RetType:     col.GetType(),
 		})
+		projUponCols = append(projUponCols, col)
 	}
 
-	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(selectLogicalPlan.Schema().Columns)}.Init(b.ctx)
+	projUponView := LogicalProjection{Exprs: expression.Column2Exprs(projUponCols)}.Init(b.ctx)
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
 	projUponView.SetSchema(projSchema)
 	return projUponView, nil
