@@ -16,7 +16,6 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	log "github.com/sirupsen/logrus"
@@ -43,19 +42,15 @@ func (p *baseLogicalPlan) recursiveDeriveStats() (*property.StatsInfo, error) {
 	if p.stats != nil {
 		return p.stats, nil
 	}
-	if len(p.children) > 1 {
-		err := ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own recursiveDeriveStats().")
-		return nil, errors.Trace(err)
-	}
-	if len(p.children) == 1 {
-		childProfile, err := p.children[0].recursiveDeriveStats()
+	childStats := make([]*property.StatsInfo, len(p.children))
+	for i, child := range p.children {
+		childProfile, err := child.recursiveDeriveStats()
 		if err != nil {
 			return nil, err
 		}
-		childStats := []*property.StatsInfo{childProfile}
-		return p.self.DeriveStats(childStats)
+		childStats[i] = childProfile
 	}
-	return p.self.DeriveStats(nil)
+	return p.self.DeriveStats(childStats)
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
@@ -66,7 +61,7 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo) (*proper
 	}
 	if len(childStats) > 1 {
 		err := ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	profile := &property.StatsInfo{
 		RowCount:    float64(1),
@@ -143,21 +138,6 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	p.stats = childStats[0].Scale(selectionFactor)
 	return p.stats, nil
-}
-
-func (p *LogicalUnionAll) recursiveDeriveStats() (*property.StatsInfo, error) {
-	if p.stats != nil {
-		return p.stats, nil
-	}
-	childStats := make([]*property.StatsInfo, len(p.children))
-	for i, child := range p.children {
-		childProfile, err := child.recursiveDeriveStats()
-		if err != nil {
-			return nil, err
-		}
-		childStats[i] = childProfile
-	}
-	return p.DeriveStats(childStats)
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
@@ -251,30 +231,13 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo) (*pr
 	return la.stats, nil
 }
 
-// recursiveDeriveStats prepares property.StatsInfo.
+// DeriveStats implement LogicalPlan DeriveStats interface.
 // If the type of join is SemiJoin, the selectivity of it will be same as selection's.
 // If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose Cardinality should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
 // N(s) stands for the number of rows in relation s. V(s.key) means the Cardinality of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) recursiveDeriveStats() (*property.StatsInfo, error) {
-	if p.stats != nil {
-		return p.stats, nil
-	}
-	leftProfile, err := p.children[0].recursiveDeriveStats()
-	if err != nil {
-		return nil, err
-	}
-	rightProfile, err := p.children[1].recursiveDeriveStats()
-	if err != nil {
-		return nil, err
-	}
-	childStats := []*property.StatsInfo{leftProfile, rightProfile}
-	return p.DeriveStats(childStats)
-}
-
-// DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
@@ -328,22 +291,6 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		Cardinality: cardinality,
 	}
 	return p.stats, nil
-}
-
-func (la *LogicalApply) recursiveDeriveStats() (*property.StatsInfo, error) {
-	if la.stats != nil {
-		return la.stats, nil
-	}
-	leftProfile, err := la.children[0].recursiveDeriveStats()
-	if err != nil {
-		return nil, err
-	}
-	_, err = la.children[1].recursiveDeriveStats()
-	if err != nil {
-		return nil, err
-	}
-	childStats := []*property.StatsInfo{leftProfile}
-	return la.DeriveStats(childStats)
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
