@@ -282,6 +282,7 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 	return domain.ErrInfoSchemaExpired
 }
 
+// mockCommitErrorOnce use to make sure gofail mockCommitError only mock commit error once.
 var mockCommitErrorOnce = true
 
 func (s *session) doCommit(ctx context.Context) error {

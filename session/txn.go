@@ -287,7 +287,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	// mockGetTSErrorInRetry should wait mockCommitErrorOnce first, then will run into retry() logic.
 	// Then mockGetTSErrorInRetry will return retryable error when first retry.
 	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
-	// This may cause multiple identical data to be written.
+	// This may cause duplicate data to be written.
 	// gofail: var mockGetTSErrorInRetry bool
 	//if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
 	//	 mockGetTSErrorInRetryOnce = false
