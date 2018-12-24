@@ -287,14 +287,16 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
+	txn, err := s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(1), int64(10), int64(11))}
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
@@ -307,8 +309,10 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	_, err = tb.AddRecord(s.ctx, record2.Values, false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
-	txn, err := s.store.Begin()
+	txn, err = s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 
 	records, nextHandle, err := ScanTableRecord(se, txn, tb, int64(1), 1)
@@ -351,7 +355,9 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
+	txn, err = s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {

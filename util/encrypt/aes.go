@@ -173,6 +173,30 @@ func AESDecryptWithCBC(cryptStr, key []byte, iv []byte) ([]byte, error) {
 	return aesDecrypt(cryptStr, mode)
 }
 
+// AESEncryptWithCFB decrypts data using AES with CFB mode.
+func AESEncryptWithCFB(cryptStr, key []byte, iv []byte) ([]byte, error) {
+	cb, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	cfb := cipher.NewCFBEncrypter(cb, iv)
+	crypted := make([]byte, len(cryptStr))
+	cfb.XORKeyStream(crypted, cryptStr)
+	return crypted, nil
+}
+
+// AESDecryptWithCFB decrypts data using AES with CFB mode.
+func AESDecryptWithCFB(cryptStr, key []byte, iv []byte) ([]byte, error) {
+	cb, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cfb := cipher.NewCFBDecrypter(cb, []byte(iv))
+	dst := make([]byte, len(cryptStr))
+	cfb.XORKeyStream(dst, cryptStr)
+	return dst, nil
+}
+
 // aesDecrypt decrypts data using AES.
 func aesDecrypt(cryptStr []byte, mode cipher.BlockMode) ([]byte, error) {
 	blockSize := mode.BlockSize()
