@@ -63,6 +63,32 @@ func (ts *testDDLSuite) TestDDLVisitorCover(c *C) {
 	}
 }
 
+func (ts *testDDLSuite) TestDDLOnDeleteRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"on delete restrict", "ON DELETE RESTRICT"},
+		{"on delete CASCADE", "ON DELETE CASCADE"},
+		{"on delete SET NULL", "ON DELETE SET NULL"},
+		{"on delete no action", "ON DELETE NO ACTION"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*CreateTableStmt).Constraints[1].Refer.OnDelete
+	}
+	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) %s)", extractNodeFunc)
+}
+
+func (ts *testDDLSuite) TestDDLOnUpdateRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"ON UPDATE RESTRICT", "ON UPDATE RESTRICT"},
+		{"on update CASCADE", "ON UPDATE CASCADE"},
+		{"on update SET NULL", "ON UPDATE SET NULL"},
+		{"on update no action", "ON UPDATE NO ACTION"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*CreateTableStmt).Constraints[1].Refer.OnUpdate
+	}
+	RunNodeRestoreTest(c, testCases, "CREATE TABLE child ( id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE %s )", extractNodeFunc)
+}
+
 func (ts *testDDLSuite) TestDDLIndexOption(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"key_block_size=16", "KEY_BLOCK_SIZE=16"},
