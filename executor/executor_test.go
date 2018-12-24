@@ -684,7 +684,7 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 3;")
 	r.Check(testkit.Rows("4 hello"))
 
-	err := tk.ExecNoRes("select * from select_limit limit 18446744073709551616 offset 3;")
+	err := tk.ExecToErr("select * from select_limit limit 18446744073709551616 offset 3;")
 	c.Assert(err, NotNil)
 }
 
@@ -812,28 +812,28 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	err := tk.ExecNoRes("select row(1, 1) from test")
+	err := tk.ExecToErr("select row(1, 1) from test")
 	c.Assert(err, NotNil)
 
-	err = tk.ExecNoRes("select * from test group by row(1, 1);")
+	err = tk.ExecToErr("select * from test group by row(1, 1);")
 	c.Assert(err, NotNil)
 
-	err = tk.ExecNoRes("select * from test order by row(1, 1);")
+	err = tk.ExecToErr("select * from test order by row(1, 1);")
 	c.Assert(err, NotNil)
 
-	err = tk.ExecNoRes("select * from test having row(1, 1);")
+	err = tk.ExecToErr("select * from test having row(1, 1);")
 	c.Assert(err, NotNil)
 
-	err = tk.ExecNoRes("select (select 1, 1) from test;")
+	err = tk.ExecToErr("select (select 1, 1) from test;")
 	c.Assert(err, NotNil)
 
-	err = tk.ExecNoRes("select * from test group by (select 1, 1);")
+	err = tk.ExecToErr("select * from test group by (select 1, 1);")
 	c.Assert(err, NotNil)
 
-	err = tk.ExecNoRes("select * from test order by (select 1, 1);")
+	err = tk.ExecToErr("select * from test order by (select 1, 1);")
 	c.Assert(err, NotNil)
 
-	err = tk.ExecNoRes("select * from test having (select 1, 1);")
+	err = tk.ExecToErr("select * from test having (select 1, 1);")
 	c.Assert(err, NotNil)
 }
 
@@ -1041,12 +1041,12 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustQuery("select -10 as a from dual union select a from t order by a limit 1 ").Check(testkit.Rows("-10"))
 	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
 
-	err := tk.ExecNoRes("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
+	err := tk.ExecToErr("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
-	err = tk.ExecNoRes("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
+	err = tk.ExecToErr("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))

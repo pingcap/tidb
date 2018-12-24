@@ -185,8 +185,8 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	return tk.ResultSetToResult(rs, comment)
 }
 
-// ExecNoRes executes a sql statement and discard results.
-func (tk *TestKit) ExecNoRes(sql string, args ...interface{}) error {
+// ExecToErr executes a sql statement and discard results.
+func (tk *TestKit) ExecToErr(sql string, args ...interface{}) error {
 	res, err := tk.Exec(sql, args...)
 	if res != nil {
 		tk.c.Assert(res.Close(), check.IsNil)

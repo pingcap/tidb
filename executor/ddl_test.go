@@ -192,7 +192,7 @@ func (s *testSuite3) TestCreateDropDatabase(c *C) {
 	tk.MustExec("drop database drop_test;")
 	_, err := tk.Exec("drop table t;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
-	err = tk.ExecNoRes("select * from t;")
+	err = tk.ExecToErr("select * from t;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 
 	_, err = tk.Exec("drop database mysql")

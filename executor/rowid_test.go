@@ -47,7 +47,7 @@ func (s *testSuite1) TestExportRowID(c *C) {
 	tk.MustExec("insert s values (1)")
 	_, err := tk.Exec("insert s (a, _tidb_rowid) values (1, 2)")
 	c.Assert(err, NotNil)
-	err = tk.ExecNoRes("select _tidb_rowid from s")
+	err = tk.ExecToErr("select _tidb_rowid from s")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("update s set a = 2 where _tidb_rowid = 1")
 	c.Assert(err, NotNil)
