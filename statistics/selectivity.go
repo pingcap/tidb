@@ -166,10 +166,10 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				if colHist.NDV > 0 {
 					ret *= 1 / float64(colHist.NDV)
 				} else {
-					ret *= 1 / pseudoEqualRate
+					ret *= 1.0 / pseudoEqualRate
 				}
 			} else {
-				ret *= 1 / pseudoEqualRate
+				ret *= 1.0 / pseudoEqualRate
 			}
 		} else {
 			remainedExprs = append(remainedExprs, expr)
