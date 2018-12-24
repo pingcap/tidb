@@ -502,7 +502,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// for create database
 	dbInfo1 := testSchemaInfo(c, d, "test_cancel_job1")
 	test = &tests[9]
-	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo1.ID, 0, model.ActionCreateTable, []interface{}{dbInfo1}, &cancelState)
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo1.ID, 0, model.ActionCreateSchema, []interface{}{dbInfo1}, &cancelState)
 	c.Check(checkErr, IsNil)
 	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
 

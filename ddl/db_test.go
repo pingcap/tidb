@@ -687,7 +687,6 @@ func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
 			_, err = s.tk.Exec("insert into t values (?, ?)", i, i)
 			c.Assert(err, NotNil)
 		}
-
 	}
 }
 
