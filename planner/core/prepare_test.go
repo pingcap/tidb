@@ -178,7 +178,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 		c.Check(cnt[i], Equals, float64(i))
 		time.Sleep(time.Millisecond * 10)
 	}
-	c.Assert(planStr[0] < planStr[1], IsTrue)
+	c.Assert(planStr[0] < planStr[1], IsTrue, Commentf("plan 1: %v, plan 2: %v", planStr[0], planStr[1]))
 }
 
 func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
@@ -205,25 +205,14 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 	// behavior would not be effected by the uncertain memory utilization.
 	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	tk.MustExec("use test")
-	tk.MustExec(`prepare stmt1 from "select now(), sleep(1), now()"`)
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
+	tk.MustExec(`prepare stmt1 from "select now(), current_timestamp(), utc_timestamp(), unix_timestamp(), sleep(0.1), now(), current_timestamp(), utc_timestamp(), unix_timestamp()"`)
+	// When executing one statement at the first time, we don't usTestPrepareCacheDeferredFunctione cache, so we need to execute it at least twice to test the cache.
+	_ = tk.MustQuery("execute stmt1").Rows()
 	rs := tk.MustQuery("execute stmt1").Rows()
-	c.Assert(rs[0][0].(string), Equals, rs[0][2].(string))
-
-	tk.MustExec(`prepare stmt2 from "select current_timestamp(), sleep(1), current_timestamp()"`)
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
-	rs = tk.MustQuery("execute stmt2").Rows()
-	c.Assert(rs[0][0].(string), Equals, rs[0][2].(string))
-
-	tk.MustExec(`prepare stmt3 from "select utc_timestamp(), sleep(1), utc_timestamp()"`)
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
-	rs = tk.MustQuery("execute stmt3").Rows()
-	c.Assert(rs[0][0].(string), Equals, rs[0][2].(string))
-
-	tk.MustExec(`prepare stmt4 from "select unix_timestamp(), sleep(1), unix_timestamp()"`)
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
-	rs = tk.MustQuery("execute stmt4").Rows()
-	c.Assert(rs[0][0].(string), Equals, rs[0][2].(string))
+	c.Assert(rs[0][0].(string), Equals, rs[0][5].(string))
+	c.Assert(rs[0][1].(string), Equals, rs[0][6].(string))
+	c.Assert(rs[0][2].(string), Equals, rs[0][7].(string))
+	c.Assert(rs[0][3].(string), Equals, rs[0][8].(string))
 }
 
 func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
@@ -270,9 +259,8 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 			_, err = tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 			c.Assert(terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached), IsTrue)
 			break
-		} else {
-			tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 		}
+		tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 	}
 }
 

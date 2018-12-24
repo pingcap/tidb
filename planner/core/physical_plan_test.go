@@ -70,7 +70,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test DNF condition + Double Read.
 		{
 			sql:  "select * from t where (t.c > 0 and t.c < 2) or (t.c > 4 and t.c < 6) or (t.c > 8 and t.c < 10) or (t.c > 12 and t.c < 14) or (t.c > 16 and t.c < 18)",
-			best: "IndexLookUp(Index(t.c_d_e)[(0 +inf,2 NULL) (4 +inf,6 NULL) (8 +inf,10 NULL) (12 +inf,14 NULL) (16 +inf,18 NULL)], Table(t))",
+			best: "IndexLookUp(Index(t.c_d_e)[(0,2) (4,6) (8,10) (12,14) (16,18)], Table(t))",
 		},
 		{
 			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
@@ -773,8 +773,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		// Make txn not read only.
-		se.Txn(true).Set(kv.Key("AAA"), []byte("BBB"))
-		se.StmtCommit()
+		txn, err := se.Txn(true)
+		c.Assert(err, IsNil)
+		txn.Set(kv.Key("AAA"), []byte("BBB"))
+		c.Assert(se.StmtCommit(), IsNil)
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
@@ -1321,8 +1323,10 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		// Make txn not read only.
-		se.Txn(true).Set(kv.Key("AAA"), []byte("BBB"))
-		se.StmtCommit()
+		txn, err := se.Txn(true)
+		c.Assert(err, IsNil)
+		txn.Set(kv.Key("AAA"), []byte("BBB"))
+		c.Assert(se.StmtCommit(), IsNil)
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)

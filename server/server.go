@@ -72,7 +72,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -376,7 +376,14 @@ func (s *Server) KillAllConnections() {
 	log.Info("[server] kill all connections.")
 
 	for _, conn := range s.clients {
-		killConn(conn, false)
+		atomic.StoreInt32(&conn.status, connStatusShutdown)
+		terror.Log(errors.Trace(conn.closeWithoutLock()))
+		conn.mu.RLock()
+		cancelFunc := conn.mu.cancelFunc
+		conn.mu.RUnlock()
+		if cancelFunc != nil {
+			cancelFunc()
+		}
 	}
 }
 

@@ -82,58 +82,58 @@ func (s *testSuite) TestPrepared(c *C) {
 		result := tk.MustQuery("select distinct c1, c2 from prepare_test where c1 = ?", 1)
 		result.Check(testkit.Rows("1 <nil>"))
 
-		// Call Session PrepareStmt directly to get stmtId.
+		// Call Session PrepareStmt directly to get stmtID.
 		query := "select c1, c2 from prepare_test where c1 = ?"
-		stmtId, _, _, err := tk.Se.PrepareStmt(query)
+		stmtID, _, _, err := tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
-		rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtId, 1)
+		rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
 		c.Assert(err, IsNil)
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1 <nil>"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
-		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		stmtID, _, _, err = tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
 		tk1 := testkit.NewTestKitWithInit(c, s.store)
 		tk1.MustExec("insert prepare_test (c1) values (3)")
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 3)
 		c.Assert(err, IsNil)
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
-		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		stmtID, _, _, err = tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 3)
 		c.Assert(err, IsNil)
 		tk1.MustExec("insert prepare_test (c1) values (3)")
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 3)
 		c.Assert(err, IsNil)
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("delete from prepare_test")
 		query = "select c1 from prepare_test where c1 in (select c1 from prepare_test where c1 = ?)"
-		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		stmtID, _, _, err = tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 3)
 		c.Assert(err, IsNil)
 		tk1.MustExec("insert prepare_test (c1) values (3)")
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 3)
 		c.Assert(err, IsNil)
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
 
 		tk.MustExec("begin")
 		tk.MustExec("insert prepare_test (c1) values (4)")
 		query = "select c1, c2 from prepare_test where c1 = ?"
-		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		stmtID, _, _, err = tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
 		tk.MustExec("rollback")
-		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 4)
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 4)
 		c.Assert(err, IsNil)
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
+		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtID, 1)
 		c.Assert(err, IsNil)
 		c.Assert(stmt.OriginText(), Equals, query)
 
@@ -153,20 +153,20 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.Exec("create table prepare2 (a int)")
 
 		// Should success as the changed schema do not affect the prepared statement.
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 1)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
 		c.Assert(err, IsNil)
 
 		// Drop a column so the prepared statement become invalid.
 		query = "select c1, c2 from prepare_test where c1 = ?"
-		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		stmtID, _, _, err = tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
 		tk.MustExec("alter table prepare_test drop column c2")
 
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 1)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
 		c.Assert(plannercore.ErrUnknownColumn.Equal(err), IsTrue)
 
 		tk.MustExec("drop table prepare_test")
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 1)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
 		c.Assert(plannercore.ErrSchemaChanged.Equal(err), IsTrue)
 
 		// issue 3381
@@ -746,5 +746,42 @@ func (s *testSuite) TestPreparedIssue8153(c *C) {
 		tk.MustExec(`set @a=1,@b=2`)
 		_, err = tk.Exec(`execute stmt using @a,@b;`)
 		c.Assert(err.Error(), Equals, "[planner:1056]Can't group on 'sum(a)'")
+	}
+}
+
+func (s *testSuite) TestPreparedIssue8644(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	orgMemGuardRatio := plannercore.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := plannercore.PreparedPlanCacheMaxMemory
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		plannercore.PreparedPlanCacheMaxMemory = orgMaxMemory
+	}()
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
+		plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+		// behavior would not be effected by the uncertain memory utilization.
+		plannercore.PreparedPlanCacheMaxMemory = math.MaxUint64
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(data mediumblob)")
+
+		tk.MustExec(`prepare stmt1 from 'insert t (data) values (?)'`)
+
+		tk.MustExec(`set @a = 'a'`)
+		tk.MustExec(`execute stmt1 using @a;`)
+
+		tk.MustExec(`set @b = 'aaaaaaaaaaaaaaaaaa'`)
+		tk.MustExec(`execute stmt1 using @b;`)
+
+		r := tk.MustQuery(`select * from t`)
+		r.Check(testkit.Rows("a", "aaaaaaaaaaaaaaaaaa"))
 	}
 }
