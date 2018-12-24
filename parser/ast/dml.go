@@ -286,7 +286,15 @@ type DeleteTableList struct {
 
 // Restore implements Node interface.
 func (n *DeleteTableList) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	for i, t := range n.Tables {
+		if i != 0 {
+			ctx.WritePlain(",")
+		}
+		if err := t.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore DeleteTableList.Tables[%v]", i)
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.

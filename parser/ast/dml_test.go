@@ -215,3 +215,13 @@ func (tc *testDMLSuite) TestJoinRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select * from %s", extractNodeFunc)
 }
+func (tc *testDMLSuite) TestDeleteTableListRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"t1,t2", "`t1`,`t2`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*DeleteStmt).Tables
+	}
+	RunNodeRestoreTest(c, testCases, "DELETE %s FROM t1, t2;", extractNodeFunc)
+	RunNodeRestoreTest(c, testCases, "DELETE FROM %s USING t1, t2;", extractNodeFunc)
+}
