@@ -1300,7 +1300,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AlterColumn(ctx, ident, spec)
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
-			err = d.RenameTable(ctx, ident, newIdent)
+			isAlterTable := true
+			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("drop")
 		case ast.AlterTableRenameIndex:
@@ -2246,7 +2247,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) error {
+func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInformationSchema(ctx)
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
@@ -2256,7 +2257,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) 
 	if err != nil {
 		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
-	if newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
+	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		// oldIdent is equal to newIdent, do nothing
 		return nil
 	}
