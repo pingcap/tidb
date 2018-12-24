@@ -83,7 +83,11 @@ func (dt *DirtyTable) TruncateTable() {
 
 // GetRow gets a row from the DirtyTable.
 func (dt *DirtyTable) getRow(handle int64, ctx sessionctx.Context) ([]types.Datum, error) {
-	val, err := ctx.Txn(true).Get(tablecodec.EncodeRowKeyWithHandle(dt.tid, handle))
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	val, err := txn.Get(tablecodec.EncodeRowKeyWithHandle(dt.tid, handle))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
