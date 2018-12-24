@@ -192,6 +192,7 @@ func (tc *testExpressionsSuite) TestBinaryOperationExpr(c *C) {
 		{"3+5", "3+5"},
 		{"3-5", "3-5"},
 		{"a<>5", "`a`!=5"},
+		{"a=1", "`a`=1"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
