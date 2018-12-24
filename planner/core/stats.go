@@ -16,6 +16,7 @@ package core
 import (
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	log "github.com/sirupsen/logrus"
@@ -23,13 +24,6 @@ import (
 
 func (p *basePhysicalPlan) StatsCount() float64 {
 	return p.stats.RowCount
-}
-
-func (p *LogicalTableDual) recursiveDeriveStats() (*property.StatsInfo, error) {
-	if p.stats != nil {
-		return p.stats, nil
-	}
-	return p.DeriveStats(nil)
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
@@ -50,9 +44,9 @@ func (p *baseLogicalPlan) recursiveDeriveStats() (*property.StatsInfo, error) {
 		return p.stats, nil
 	}
 	if len(p.children) > 1 {
-		panic("LogicalPlans with more than one child should implement their own recursiveDeriveStats().")
+		err := ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own recursiveDeriveStats().")
+		return nil, errors.Trace(err)
 	}
-
 	if len(p.children) == 1 {
 		childProfile, err := p.children[0].recursiveDeriveStats()
 		if err != nil {
@@ -61,7 +55,7 @@ func (p *baseLogicalPlan) recursiveDeriveStats() (*property.StatsInfo, error) {
 		childStats := []*property.StatsInfo{childProfile}
 		return p.self.DeriveStats(childStats)
 	}
-	return p.DeriveStats(nil)
+	return p.self.DeriveStats(nil)
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
@@ -69,6 +63,10 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo) (*proper
 	if len(childStats) == 1 {
 		p.stats = childStats[0]
 		return p.stats, nil
+	}
+	if len(childStats) > 1 {
+		err := ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
+		return nil, errors.Trace(err)
 	}
 	profile := &property.StatsInfo{
 		RowCount:    float64(1),
@@ -104,13 +102,6 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.Stat
 		selectivity = selectionFactor
 	}
 	return profile.Scale(selectivity)
-}
-
-func (ds *DataSource) recursiveDeriveStats() (*property.StatsInfo, error) {
-	if ds.stats != nil {
-		return ds.stats, nil
-	}
-	return ds.DeriveStats(nil)
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
