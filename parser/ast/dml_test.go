@@ -138,4 +138,3 @@ func (tc *testDMLSuite) TestLimitRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "SELECT 1 %s", extractNodeFunc)
 }
-
