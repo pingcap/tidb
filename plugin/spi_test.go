@@ -30,7 +30,7 @@ func TestExportManifest(t *testing.T) {
 			Kind:    plugin.Authentication,
 			Name:    "test audit",
 			Version: 1,
-			OnInit: func(ctx context.Context) error {
+			OnInit: func(ctx context.Context, manifest *plugin.Manifest) error {
 				callRecorder.OnInitCalled = true
 				return nil
 			},
@@ -41,7 +41,7 @@ func TestExportManifest(t *testing.T) {
 		},
 	}
 	exported := plugin.ExportManifest(manifest)
-	exported.OnInit(context.Background())
+	exported.OnInit(context.Background(), exported)
 	audit := plugin.DeclareAuditManifest(exported)
 	audit.NotifyEvent(context.Background())
 	if !callRecorder.NotifyEventCalled || !callRecorder.OnInitCalled {

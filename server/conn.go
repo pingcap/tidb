@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/util"
 )
 
 const (
@@ -244,7 +245,6 @@ type handshakeResponse41 struct {
 	DBName     string
 	Auth       []byte
 	Attrs      map[string]string
-	AuthPlugin string
 }
 
 // parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
@@ -277,7 +277,8 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			log.Errorf("handshake panic, packet data: %v", data)
+			buf := util.GetStack()
+			log.Errorf("handshake panic, packet data: %v , %v\n%s", data, r, buf)
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -315,8 +316,8 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 	}
 
 	if packet.Capability&mysql.ClientPluginAuth > 0 {
+		// TODO: Support mysql.ClientPluginAuth, skip it now
 		idx := bytes.IndexByte(data[offset:], 0)
-		packet.AuthPlugin = string(data[offset : offset+idx])
 		offset = offset + idx + 1
 	}
 
