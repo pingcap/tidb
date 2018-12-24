@@ -1881,7 +1881,7 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
 	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
 
-	safePointSql := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 
@@ -1911,13 +1911,13 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
 
 	// recover job is before gc safe point
-	tk.MustExec(fmt.Sprintf(safePointSql, timeAfterDrop))
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, variable.ErrSnapshotTooOld.GenWithStackByArgs(timeAfterDrop).Error())
 
 	// recover job after gc safe point
-	tk.MustExec(fmt.Sprintf(safePointSql, timeBeforeDrop))
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
 
 	// check recover table meta and data record.
