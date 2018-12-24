@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
-	"github.com/pingcap/tidb/util"
 )
 
 const (
@@ -277,8 +276,7 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			buf := util.GetStack()
-			log.Errorf("handshake panic, packet data: %v , %v\n%s", data, r, buf)
+			log.Errorf("handshake panic, packet data: %v", data)
 			err = mysql.ErrMalformPacket
 		}
 	}()
