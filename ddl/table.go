@@ -133,6 +133,16 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		))
 	}
 
+	if job.IsRollingback() {
+		// To simplify the rollback logic, cannot be canceled after job start to run.
+		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+		if tblInfo.State == model.StatePublic {
+			job.State = model.JobStateCancelled
+			return ver, errCancelledDDLJob
+		}
+		job.State = model.JobStateRunning
+	}
+
 	originalState := job.SchemaState
 	switch tblInfo.State {
 	case model.StatePublic:

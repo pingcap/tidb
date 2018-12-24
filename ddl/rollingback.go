@@ -14,8 +14,6 @@
 package ddl
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -120,50 +118,6 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return ver, errCancelledDDLJob
 }
 
-func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
-	dbInfo, err := t.GetDatabase(job.SchemaID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if dbInfo == nil {
-		job.State = model.JobStateCancelled
-		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs("")
-	}
-
-	if dbInfo.State == model.StatePublic {
-		job.State = model.JobStateCancelled
-		return errCancelledDDLJob
-	}
-	// To simplify the rollback logic, cannot be canceled after job start to run.
-	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
-	job.State = model.JobStateRunning
-	return nil
-}
-
-func rollingbackDropTable(t *meta.Meta, job *model.Job) error {
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if tblInfo == nil {
-		job.State = model.JobStateCancelled
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", schemaID),
-			fmt.Sprintf("(Table ID %d)", job.TableID),
-		))
-	}
-
-	if tblInfo.State == model.StatePublic {
-		job.State = model.JobStateCancelled
-		return errCancelledDDLJob
-	}
-	// To simplify the rollback logic, cannot be canceled after job start to run.
-	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
-	job.State = model.JobStateRunning
-	return nil
-}
-
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
@@ -230,10 +184,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddindex(w, d, t, job)
 	case model.ActionDropIndex:
 		ver, err = rollingbackDropIndex(t, job)
-	case model.ActionDropTable:
-		err = rollingbackDropTable(t, job)
-	case model.ActionDropSchema:
-		err = rollingbackDropSchema(t, job)
+	case model.ActionDropTable, model.ActionDropSchema:
+		job.State = model.JobStateRollingback
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
