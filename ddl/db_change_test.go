@@ -646,11 +646,11 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 
 func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
 	sql1 := `alter table t_part add partition (
-    partition p4 values less than (30)
+    partition p2 values less than (30)
    );`
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[schema:1050]Table 'test_db_state.t_part' already exists")
+		c.Assert(err2.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
 }
