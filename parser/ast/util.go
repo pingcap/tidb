@@ -144,13 +144,14 @@ func (rf RestoreFlags) HasNameBackQuotesFlag() bool {
 
 // RestoreCtx is `Restore` context to hold flags and writer.
 type RestoreCtx struct {
-	Flags RestoreFlags
-	In    io.Writer
+	Flags     RestoreFlags
+	In        io.Writer
+	JoinLevel int
 }
 
 // NewRestoreCtx returns a new `RestoreCtx`.
 func NewRestoreCtx(flags RestoreFlags, in io.Writer) *RestoreCtx {
-	return &RestoreCtx{flags, in}
+	return &RestoreCtx{flags, in, 0}
 }
 
 // WriteKeyWord writes the `keyWord` into writer.
