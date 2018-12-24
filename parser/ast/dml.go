@@ -348,7 +348,16 @@ type WildCardField struct {
 
 // Restore implements Node interface.
 func (n *WildCardField) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if schema := n.Schema.String(); schema != "" {
+		ctx.WriteName(schema)
+		ctx.WritePlain(".")
+	}
+	if table := n.Table.String(); table != "" {
+		ctx.WriteName(table)
+		ctx.WritePlain(".")
+	}
+	ctx.WritePlain("*")
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -383,7 +392,21 @@ type SelectField struct {
 
 // Restore implements Node interface.
 func (n *SelectField) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if n.WildCard != nil {
+		if err := n.WildCard.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SelectField.WildCard")
+		}
+	}
+	if n.Expr != nil {
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore SelectField.Expr")
+		}
+	}
+	if asName := n.AsName.String(); asName != "" {
+		ctx.WriteKeyWord(" AS ")
+		ctx.WriteName(asName)
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -412,7 +435,15 @@ type FieldList struct {
 
 // Restore implements Node interface.
 func (n *FieldList) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	for i, v := range n.Fields {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore FieldList.Fields[%d]", i)
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
