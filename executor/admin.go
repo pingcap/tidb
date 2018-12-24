@@ -201,8 +201,11 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			}
 		}()
 	}
-
-	t := meta.NewMeta(e.ctx.Txn(true))
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	t := meta.NewMeta(txn)
 	job, err := t.GetHistoryDDLJob(e.jobID)
 	if err != nil {
 		return errors.Trace(err)
