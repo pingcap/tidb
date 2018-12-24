@@ -277,3 +277,13 @@ func (tc *testExpressionsSuite) TestPatternRegexpExprRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
 }
+
+func (tc *testExpressionsSuite) TestMaxValueExprRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"maxvalue", "MAXVALUE"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*AlterTableStmt).Specs[0].PartDefinitions[0].LessThan[0]
+	}
+	RunNodeRestoreTest(c, testCases, "alter table posts add partition ( partition p1 values less than %s)", extractNodeFunc)
+}

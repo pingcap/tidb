@@ -1157,7 +1157,8 @@ type MaxValueExpr struct {
 
 // Restore implements Node interface.
 func (n *MaxValueExpr) Restore(ctx *RestoreCtx) error {
-	panic("Not implemented")
+	ctx.WriteKeyWord("MAXVALUE")
+	return nil
 }
 
 // Format the ExprNode into a Writer.
