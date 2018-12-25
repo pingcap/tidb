@@ -1087,7 +1087,11 @@ type TruncateTableStmt struct {
 
 // Restore implements Node interface.
 func (n *TruncateTableStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("TRUNCATE TABLE ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore TruncateTableStmt.Table")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
