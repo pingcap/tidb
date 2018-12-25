@@ -222,17 +222,16 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				return nil, err
 			}
 			return p, nil
-		} else {
-			dpSolver := &joinReorderDPSolver{
-				ctx: ctx,
-			}
-			dpSolver.newJoin = dpSolver.newJoinWithConds
-			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges), otherConds)
-			if err != nil {
-				return nil, err
-			}
-			return p, nil
 		}
+		dpSolver := &joinReorderDPSolver{
+			ctx: ctx,
+		}
+		dpSolver.newJoin = dpSolver.newJoinWithConds
+		p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges), otherConds)
+		if err != nil {
+			return nil, err
+		}
+		return p, nil
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
