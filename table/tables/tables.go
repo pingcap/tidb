@@ -933,6 +933,9 @@ func (t *tableCommon) Seek(ctx sessionctx.Context, h int64) (int64, bool, error)
 	}
 	seekKey := tablecodec.EncodeRowKeyWithHandle(t.physicalTableID, h)
 	iter, err := txn.Iter(seekKey, t.RecordPrefix().PrefixNext())
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
 		// No more records in the table, skip to the end.
 		return 0, false, nil

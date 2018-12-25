@@ -233,7 +233,6 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(err, IsNil)
 	// It should not be "GRANT ON `te%`.* to 'show'@'localhost'"
 	c.Assert(gs, HasLen, 0)
-
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
