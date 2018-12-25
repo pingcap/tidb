@@ -5195,6 +5195,7 @@ TableOptimizerHints:
 	{
 		yyerrok()
 		parser.lastErrorAsWarn()
+		$$ = nil
 	}
 
 HintTableList:
