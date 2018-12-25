@@ -14,7 +14,7 @@ env:
 matrix:
   fast_finish: true
   allow_failures:
-    - go: "1.10"
+    - go: "1.11.3"
       env: TRAVIS_COVERAGE=1
 
 before_install:  
