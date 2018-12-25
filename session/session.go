@@ -646,9 +646,13 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 	}
 	// Set snapshot.
 	if snapshot != 0 {
-		se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10))
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
+			return nil, nil, errors.Trace(err)
+		}
 		defer func() {
-			se.sessionVars.SetSystemVar(variable.TiDBSnapshot, "")
+			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+				log.Error(errors.ErrorStack(err))
+			}
 		}()
 	}
 	return execRestrictedSQL(ctx, se, sql)
@@ -1220,9 +1224,15 @@ func loadSystemTZ(se *session) (string, error) {
 		return "", errLoad
 	}
 	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
-	defer rss[0].Close()
+	defer func() {
+		if err := rss[0].Close(); err != nil {
+			log.Error(errors.ErrorStack(err))
+		}
+	}()
 	chk := rss[0].NewChunk()
-	rss[0].Next(context.Background(), chk)
+	if err := rss[0].Next(context.Background(), chk); err != nil {
+		return "", errors.Trace(err)
+	}
 	return chk.GetRow(0).GetString(0), nil
 }
 
@@ -1472,7 +1482,9 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if vars.ClientCapability&mysql.ClientInteractive > 0 {
 		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
-			vars.SetSystemVar(variable.WaitTimeout, varVal)
+			if err := vars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 

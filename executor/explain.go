@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -82,9 +83,13 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 				break
 			}
 		}
-		e.analyzeExec.Close()
+		if err := e.analyzeExec.Close(); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
-	e.explain.RenderResult()
+	if err := e.explain.RenderResult(); err != nil {
+		return nil, errors.Trace(err)
+	}
 	if e.analyzeExec != nil {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	}

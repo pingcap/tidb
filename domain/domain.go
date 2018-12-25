@@ -393,7 +393,9 @@ func (do *Domain) infoSyncerKeeper() {
 		select {
 		case <-do.info.Done():
 			log.Info("[ddl] server info syncer need to restart")
-			do.info.Restart(context.Background())
+			if err := do.info.Restart(context.Background()); err != nil {
+				log.Error(err)
+			}
 			log.Info("[ddl] server info syncer restarted.")
 		case <-do.exit:
 			return
