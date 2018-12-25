@@ -249,7 +249,9 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 	tk.MustExec("insert t values (12, 2, 3)")
@@ -336,7 +338,9 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("set @@autocommit = 0")
-	c.Assert(tk.Se.Txn(false).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
@@ -352,15 +356,21 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 
 	// Begin statement should start a new transaction.
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
 
 	tk.MustExec("select * from t")
-	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
 
 	tk.MustExec("insert into t values (1)")
-	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
 }
 
@@ -462,7 +472,9 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
 }
 
@@ -537,39 +549,41 @@ func (s *testSessionSuite) TestInTrans(c *C) {
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	tk.MustExec("insert t values ()")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("drop table if exists t;")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("commit")
 	tk.MustExec("insert t values ()")
 
 	tk.MustExec("set autocommit=0")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 
 	tk.MustExec("set autocommit=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 }
 
 func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
@@ -578,7 +592,9 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 

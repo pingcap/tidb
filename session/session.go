@@ -526,19 +526,16 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 				s.StmtRollback()
 				break
 			}
-			s.StmtCommit()
+			err = s.StmtCommit()
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		log.Warnf("con:%d retrying_txn_start_ts:%d original_txn_start_ts:(%d)",
 			connID, s.GetSessionVars().TxnCtx.StartTS, orgStartTS)
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
 			hook.(func())()
-		}
-
-		if err == nil && s.txn.fail != nil {
-			err = s.txn.fail
-			s.txn.cleanup()
-			s.txn.fail = nil
 		}
 
 		if err == nil {
@@ -813,7 +810,11 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 
 	if planCacheEnabled {
 		schemaVersion := domain.GetDomain(s).InfoSchema().SchemaMetaVersion()
-		readOnly := s.Txn(true) == nil || s.Txn(true).IsReadOnly()
+		txn, err1 := s.Txn(true)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		readOnly := !txn.Valid() || txn.IsReadOnly()
 
 		cacheKey = plan.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
 		cacheValue, hitCache = plan.GlobalPlanCache.Get(cacheKey)
@@ -1002,24 +1003,24 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn(active bool) kv.Transaction {
+func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if s.txn.pending() && active {
-		// Transaction is lazy intialized.
+		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		txnCap := s.getMembufCap()
 		if err := s.txn.changePendingToValid(txnCap); err != nil {
 			log.Error("active transaction fail, err = ", err)
-			s.txn.fail = errors.Trace(err)
 			s.txn.cleanup()
-		} else {
-			s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
+			s.sessionVars.TxnCtx.StartTS = 0
+			return &s.txn, errors.Trace(err)
 		}
+		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 	}
-	return &s.txn
+	return &s.txn, nil
 }
 
 func (s *session) NewTxn() error {
