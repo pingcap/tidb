@@ -430,45 +430,36 @@ func sqlOffsetInComment(comment string) int {
 func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
-	ch1 := s.r.peek()
-	if ch1 == '\'' || ch1 == '"' {
-		nTok, nPos, nLit := startString(s)
-		if nTok == stringLit {
-			tok = singleAtIdentifier
-			pos = nPos
-			lit = nLit
-		} else {
-			tok = int('@')
-		}
-	} else if ch1 == '`' {
-		nTok, nPos, nLit := scanQuotedIdent(s)
-		if nTok == quotedIdentifier {
-			tok = singleAtIdentifier
-			pos = nPos
-			lit = nLit
-		} else {
-			tok = int('@')
-		}
-	} else if isUserVarChar(ch1) {
-		s.r.incAsLongAs(isUserVarChar)
-		tok, lit = singleAtIdentifier, s.r.data(&pos)
-	} else if ch1 == '@' {
+
+	tok, lit = scanIdentifierOrString(s)
+	switch tok {
+	case '@':
 		s.r.inc()
 		stream := s.r.s[pos.Offset+2:]
+		var prefix string
 		for _, v := range []string{"global.", "session.", "local."} {
 			if len(v) > len(stream) {
 				continue
 			}
 			if strings.EqualFold(stream[:len(v)], v) {
+				prefix = v
 				s.r.incN(len(v))
 				break
 			}
 		}
-		s.r.incAsLongAs(isIdentChar)
-		tok, lit = doubleAtIdentifier, s.r.data(&pos)
-	} else {
-		tok, lit = singleAtIdentifier, s.r.data(&pos)
+		tok, lit = scanIdentifierOrString(s)
+		switch tok {
+		case stringLit, quotedIdentifier:
+			tok, lit = doubleAtIdentifier, "@@"+prefix+lit
+		case identifier:
+			tok, lit = doubleAtIdentifier, s.r.data(&pos)
+		}
+	case unicode.ReplacementChar:
+		break
+	default:
+		tok = singleAtIdentifier
 	}
+
 	return
 }
 
@@ -477,6 +468,25 @@ func scanIdentifier(s *Scanner) (int, Pos, string) {
 	s.r.inc()
 	s.r.incAsLongAs(isIdentChar)
 	return identifier, pos, s.r.data(&pos)
+}
+
+func scanIdentifierOrString(s *Scanner) (tok int, lit string) {
+	ch1 := s.r.peek()
+	switch ch1 {
+	case '\'', '"':
+		tok, _, lit = startString(s)
+	case '`':
+		tok, _, lit = scanQuotedIdent(s)
+	default:
+		if isUserVarChar(ch1) {
+			pos := s.r.pos()
+			s.r.incAsLongAs(isUserVarChar)
+			tok, lit = identifier, s.r.data(&pos)
+		} else {
+			tok = int(ch1)
+		}
+	}
+	return
 }
 
 var (
