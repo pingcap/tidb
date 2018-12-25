@@ -12,4 +12,4 @@ jobs:
           command: make dev
       - run:
           name: "Check go mod replace is removed"
-          command: ./hack/check_parser_replace.sh
+          command: ./tools/check/check_parser_replace.sh

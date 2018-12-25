@@ -243,6 +243,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 
 	// This should now return an error
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	c.Assert(err, NotNil)
 	// cant show grants for non-existent
 	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
 	c.Assert(terror.ErrorEqual(err, errNonexistingGrant), IsTrue)
