@@ -72,11 +72,13 @@ require (
 	github.com/urfave/negroni v1.0.0 // indirect
 	github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 // indirect
 	golang.org/x/crypto v0.0.0-20181203042331-505ab145d0a9 // indirect
+	golang.org/x/lint v0.0.0-20181217174547-8f45f776aaf1 // indirect
 	golang.org/x/net v0.0.0-20170406210907-d1e1b351919c
 	golang.org/x/sync v0.0.0-20181221193216-37e7f081c4d4 // indirect
 	golang.org/x/sys v0.0.0-20180510032850-7dfd1290c791 // indirect
 	golang.org/x/text v0.0.0-20170530162606-4ee4af566555
 	golang.org/x/time v0.0.0-20181108054448-85acf8d2951c // indirect
+	golang.org/x/tools v0.0.0-20181221235234-d00ac6d27372 // indirect
 	google.golang.org/genproto v0.0.0-20170815003206-6b7d9516179c // indirect
 	google.golang.org/grpc v1.7.5
 	gopkg.in/fsnotify.v1 v1.4.7 // indirect
