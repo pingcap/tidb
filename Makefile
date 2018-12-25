@@ -71,7 +71,7 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check: fmt errcheck lint vet
+check: fmt errcheck lint
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -91,10 +91,6 @@ lint:
 	$(GO) build -o ./bin/revive github.com/mgechev/revive
 	@echo "linting"
 	@./bin/revive -formatter friendly -config revive.toml $(PACKAGES)
-
-vet:
-	@echo "vet"
-	@ $(GO) tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...
