@@ -290,7 +290,7 @@
     "tidb-binlog/pump_client",
   ]
   pruneopts = "NUT"
-  revision = "378eff7f95ef5a93e56efb576bb45d385e883b42"
+  revision = "ef280e42facacfdc24930df166277abbc7b59936"
 
 [[projects]]
   digest = "1:9b8c09ab4ba145585f816352ab42c67da7450cfbe575cba8c4c2a6537ca534c8"

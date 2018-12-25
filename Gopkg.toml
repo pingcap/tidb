@@ -86,6 +86,7 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
   name = "github.com/pingcap/tipb"
   revision = "2d5073e5521a10f8db2adc0eaab2c46ca0a151d9"
 
+
 [[constraint]]
   name = "github.com/pingcap/tidb-tools"
-  revision = "378eff7f95ef5a93e56efb576bb45d385e883b42"
+  revision = "ef280e42facacfdc24930df166277abbc7b59936"
