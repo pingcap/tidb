@@ -1,7 +1,8 @@
 module github.com/pingcap/tidb
 
 require (
-	github.com/BurntSushi/toml v0.0.0-20170626110600-a368813c5e64
+	github.com/BurntSushi/toml v0.3.0
+	github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf // indirect
 	github.com/apache/thrift v0.0.0-20161221203622-b2a4d4ae21c7 // indirect
 	github.com/beorn7/perks v0.0.0-20160229213445-3ac7bf7a47d1 // indirect
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470
@@ -33,6 +34,7 @@ require (
 	github.com/golang/protobuf v1.2.0
 	github.com/golang/snappy v0.0.0-20150730031844-723cc1e459b8 // indirect
 	github.com/google/btree v0.0.0-20161217183710-316fb6d3f031
+	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf // indirect
 	github.com/gorilla/context v0.0.0-20160226214623-1ea25387ff6f // indirect
 	github.com/gorilla/mux v0.0.0-20170228224354-599cba5e7b61
 	github.com/grpc-ecosystem/go-grpc-middleware v0.0.0-20171020063731-82921fcf811d
@@ -45,12 +47,15 @@ require (
 	github.com/juju/testing v0.0.0-20180920084828-472a3e8b2073 // indirect
 	github.com/kisielk/errcheck v1.1.0 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
+	github.com/mgechev/revive v0.0.0-20181210140514-b4cc152955fb // indirect
 	github.com/montanaflynn/stats v0.0.0-20181214052348-945b007cb92f // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
+	github.com/nicksnyder/go-i18n v1.10.0 // indirect
 	github.com/onsi/ginkgo v1.7.0 // indirect
 	github.com/onsi/gomega v1.4.1 // indirect
 	github.com/opentracing/opentracing-go v1.0.2
+	github.com/pelletier/go-toml v1.2.0 // indirect
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20181113115049-2b379bf42507
@@ -75,12 +80,12 @@ require (
 	golang.org/x/lint v0.0.0-20181217174547-8f45f776aaf1 // indirect
 	golang.org/x/net v0.0.0-20170406210907-d1e1b351919c
 	golang.org/x/sync v0.0.0-20181221193216-37e7f081c4d4 // indirect
-	golang.org/x/sys v0.0.0-20180510032850-7dfd1290c791 // indirect
 	golang.org/x/text v0.0.0-20170530162606-4ee4af566555
 	golang.org/x/time v0.0.0-20181108054448-85acf8d2951c // indirect
 	golang.org/x/tools v0.0.0-20181221235234-d00ac6d27372 // indirect
 	google.golang.org/genproto v0.0.0-20170815003206-6b7d9516179c // indirect
 	google.golang.org/grpc v1.7.5
+	gopkg.in/alecthomas/kingpin.v3-unstable v3.0.0-20170321130658-9670b87a702e // indirect
 	gopkg.in/fsnotify.v1 v1.4.7 // indirect
 	gopkg.in/mgo.v2 v2.0.0-20180705113604-9856a29383ce // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0-20161104145732-dd45e6a67c53

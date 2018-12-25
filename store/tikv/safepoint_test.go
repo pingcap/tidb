@@ -67,9 +67,8 @@ func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
 		if err == nil {
 			s.store.UpdateSPCache(newSafePoint, cachedTime)
 			break
-		} else {
-			time.Sleep(time.Second)
 		}
+		time.Sleep(time.Second)
 	}
 }
 

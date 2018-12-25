@@ -191,12 +191,11 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 			}
 			log.Infof("[ddl] delRange emulator complete task: (%d, %d)", r.JobID, r.ElementID)
 			break
-		} else {
-			if err := util.UpdateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
-				log.Errorf("[ddl] delRange emulator update task fail: %s", err)
-			}
-			oldStartKey = newStartKey
 		}
+		if err := util.UpdateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
+			log.Errorf("[ddl] delRange emulator update task fail: %s", err)
+		}
+		oldStartKey = newStartKey
 	}
 	return nil
 }

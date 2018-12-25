@@ -1,4 +1,4 @@
-# github.com/BurntSushi/toml v0.0.0-20170626110600-a368813c5e64
+# github.com/BurntSushi/toml v0.3.0
 github.com/BurntSushi/toml
 # github.com/apache/thrift v0.0.0-20161221203622-b2a4d4ae21c7
 github.com/apache/thrift/lib/go/thrift
@@ -134,7 +134,7 @@ golang.org/x/net/http2/hpack
 golang.org/x/net/idna
 golang.org/x/net/lex/httplex
 golang.org/x/net/internal/timeseries
-# golang.org/x/sys v0.0.0-20180510032850-7dfd1290c791
+# golang.org/x/sys v0.0.0-20180909124046-d0be0721c37e
 golang.org/x/sys/unix
 # golang.org/x/text v0.0.0-20170530162606-4ee4af566555
 golang.org/x/text/transform

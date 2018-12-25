@@ -88,9 +88,9 @@ errcheck:
 	@ GOPATH=$(GOPATH) errcheck -exclude errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:
-	$(GO) get golang.org/x/lint/golint
-	@echo "golint"
-	@ golint -set_exit_status $(PACKAGES)
+	$(GO) build -o ./bin/revive github.com/mgechev/revive
+	@echo "linting"
+	@./bin/revive -formatter friendly -config revive.toml $(PACKAGES)
 
 vet:
 	@echo "vet"
