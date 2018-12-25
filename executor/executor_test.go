@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -66,17 +65,25 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// TestLeakCheckCnt is the check count in the pacakge of executor.
+// In this package CustomParallelSuiteFlag is true, so we need to increase check count.
+const TestLeakCheckCnt = 1000
+
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(&logutil.LogConfig{
 		Level: logLevel,
 	})
+	autoid.SetStep(5000)
 	TestingT(t)
 }
 
 var _ = Suite(&testSuite{})
-var _ = Suite(&testContextOptionSuite{})
+var _ = Suite(&testSuite1{})
+var _ = Suite(&testSuite2{})
+var _ = Suite(&testSuite3{})
 var _ = Suite(&testBypassSuite{})
 
 type testSuite struct {
@@ -86,16 +93,12 @@ type testSuite struct {
 	domain    *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
-
-	autoIDStep int64
 }
 
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	s.autoIDStep = autoid.GetStep()
-	autoid.SetStep(5000)
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -121,8 +124,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	autoid.SetStep(s.autoIDStep)
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
@@ -239,12 +241,12 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	r, err_admin := tk.Exec("admin check table admin_test")
-	c.Assert(err_admin, NotNil)
+	r, errAdmin := tk.Exec("admin check table admin_test")
+	c.Assert(errAdmin, NotNil)
 
 	if config.CheckTableBeforeDrop {
 		r, err = tk.Exec("drop table admin_test")
-		c.Assert(err.Error(), Equals, err_admin.Error())
+		c.Assert(err.Error(), Equals, errAdmin.Error())
 
 		// Drop inconsistency index.
 		tk.MustExec("alter table admin_test drop index c1")
@@ -324,10 +326,11 @@ func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
 }
 
 type testCase struct {
-	data1    []byte
-	data2    []byte
-	expected []string
-	restData []byte
+	data1       []byte
+	data2       []byte
+	expected    []string
+	restData    []byte
+	expectedMsg string
 }
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
@@ -348,9 +351,14 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 			c.Assert(data, DeepEquals, tt.restData,
 				Commentf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data)))
 		}
-		ctx.StmtCommit()
-		err1 = ctx.Txn(true).Commit(context.Background())
-		c.Assert(err1, IsNil)
+		ld.SetMessage()
+		tk.CheckLastMessage(tt.expectedMsg)
+		err := ctx.StmtCommit()
+		c.Assert(err, IsNil)
+		txn, err := ctx.Txn(true)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
 		r := tk.MustQuery(selectSQL)
 		r.Check(testutil.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
@@ -676,7 +684,7 @@ func (s *testSuite) TestSelectLimit(c *C) {
 	r = tk.MustQuery("select * from select_limit limit 18446744073709551615 offset 3;")
 	r.Check(testkit.Rows("4 hello"))
 
-	_, err := tk.Exec("select * from select_limit limit 18446744073709551616 offset 3;")
+	err := tk.ExecToErr("select * from select_limit limit 18446744073709551616 offset 3;")
 	c.Assert(err, NotNil)
 }
 
@@ -804,28 +812,28 @@ func (s *testSuite) TestSelectErrorRow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	_, err := tk.Exec("select row(1, 1) from test")
+	err := tk.ExecToErr("select row(1, 1) from test")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test group by row(1, 1);")
+	err = tk.ExecToErr("select * from test group by row(1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test order by row(1, 1);")
+	err = tk.ExecToErr("select * from test order by row(1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test having row(1, 1);")
+	err = tk.ExecToErr("select * from test having row(1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select (select 1, 1) from test;")
+	err = tk.ExecToErr("select (select 1, 1) from test;")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test group by (select 1, 1);")
+	err = tk.ExecToErr("select * from test group by (select 1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test order by (select 1, 1);")
+	err = tk.ExecToErr("select * from test order by (select 1, 1);")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("select * from test having (select 1, 1);")
+	err = tk.ExecToErr("select * from test having (select 1, 1);")
 	c.Assert(err, NotNil)
 }
 
@@ -844,6 +852,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
+	rs.Close()
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -1032,12 +1041,12 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustQuery("select -10 as a from dual union select a from t order by a limit 1 ").Check(testkit.Rows("-10"))
 	tk.MustQuery("select count(1) from (select a from t union all select a from t) tmp").Check(testkit.Rows("4"))
 
-	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
+	err := tk.ExecToErr("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
-	_, err = tk.Exec("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
+	err = tk.ExecToErr("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
@@ -1846,7 +1855,8 @@ func (s *testSuite) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		p, err := planner.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
-		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		ret, err := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
+		c.Assert(err, IsNil)
 		c.Assert(ret, Equals, result)
 	}
 }
@@ -1915,12 +1925,14 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].ColumnAsName.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
 	c.Check(fields[1].ColumnAsName.L, Equals, "count(*)")
+	rs.Close()
 	rs, err = tk.Exec("select (c) > all (select c from t) from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
 	c.Check(fields[0].ColumnAsName.L, Equals, "(c) > all (select c from t)")
+	rs.Close()
 	tk.MustExec("begin")
 	tk.MustExec("insert t values(1,1)")
 	rs, err = tk.Exec("select c d, d c from t")
@@ -1931,6 +1943,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].ColumnAsName.L, Equals, "d")
 	c.Check(fields[1].Column.Name.L, Equals, "d")
 	c.Check(fields[1].ColumnAsName.L, Equals, "c")
+	rs.Close()
 	// Test case for query a column of a table.
 	// In this case, all attributes have values.
 	rs, err = tk.Exec("select c as a from t as t2")
@@ -1941,6 +1954,7 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "t")
 	c.Check(fields[0].TableAsName.L, Equals, "t2")
 	c.Check(fields[0].DBName.L, Equals, "test")
+	rs.Close()
 	// Test case for query a expression which only using constant inputs.
 	// In this case, the table, org_table and database attributes will all be empty.
 	rs, err = tk.Exec("select hour(1) as a from t as t2")
@@ -1951,6 +1965,17 @@ func (s *testSuite) TestColumnName(c *C) {
 	c.Check(fields[0].Table.Name.L, Equals, "")
 	c.Check(fields[0].TableAsName.L, Equals, "")
 	c.Check(fields[0].DBName.L, Equals, "")
+	rs.Close()
+	// Test case for query a column wrapped with parentheses and unary plus.
+	// In this case, the column name should be its original name.
+	rs, err = tk.Exec("select (c), (+c), +(c), +(+(c)), ++c from t")
+	c.Check(err, IsNil)
+	fields = rs.Fields()
+	for i := 0; i < 5; i++ {
+		c.Check(fields[0].Column.Name.L, Equals, "c")
+		c.Check(fields[0].ColumnAsName.L, Equals, "c")
+	}
+	rs.Close()
 }
 
 func (s *testSuite) TestSelectVar(c *C) {
@@ -2142,16 +2167,20 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	tk.MustExec("begin")
 	rows := tk.MustQuery("select @@tidb_current_ts").Rows()
 	tsStr := rows[0][0].(string)
-	c.Assert(tsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn(true).StartTS()))
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(tsStr, Equals, fmt.Sprintf("%d", txn.StartTS()))
 	tk.MustExec("begin")
 	rows = tk.MustQuery("select @@tidb_current_ts").Rows()
 	newTsStr := rows[0][0].(string)
-	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", tk.Se.Txn(true).StartTS()))
+	txn, err = tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(newTsStr, Equals, fmt.Sprintf("%d", txn.StartTS()))
 	c.Assert(newTsStr, Not(Equals), tsStr)
 	tk.MustExec("commit")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
-	_, err := tk.Exec("set @@tidb_current_ts = '1'")
+	_, err = tk.Exec("set @@tidb_current_ts = '1'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
 }
 
@@ -2165,7 +2194,9 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 
 	tk.MustExec("drop table if exists t, t1")
 
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 	tk.MustExec("insert t values (12, 2, 3)")
@@ -2182,7 +2213,7 @@ func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk2.MustExec("update t set c2=211 where c1=11")
 	tk2.MustExec("commit")
 
-	_, err := tk1.Exec("commit")
+	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 
 	// no conflict for subquery.
@@ -2328,13 +2359,13 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	return resp, err
 }
 
-type testContextOptionSuite struct {
+type testSuite1 struct {
 	store kv.Storage
 	dom   *domain.Domain
 	cli   *checkRequestClient
 }
 
-func (s *testContextOptionSuite) SetUpSuite(c *C) {
+func (s *testSuite1) SetUpSuite(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
@@ -2351,12 +2382,22 @@ func (s *testContextOptionSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testContextOptionSuite) TearDownSuite(c *C) {
+func (s *testSuite1) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
 
-func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
+func (s *testSuite1) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+}
+
+func (s *testSuite1) TestAddIndexPriority(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
@@ -2425,7 +2466,7 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.mu.Unlock()
 }
 
-func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
+func (s *testSuite1) TestAlterTableComment(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_1")
@@ -2438,7 +2479,7 @@ func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
 	result.Check(testkit.Rows("table t comment"))
 }
 
-func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
+func (s *testSuite1) TestCoprocessorPriority(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
@@ -2559,7 +2600,7 @@ func (s *testSuite) TestNotFillCacheFlag(c *C) {
 	c.Assert(count, Equals, len(tests)) // Make sure the hook function is called.
 }
 
-func (s *testContextOptionSuite) TestSyncLog(c *C) {
+func (s *testSuite1) TestSyncLog(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -2618,6 +2659,7 @@ func (s *testSuite) TestBit(c *C) {
 	err = r.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	r.Close()
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c1 bit(31))")
@@ -2752,51 +2794,6 @@ func (s *testSuite) TestUnsignedPk(c *C) {
 	tk.MustQuery("select * from t where id not in (2)").Check(testkit.Rows(num1Str, num2Str, "1"))
 }
 
-func (s *testSuite) TestEarlyClose(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table earlyclose (id int primary key)")
-
-	// Insert 1000 rows.
-	var values []string
-	for i := 0; i < 1000; i++ {
-		values = append(values, fmt.Sprintf("(%d)", i))
-	}
-	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
-
-	// Get table ID for split.
-	dom := domain.GetDomain(tk.Se)
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
-	c.Assert(err, IsNil)
-	tblID := tbl.Meta().ID
-
-	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 500)
-
-	ctx := context.Background()
-	for i := 0; i < 500; i++ {
-		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
-		c.Assert(err1, IsNil)
-		rs := rss[0]
-		chk := rs.NewChunk()
-		err = rs.Next(ctx, chk)
-		c.Assert(err, IsNil)
-		rs.Close()
-	}
-
-	// Goroutine should not leak when error happen.
-	gofail.Enable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/store/tikv/handleTaskOnceError")
-	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
-	c.Assert(err, IsNil)
-	rs := rss[0]
-	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
-	c.Assert(err, NotNil)
-	rs.Close()
-}
-
 func (s *testSuite) TestIssue5666(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@profiling=1")
@@ -2848,7 +2845,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 
@@ -2868,7 +2865,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(s.ctx, recordVal2, false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
+	txn, err := s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]
@@ -2880,7 +2879,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	txn, err := s.store.Begin()
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = idx.Create(mockCtx, txn, types.MakeDatums(int64(30)), 3)
 	c.Assert(err, IsNil)
@@ -3057,7 +3056,7 @@ func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Division by 0"))
 }
 
-func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
+func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -3067,7 +3066,7 @@ func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-func (s *testSuite) TestForSelectScopeInUnion(c *C) {
+func (s *testSuite3) TestForSelectScopeInUnion(c *C) {
 	// A union B for update, the "for update" option belongs to union statement, so
 	// it should works on both A and B.
 	tk1 := testkit.NewTestKit(c, s.store)
@@ -3099,7 +3098,7 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
+func (s *testSuite3) TestUnsignedDecimalOverflow(c *C) {
 	tests := []struct {
 		input  interface{}
 		hasErr bool
@@ -3149,7 +3148,7 @@ func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
 	r.Check(testkit.Rows("0.00"))
 }
 
-func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
+func (s *testSuite3) TestIndexJoinTableDualPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists a")
@@ -3159,7 +3158,7 @@ func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
 		Check(testkit.Rows("1 a"))
 }
 
-func (s *testSuite) TestUnionAutoSignedCast(c *C) {
+func (s *testSuite3) TestUnionAutoSignedCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
@@ -3199,7 +3198,7 @@ func (s *testSuite) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
 }
 
-func (s *testSuite) TestUpdateJoin(c *C) {
+func (s *testSuite3) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7")
@@ -3272,7 +3271,7 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustQuery("select v from t6").Check(testkit.Rows("a"))
 }
 
-func (s *testSuite) TestMaxOneRow(c *C) {
+func (s *testSuite3) TestMaxOneRow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t1`)
@@ -3292,7 +3291,7 @@ func (s *testSuite) TestMaxOneRow(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
+func (s *testSuite3) TestCurrentTimestampValueSelection(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t1")
@@ -3326,7 +3325,7 @@ func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
 	c.Assert(len(strings.Split(d, ".")[1]), Equals, 3)
 }
 
-func (s *testSuite) TestRowID(c *C) {
+func (s *testSuite3) TestRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -3348,7 +3347,7 @@ func (s *testSuite) TestRowID(c *C) {
 	tk.MustQuery("select *, _tidb_rowid from t use index(`primary`) where _tidb_rowid=1").Check(testkit.Rows("a 1"))
 }
 
-func (s *testSuite) TestDoSubquery(c *C) {
+func (s *testSuite3) TestDoSubquery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -3361,7 +3360,7 @@ func (s *testSuite) TestDoSubquery(c *C) {
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
 }
 
-func (s *testSuite) TestTSOFail(c *C) {
+func (s *testSuite3) TestTSOFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -3373,7 +3372,7 @@ func (s *testSuite) TestTSOFail(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestSelectHashPartitionTable(c *C) {
+func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists th`)
@@ -3403,4 +3402,102 @@ func (s *testSuite) TestSelectHashPartitionTable(c *C) {
 		"└─TableReader_14 10000.00 root data:TableScan_13",
 		"  └─TableScan_13 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
+}
+
+type testSuite2 struct {
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	store     kv.Storage
+	domain    *domain.Domain
+	*parser.Parser
+	ctx *mock.Context
+}
+
+func (s *testSuite2) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.Parser = parser.New()
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
+	}
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
+}
+
+func (s *testSuite2) TearDownSuite(c *C) {
+	s.domain.Close()
+	s.store.Close()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
+}
+
+func (s *testSuite2) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
+}
+
+type testSuite3 struct {
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	store     kv.Storage
+	domain    *domain.Domain
+	*parser.Parser
+	ctx *mock.Context
+}
+
+func (s *testSuite3) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.Parser = parser.New()
+	flag.Lookup("mockTikv")
+	useMockTikv := *mockTikv
+	if useMockTikv {
+		s.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(s.cluster)
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
+		)
+		c.Assert(err, IsNil)
+		s.store = store
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
+	}
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
+}
+
+func (s *testSuite3) TearDownSuite(c *C) {
+	s.domain.Close()
+	s.store.Close()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
+}
+
+func (s *testSuite3) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+	}
 }
