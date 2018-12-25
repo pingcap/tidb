@@ -513,7 +513,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
 func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
+	if astCol, ok := getInnerFromParenthesesAndUnaryPlus(field.Expr).(*ast.ColumnNameExpr); ok {
 		origColName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
 	}
 	if field.AsName.L != "" {
@@ -537,7 +537,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
 	}
 
-	innerExpr := getInnerFromParentheses(field.Expr)
+	innerExpr := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
@@ -1970,7 +1970,11 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	// If this SQL is executed in a non-readonly transaction, we need a
 	// "UnionScan" operator to read the modifications of former SQLs, which is
 	// buffered in tidb-server memory.
-	if b.ctx.Txn(false).Valid() && !b.ctx.Txn(false).IsReadOnly() {
+	txn, err := b.ctx.Txn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if txn.Valid() && !txn.IsReadOnly() {
 		us := LogicalUnionScan{}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
@@ -2468,9 +2472,12 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 	})
 }
 
-func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
+func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
-		return getInnerFromParentheses(pexpr.Expr)
+		return getInnerFromParenthesesAndUnaryPlus(pexpr.Expr)
+	}
+	if uexpr, ok := expr.(*ast.UnaryOperationExpr); ok && uexpr.Op == opcode.Plus {
+		return getInnerFromParenthesesAndUnaryPlus(uexpr.V)
 	}
 	return expr
 }
