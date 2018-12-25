@@ -15,7 +15,7 @@ jobs:
             diff -u parser.go.committed parser.go
       - run:
           name: "Check code format"
-          command: gofmt -l -s . | awk '{print} END{if(NR>0) {exit 1}}'
+          command: make fmt
       - run:
           name: "Build & Test"
           command: make test

@@ -4,9 +4,9 @@ ARCH:="`uname -s`"
 MAC:="Darwin"
 LINUX:="Linux"
 
-all: parser.go
+all: parser.go fmt
 
-test: parser.go
+test: parser.go fmt
 	sh test.sh
 
 parser.go: parser.y
@@ -30,6 +30,10 @@ parser: bin/goyacc
 
 bin/goyacc: goyacc/main.go
 	GO111MODULE=on go build -o bin/goyacc goyacc/main.go
+
+fmt:
+	@echo "gofmt (simplify)"
+	@ gofmt -s -l -w . 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	go clean -i ./...
