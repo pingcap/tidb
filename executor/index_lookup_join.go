@@ -520,8 +520,8 @@ func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types
 			if iw.hasNullInOuterJoinKey(outerRow) {
 				continue
 			}
-			rowPtr := chunk.RowPtr{ChkIdx: uint32(0), RowIdx: uint32(i)}
-			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
+			rowPtr := uint32(i)
+			*(*uint32)(unsafe.Pointer(&valBuf[0])) = rowPtr
 			task.lookupMap.Put(keyBuf, valBuf)
 		}
 	}
@@ -712,7 +712,6 @@ func (e *IndexLookUpHash) Open(ctx context.Context) error {
 
 func (e *IndexLookUpHash) startWorkers(ctx context.Context) {
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
-	concurrency = 1
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -913,15 +912,11 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask,
 		return errors.New("join2Chunk failed")
 	}
 	it := task.lookupMap.NewIterator()
-	for i := 0; i < task.outerResult.NumRows(); i++ {
-		key, rowPtr := it.Next()
-		if key == nil || rowPtr == nil {
-			break
-		}
+	for key, rowPtr := it.Next(); key != nil; key, rowPtr = it.Next() {
 		iw.matchPtrBytes = task.matchKeyMap.Get(key, iw.matchPtrBytes[:0])
 		if len(iw.matchPtrBytes) == 0 {
-			ptr := *(*chunk.RowPtr)(unsafe.Pointer(&rowPtr[0]))
-			misMatchedRow := task.outerResult.GetRow(int(ptr.RowIdx))
+			ptr := *(*uint32)(unsafe.Pointer(&rowPtr[0]))
+			misMatchedRow := task.outerResult.GetRow(int(ptr))
 			iw.joiner.onMissMatch(misMatchedRow, joinResult.chk)
 		}
 		if joinResult.chk.NumRows() == iw.maxChunkSize {
@@ -929,7 +924,7 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask,
 			iw.joinResultCh <- joinResult
 			ok, joinResult = iw.getNewJoinResult()
 			if !ok {
-				return errors.New("getNewJoinResult failed")
+				return nil
 			}
 		}
 	}
@@ -941,12 +936,13 @@ func (iw *innerHashWorker) join2Chunk(joinResult *indexLookUpResult, task *lookU
 
 	for i := 0; i < task.innerResult.NumChunks(); i++ {
 		curChk := task.innerResult.GetChunk(i)
-		for j := 0; j < curChk.NumRows(); j++ {
-			innerRow := curChk.GetRow(j)
+		iter := chunk.NewIterator4Chunk(curChk)
+		for innerRow := iter.Begin(); innerRow != iter.End(); innerRow = iter.Next() {
 			ok, joinResult = iw.joinMatchInnerRow2Chunk(innerRow, task, joinResult)
 			if !ok {
 				return false, joinResult
 			}
+
 		}
 	}
 	return true, joinResult
@@ -970,8 +966,8 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *loo
 	task.matchedInners = task.matchedInners[:0]
 	var matchedOuters []chunk.Row
 	for _, b := range iw.matchPtrBytes {
-		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
-		matchedOuter := task.outerResult.GetRow(int(ptr.RowIdx))
+		ptr := *(*uint32)(unsafe.Pointer(&b[0]))
+		matchedOuter := task.outerResult.GetRow(int(ptr))
 		matchedOuters = append(matchedOuters, matchedOuter)
 	}
 	innerIter := chunk.NewIterator4Slice([]chunk.Row{innerRow})
