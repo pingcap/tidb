@@ -293,7 +293,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				e.ctx.StmtCommit()
+				if err = e.ctx.StmtCommit(); err != nil {
+					return errors.Trace(err)
+				}
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -839,9 +841,13 @@ func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
 	if err := e.checkBatchLimit(); err != nil {
 		return 0, errors.Trace(err)
 	}
-	e.ctx.Txn(true).SetOption(kv.PresumeKeyNotExists, nil)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	txn.SetOption(kv.PresumeKeyNotExists, nil)
 	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn(true).DelOption(kv.PresumeKeyNotExists)
+	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -857,9 +863,13 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
 
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	e.rowCount = 0
 	if !sessVars.ImportingData {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	}
 
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
@@ -892,10 +902,10 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 				return nil, errors.Trace(err)
 			}
 			if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
-				e.ctx.Txn(true).SetOption(kv.PresumeKeyNotExists, nil)
+				txn.SetOption(kv.PresumeKeyNotExists, nil)
 			}
 			h, err := e.Table.AddRecord(e.ctx, row, false)
-			e.ctx.Txn(true).DelOption(kv.PresumeKeyNotExists)
+			txn.DelOption(kv.PresumeKeyNotExists)
 			if err == nil {
 				if !sessVars.ImportingData {
 					e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
@@ -946,7 +956,11 @@ func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (
 	for _, handle := range handles {
 		batchKeys = append(batchKeys, t.RecordKey(handle))
 	}
-	values, err := kv.BatchGetValues(ctx.Txn(true), batchKeys)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	values, err := kv.BatchGetValues(txn, batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1066,7 +1080,11 @@ func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types
 			batchKeys = append(batchKeys, k.key)
 		}
 	}
-	values, err := kv.BatchGetValues(ctx.Txn(true), batchKeys)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	values, err := kv.BatchGetValues(txn, batchKeys)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1079,14 +1097,20 @@ func (e *InsertExec) checkBatchLimit() error {
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 	if batchInsert && e.rowCount >= batchSize {
-		e.ctx.StmtCommit()
+		if err := e.ctx.StmtCommit(); err != nil {
+			return errors.Trace(err)
+		}
 		if err := e.ctx.NewTxn(); err != nil {
 			// We should return a special error for batch insert.
 			return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 		}
 		e.rowCount = 0
 		if !sessVars.ImportingData {
-			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
+			txn, err := e.ctx.Txn(true)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 		}
 	}
 	return nil
