@@ -259,13 +259,13 @@ func parseOldHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (
 	packet.Capability = uint32(capability)
 
 	// be compatible with Protocol::HandshakeResponse41
-	packet.Capability = packet.Capability | 0x00000200
+	packet.Capability = packet.Capability | mysql.ClientProtocol41
 
 	offset += 2
 	// skip max packet size
 	offset += 3
 	// usa default CharsetID
-	packet.Collation = 33
+	packet.Collation = mysql.CollationNames["utf8mb4_general_ci"]
 
 	return offset, nil
 }
@@ -294,7 +294,7 @@ func parseOldHandshakeResponseBody(packet *handshakeResponse41, data []byte, off
 			offset += len(packet.Auth) + 1
 		}
 	} else {
-		packet.Auth = data[offset:]
+		packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
 		offset += len(packet.Auth) + 1
 	}
 
@@ -427,11 +427,15 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 
 	pos, err := parseHandshakeResponseHeader(&resp, data)
 	if err != nil {
-		pos, err = parseOldHandshakeResponseHeader(&resp, data)
-		if err != nil {
+		if err == mysql.ErrMalformPacket {
+			pos, err = parseOldHandshakeResponseHeader(&resp, data)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			isOldVersion = true
+		} else {
 			return errors.Trace(err)
 		}
-		isOldVersion = true
 	}
 
 	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.tlsConfig != nil {
