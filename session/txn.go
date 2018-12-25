@@ -277,11 +277,22 @@ type txnFuture struct {
 	mockFail bool
 }
 
+var mockGetTSErrorInRetryOnce = true
+
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	if tf.mockFail {
 		return nil, errors.New("mock get timestamp fail")
 	}
 
+	// mockGetTSErrorInRetry should wait mockCommitErrorOnce first, then will run into retry() logic.
+	// Then mockGetTSErrorInRetry will return retryable error when first retry.
+	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
+	// This may cause duplicate data to be written.
+	// gofail: var mockGetTSErrorInRetry bool
+	//if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
+	//	 mockGetTSErrorInRetryOnce = false
+	//	 return nil, errors.Errorf("PD server timeout[try again later]")
+	//}
 	startTS, err := tf.future.Wait()
 	tf.span.Finish()
 	if err == nil {
