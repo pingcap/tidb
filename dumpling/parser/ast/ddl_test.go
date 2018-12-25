@@ -118,6 +118,16 @@ func (ts *testDDLSuite) TestDDLIndexOption(c *C) {
 	RunNodeRestoreTest(c, testCases, "CREATE INDEX idx ON t (a) %s", extractNodeFunc)
 }
 
+func (ts *testDDLSuite) TestTableToTableRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"t1 to t2", "`t1` TO `t2`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*RenameTableStmt).TableToTables[0]
+	}
+	RunNodeRestoreTest(c, testCases, "rename table %s", extractNodeFunc)
+}
+
 func (ts *testDDLSuite) TestDDLReferenceDefRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"REFERENCES parent(id) ON DELETE CASCADE ON UPDATE RESTRICT", "REFERENCES `parent`(`id`) ON DELETE CASCADE ON UPDATE RESTRICT"},
