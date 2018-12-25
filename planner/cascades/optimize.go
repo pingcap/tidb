@@ -17,7 +17,6 @@ import (
 	"container/list"
 	"math"
 
-	"github.com/pingcap/errors"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
@@ -75,7 +74,7 @@ func exploreGroup(g *memo.Group) error {
 		curExpr.Explored = true
 		for _, childGroup := range curExpr.Children {
 			if err := exploreGroup(childGroup); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			curExpr.Explored = curExpr.Explored && childGroup.Explored
 		}

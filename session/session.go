@@ -749,7 +749,7 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
 	value, err := d.ToString()
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	return value, nil
 }
@@ -882,7 +882,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	connID := s.sessionVars.ConnectionID
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
@@ -1483,7 +1483,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if vars.ClientCapability&mysql.ClientInteractive > 0 {
 		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
 			if err := vars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 	}

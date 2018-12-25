@@ -133,7 +133,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
 	if _, err := e.ctx.Txn(true); err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	return nil
 }
