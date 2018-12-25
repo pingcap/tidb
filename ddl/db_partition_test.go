@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -952,7 +953,7 @@ func (s *testIntegrationSuite) TestPartitionDropIndex(c *C) {
 	}
 	c.Assert(idx1, NotNil)
 
-	sessionExecInGoroutine(c, s.store, "drop index idx1 on partition_drop_idx;", done)
+	testutil.SessionExecInGoroutine(c, s.store, "drop index idx1 on partition_drop_idx;", done)
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 LOOP:
