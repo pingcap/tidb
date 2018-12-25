@@ -106,11 +106,13 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	// 0 converts to OFF
 	SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("0"))
 	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "OFF")
 
 	// 1/ON is not supported (generates a warning and sets to OFF)
 	SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("1"))
 	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "OFF")
 
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
