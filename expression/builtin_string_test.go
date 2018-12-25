@@ -1599,7 +1599,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		locale    string
 		ret       interface{}
 	}{
-		{12332.1234561111111111111111111111111111111111111, 4, "en_US", "12,332.1234"},
+		{12332.12341111111111111111111111111111111111111, 4, "en_US", "12,332.1234"},
 		{nil, 22, "en_US", nil},
 	}
 	formatTests1 := []struct {
@@ -1648,9 +1648,15 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		locale    string
 		ret       interface{}
 	}{"-12332.123456", "4", "de_GE", nil}
+	formatTests4 := struct {
+		number    interface{}
+		precision interface{}
+		locale    interface{}
+		ret       interface{}
+	}{1, 4, nil, "1.0000"}
 
+	fc := funcs[ast.Format]
 	for _, tt := range formatTests {
-		fc := funcs[ast.Format]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.number, tt.precision, tt.locale)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
@@ -1662,12 +1668,12 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	origConfig := s.ctx.GetSessionVars().StmtCtx.TruncateAsWarning
 	s.ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
 	for _, tt := range formatTests1 {
-		fc := funcs[ast.Format]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.number, tt.precision)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret), Commentf("test %v", tt))
 		if tt.warnings > 0 {
 			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 			c.Assert(len(warnings), Equals, tt.warnings, Commentf("test %v", tt))
@@ -1676,25 +1682,33 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 			}
 			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 		}
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.ret), Commentf("test %v", tt))
 	}
 	s.ctx.GetSessionVars().StmtCtx.TruncateAsWarning = origConfig
 
-	fc2 := funcs[ast.Format]
-	f2, err := fc2.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
+	f2, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests2.number, formatTests2.precision, formatTests2.locale)))
 	c.Assert(err, IsNil)
 	c.Assert(f2, NotNil)
 	r2, err := evalBuiltinFunc(f2, chunk.Row{})
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not implemented")))
 	c.Assert(r2, testutil.DatumEquals, types.NewDatum(formatTests2.ret))
 
-	fc3 := funcs[ast.Format]
-	f3, err := fc3.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
+	f3, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
 	c.Assert(err, IsNil)
 	c.Assert(f3, NotNil)
 	r3, err := evalBuiltinFunc(f3, chunk.Row{})
 	c.Assert(types.NewDatum(err), testutil.DatumEquals, types.NewDatum(errors.New("not support for the specific locale")))
 	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret))
+
+	f4, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(formatTests4.number, formatTests4.precision, formatTests4.locale)))
+	c.Assert(err, IsNil)
+	c.Assert(f4, NotNil)
+	r4, err := evalBuiltinFunc(f4, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(r4, testutil.DatumEquals, types.NewDatum(formatTests4.ret))
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	c.Assert(terror.ErrorEqual(errUnknownLocale, warnings[0].Err), IsTrue)
+	s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 }
 
 func (s *testEvaluatorSuite) TestFromBase64(c *C) {
