@@ -81,7 +81,3 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 [[constraint]]
   name = "github.com/pingcap/kvproto"
   branch = "release-2.0"
-
-[[constraint]]
-  name = "github.com/pingcap/tidb-tools"
-  revision = "f0951afd46b0af98a488e1d7e72c7f844b3d49d2"
