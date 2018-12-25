@@ -16,7 +16,6 @@ package domain
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"

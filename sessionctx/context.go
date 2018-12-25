@@ -16,14 +16,14 @@ package sessionctx
 import (
 	"context"
 	"fmt"
-
+	"github.com/pingcap/tidb/infobind"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 // Context is an interface for transaction and executive args environment.
@@ -52,6 +52,8 @@ type Context interface {
 	ClearValue(key fmt.Stringer)
 
 	GetSessionVars() *variable.SessionVars
+
+	GetSessionBind() *infobind.SessionBind
 
 	GetSessionManager() util.SessionManager
 

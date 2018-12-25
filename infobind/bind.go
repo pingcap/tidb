@@ -17,8 +17,8 @@ import (
 )
 
 type InfoBind struct {
-	ast      ast.StmtNode
-	database []string
+	Ast      ast.StmtNode
+	Database []string
 }
 
 type Handle struct {
@@ -143,8 +143,8 @@ func (h *Handle) decodeBindTableRow(sctx sessionctx.Context, row chunk.Row, fs [
 		}
 
 		h.Put(hash, &InfoBind{
-			ast:      stmtNodes[0],
-			database: strings.Split(value.db, ","),
+			Ast:      stmtNodes[0],
+			Database: strings.Split(value.db, ","),
 		})
 	} else {
 		h.Delete(hash)

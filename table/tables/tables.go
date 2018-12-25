@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/infobind"
 	"math"
 	"strings"
 	"time"
@@ -1022,6 +1023,7 @@ func init() {
 // ctxForPartitionExpr implement sessionctx.Context interfact.
 type ctxForPartitionExpr struct {
 	sessionVars *variable.SessionVars
+	sessionBind *infobind.SessionBind
 }
 
 // newCtxForPartitionExpr creates a new sessionctx.Context.
@@ -1068,6 +1070,10 @@ func (ctx *ctxForPartitionExpr) ClearValue(key fmt.Stringer) {
 
 func (ctx *ctxForPartitionExpr) GetSessionVars() *variable.SessionVars {
 	return ctx.sessionVars
+}
+
+func (ctx *ctxForPartitionExpr) GetSessionBind() *infobind.SessionBind {
+	return ctx.sessionBind
 }
 
 // GetSessionManager implements the sessionctx.Context interface.

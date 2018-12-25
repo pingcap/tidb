@@ -326,6 +326,27 @@ type Set struct {
 	VarAssigns []*expression.VarAssignment
 }
 
+type CreateBindPlan struct {
+	baseSchemaProducer
+
+	OriginSql string
+	BindSql   string
+	DefaultDb string
+
+	IsGlobal bool
+
+	BindStmt *ast.SelectStmt
+}
+
+type DropBindPlan struct {
+	baseSchemaProducer
+
+	OriginSql string
+	DefaultDb string
+
+	IsGlobal bool
+}
+
 // Simple represents a simple statement plan which doesn't need any optimization.
 type Simple struct {
 	baseSchemaProducer

@@ -22,6 +22,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/infobind"
 	"net"
 	"strconv"
 	"strings"
@@ -144,6 +145,8 @@ type session struct {
 
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
+
+	sessionBind 	*infobind.SessionBind
 
 	statsCollector *statistics.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
@@ -800,6 +803,24 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	return errors.Trace(err)
 }
 
+func (s *session) GetAllBindAccessor() (map[string]string, error){
+	return nil, nil
+}
+
+func (s *session) DropGlobalBind(originSql string, defaultDb string) error {
+	sql := fmt.Sprintf(`DELETE FROM %s.%s WHERE %s=%s;`,
+		mysql.SystemDB, "bindsql_info", "original_sql", originSql)	//todo 这个表的主键是不是需要改变一下，不然会有问题
+	_, _, err := s.ExecRestrictedSQL(s, sql)
+	return errors.Trace(err)
+}
+
+func (s *session) AddGlobalBind(originSql string, bindSql string, defaultDb string) error {
+	sql := fmt.Sprintf(`INSERT INTO %s.%s(%s,%s,%s,%s) VALUES ('%s', '%s', '%s' , '%d');`,
+		mysql.SystemDB, "bindsql_info", originSql, bindSql, defaultDb, 0)	//todo 这个表的主键是不是需要改变一下，不然会有问题
+	_, _, err := s.ExecRestrictedSQL(s, sql)
+	return errors.Trace(err)
+}
+
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
@@ -965,8 +986,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	label := s.getSQLLabel()
 	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
-	dig := parser.Digest(sql)
-	log.Infof("%s %s", sql, dig)
+	//dig := parser.Digest(sql)
+	//log.Infof("%s %s", sql, dig)
 	compiler := executor.Compiler{Ctx: s}
 	for _, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
@@ -1195,6 +1216,10 @@ func (s *session) Close() {
 // GetSessionVars implements the context.Context interface.
 func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
+}
+
+func (s *session) GetSessionBind() *infobind.SessionBind {
+	return s.sessionBind
 }
 
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {

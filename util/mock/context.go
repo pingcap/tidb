@@ -17,6 +17,7 @@ package mock
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/infobind"
 	"sync"
 	"time"
 
@@ -41,6 +42,7 @@ type Context struct {
 	txn         wrapTxn    // mock global variable
 	Store       kv.Storage // mock global variable
 	sessionVars *variable.SessionVars
+	sessionBind *infobind.SessionBind
 	mux         sync.Mutex // fix data race in ddl test.
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -85,6 +87,10 @@ func (c *Context) ClearValue(key fmt.Stringer) {
 // GetSessionVars implements the sessionctx.Context GetSessionVars interface.
 func (c *Context) GetSessionVars() *variable.SessionVars {
 	return c.sessionVars
+}
+
+func (c *Context) GetSessionBind() *infobind.SessionBind {
+	return c.sessionBind
 }
 
 // Txn implements sessionctx.Context Txn interface.

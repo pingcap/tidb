@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/infobind"
 	"math"
 	"sort"
 	"strings"
@@ -168,10 +169,48 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
 		return b.buildIndexLookUpReader(v)
+	case *plannercore.CreateBindPlan:
+		return b.buildCreateBind(v)
+	case *plannercore.DropBindPlan:
+		return b.buildDropBind(v)
 	default:
 		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
 	}
+}
+
+func (b *executorBuilder) buildDropBind(v *plannercore.DropBindPlan) Executor {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = chunk.ZeroCapacity
+
+	e := &DropBindExec{
+		baseExecutor: base,
+		originSql: v.OriginSql,
+		defaultDb: v.DefaultDb,
+		isGlobal: v.IsGlobal,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildCreateBind(v *plannercore.CreateBindPlan) Executor {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = chunk.ZeroCapacity
+
+	databases := make([]string , 0)
+	databases = append(databases , v.DefaultDb)
+	infobind := &infobind.InfoBind{
+		Ast : v.BindStmt,
+		Database: databases,
+	}
+	e := &CreateBindExec{
+		baseExecutor: base,
+		originSql: v.OriginSql,
+		bindSql: v.BindSql,
+		defaultDb: v.DefaultDb,
+		isGlobal: v.IsGlobal,
+		infoBind: infobind,
+	}
+	return e
 }
 
 func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Executor {

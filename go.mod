@@ -3,6 +3,8 @@ module github.com/pingcap/tidb
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/StackExchange/wmi v0.0.0-20180725035823-b12b22c5341f // indirect
+	github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc // indirect
+	github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf // indirect
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470
 	github.com/boltdb/bolt v1.3.1 // indirect
@@ -54,7 +56,7 @@ require (
 	github.com/pkg/errors v0.8.0 // indirect
 	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
-	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
+	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39
 	github.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20170806203942-52369c62f446 // indirect
 	github.com/shirou/gopsutil v2.18.10+incompatible
@@ -80,6 +82,7 @@ require (
 	golang.org/x/text v0.3.0
 	golang.org/x/time v0.0.0-20181108054448-85acf8d2951c // indirect
 	google.golang.org/grpc v1.16.0
+	gopkg.in/alecthomas/kingpin.v2 v2.2.6 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4

@@ -83,6 +83,9 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(x)
+	case *ast.CreateBindStmt:
+		err = e.executeCreateBind(x)
+		err = e.executeCreateBind(x)
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -157,6 +160,15 @@ func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
+	return errors.Trace(err)
+}
+
+func (e *DDLExec) executeCreateBind(s *ast.CreateBindStmt) error {
+	if s.isGlobal {
+
+	} else {
+		e.ctx.GetSessionBind().SetBind(s.originSql , s.infoBind)
+	}
 	return errors.Trace(err)
 }
 

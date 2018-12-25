@@ -199,6 +199,10 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildSimple(node.(ast.StmtNode)), nil
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *CreateBindStmt:
+		return b.buildCreateBind(x)
+	case *DropBindStmt:
+		return b.buildDropBind(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -273,6 +277,77 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
 	return p, nil
+}
+
+func (b *PlanBuilder) buildDropBind(v *DropBindStmt) (Plan, error) {
+	p := &DropBindPlan{}
+
+	p.OriginSql = v.OriginSql
+	p.IsGlobal = v.isGlobal
+
+	p.DefaultDb = b.ctx.GetSessionVars().CurrentDB
+
+	return p, nil
+}
+
+func (b *PlanBuilder) buildCreateBind(v *CreateBindStmt) (Plan, error) {
+	p := &CreateBindPlan{}
+
+	p.OriginSql = v.originStmt.Text()
+	p.BindSql = v.bindStmt.Text()
+	p.IsGlobal = v.isGlobal
+	p.BindStmt = v.bindStmt
+	p.DefaultDb = b.ctx.GetSessionVars().CurrentDB
+
+	return p, nil
+}
+
+type CreateBindStmt struct {
+	ast.StmtNode
+
+	isGlobal bool
+
+
+	originStmt *ast.SelectStmt
+
+	bindStmt *ast.SelectStmt
+}
+
+type DropBindStmt struct {
+	ast.StmtNode
+
+	isGlobal bool
+
+	OriginSql string
+}
+
+func (n *CreateBindStmt) Accept(v ast.Visitor) (ast.Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*CreateBindStmt)
+
+	if n.originStmt != nil {
+		node,ok := n.originStmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+
+		n.originStmt = node.(*ast.SelectStmt)
+	}
+
+	if n.bindStmt != nil {
+		node,ok := n.originStmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+
+		n.bindStmt = node.(*ast.SelectStmt)
+	}
+
+	return v.Leave(n)
 }
 
 // Detect aggregate function or groupby clause.

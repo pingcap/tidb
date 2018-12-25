@@ -85,6 +85,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
+	case *CreateBindStmt:
+		p.checkBindGrammar(node)
 	default:
 		p.parentIsJoin = false
 	}
@@ -353,6 +355,10 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		return
 	}
 	p.parentIsJoin = true
+}
+
+func (p *preprocessor) checkBindGrammar(stmt *CreateBindStmt) {
+	//把玉龙的代码整合进来
 }
 
 func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
