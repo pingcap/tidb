@@ -714,7 +714,14 @@ type TableToTable struct {
 
 // Restore implements Node interface.
 func (n *TableToTable) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.OldTable.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore TableToTable.OldTable")
+	}
+	ctx.WriteKeyWord(" TO ")
+	if err := n.NewTable.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore TableToTable.NewTable")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
