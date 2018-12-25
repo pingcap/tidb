@@ -19,7 +19,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/pingcap/errors"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pb "github.com/pingcap/tipb/go-binlog"
 	"google.golang.org/grpc"

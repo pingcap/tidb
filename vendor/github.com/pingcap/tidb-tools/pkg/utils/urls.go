@@ -18,7 +18,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/pingcap/errors"
+	"github.com/juju/errors"
 )
 
 // ParseHostPortAddr returns a scheme://host:port or host:port list
