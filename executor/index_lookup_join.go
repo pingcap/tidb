@@ -72,7 +72,6 @@ type IndexLookUpJoin struct {
 
 	joinResultCh      chan *indexLookUpResult
 	joinChkResourceCh []chan *chunk.Chunk
-	closeCh           chan struct{} // closeCh add a lock for closing executor.
 }
 
 type IndexLookUpHash struct {
@@ -146,7 +145,6 @@ type innerWorker struct {
 	maxChunkSize      int
 	workerId          int
 	joinChkResourceCh []chan *chunk.Chunk
-	closeCh           chan struct{}
 	joinResultCh      chan *indexLookUpResult
 }
 
@@ -720,7 +718,6 @@ func (e *IndexLookUpHash) startWorkers(ctx context.Context) {
 	e.workerWg.Add(1)
 	go e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.workerWg)
 
-	e.closeCh = make(chan struct{})
 	e.joinResultCh = make(chan *indexLookUpResult, concurrency+1)
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
 	for i := int(0); i < concurrency; i++ {
@@ -763,7 +760,6 @@ func (e *IndexLookUpHash) Close() error {
 		e.cancelFunc()
 	}
 
-	close(e.closeCh)
 	if e.joinResultCh != nil {
 		for range e.joinResultCh {
 		}
@@ -841,7 +837,6 @@ func (e *IndexLookUpHash) newInnerWorker(taskCh chan *lookUpJoinTask, workerId i
 			joiner:            e.joiner,
 			maxChunkSize:      e.maxChunkSize,
 			workerId:          workerId,
-			closeCh:           e.closeCh,
 			joinChkResourceCh: e.joinChkResourceCh,
 			joinResultCh:      e.joinResultCh,
 		},
@@ -858,8 +853,6 @@ func (iw *innerHashWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	}
 	for {
 		select {
-		case <-iw.closeCh:
-			return
 		case <-ctx.Done():
 			return
 		case task, ok = <-iw.taskCh:
@@ -890,8 +883,6 @@ func (iw *innerHashWorker) getNewJoinResult() (bool, *indexLookUpResult) {
 	}
 	ok := true
 	select {
-	case <-iw.closeCh:
-		ok = false
 	case joinResult.chk, ok = <-iw.joinChkResourceCh[iw.workerId]:
 	}
 	return ok, joinResult
