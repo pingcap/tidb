@@ -1,157 +1,158 @@
 package infobind
 
 import (
-	"context"
-	"fmt"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/prometheus/common/log"
-	"strings"
 	"time"
 )
 
-type InfoBind struct {
-	ast      ast.StmtNode
-	database []string
+var _ Manager = (*AstBind)(nil)
+
+// User implements privilege.Manager interface.
+// This is used to update or check ast.
+type AstBind struct {
+	Parser         *parser.Parser
+	LastUpdateTime time.Time
+	Is 				infoshema.InfoSchema
+	*Handle
 }
 
-type Handle struct {
-	cache          *kvcache.SimpleMap
-	lastUpdateTime time.Time
-	parser         *parser.Parser
+type keyType int
+
+func (k keyType) String() string {
+	return "bind-key"
 }
 
-type BindStat struct {
-	bindCache *kvcache.SimpleMap
-}
-type tablesBindRecord struct {
-	originalSql string
-	bindSql     string
-	hashCode    []byte
-	db          string
-	status     int64
-	createTime  time.Time
-	updateTime  time.Time
+// Manager is the interface for providing bind related operations.
+type Manager interface {
+	GetMatchedAst(key string) *BindData
+	DeleteInvalidBind(key string)
+	MatchHint(originalNode, hintedNode ast.Node) bool
 }
 
-func NewHandle() *Handle {
-	return &Handle{
-		cache:          kvcache.NewSimpleMapCache(),
-		lastUpdateTime: time.Now(),
-		parser:         parser.New(),
+const key keyType = 0
+
+// BindManager binds Manager to context.
+func BindBinderManager(ctx sessionctx.Context, pc Manager) {
+	ctx.SetValue(key, pc)
+}
+
+// GetBindManager gets Checker from context.
+func GetBindManager(ctx sessionctx.Context) Manager {
+	if v, ok := ctx.Value(key).(Manager); ok {
+		return v
 	}
+	return nil
 }
-
-func (h *Handle) Get(key string) *InfoBind {
-	value, ok := h.cache.Get(key)
-	if ok {
-		return value.(*InfoBind)
+func (b *AstBind) GetMatchedAst(key string) *BindData {
+	bindInfo := b.Handle.Get()
+	if bindData, ok := bindInfo.cache[key]; ok {
+		return bindData
 	}
 	return nil
 }
 
-func (h *Handle) Put(key string, value *InfoBind)  {
-	 h.cache.Put(key, value)
+func (b *AstBind) DeleteInvalidBind(hash string) {
+	bindInfo := b.Handle.Get()
+	delete(bindInfo.cache, hash)
+	b.Handle.bind.Store(bindInfo)
 }
 
-func (h *Handle) Delete(key string) {
-	h.cache.Delete(key)
+func (b *AstBind) dataSourceBind(originalNode, hintedNode *ast.TableName) bool {
+	if len(hintedNode.IndexHints) > 0 {
+		originalNode.IndexHints = append(originalNode.IndexHints, hintedNode.IndexHints...)
+	}
+	return true
 }
 
-func (h *Handle) Update(sctx sessionctx.Context, fullLoad bool) error {
-	ctx := context.Background()
-	var sql string
-	if fullLoad {
-		sql = fmt.Sprintf("select * from mysql.bind_info")
-	} else {
-		sql = fmt.Sprintf("select * from mysql.bind_info where update_time > %s", h.lastUpdateTime)
+func (b *AstBind) joinBind(originalNode, hintedNode *ast.Join) bool {
+	if originalNode.Right == nil {
+		if hintedNode.Right != nil {
+			return false
+		}
+		return b.resultSetNodeBind(originalNode.Left, hintedNode.Left)
 	}
-	tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rs := tmp[0]
-	defer terror.Call(rs.Close)
 
-	fs := rs.Fields()
-	chk := rs.NewChunk()
-	for {
-		err = rs.Next(context.TODO(), chk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if chk.NumRows() == 0 {
-			return nil
-		}
-		it := chunk.NewIterator4Chunk(chk)
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			err = h.decodeBindTableRow(sctx, row, fs)
-			if err != nil {
-				continue
+	ok := b.resultSetNodeBind(originalNode.Left, hintedNode.Left)
+	if !ok {
+		return false
+	}
+
+	ok = b.resultSetNodeBind(originalNode.Right, hintedNode.Right)
+	return ok
+
+}
+
+func (b *AstBind) resultSetNodeBind(originalNode, hintedNode ast.ResultSetNode) bool {
+	ok := false
+	switch x := originalNode.(type) {
+	case *ast.Join:
+		if join, iok := hintedNode.(*ast.Join); iok {
+			iok = b.joinBind(x, join)
+			if iok {
+				ok = true
 			}
 		}
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
-	}
-	return nil
-}
-func (h *Handle) ParseSQL(sctx sessionctx.Context, sql string) ([]ast.StmtNode, error){
-	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
-	h.parser.SetSQLMode(sctx.GetSessionVars().SQLMode)
-	h.parser.EnableWindowFunc(sctx.GetSessionVars().EnableWindowFunction)
-	return  h.parser.Parse(sql, charset, collation)
-}
-
-func (h *Handle) decodeBindTableRow(sctx sessionctx.Context, row chunk.Row, fs []*ast.ResultField) error {
-	var value tablesBindRecord
-	for i, f := range fs {
-		switch {
-		case f.ColumnAsName.L == "original_sql":
-			value.originalSql = row.GetString(i)
-		case f.ColumnAsName.L == "bind_sql":
-			value.bindSql = row.GetString(i)
-		case f.ColumnAsName.L == "db":
-			value.db = row.GetString(i)
-		case f.ColumnAsName.L == "status":
-			value.status = row.GetInt64(i)
-		case f.ColumnAsName.L == "create_time":
-			var err error
-			value.createTime, err = row.GetTime(i).Time.GoTime(time.Local)
-			if err != nil {
-				return errors.Trace(err)
+	case *ast.TableSource:
+		ts, iok := hintedNode.(*ast.TableSource)
+		if !iok {
+			break
+		}
+		switch v := x.Source.(type) {
+		case *ast.SelectStmt:
+			if value, iok := ts.Source.(*ast.SelectStmt); iok {
+				return b.selectBind(v, value)
 			}
-		case f.ColumnAsName.L == "update_time":
-			var err error
-			value.updateTime, err = row.GetTime(i).Time.GoTime(time.Local)
-			if err != nil {
-				return errors.Trace(err)
+			break
+		case *ast.UnionStmt:
+			ok = true
+		case *ast.TableName:
+			value, iok := ts.Source.(*ast.TableName)
+			if iok {
+				if iok := b.dataSourceBind(v, value); iok {
+					ok = true
+				}
 			}
 		}
-	}
-
-	hash := parser.Digest(value.originalSql)
-	if value.status == 1 {
-		stmtNodes, err := h.ParseSQL(sctx, value.originalSql)
-		if err != nil {
-			log.Warnf("parse error:\n%v\n%s",  err, value.originalSql)
-			return  errors.Trace(err)
+	case *ast.SelectStmt:
+		if sel, iok := hintedNode.(*ast.SelectStmt); iok {
+			return b.selectBind(x, sel)
 		}
-
-		h.Put(hash, &InfoBind{
-			ast:      stmtNodes[0],
-			database: strings.Split(value.db, ","),
-		})
-	} else {
-		h.Delete(hash)
+	case *ast.UnionStmt:
+		ok = true
+	default:
 	}
-	if value.updateTime.After(h.lastUpdateTime) {
-		h.lastUpdateTime = value.updateTime
-	}
+	return ok
+}
 
-	return nil
+func (b *AstBind) selectionBind(where ast.ExprNode, agMapper map[*ast.AggregateFuncExpr]int) bool {
+	return true
+}
+
+func (b *AstBind) selectBind(originalNode, hintedNode *ast.SelectStmt) bool {
+	if originalNode.TableHints != nil {
+		originalNode.TableHints = append(originalNode.TableHints, hintedNode.TableHints...)
+	}
+	if originalNode.From != nil {
+		if hintedNode.From == nil {
+			return false
+		}
+		b.resultSetNodeBind(originalNode.From.TableRefs, hintedNode.From.TableRefs)
+	}
+	if originalNode.Where != nil {
+		return  b.selectionBind(originalNode.Where, nil)
+	}
+	return true
+}
+
+func (b *AstBind) MatchHint(originalNode, hintedNode ast.Node) bool {
+
+	switch x := originalNode.(type) {
+	case *ast.SelectStmt:
+		if value, ok := hintedNode.(*ast.SelectStmt); ok {
+			return b.selectBind(x, value)
+		}
+	}
+	return false
 }
