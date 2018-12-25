@@ -34,7 +34,7 @@ type CreateBindExec struct {
 
 	isGlobal bool
 
-	infoBind *infobind.InfoBind
+	bindData *infobind.BindData
 }
 
 // Next implements the Executor Next interface.
@@ -55,7 +55,7 @@ func (e *CreateBindExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if sessionBind.GetBind(e.originSql , e.defaultDb) != nil {
 		return errors.Trace(errors.New(fmt.Sprintf("%s bind alreay exist" , e.originSql)))
 	}
-	sessionBind.SetBind(e.originSql , e.infoBind)
+	sessionBind.SetBind(e.originSql , e.bindData)
 	return nil
 }
 

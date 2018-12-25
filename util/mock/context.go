@@ -226,6 +226,7 @@ func NewContext() *Context {
 	sctx := &Context{
 		values:      make(map[fmt.Stringer]interface{}),
 		sessionVars: variable.NewSessionVars(),
+		sessionBind: infobind.NewSessionBind(),
 		ctx:         ctx,
 		cancel:      cancel,
 	}

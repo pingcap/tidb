@@ -2,19 +2,23 @@ package infobind
 
 type SessionBind struct {
 	GlobalBindAccessor GlobalBindAccessor
-	handle				Handle
+	Handle             *Handle
 }
 
-func (s *SessionBind) SetBind(originSql string , infoBind *InfoBind){
-	s.handle.Put(originSql , infoBind)
+func NewSessionBind() *SessionBind {
+	return &SessionBind{}
+}
+
+func (s *SessionBind) SetBind(originSql string , bindData *BindData){
+	s.Handle.Get().cache[originSql] = bindData
 }
 
 func (s *SessionBind) RemoveBind(originSql string) {
-	s.handle.Delete(originSql)	//todo 这个地方是不是有问题，是否应该加上db，是否需要提供一个原子性的删除，加个锁啥的
+	delete(s.Handle.Get().cache,originSql) //todo 这个地方是不是有问题，是否应该加上db，是否需要提供一个原子性的删除，加个锁啥的
 }
 
-func (s *SessionBind) GetBind(originSql string, defaultDb string) *InfoBind {
-	return s.handle.Get(originSql)	//todo 这个地方是不是有问题，是否应该加上db
+func (s *SessionBind) GetBind(originSql string, defaultDb string) *BindData {
+	return s.Handle.Get().cache[originSql] //todo 这个地方是不是有问题，是否应该加上db
 }
 
 type GlobalBindAccessor interface {

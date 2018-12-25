@@ -198,17 +198,17 @@ func (b *executorBuilder) buildCreateBind(v *plannercore.CreateBindPlan) Executo
 
 	databases := make([]string , 0)
 	databases = append(databases , v.DefaultDb)
-	infobind := &infobind.InfoBind{
+	bindData := &infobind.BindData{
 		Ast : v.BindStmt,
-		Database: databases,
+		DB: databases,
 	}
 	e := &CreateBindExec{
 		baseExecutor: base,
-		originSql: v.OriginSql,
-		bindSql: v.BindSql,
-		defaultDb: v.DefaultDb,
-		isGlobal: v.IsGlobal,
-		infoBind: infobind,
+		originSql:    v.OriginSql,
+		bindSql:      v.BindSql,
+		defaultDb:    v.DefaultDb,
+		isGlobal:     v.IsGlobal,
+		bindData:     bindData,
 	}
 	return e
 }

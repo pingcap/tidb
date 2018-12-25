@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/parser"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -781,11 +782,14 @@ func (do *Domain) BindHandle() *infobind.Handle {
 
 // LoadBindLoop create a goroutine loads BindInfo in a loop, it
 // should be called only once in BootstrapSession.
-func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
+func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.bindHandle = infobind.NewHandle()
 
-	err := do.bindHandle.Update(ctx, true)
+	var err error
+	lastUpTime, _ := time.ParseInLocation("2006-01-02 15:04:05.000000", "1970-01-01 00:00:01.000000", time.Local)
+
+	err, lastUpTime = do.bindHandle.Update(ctx, lastUpTime, parser)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -799,7 +803,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context) error {
 				return
 			case <-time.After(duration):
 			}
-			err := do.bindHandle.Update(ctx, false)
+			err, lastUpTime = do.bindHandle.Update(ctx, lastUpTime, parser)
 			if err != nil {
 				log.Error("[domain] load bindinfo fail:", errors.ErrorStack(err))
 			} else {

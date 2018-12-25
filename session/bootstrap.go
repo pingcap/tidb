@@ -211,11 +211,11 @@ const (
 	);`
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache
-	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bindsql_info (
-		original_sql VARCHAR(4096) NOT NULL,
-		bind_sql VARCHAR(4096) NOT NULL,
-		db VARCHAR(4096) NOT NULL,
-		status BOOL,
+	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
+		original_sql VARCHAR(1024) NOT NULL,
+		bind_sql VARCHAR(1024) NOT NULL,
+		db VARCHAR(1024) NOT NULL,
+		status int(10) NOT NULL DEFAULT 1,
 		create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE index orisql (original_sql)
