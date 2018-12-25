@@ -32,6 +32,16 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
 		}, []string{LblSQLType})
 
+	// StmtDurationHistogram records the time of statement running.
+	StmtDurationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "stmt_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of handled stmt.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
+		}, []string{LblType})
+
 	QueryTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
