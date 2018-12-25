@@ -1794,10 +1794,10 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"drop index if exists a on db.`tb-ttb`", true, "DROP INDEX IF EXISTS `a` ON `db`.`tb-ttb`"},
 
 		// for rename table statement
-		{"RENAME TABLE t TO t1", true, ""},
-		{"RENAME TABLE t t1", false, ""},
-		{"RENAME TABLE d.t TO d1.t1", true, ""},
-		{"RENAME TABLE t1 TO t2, t3 TO t4", true, ""},
+		{"RENAME TABLE t TO t1", true, "RENAME TABLE `t` TO `t1`"},
+		{"RENAME TABLE t t1", false, "RENAME TABLE `t` TO `t1`"},
+		{"RENAME TABLE d.t TO d1.t1", true, "RENAME TABLE `d`.`t` TO `d1`.`t1`"},
+		{"RENAME TABLE t1 TO t2, t3 TO t4", true, "RENAME TABLE `t1` TO `t2`, `t3` TO `t4`"},
 
 		// for truncate statement
 		{"TRUNCATE TABLE t1", true, ""},
