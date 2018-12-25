@@ -10480,6 +10480,7 @@ yynewstate:
 		{
 			yyerrok()
 			parser.lastErrorAsWarn()
+			parser.yyVAL.item = nil
 		}
 	case 979:
 		{
