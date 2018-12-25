@@ -240,11 +240,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a",
-			best: "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.a,t3.a)",
+			best: "MergeInnerJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t3.a)->TableReader(Table(t))}(t1.a,t2.a)->Projection",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.b = t3.a",
-			best: "LeftHashJoin{MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)->TableReader(Table(t))}(t1.b,t3.a)",
+			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.b,t3.a)->TableReader(Table(t))}(t1.a,t2.a)->Projection",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
@@ -269,7 +269,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.b = t2.b join t t3 on t1.b = t3.b",
-			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.b,t2.b)->TableReader(Table(t))}(t1.b,t3.b)",
+			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.b,t3.b)->TableReader(Table(t))}(t1.b,t2.b)->Projection",
 		},
 		{
 			sql:  "select * from t t1 join t t2 on t1.a = t2.a order by t1.a",

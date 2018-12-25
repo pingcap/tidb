@@ -58,7 +58,7 @@ var optRuleList = []logicalOptRule{
 	&partitionProcessor{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
-	&joinReOrderGreedySolver{},
+	&joinReOrderSolver{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.

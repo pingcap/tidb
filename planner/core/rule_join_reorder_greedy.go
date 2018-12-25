@@ -48,7 +48,7 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	return group, eqEdges, otherConds
 }
 
-type joinReOrderGreedySolver struct {
+type joinReOrderSolver struct {
 }
 
 type joinReorderGreedySingleGroupSolver struct {
@@ -196,11 +196,11 @@ func (s *joinReorderGreedySingleGroupSolver) newCartesianJoin(lChild, rChild Log
 	return join
 }
 
-func (s *joinReOrderGreedySolver) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (s *joinReOrderSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	return s.optimizeRecursive(p.context(), p)
 }
 
-func (s *joinReOrderGreedySolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
+func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
 	var err error
 	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
@@ -210,17 +210,29 @@ func (s *joinReOrderGreedySolver) optimizeRecursive(ctx sessionctx.Context, p Lo
 				return nil, err
 			}
 		}
-		groupSolver := &joinReorderGreedySingleGroupSolver{
-			ctx:          ctx,
-			curJoinGroup: curJoinGroup,
-			eqEdges:      eqEdges,
-			otherConds:   otherConds,
+		if len(curJoinGroup) > 10 {
+			greedySolver := &joinReorderGreedySingleGroupSolver{
+				ctx:          ctx,
+				curJoinGroup: curJoinGroup,
+				eqEdges:      eqEdges,
+				otherConds:   otherConds,
+			}
+			p, err = greedySolver.solve()
+			if err != nil {
+				return nil, err
+			}
+			return p, nil
+		} else {
+			dpSolver := &joinReorderDPSolver{
+				ctx: ctx,
+			}
+			dpSolver.newJoin = dpSolver.newJoinWithConds
+			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges), otherConds)
+			if err != nil {
+				return nil, err
+			}
+			return p, nil
 		}
-		p, err = groupSolver.solve()
-		if err != nil {
-			return nil, err
-		}
-		return p, nil
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {

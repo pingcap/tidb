@@ -56,7 +56,7 @@ func (mj *mockLogicalJoin) deriveStats() (*property.StatsInfo, error) {
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
 
-func (s *testJoinReorderDPSuite) newMockJoin(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction) LogicalPlan {
+func (s *testJoinReorderDPSuite) newMockJoin(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, _ []expression.Expression) LogicalPlan {
 	retJoin := mockLogicalJoin{}.init(s.ctx)
 	retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
 	retJoin.statsMap = s.statsMap
@@ -192,7 +192,7 @@ func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 		ctx:     s.ctx,
 		newJoin: s.newMockJoin,
 	}
-	result, err := solver.solve(joinGroups, eqConds)
+	result, err := solver.solve(joinGroups, eqConds, nil)
 	c.Assert(err, IsNil)
 	c.Assert(s.planToString(result), Equals, "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}")
 }
@@ -207,7 +207,7 @@ func (s *testJoinReorderDPSuite) TestDPReorderAllCartesian(c *C) {
 		ctx:     s.ctx,
 		newJoin: s.newMockJoin,
 	}
-	result, err := solver.solve(joinGroup, nil)
+	result, err := solver.solve(joinGroup, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(s.planToString(result), Equals, "MockJoin{MockJoin{a, b}, MockJoin{c, d}}")
 }
