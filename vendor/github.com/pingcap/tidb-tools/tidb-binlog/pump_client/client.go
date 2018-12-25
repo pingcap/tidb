@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/mvcc/mvccpb"
-	"github.com/pingcap/errors"
+	"github.com/juju/errors"
 	pd "github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb-tools/pkg/etcd"
 	"github.com/pingcap/tidb-tools/pkg/utils"
