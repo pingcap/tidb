@@ -324,6 +324,7 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
+// May return rootTask/CopTask(CopSingleReadTaskType, CopDoubleReadTaskType).
 func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *accessPath) (task task, err error) {
 	idx := path.index
 	is := PhysicalIndexScan{
@@ -417,7 +418,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
-	// May return rootTask/CopTask(CopSingleReadTaskType, CopDoubleReadTaskType).
 	return task, nil
 }
 
@@ -503,6 +503,7 @@ func splitIndexFilterConditions(conditions []expression.Expression, indexColumns
 }
 
 // convertToTableScan converts the DataSource to table scan.
+// May return rootTask/CopTask(CopSingleReadTaskType).
 func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *accessPath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
 	if prop.TaskTp == property.CopDoubleReadTaskType {
@@ -568,7 +569,6 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
 	}
-	// May return rootTask/CopTask(CopSingleReadTaskType).
 	return task, nil
 }
 
