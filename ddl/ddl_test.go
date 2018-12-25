@@ -63,7 +63,9 @@ func testNewDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 func getSchemaVer(c *C, ctx sessionctx.Context) int64 {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	m := meta.NewMeta(ctx.Txn(true))
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
 	ver, err := m.GetSchemaVersion()
 	c.Assert(err, IsNil)
 	return ver
@@ -91,7 +93,9 @@ func checkHistoryJob(c *C, job *model.Job) {
 }
 
 func checkHistoryJobArgs(c *C, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	t := meta.NewMeta(ctx.Txn(true))
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	t := meta.NewMeta(txn)
 	historyJob, err := t.GetHistoryDDLJob(id)
 	c.Assert(err, IsNil)
 	c.Assert(historyJob.BinlogInfo.FinishedTS, Greater, uint64(0))

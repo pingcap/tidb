@@ -193,7 +193,10 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn := sctx.Txn(true)
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	version := txn.StartTS()
 	var sql string
 	// If the count is less than 0, then we do not want to update the modify count and count.
