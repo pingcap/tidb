@@ -663,7 +663,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 		}
 		for i, af := range e.PartialAggFuncs {
 			if err := (af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk)); err != nil {
-				return errors.Trace(err)
+				return err
 			}
 		}
 		if chk.NumRows() == e.maxChunkSize {

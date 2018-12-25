@@ -122,7 +122,7 @@ func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	for _, child := range p.Children() {
 		newChild, err := a.optimize(child)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		newChildren = append(newChildren, newChild)
 	}

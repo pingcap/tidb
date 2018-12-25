@@ -148,7 +148,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	// cached start ts to construct DAG.
 	_, err := e.innerCtx.readerBuilder.getStartTS()
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	err = e.children[0].Open(ctx)
