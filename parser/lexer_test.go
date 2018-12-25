@@ -78,6 +78,10 @@ func (s *testLexerSuite) TestAtLeadingIdentifier(c *C) {
 		{"@@session.test", doubleAtIdentifier},
 		{"@@local.test", doubleAtIdentifier},
 		{"@@test", doubleAtIdentifier},
+		{"@@global.`test`", doubleAtIdentifier},
+		{"@@session.`test`", doubleAtIdentifier},
+		{"@@local.`test`", doubleAtIdentifier},
+		{"@@`test`", doubleAtIdentifier},
 	}
 	runTest(c, table)
 }
@@ -346,6 +350,13 @@ func (s *testLexerSuite) TestIllegal(c *C) {
 		{"'\\n", 0},
 		{"'\\", 0},
 		{fmt.Sprintf("%c", 0), invalid},
+		{"`", 0},
+		{`"`, 0},
+		{"@`", 0},
+		{"@'", 0},
+		{`@"`, 0},
+		{"@@`", 0},
+		{"@@global.`", 0},
 	}
 	runTest(c, table)
 }
