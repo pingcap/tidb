@@ -265,10 +265,10 @@ func (s *testSuite) TestScan(c *C) {
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
 	kvIndex := tables.NewIndex(tb.Meta(), indices[0].Meta())
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
+	idxRows, _, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
-	idxRows, nextVals, err = ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 1)
+	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 1)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1})
 	idxRows, nextVals, err = ScanIndexData(sc, txn, kvIndex, nextVals, 1)
