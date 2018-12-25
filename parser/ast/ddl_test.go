@@ -118,6 +118,21 @@ func (ts *testDDLSuite) TestDDLIndexOption(c *C) {
 	RunNodeRestoreTest(c, testCases, "CREATE INDEX idx ON t (a) %s", extractNodeFunc)
 }
 
+func (ts *testDDLSuite) TestDDLReferenceDefRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"REFERENCES parent(id) ON DELETE CASCADE ON UPDATE RESTRICT", "REFERENCES `parent`(`id`) ON DELETE CASCADE ON UPDATE RESTRICT"},
+		{"REFERENCES parent(id) ON DELETE CASCADE", "REFERENCES `parent`(`id`) ON DELETE CASCADE"},
+		{"REFERENCES parent(id,hello) ON DELETE CASCADE", "REFERENCES `parent`(`id`, `hello`) ON DELETE CASCADE"},
+		{"REFERENCES parent(id,hello(12)) ON DELETE CASCADE", "REFERENCES `parent`(`id`, `hello`(12)) ON DELETE CASCADE"},
+		{"REFERENCES parent(id(8),hello(12)) ON DELETE CASCADE", "REFERENCES `parent`(`id`(8), `hello`(12)) ON DELETE CASCADE"},
+		{"REFERENCES parent(id)", "REFERENCES `parent`(`id`)"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*CreateTableStmt).Constraints[1].Refer
+	}
+	RunNodeRestoreTest(c, testCases, "CREATE TABLE child (id INT, parent_id INT, INDEX par_ind (parent_id), FOREIGN KEY (parent_id) %s)", extractNodeFunc)
+}
+
 func (ts *testDDLSuite) TestDDLTruncateTableStmtRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"truncate t1", "TRUNCATE TABLE `t1`"},
