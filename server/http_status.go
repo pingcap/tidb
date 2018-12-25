@@ -75,6 +75,7 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{tikvHandlerTool, opStopTableScatter})
 		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandlerTool, opTableDiskUsage})
 		router.Handle("/regions/meta", regionHandler{tikvHandlerTool}).Name("RegionsMeta")
+		router.Handle("/regions/hot", regionHandler{tikvHandlerTool}).Name("RegionHot")
 		router.Handle("/regions/{regionID}", regionHandler{tikvHandlerTool})
 		router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})

@@ -61,7 +61,7 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 func parseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := charset.GetDefaultCharsetAndCollate()
-	stmts, err := parser.New().Parse(expr, charset, collation)
+	stmts, _, err := parser.New().Parse(expr, charset, collation)
 	if err == nil {
 		node = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	}
