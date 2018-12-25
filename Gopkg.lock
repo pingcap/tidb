@@ -100,13 +100,9 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:128a519aa9fe6a6df854f201c679edc9fa57784d1ad49ada52860b9cca697ff7"
+  digest = "1:f18dbc529543fe5fd5294f8385ea1f71681be964c43461f5f45335bb51ba83ae"
   name = "github.com/etcd-io/gofail"
-  packages = [
-    ".",
-    "code",
-    "runtime",
-  ]
+  packages = ["runtime"]
   pruneopts = "NUT"
   revision = "51ce9a71510a58bad5ae66ddd278ef28762a1550"
 
@@ -285,8 +281,19 @@
   revision = "eed819b6999186a4bf2d25255f8d61b371a450d6"
 
 [[projects]]
-  branch = "master"
-  digest = "1:14d83225e335cfa449b1f74d03c03ed70db64bf6af83a6e04c43e6e0021d6b94"
+  digest = "1:2d85e7b44d493849cfb9ece0547db12b359e2489d0b22e9a4e1420427ec94e03"
+  name = "github.com/pingcap/tidb-tools"
+  packages = [
+    "pkg/etcd",
+    "pkg/utils",
+    "tidb-binlog/node",
+    "tidb-binlog/pump_client",
+  ]
+  pruneopts = "NUT"
+  revision = "378eff7f95ef5a93e56efb576bb45d385e883b42"
+
+[[projects]]
+  digest = "1:9b8c09ab4ba145585f816352ab42c67da7450cfbe575cba8c4c2a6537ca534c8"
   name = "github.com/pingcap/tipb"
   packages = [
     "go-binlog",
@@ -294,7 +301,7 @@
     "sharedbytes",
   ]
   pruneopts = "NUT"
-  revision = "cacfda7d5a5e341d8cedef5fe22e11ea57b1bb96"
+  revision = "2d5073e5521a10f8db2adc0eaab2c46ca0a151d9"
 
 [[projects]]
   digest = "1:1ef3c4d6e78616bd3d1b5b7d8899febb9aa1b83d3373fbbdc2804408c7977b57"
@@ -493,7 +500,6 @@
     "github.com/cznic/sortutil",
     "github.com/cznic/strutil",
     "github.com/cznic/y",
-    "github.com/etcd-io/gofail",
     "github.com/etcd-io/gofail/runtime",
     "github.com/go-sql-driver/mysql",
     "github.com/golang/protobuf/proto",
@@ -504,6 +510,7 @@
     "github.com/grpc-ecosystem/go-grpc-prometheus",
     "github.com/juju/errors",
     "github.com/ngaut/pools",
+    "github.com/ngaut/sync2",
     "github.com/opentracing/opentracing-go",
     "github.com/pingcap/check",
     "github.com/pingcap/goleveldb/leveldb",
@@ -519,6 +526,7 @@
     "github.com/pingcap/kvproto/pkg/metapb",
     "github.com/pingcap/kvproto/pkg/tikvpb",
     "github.com/pingcap/pd/pd-client",
+    "github.com/pingcap/tidb-tools/tidb-binlog/pump_client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
     "github.com/prometheus/client_golang/prometheus",
