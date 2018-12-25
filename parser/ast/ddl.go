@@ -673,7 +673,16 @@ type RenameTableStmt struct {
 
 // Restore implements Node interface.
 func (n *RenameTableStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("RENAME TABLE ")
+	for index, table2table := range n.TableToTables {
+		if index != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := table2table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore RenameTableStmt.TableToTables")
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
