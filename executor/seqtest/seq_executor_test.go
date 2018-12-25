@@ -28,9 +28,12 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	gofail "github.com/pingcap/gofail/runtime"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -41,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -715,4 +719,108 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 		placeholders = append(placeholders, "(?)")
 	}
 	return "insert into t values " + strings.Join(placeholders, ","), params
+}
+
+type checkPrioClient struct {
+	tikv.Client
+	priority pb.CommandPri
+}
+
+func (c *checkPrioClient) setCheckPriority(priority pb.CommandPri) {
+	atomic.StoreInt32((*int32)(&c.priority), int32(priority))
+}
+
+func (c *checkPrioClient) getCheckPriority() pb.CommandPri {
+	return (pb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
+}
+
+func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
+	switch req.Type {
+	case tikvrpc.CmdCop:
+		if c.getCheckPriority() != req.Priority {
+			return nil, errors.New("fail to set priority")
+		}
+	}
+	return resp, err
+}
+
+type seqTestSuite1 struct {
+	store kv.Storage
+	dom   *domain.Domain
+	cli   *checkPrioClient
+}
+
+func (s *seqTestSuite1) SetUpSuite(c *C) {
+	cli := &checkPrioClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+	s.cli = cli
+
+	var err error
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *seqTestSuite1) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("create table t1 (id int, v int, unique index i_id (id))")
+	defer tk.MustExec("drop table t")
+	defer tk.MustExec("drop table t1")
+	tk.MustExec("insert into t values (1)")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
+
+	cli := s.cli
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
+
+	cli.setCheckPriority(pb.CommandPri_Normal)
+	tk.MustQuery("select count(*) from t")
+	tk.MustExec("update t set id = 3")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t select * from t limit 2")
+	tk.MustExec("delete from t")
+
+	// Insert some data to make sure plan build IndexLookup for t.
+	tk.MustExec("insert into t values (1), (2)")
+
+	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
+	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
+	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
+	tk.MustExec("delete from t where id = 2")
+	tk.MustExec("update t set id = 2 where id = 1")
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustQuery("select count(*) from t")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (3)")
+
+	// Test priority specified by SQL statement.
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustQuery("select HIGH_PRIORITY * from t")
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 }

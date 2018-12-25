@@ -2298,10 +2298,9 @@ func (s *testSuite) TestIssue4024(c *C) {
 }
 
 const (
-	checkRequestOff          = 0
-	checkRequestPriority     = 1
-	checkRequestSyncLog      = 3
-	checkDDLAddIndexPriority = 4
+	checkRequestOff = iota
+	checkRequestSyncLog
+	checkDDLAddIndexPriority
 )
 
 type checkRequestClient struct {
@@ -2328,14 +2327,7 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
 	c.mu.RUnlock()
-	if checkFlags == checkRequestPriority {
-		switch req.Type {
-		case tikvrpc.CmdCop:
-			if c.getCheckPriority() != req.Priority {
-				return nil, errors.New("fail to set priority")
-			}
-		}
-	} else if checkFlags == checkRequestSyncLog {
+	if checkFlags == checkRequestSyncLog {
 		switch req.Type {
 		case tikvrpc.CmdPrewrite, tikvrpc.CmdCommit:
 			c.mu.RLock()
@@ -2477,69 +2469,6 @@ func (s *testSuite1) TestAlterTableComment(c *C) {
 	tk.MustExec("alter table `t_1` comment 'table t comment';")
 	result = tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';")
 	result.Check(testkit.Rows("table t comment"))
-}
-
-func (s *testSuite1) TestCoprocessorPriority(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key)")
-	tk.MustExec("create table t1 (id int, v int, unique index i_id (id))")
-	defer tk.MustExec("drop table t")
-	defer tk.MustExec("drop table t1")
-	tk.MustExec("insert into t values (1)")
-
-	// Insert some data to make sure plan build IndexLookup for t1.
-	for i := 0; i < 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
-	}
-
-	cli := s.cli
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestPriority
-	cli.mu.Unlock()
-
-	cli.setCheckPriority(pb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
-
-	cli.setCheckPriority(pb.CommandPri_Normal)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("update t set id = 3")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t select * from t limit 2")
-	tk.MustExec("delete from t")
-
-	// Insert some data to make sure plan build IndexLookup for t.
-	tk.MustExec("insert into t values (1), (2)")
-
-	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
-	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
-	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
-
-	cli.setCheckPriority(pb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
-
-	cli.setCheckPriority(pb.CommandPri_Low)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (3)")
-
-	// TODO: Those are not point get, but they should be high priority.
-	// cli.priority = pb.CommandPri_High
-	// tk.MustExec("delete from t where id = 2")
-	// tk.MustExec("update t set id = 2 where id = 1")
-
-	// Test priority specified by SQL statement.
-	cli.setCheckPriority(pb.CommandPri_High)
-	tk.MustQuery("select HIGH_PRIORITY * from t")
-
-	cli.setCheckPriority(pb.CommandPri_Low)
-	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
 }
 
 func (s *testSuite) TestTimezonePushDown(c *C) {
