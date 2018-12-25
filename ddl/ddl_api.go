@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
+	log "github.com/sirupsen/logrus"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -481,9 +482,14 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	// For timestamp Col, if is not set default value or not set null, use current timestamp.
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
-			c.SetDefaultValue(types.ZeroDatetimeStr)
+			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
+				log.Error(errors.ErrorStack(err))
+			}
 		} else {
-			c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp))
+			if err := c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp)); err != nil {
+				log.Error(errors.ErrorStack(err))
+			}
+
 		}
 	}
 }
@@ -1179,7 +1185,9 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		}
 	}
 
-	setDefaultTableCharsetAndCollation(tbInfo)
+	if err := setDefaultTableCharsetAndCollation(tbInfo); err != nil {
+		log.Error(errors.ErrorStack(err))
+	}
 	return nil
 }
 
