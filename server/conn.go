@@ -625,7 +625,11 @@ func (cc *clientConn) dispatch(data []byte) error {
 	cc.lastCmd = hack.String(data)
 	token := cc.server.getToken()
 	defer func() {
-		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
+		stmtType := cc.ctx.ShowProcess().StmtType
+		if stmtType != "" {
+			metrics.StmtDurationHistogram.WithLabelValues(stmtType).Observe(time.Since(t).Seconds())
+		}
+		cc.ctx.SetProcessInfo("", t, mysql.ComSleep, "")
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
@@ -637,9 +641,9 @@ func (cc *clientConn) dispatch(data []byte) error {
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
-		cc.ctx.SetProcessInfo("", t, cmd)
+		cc.ctx.SetProcessInfo("", t, cmd, "")
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
+		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd, "")
 	}
 
 	switch cmd {

@@ -44,7 +44,7 @@ import (
 )
 
 type processinfoSetter interface {
-	SetProcessInfo(string, time.Time, byte)
+	SetProcessInfo(string, time.Time, byte, string)
 }
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
@@ -155,6 +155,10 @@ func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
+func (a *ExecStmt) rootStmt() string {
+	return GetStmtLabel(a.StmtNode)
+}
+
 // IsPrepared returns true if stmt is a prepare statement.
 func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
@@ -227,6 +231,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
+		stmtType := a.rootStmt()
 		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
 			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
 				// Use SecureText to avoid leak password information.
@@ -234,7 +239,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 			}
 		}
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd)
+		pi.SetProcessInfo(sql, time.Now(), cmd, stmtType)
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
