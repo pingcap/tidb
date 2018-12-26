@@ -234,6 +234,21 @@ func (tc *testExpressionsSuite) TestDefaultExpr(c *C) {
 	RunNodeRestoreTest(c, testCases, "insert into t values(%s)", extractNodeFunc)
 }
 
+func (tc *testExpressionsSuite) TestPatternInExprRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"'a' in ('b')", "'a' IN ('b')"},
+		{"2 in (0,3,7)", "2 IN (0,3,7)"},
+		{"2 not in (0,3,7)", "2 NOT IN (0,3,7)"},
+		// TODO: Test for subquery when it's implemented
+		// 2 in (select 2)
+		// 2 not in (select 2)
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Fields.Fields[0].Expr
+	}
+	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+}
+
 func (tc *testExpressionsSuite) TestPatternLikeExprRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"a like 't1'", "`a` LIKE 't1'"},
