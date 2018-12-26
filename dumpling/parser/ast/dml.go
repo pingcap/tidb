@@ -674,7 +674,16 @@ type OrderByClause struct {
 
 // Restore implements Node interface.
 func (n *OrderByClause) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("ORDER BY ")
+	for i, item := range n.Items {
+		if i != 0 {
+			ctx.WritePlain(",")
+		}
+		if err := item.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore OrderByClause.Items[%d]", i)
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
