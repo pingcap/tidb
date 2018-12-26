@@ -474,6 +474,8 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
+			// add value to `r` for dirty db in transaction.
+			// Otherwise when update will panic cause by get value of column in write only state from dirty db.
 			if col.Offset < len(r) {
 				r[col.Offset] = value
 			} else {
