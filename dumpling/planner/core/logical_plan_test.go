@@ -449,29 +449,6 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 	}
 }
 
-func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
-	tableInfo := *MockTable()
-	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
-	cols = append(cols, tableInfo.Columns...)
-	cols = append(cols, &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    10,
-		Name:      model.NewCIStr("h"),
-		FieldType: newLongType(),
-		ID:        11,
-	})
-	partition := &model.PartitionInfo{
-		Type:        model.PartitionTypeRange,
-		Expr:        "h",
-		Enable:      true,
-		Definitions: definitions,
-	}
-	tableInfo.Columns = cols
-	tableInfo.Partition = partition
-	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
-	return is
-}
-
 func (s *testPlanSuite) TestTablePartition(c *C) {
 	defer testleak.AfterTest(c)()
 	definitions := []model.PartitionDefinition{
@@ -501,11 +478,11 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			LessThan: []string{"maxvalue"},
 		},
 	}
-	is := newPartitionInfoSchema(definitions)
+	is := MockPartitionInfoSchema(definitions)
 	// is1 equals to is without maxvalue partition.
 	definitions1 := make([]model.PartitionDefinition, len(definitions)-1)
 	copy(definitions1, definitions)
-	is1 := newPartitionInfoSchema(definitions1)
+	is1 := MockPartitionInfoSchema(definitions1)
 
 	tests := []struct {
 		sql   string
