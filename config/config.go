@@ -150,6 +150,7 @@ type Status struct {
 // Performance is the performance section of the config.
 type Performance struct {
 	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
+	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
 	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
@@ -184,8 +185,9 @@ type TxnLocalLatches struct {
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
-	Enabled  bool `toml:"enabled" json:"enabled"`
-	Capacity uint `toml:"capacity" json:"capacity"`
+	Enabled          bool    `toml:"enabled" json:"enabled"`
+	Capacity         uint    `toml:"capacity" json:"capacity"`
+	MemoryGuardRatio float64 `toml:"memory-guard-ratio" json:"memory-guard-ratio"`
 }
 
 // OpenTracing is the opentracing section of the config.
@@ -249,6 +251,8 @@ type Binlog struct {
 	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
+	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
+	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 }
 
 var defaultConf = Config{
@@ -287,6 +291,7 @@ var defaultConf = Config{
 		MetricsInterval: 15,
 	},
 	Performance: Performance{
+		MaxMemory:           0,
 		TCPKeepAlive:        true,
 		CrossJoin:           true,
 		StatsLease:          "3s",
@@ -306,8 +311,9 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:  false,
-		Capacity: 100,
+		Enabled:          false,
+		Capacity:         100,
+		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
 		Enable: false,
@@ -392,7 +398,7 @@ func init() {
 }
 
 // The following constants represents the valid action configurations for OOMAction.
-// NOTE: Althrough the values is case insensitiv, we should use lower-case
+// NOTE: Although the values is case insensitive, we should use lower-case
 // strings because the configuration value will be transformed to lower-case
 // string and compared with these constants in the further usage.
 const (

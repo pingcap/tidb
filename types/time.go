@@ -789,7 +789,10 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64) (int64, error) {
+func AdjustYear(y int64, fromStr bool) (int64, error) {
+	if y == 0 && !fromStr {
+		return y, nil
+	}
 	y = int64(adjustYear(int(y)))
 	if y < int64(MinYear) || y > int64(MaxYear) {
 		return 0, errors.Trace(ErrInvalidYear)
@@ -1524,7 +1527,7 @@ func extractSingleTimeValue(unit string, format string) (int64, int64, int64, fl
 	if err != nil {
 		return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 	}
-	iv := int64(fv + 0.5)
+	iv := int64(math.Round(fv))
 
 	switch strings.ToUpper(unit) {
 	case "MICROSECOND":

@@ -36,6 +36,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/binary"
 	"fmt"
@@ -57,12 +58,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -152,6 +153,10 @@ func (cc *clientConn) Close() error {
 	delete(cc.server.clients, cc.connectionID)
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
+	return closeConn(cc, connections)
+}
+
+func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	err := cc.bufReadConn.Close()
 	terror.Log(errors.Trace(err))
@@ -159,6 +164,11 @@ func (cc *clientConn) Close() error {
 		return cc.ctx.Close()
 	}
 	return nil
+}
+
+func (cc *clientConn) closeWithoutLock() error {
+	delete(cc.server.clients, cc.connectionID)
+	return closeConn(cc, len(cc.server.clients))
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
@@ -212,6 +222,21 @@ func (cc *clientConn) readPacket() ([]byte, error) {
 
 func (cc *clientConn) writePacket(data []byte) error {
 	return cc.pkt.writePacket(data)
+}
+
+// getSessionVarsWaitTimeout get session variable wait_timeout
+func (cc *clientConn) getSessionVarsWaitTimeout() uint64 {
+	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	if !exists {
+		return variable.DefWaitTimeout
+	}
+	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		log.Warnf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
+		// if get waitTimeout error, use default value
+		return variable.DefWaitTimeout
+	}
+	return waitTimeout
 }
 
 type handshakeResponse41 struct {
@@ -391,16 +416,17 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !cc.server.skipAuth() {
-		// Do Auth.
+	host := variable.DefHostname
+	if !cc.server.isUnixSocket() {
 		addr := cc.bufReadConn.RemoteAddr().String()
-		host, _, err1 := net.SplitHostPort(addr)
-		if err1 != nil {
+		// Do Auth.
+		host, _, err = net.SplitHostPort(addr)
+		if err != nil {
 			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
 		}
-		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
-			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
-		}
+	}
+	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
+		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
 	}
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
@@ -447,13 +473,22 @@ func (cc *clientConn) Run() {
 		}
 
 		cc.alloc.Reset()
+		// close connection when idle time is more than wait_timout
+		waitTimeout := cc.getSessionVarsWaitTimeout()
+		cc.pkt.setReadTimeout(time.Duration(waitTimeout) * time.Second)
+		start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				errStack := errors.ErrorStack(err)
-				if !strings.Contains(errStack, "use of closed network connection") {
-					log.Errorf("con:%d read packet error, close this connection %s",
-						cc.connectionID, errStack)
+				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
+					idleTime := time.Now().Sub(start)
+					log.Infof("con:%d read packet timeout, close this connection, idle: %v, wait_timeout: %v", cc.connectionID, idleTime, waitTimeout)
+				} else {
+					errStack := errors.ErrorStack(err)
+					if !strings.Contains(errStack, "use of closed network connection") {
+						log.Errorf("con:%d read packet error, close this connection %s",
+							cc.connectionID, errStack)
+					}
 				}
 			}
 			return
@@ -670,13 +705,24 @@ func (cc *clientConn) flush() error {
 }
 
 func (cc *clientConn) writeOK() error {
-	data := cc.alloc.AllocWithLen(4, 32)
+	msg := cc.ctx.LastMessage()
+	enclen := 0
+	if len(msg) > 0 {
+		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
+	}
+
+	data := cc.alloc.AllocWithLen(4, 32+enclen)
 	data = append(data, mysql.OKHeader)
 	data = dumpLengthEncodedInt(data, cc.ctx.AffectedRows())
 	data = dumpLengthEncodedInt(data, cc.ctx.LastInsertID())
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = dumpUint16(data, cc.ctx.Status())
 		data = dumpUint16(data, cc.ctx.WarningCount())
+	}
+	if enclen > 0 {
+		// although MySQL manual says the info message is string<EOF>(https://dev.mysql.com/doc/internals/en/packet-OK_Packet.html),
+		// it is actually string<lenenc>
+		data = dumpLengthEncodedString(data, []byte(msg))
 	}
 
 	err := cc.writePacket(data)
@@ -763,7 +809,9 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		loadDataInfo.Ctx.StmtCommit()
+		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
+			return nil, errors.Trace(err)
+		}
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
 			return nil, errors.Trace(err)
@@ -794,7 +842,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	var prevData, curData []byte
 	// TODO: Make the loadDataRowCnt settable.
 	loadDataInfo.SetMaxRowsInBatch(defaultLoadDataBatchCnt)
-	err = loadDataInfo.Ctx.NewTxn()
+	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -820,9 +868,12 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 			break
 		}
 	}
+	loadDataInfo.SetMessage()
 
-	txn := loadDataInfo.Ctx.Txn()
-	loadDataInfo.Ctx.StmtCommit()
+	if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
+		return errors.Trace(err)
+	}
+	txn, err := loadDataInfo.Ctx.Txn(true)
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
@@ -843,7 +894,7 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 		return errNotAllowedCommand
 	}
 	if loadStatsInfo == nil {
-		return errors.New("Load stats: info is empty")
+		return errors.New("load stats: info is empty")
 	}
 	err := cc.writeReq(loadStatsInfo.Path)
 	if err != nil {
