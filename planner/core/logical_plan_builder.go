@@ -2155,6 +2155,8 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	oldSchema := p.Schema()
+	oldLen := oldSchema.Len()
 
 	var tableList []*ast.TableName
 	tableList = extractTableList(sel.From.TableRefs, tableList)
@@ -2189,6 +2191,14 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		return nil, errors.Trace(err)
 	}
 	p = np
+
+	// Add a projection to get the correct schema, when the children is something like join.
+	if oldLen != p.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx)
+		proj.SetChildren(p)
+		proj.SetSchema(oldSchema.Clone())
+		p = proj
+	}
 
 	updt := Update{OrderedList: orderedList}.Init(b.ctx)
 	updt.SetSchema(p.Schema())
@@ -2329,6 +2339,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 		return nil, errors.Trace(err)
 	}
 	oldSchema := p.Schema()
+	oldLen := oldSchema.Len()
 
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
@@ -2353,7 +2364,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 
 	// Add a projection for the following case, otherwise the final schema will be the schema of the join.
 	// delete from t where a in (select ...) or b in (select ...)
-	if oldLen := oldSchema.Len(); oldLen != p.Schema().Len() {
+	if !delete.IsMultiTable && oldLen != p.Schema().Len() {
 		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx)
 		proj.SetChildren(p)
 		proj.SetSchema(oldSchema.Clone())
