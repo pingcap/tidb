@@ -226,12 +226,15 @@ func (cc *clientConn) writePacket(data []byte) error {
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
 func (cc *clientConn) getSessionVarsWaitTimeout() uint64 {
-	valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	if !exists {
+		return variable.DefWaitTimeout
+	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		log.Errorf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
+		log.Warnf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
 		// if get waitTimeout error, use default value
-		waitTimeout = variable.DefWaitTimeout
+		return variable.DefWaitTimeout
 	}
 	return waitTimeout
 }
