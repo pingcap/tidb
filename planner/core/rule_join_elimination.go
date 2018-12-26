@@ -16,6 +16,7 @@ package core
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	log "github.com/sirupsen/logrus"
 )
 
 type outerJoinEliminator struct {
@@ -74,7 +75,8 @@ func (o *outerJoinEliminator) isAggColsAllFromOuterTable(outerPlan LogicalPlan, 
 	}
 	for _, col := range aggCols {
 		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-		if c, _ := outerPlan.Schema().FindColumn(columnName); c == nil {
+		if c, err := outerPlan.Schema().FindColumn(columnName); c == nil {
+			log.Warn(err)
 			return false
 		}
 	}
@@ -88,7 +90,8 @@ func (o *outerJoinEliminator) isParentColsAllFromOuterTable(outerPlan LogicalPla
 	}
 	for _, col := range parentSchema.Columns {
 		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-		if c, _ := outerPlan.Schema().FindColumn(columnName); c == nil {
+		if c, err := outerPlan.Schema().FindColumn(columnName); c == nil {
+			log.Warn(err)
 			return false
 		}
 	}
@@ -101,7 +104,8 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan LogicalP
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
 			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
-			if c, _ := joinKeys.FindColumn(columnName); c == nil {
+			if c, err := joinKeys.FindColumn(columnName); c == nil {
+				log.Warn(err)
 				joinKeysContainKeyInfo = false
 				break
 			}
@@ -130,7 +134,8 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 		joinKeysContainIndex := true
 		for _, idxCol := range idx.Columns {
 			columnName := &ast.ColumnName{Schema: ds.DBName, Table: ds.tableInfo.Name, Name: idxCol.Name}
-			if c, _ := joinKeys.FindColumn(columnName); c == nil {
+			if c, err := joinKeys.FindColumn(columnName); c == nil {
+				log.Warn(err)
 				joinKeysContainIndex = false
 				break
 			}
