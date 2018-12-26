@@ -137,14 +137,11 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	}
 	originalState := colInfo.State
 	switch colInfo.State {
-	// In the state of drop column `write only -> delete only -> reorganization`,
+	// In the state of drop column `public -> write only -> delete only -> reorganization`,
 	// We can not rollback now, so just continue to drop column.
-	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
+	case model.StatePublic, model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization:
 		job.State = model.JobStateRunning
 		return ver, nil
-	case model.StatePublic:
-		job.State = model.JobStateRollbackDone
-		colInfo.State = model.StatePublic
 	default:
 		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}

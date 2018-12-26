@@ -895,11 +895,12 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 	testCases := []struct {
 		jobState       model.JobState
 		JobSchemaState model.SchemaState
+		cancelSucc       bool
 	}{
-		{model.JobStateNone, model.StateNone},
-		{model.JobStateRunning, model.StateWriteOnly},
-		{model.JobStateRunning, model.StateDeleteOnly},
-		{model.JobStateRunning, model.StateDeleteReorganization},
+		{model.JobStateNone, model.StateNone, true},
+		{model.JobStateRunning, model.StateWriteOnly, false},
+		{model.JobStateRunning, model.StateDeleteOnly, false},
+		{model.JobStateRunning, model.StateDeleteReorganization, false},
 	}
 	var checkErr error
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
@@ -911,7 +912,6 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionDropColumn && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
 			jobIDs := []int64{job.ID}
-			jobID = job.ID
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.Background())
@@ -919,16 +919,21 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err1 := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
-			if err1 != nil {
-				checkErr = errors.Trace(err1)
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
 				return
 			}
 			if errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
 				return
 			}
-			checkErr = hookCtx.Txn(true).Commit(context.Background())
+			checkErr = txn.Commit(context.Background())
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
@@ -948,10 +953,16 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 				break
 			}
 		}
-		c.Assert(col1, IsNil)
-		c.Assert(err, IsNil)
-		c.Assert(checkErr, NotNil)
-		c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+		} else {
+			c.Assert(col1, IsNil)
+			c.Assert(err, IsNil)
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(c, "alter table t add column c3 int")
