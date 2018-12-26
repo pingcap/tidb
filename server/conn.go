@@ -249,6 +249,7 @@ type handshakeResponse41 struct {
 func parseOldHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
 	// Ensure there are enough data to read:
 	// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse320
+	log.Debugf("Try to parse hanshake response as Protocol::HandshakeResponse320 , packet data: %v", data)
 	if len(data) < 2+3 {
 		log.Errorf("Got malformed handshake response, packet data: %v", data)
 		return 0, mysql.ErrMalformPacket
@@ -306,7 +307,6 @@ func parseHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (par
 	// Ensure there are enough data to read:
 	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
 	if len(data) < 4+4+1+23 {
-		log.Errorf("Got malformed handshake response, packet data: %v", data)
 		return 0, mysql.ErrMalformPacket
 	}
 
