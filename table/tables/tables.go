@@ -474,7 +474,11 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			r = append(r, value)
+			if col.Offset < len(r) {
+				r[col.Offset] = value
+			} else {
+				r = append(r, value)
+			}
 		} else {
 			value = r[col.Offset]
 		}
