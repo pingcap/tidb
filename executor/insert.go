@@ -43,7 +43,11 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
 	if !sessVars.LightningMode {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
+		txn, err := e.ctx.Txn(true)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	}
 
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(rows)))

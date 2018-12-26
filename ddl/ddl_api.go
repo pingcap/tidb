@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
+	log "github.com/sirupsen/logrus"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -482,9 +483,14 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	// For timestamp Col, if is not set default value or not set null, use current timestamp.
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
-			c.SetDefaultValue(types.ZeroDatetimeStr)
+			if err := c.SetDefaultValue(types.ZeroDatetimeStr); err != nil {
+				log.Error(errors.ErrorStack(err))
+			}
 		} else {
-			c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp))
+			if err := c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp)); err != nil {
+				log.Error(errors.ErrorStack(err))
+			}
+
 		}
 	}
 }
@@ -1001,10 +1007,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(tbInfo.Charset) != 0 && strings.ToLower(tbInfo.Charset) != mysql.DefaultCharset {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(`TiDB only supports the "utf8mb4" character set, so "%s" does not take effect.`, tbInfo.Charset))
-	}
-
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
@@ -1201,7 +1203,9 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		}
 	}
 
-	setDefaultTableCharsetAndCollation(tbInfo)
+	if err := setDefaultTableCharsetAndCollation(tbInfo); err != nil {
+		log.Error(errors.ErrorStack(err))
+	}
 	return nil
 }
 
@@ -1309,7 +1313,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AlterColumn(ctx, ident, spec)
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
-			err = d.RenameTable(ctx, ident, newIdent)
+			isAlterTable := true
+			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("drop")
 		case ast.AlterTableRenameIndex:
@@ -2255,7 +2260,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) error {
+func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInformationSchema(ctx)
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
@@ -2265,7 +2270,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) 
 	if err != nil {
 		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
-	if newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
+	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		// oldIdent is equal to newIdent, do nothing
 		return nil
 	}

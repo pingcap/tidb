@@ -226,12 +226,15 @@ func (cc *clientConn) writePacket(data []byte) error {
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
 func (cc *clientConn) getSessionVarsWaitTimeout() uint64 {
-	valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	if !exists {
+		return variable.DefWaitTimeout
+	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		log.Errorf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
+		log.Warnf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
 		// if get waitTimeout error, use default value
-		waitTimeout = variable.DefWaitTimeout
+		return variable.DefWaitTimeout
 	}
 	return waitTimeout
 }
@@ -806,7 +809,9 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		loadDataInfo.Ctx.StmtCommit()
+		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
+			return nil, errors.Trace(err)
+		}
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
 			return nil, errors.Trace(err)
@@ -865,8 +870,10 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	}
 	loadDataInfo.SetMessage()
 
-	txn := loadDataInfo.Ctx.Txn(true)
-	loadDataInfo.Ctx.StmtCommit()
+	if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
+		return errors.Trace(err)
+	}
+	txn, err := loadDataInfo.Ctx.Txn(true)
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
