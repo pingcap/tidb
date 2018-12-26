@@ -1952,24 +1952,39 @@ func (s *testDBSuite) TestTransactionOnAddDropColumn(c *C) {
 	s.mustExec(c, "use test_db")
 	s.mustExec(c, "drop table if exists t1")
 	s.mustExec(c, "create table t1 (a int, b int);")
+	s.mustExec(c, "create table t2 (a int, b int);")
+	s.mustExec(c, "insert into t2 values (2,0)")
+
+	transactions := [][]string{
+		{
+			"begin",
+			"insert into t1 set a=1",
+			"update t1 set b=1 where a=1",
+			"commit",
+		},
+		{
+			"begin",
+			"insert into t1 select a,b from t2",
+			"update t1 set b=2 where a=2",
+			"commit",
+		},
+	}
 
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
-	num := 1
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.SchemaState == model.StatePublic {
+		switch job.SchemaState {
+		case model.StateWriteOnly, model.StateWriteReorganization, model.StateDeleteOnly, model.StateDeleteReorganization:
+		default:
 			return
 		}
-		if job.State == model.JobStateNone && job.Type == model.ActionDropColumn {
-			return
+		// do transaction.
+		for _, transaction := range transactions {
+			for _, sql := range transaction {
+				s.mustExec(c, sql)
+			}
 		}
-
-		s.mustExec(c, "begin")
-		s.mustExec(c, fmt.Sprintf("insert into t1 set a=%v", num))
-		s.mustExec(c, fmt.Sprintf("update t1 set b=%v where a=%v", num, num))
-		s.mustExec(c, "commit")
-		num++
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
@@ -1977,12 +1992,12 @@ func (s *testDBSuite) TestTransactionOnAddDropColumn(c *C) {
 	go backgroundExec(s.store, "alter table t1 add column c int not null after a", done)
 	err := <-done
 	c.Assert(err, IsNil)
-	s.tk.MustQuery("select a,b,c from t1 order by a").Check(testkit.Rows("1 1 0", "2 2 0", "3 3 0", "4 4 0"))
+	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 	s.mustExec(c, "delete from t1")
 
 	// test transaction on drop column.
 	go backgroundExec(s.store, "alter table t1 drop column c", done)
 	err = <-done
 	c.Assert(err, IsNil)
-	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("5 5", "6 6", "7 7"))
+	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 }
