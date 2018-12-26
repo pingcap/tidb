@@ -163,6 +163,7 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	cfg := config.NewConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
+	os.Remove(cfg.Socket)
 	cfg.Status.ReportStatus = false
 
 	server, err := NewServer(cfg, ts.tidbdrv)

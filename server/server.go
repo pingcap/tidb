@@ -32,10 +32,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
 	// For pprof
 	_ "net/http/pprof"
 	"sync"
@@ -133,6 +135,37 @@ func (s *Server) isUnixSocket() bool {
 	return s.cfg.Socket != ""
 }
 
+func (s *Server) forwardUnixSocketToTcp(socket string, addr string) {
+	if sock, err := net.Listen("unix", socket); err == nil {
+		log.Infof("Server redirecting [%s] to [%s]", socket, addr)
+		for {
+			uconn, err := sock.Accept()
+			if err != nil {
+				log.Warningf("server failed to forward from [%s] to [%s], err: %s", socket, addr, err)
+				continue
+			} else {
+				log.Infof("server socket forwarding from [%s] to [%s]", socket, addr)
+			}
+			go s.handleForwardedConnection(uconn, addr)
+		}
+	} else {
+		log.Fatalf("err: %s", err) // in use?
+	}
+}
+
+func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
+	if tconn, err := net.Dial("tcp", addr); err == nil {
+		if _, err := io.Copy(tconn, uconn); err != nil {
+			log.Warningf("socket forward copy failed: %s", err)
+		}
+	} else {
+		log.Warningf("socket forward failed: could not connect to [%s], err: %s", addr, err)
+	}
+	if err := uconn.Close(); err != nil {
+		log.Warningf("socket failed to close: %s", err)
+	}
+}
+
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
@@ -151,15 +184,23 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	var err error
-	if cfg.Socket != "" {
-		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
-			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
-		}
-	} else {
+
+	if s.cfg.Host != "" && s.cfg.Port != 0 {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
 			log.Infof("Server is running MySQL Protocol at [%s]", addr)
 		}
+		if cfg.Socket != "" {
+			go s.forwardUnixSocketToTcp(cfg.Socket, addr) // listen on both
+		}
+	} else if cfg.Socket != "" {
+		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
+			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
+		} else {
+			log.Fatalf("err: %s", err) // in use?
+		}
+	} else {
+		log.Fatal("Server not configured to listen on either -socket or -host and -port!")
 	}
 
 	if cfg.ProxyProtocol.Networks != "" {
@@ -401,6 +442,16 @@ func (s *Server) GracefulDown() {
 		// Print information for every 30s.
 		if i%30 == 0 {
 			log.Infof("graceful shutdown...connection count %d\n", count)
+		}
+	}
+}
+
+// CleanupSocketFile cleans up socket file if it was created.
+func (s *Server) CleanupSocketFile() {
+	if s.cfg.Socket != "" {
+		log.Infof("[server] removing socket file [%s]", s.cfg.Socket)
+		if err := os.Remove(s.cfg.Socket); err != nil {
+			log.Warningf("[server] failed to remove socket file! err: %s", err)
 		}
 	}
 }
