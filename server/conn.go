@@ -424,18 +424,23 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 	isOldVersion := false
 
 	var resp handshakeResponse41
+	var pos int
 
-	pos, err := parseHandshakeResponseHeader(&resp, data)
+	if len(data) < 2 {
+		log.Errorf("Got malformed handshake response, packet data: %v", data)
+		return mysql.ErrMalformPacket
+	}
+
+	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
+	if capability&mysql.ClientProtocol41 > 0 {
+		pos, err = parseHandshakeResponseHeader(&resp, data)
+	} else {
+		pos, err = parseOldHandshakeResponseHeader(&resp, data)
+		isOldVersion = true
+	}
+
 	if err != nil {
-		if err == mysql.ErrMalformPacket {
-			pos, err = parseOldHandshakeResponseHeader(&resp, data)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			isOldVersion = true
-		} else {
-			return errors.Trace(err)
-		}
+		return errors.Trace(err)
 	}
 
 	if (resp.Capability&mysql.ClientSSL > 0) && cc.server.tlsConfig != nil {
