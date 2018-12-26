@@ -171,7 +171,6 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
 func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) (*Table, error) {
-
 	coll, err := HistCollFromJSON(tableInfo, physicalID, jsonTbl)
 	if err != nil {
 		return nil, err

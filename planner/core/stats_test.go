@@ -68,6 +68,7 @@ func (s *testStatsSuite) mockTableInfo(sql string, tblID int64) (*model.TableInf
 }
 
 func (s *testStatsSuite) TestInnerJoinStats(c *C) {
+	// t1's values are (i, i) where i = 1..9. Each pair appears once.
 	t1Tbl, err := s.mockTableInfo("create table t1(a int, b int, index a(a, b))", 1)
 	c.Assert(err, IsNil)
 	t1Coll, err := s.loadStatsByFileName("t1.json", t1Tbl)
@@ -88,6 +89,7 @@ func (s *testStatsSuite) TestInnerJoinStats(c *C) {
 
 	t2Tbl, err := s.mockTableInfo("create table t2(a int, b int, index a(a, b))", 2)
 	c.Assert(err, IsNil)
+	// t2's values are (i, i) where i = 8..15. Each pair appears once.
 	t2Coll, err := s.loadStatsByFileName("t2.json", t2Tbl)
 	c.Assert(err, IsNil)
 	t2ExprCols := expression.ColumnInfos2ColumnsWithDBName(s.ctx, model.NewCIStr("test"), t2Tbl.Name, t2Tbl.Columns)

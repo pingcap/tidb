@@ -335,7 +335,6 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 			if rIncreaseFactor > 1 {
 				rIncreaseFactor = 1
 			}
-			log.Warnf("left factor: %v, right factor: %v", lIncreaseFactor, rIncreaseFactor)
 			ndv *= float64(newHist.NDV) * lIncreaseFactor * rIncreaseFactor
 			lPosNew := p.schema.ColumnIndex(leftKeys[i])
 			rPosNew := p.schema.ColumnIndex(rightKeys[i])
