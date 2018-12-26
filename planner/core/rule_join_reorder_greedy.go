@@ -72,7 +72,7 @@ type joinReorderGreedySingleGroupSolver struct {
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySingleGroupSolver) solve() (LogicalPlan, error) {
 	for _, node := range s.curJoinGroup {
-		_, err := node.deriveStats()
+		_, err := node.recursiveDeriveStats()
 		if err != nil {
 			return nil, err
 		}
@@ -106,7 +106,7 @@ func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (Logic
 			if newJoin == nil {
 				continue
 			}
-			_, err := newJoin.deriveStats()
+			_, err := newJoin.recursiveDeriveStats()
 			if err != nil {
 				return nil, err
 			}

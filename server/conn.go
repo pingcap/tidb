@@ -226,12 +226,15 @@ func (cc *clientConn) writePacket(data []byte) error {
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
 func (cc *clientConn) getSessionVarsWaitTimeout() uint64 {
-	valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	if !exists {
+		return variable.DefWaitTimeout
+	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		log.Errorf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
+		log.Warnf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
 		// if get waitTimeout error, use default value
-		waitTimeout = variable.DefWaitTimeout
+		return variable.DefWaitTimeout
 	}
 	return waitTimeout
 }
@@ -702,13 +705,24 @@ func (cc *clientConn) flush() error {
 }
 
 func (cc *clientConn) writeOK() error {
-	data := cc.alloc.AllocWithLen(4, 32)
+	msg := cc.ctx.LastMessage()
+	enclen := 0
+	if len(msg) > 0 {
+		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
+	}
+
+	data := cc.alloc.AllocWithLen(4, 32+enclen)
 	data = append(data, mysql.OKHeader)
 	data = dumpLengthEncodedInt(data, cc.ctx.AffectedRows())
 	data = dumpLengthEncodedInt(data, cc.ctx.LastInsertID())
 	if cc.capability&mysql.ClientProtocol41 > 0 {
 		data = dumpUint16(data, cc.ctx.Status())
 		data = dumpUint16(data, cc.ctx.WarningCount())
+	}
+	if enclen > 0 {
+		// although MySQL manual says the info message is string<EOF>(https://dev.mysql.com/doc/internals/en/packet-OK_Packet.html),
+		// it is actually string<lenenc>
+		data = dumpLengthEncodedString(data, []byte(msg))
 	}
 
 	err := cc.writePacket(data)
@@ -795,7 +809,9 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		loadDataInfo.Ctx.StmtCommit()
+		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
+			return nil, errors.Trace(err)
+		}
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
 			return nil, errors.Trace(err)
@@ -852,9 +868,12 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 			break
 		}
 	}
+	loadDataInfo.SetMessage()
 
-	txn := loadDataInfo.Ctx.Txn(true)
-	loadDataInfo.Ctx.StmtCommit()
+	if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
+		return errors.Trace(err)
+	}
+	txn, err := loadDataInfo.Ctx.Txn(true)
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
