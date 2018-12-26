@@ -326,3 +326,26 @@ func (tc *testExpressionsSuite) TestPositionExprRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select * from t order by %s", extractNodeFunc)
 }
+
+func (tc *testExpressionsSuite) TestVariableExpr(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"@a>1", "@`a`>1"},
+		{"@`aB`+1", "@`aB`+1"},
+		{"@'a':=1", "@`a`:=1"},
+		{"@`a``b`=4", "@`a``b`=4"},
+		{`@"aBC">1`, "@`aBC`>1"},
+		{"@`a`+1", "@`a`+1"},
+		{"@``", "@``"},
+		{"@", "@``"},
+		{"@@``", "@@``"},
+		{"@@", "@@``"},
+		{"@@var", "@@`var`"},
+		{"@@global.b='foo'", "@@GLOBAL.`b`='foo'"},
+		{"@@session.'C'", "@@SESSION.`c`"},
+		{`@@local."aBc"`, "@@SESSION.`abc`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).Fields.Fields[0].Expr
+	}
+	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+}
