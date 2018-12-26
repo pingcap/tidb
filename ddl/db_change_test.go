@@ -107,12 +107,12 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	}
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 	tk.MustExec("alter table t add index idx1(id)")
 	c.Assert(checkErr, IsNil)
 	tk.MustExec("alter table t add column c int")
 	c.Assert(checkErr, IsNil)
-	d.(ddl.DDLForTest).SetHook(originalCallback)
 }
 
 // TestDropNotNullColumn is used to test issue #8654.
@@ -270,6 +270,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	}
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -281,7 +282,6 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	err = testInfo.execSQL(3)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
-	d.(ddl.DDLForTest).SetHook(originalCallback)
 }
 
 type stateCase struct {
@@ -755,6 +755,7 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	}
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 
 	wg := sync.WaitGroup{}
@@ -802,8 +803,6 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 
 	wg.Wait()
 	f(c, err1, err2)
-
-	d.(ddl.DDLForTest).SetHook(originalCallback)
 }
 
 func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
@@ -831,6 +830,7 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 
 	wg.Add(2)
@@ -846,7 +846,6 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	wg.Wait()
 	c.Assert(err2, IsNil)
 	c.Assert(err3, IsNil)
-	d.(ddl.DDLForTest).SetHook(originalCallback)
 }
 
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
