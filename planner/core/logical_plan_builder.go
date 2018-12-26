@@ -2208,8 +2208,6 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	oldSchema := p.Schema()
-	oldLen := oldSchema.Len()
 
 	var tableList []*ast.TableName
 	tableList = extractTableList(sel.From.TableRefs, tableList)
