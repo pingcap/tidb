@@ -95,6 +95,10 @@ func isJobRollbackable(job *model.Job, id int64) error {
 		if job.SchemaState == model.StateDeleteOnly || job.SchemaState == model.StateNone ||
 			job.SchemaState == model.StateWriteOnly ||
 			job.SchemaState == model.StateDeleteReorganization {
+	case model.ActionDropSchema, model.ActionDropTable:
+		// To simplify the rollback logic, cannot be canceled in the following states.
+		if job.SchemaState == model.StateWriteOnly ||
+			job.SchemaState == model.StateDeleteOnly {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
 	}
