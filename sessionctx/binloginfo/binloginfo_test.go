@@ -430,7 +430,6 @@ func (s *testBinlogSuite) TestDeleteSchema(c *C) {
 
 	// This test cover a bug that the final schema and the binlog row inconsistent.
 	// The final schema of this SQL should be the schema of table b1, rather than the schema of join result.
-	tk.MustExec("update b1 set job_id = 2 where job_id in (select job_id from b2 where batch_class = 'TEST') or split_job_id in (select job_id from b2 where batch_class = 'TEST');")
 	tk.MustExec("delete from b1 where job_id in (select job_id from b2 where batch_class = 'TEST') or split_job_id in (select job_id from b2 where batch_class = 'TEST');")
 	tk.MustExec("delete b1 from b2 right join b1 on b1.job_id = b2.job_id and batch_class = 'TEST';")
 }

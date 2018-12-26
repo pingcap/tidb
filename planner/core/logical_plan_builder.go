@@ -2245,14 +2245,6 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	}
 	p = np
 
-	// Add a projection to get the correct schema, when the children is something like join.
-	if oldLen != p.Schema().Len() {
-		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx)
-		proj.SetChildren(p)
-		proj.SetSchema(oldSchema.Clone())
-		p = proj
-	}
-
 	updt := Update{OrderedList: orderedList}.Init(b.ctx)
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, err = DoOptimize(b.optFlag, p)
