@@ -93,6 +93,20 @@ func (ts ConnTestSuite) TestParseHandshakeResponse(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(p.User, Equals, "pam")
 	c.Assert(p.DBName, Equals, "test")
+
+	// Test for compatibility of Protocol::HandshakeResponse320
+	data = []byte{
+		0x00, 0x80, 0x00, 0x00, 0x01, 0x72, 0x6f, 0x6f, 0x74, 0x00, 0x00,
+	}
+	p = handshakeResponse41{}
+	offset, err = parseOldHandshakeResponseHeader(&p, data)
+	c.Assert(err, IsNil)
+	capability = mysql.ClientProtocol41 |
+		mysql.ClientSecureConnection
+	c.Assert(p.Capability&capability, Equals, capability)
+	err = parseOldHandshakeResponseBody(&p, data, offset)
+	c.Assert(err, IsNil)
+	c.Assert(p.User, Equals, "root")
 }
 
 func (ts ConnTestSuite) TestIssue1768(c *C) {
