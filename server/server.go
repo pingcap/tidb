@@ -135,18 +135,16 @@ func (s *Server) isUnixSocket() bool {
 	return s.cfg.Socket != ""
 }
 
-func (s *Server) forwardUnixSocketToTcp(socket string, addr string) {
+func (s *Server) forwardUnixSocketToTCP(socket string, addr string) {
 	if sock, err := net.Listen("unix", socket); err == nil {
 		log.Infof("Server redirecting [%s] to [%s]", socket, addr)
 		for {
-			uconn, err := sock.Accept()
-			if err != nil {
-				log.Warningf("server failed to forward from [%s] to [%s], err: %s", socket, addr, err)
-				continue
-			} else {
+			if uconn, err := sock.Accept(); err == nil {
 				log.Infof("server socket forwarding from [%s] to [%s]", socket, addr)
+				go s.handleForwardedConnection(uconn, addr)
+			} else {
+				log.Warningf("server failed to forward from [%s] to [%s], err: %s", socket, addr, err)
 			}
-			go s.handleForwardedConnection(uconn, addr)
 		}
 	} else {
 		log.Fatalf("err: %s", err) // in use?
@@ -191,7 +189,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			log.Infof("Server is running MySQL Protocol at [%s]", addr)
 		}
 		if cfg.Socket != "" {
-			go s.forwardUnixSocketToTcp(cfg.Socket, addr) // listen on both
+			go s.forwardUnixSocketToTCP(cfg.Socket, addr) // listen on both
 		}
 	} else if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
