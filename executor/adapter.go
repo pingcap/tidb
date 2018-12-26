@@ -43,6 +43,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, string)
 }
@@ -155,7 +156,8 @@ func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
-func (a *ExecStmt) rootStmt() string {
+// rootStmtType returns the SQL type label of root stmt.
+func (a *ExecStmt) rootStmtType() string {
 	return GetStmtLabel(a.StmtNode)
 }
 
@@ -231,7 +233,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
-		stmtType := a.rootStmt()
+		stmtType := a.rootStmtType()
 		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
 			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
 				// Use SecureText to avoid leak password information.
