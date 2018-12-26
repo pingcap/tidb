@@ -229,6 +229,15 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
+
+	if job.IsRollingback() && job.Type == model.ActionDropColumn {
+		if colInfo.State == model.StatePublic {
+			job.State = model.JobStateCancelled
+			return ver, errCancelledDDLJob
+		}
+		job.State = model.JobStateRunning
+	}
+
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

@@ -374,7 +374,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 9}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 9)}, cancelState: model.StateDeleteOnly, ddlRetErr: err},
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 10}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 10)}, cancelState: model.StateWriteOnly, ddlRetErr: err},
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 11}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 11)}, cancelState: model.StateWriteReorganization, ddlRetErr: err},
-		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 12}, cancelRetErrs: noErrs, cancelState: model.StatePublic, ddlRetErr: err},
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 12}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
 
 		// Test create table, watch out, table id will alloc a globalID.
 		{act: model.ActionCreateTable, jobIDs: []int64{firstID + 10}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
@@ -411,14 +411,14 @@ func (s *testDDLSuite) checkAddColumn(c *C, d *ddl, schemaID int64, tableID int6
 
 func (s *testDDLSuite) checkDropColumn(c *C, d *ddl, schemaID int64, tableID int64, colName string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
-	found := true
+	notFound := true
 	for _, colInfo := range changedTable.Meta().Columns {
 		if colInfo.Name.O == colName {
-			found = false
+			notFound = false
 			break
 		}
 	}
-	c.Assert(found, Equals, success)
+	c.Assert(notFound, Equals, success)
 }
 
 func (s *testDDLSuite) TestCancelJob(c *C) {
