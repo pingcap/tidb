@@ -1523,8 +1523,6 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(show)
 	}
-	sql := explain.Text()
-	explain.Stmt.SetText(sql[len("explain "):])
 	targetPlan, err := OptimizeAstNode(b.ctx, explain.Stmt, b.is)
 	if err != nil {
 		return nil, errors.Trace(err)

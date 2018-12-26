@@ -3,6 +3,9 @@ package infobind
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -11,18 +14,16 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"strings"
-	"sync/atomic"
-	"time"
 )
 
 type BindData struct {
 	Ast ast.StmtNode
-	DB  []string
+	DefaultDB  string
+	ToDeleted bool
 }
 
 type BindInfo struct {
-	cache map[string]*BindData
+	cache map[string][]*BindData
 }
 
 type Handle struct {
@@ -43,13 +44,20 @@ func NewHandle() *Handle {
 	return &Handle{}
 }
 
+func (h *Handle) SetInvalid() {
+	//bindInfo := h.bind.Load()
+	//if bindInfo != nil {
+	//	bindInfo = bindInfo.(*BindInfo)
+	//}
+
+}
 func (h *Handle) Get() *BindInfo {
 	bindInfo := h.bind.Load()
 	if bindInfo != nil {
 		return bindInfo.(*BindInfo)
 	}
 	return &BindInfo{
-		cache : make(map[string]*BindData, 1000),
+		cache: make(map[string][]*BindData, 1000),
 	}
 }
 
@@ -138,16 +146,22 @@ func (b *BindInfo) decodeBindTableRow(sctx sessionctx.Context, row chunk.Row, fs
 func (b *BindInfo) append(sctx sessionctx.Context, value tablesBindRecord, sparser *parser.Parser, lastUpTime time.Time) (error, time.Time) {
 	hash := parser.Digest(value.originalSql)
 	if value.status == 1 {
-		stmtNodes, err := b.parseSQL(sctx, sparser, value.bindSql)
+		_, err := b.parseSQL(sctx, sparser, value.originalSql)
 		if err != nil {
 			log.Warnf("parse error:\n%v\n%s", err, value.originalSql)
 			return errors.Trace(err), lastUpTime
 		}
-
-		b.cache[hash] = &BindData{
-			Ast: stmtNodes[0],
-			DB:  strings.Split(value.db, ","),
+		stmtNodes, err := b.parseSQL(sctx, sparser, value.bindSql)
+		if err != nil {
+			log.Warnf("parse error:\n%v\n%s", err, value.bindSql)
+			return errors.Trace(err), lastUpTime
 		}
+		log.Infof("original sql %s bind sql %s", value.originalSql, value.bindSql)
+
+		b.cache[hash] = append(b.cache[hash] , &BindData{
+			Ast: stmtNodes[0],
+			DefaultDB:  value.db,
+		})
 	} else {
 		delete(b.cache, hash)
 	}
@@ -157,4 +171,3 @@ func (b *BindInfo) append(sctx sessionctx.Context, value tablesBindRecord, spars
 
 	return nil, lastUpTime
 }
-

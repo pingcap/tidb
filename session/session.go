@@ -151,7 +151,6 @@ type session struct {
 	ddlOwnerChecker owner.DDLOwnerChecker
 
 	localBindCache *kvcache.SimpleMap
-	bindHandle     *infobind.Handle
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -1195,12 +1194,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
-	lastUpTime, _ := time.ParseInLocation("2006-01-02 15:04:05.000000", "1970-01-01 00:00:01.000000", time.Local)
-
 	bm := &infobind.AstBind{
 		Handle:         do.BindHandle(),
-		Parser:         s.GetParser(),
-		LastUpdateTime: lastUpTime,
 	}
 	infobind.BindBinderManager(s, bm)
 	// Add stats collector, and it will be freed by background stats worker
@@ -1321,7 +1316,6 @@ func createSession(store kv.Storage) (*session, error) {
 		parser:          parser.New(),
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
-		bindHandle:      dom.BindHandle(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,

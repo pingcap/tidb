@@ -15,15 +15,12 @@ package planner
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/tidb/infobind"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
-	log "github.com/sirupsen/logrus"
 )
 
 // Optimize does optimization and creates a Plan.
@@ -32,16 +29,6 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	fp := plannercore.TryFastPlan(ctx, node)
 	if fp != nil {
 		return fp, nil
-	}
-
-	hash := parser.Digest(node.Text())
-	log.Infof("%s %s", node.Text(), hash)
-	if bm := infobind.GetBindManager(ctx); bm !=nil {
-		if bindedNode := bm.GetMatchedAst(hash); bindedNode != nil {
-			if !bm.MatchHint(node, bindedNode.Ast) {
-				bm.DeleteInvalidBind(hash)
-			}
-		}
 	}
 
 	// build logical plan
