@@ -759,11 +759,12 @@ func (s *testAnalyzeSuite) TestJoinWithHistogram(c *C) {
 	tk.MustExec("analyze table t, tt")
 	tk.MustExec("set @@session.tidb_optimizer_selectivity_level=1")
 	tk.MustQuery("explain select * from t t1 join tt t2 where t1.a=t2.a").Check(testkit.Rows(
-		"IndexJoin_14 5.00 root inner join, inner:TableReader_13, outer key:t2.a, inner key:t1.a",
-		"├─TableReader_13 1.00 root data:TableScan_12",
-		"│ └─TableScan_12 1.00 cop table:t1, range: decided by [t2.a], keep order:false",
-		"└─TableReader_24 6.00 root data:TableScan_23",
-		"  └─TableScan_23 6.00 cop table:t2, range:[-inf,+inf], keep order:false",
+		"Projection_7 5.00 root t1.a, t1.b, t2.a, t2.b",
+		"└─IndexJoin_11 5.00 root inner join, inner:TableReader_10, outer key:t2.a, inner key:t1.a",
+		"  ├─TableReader_24 6.00 root data:TableScan_23",
+		"  │ └─TableScan_23 6.00 cop table:t2, range:[-inf,+inf], keep order:false",
+		"  └─TableReader_10 1.00 root data:TableScan_9",
+		"    └─TableScan_9 1.00 cop table:t1, range: decided by [t2.a], keep order:false",
 	))
 }
 

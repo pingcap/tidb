@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -705,7 +706,7 @@ func MergeHistogramForInnerJoin(lSide *Histogram, rSide *Histogram, tp *types.Fi
 	rAvgPerVal := rSide.notNullRowCount() / float64(rSide.NDV)
 	totCnt := int64(0)
 	totNdv := float64(0)
-	newHist := NewHistogram(0, 0, 0, 0, tp, 256, 0)
+	newHist := NewHistogram(0, 0, 0, 0, tp, mathutil.Max(len(lSide.Buckets), len(rSide.Buckets)), 0)
 	for i, j := 0, 0; i < lSide.Len() && j < rSide.Len(); {
 		lLow := lSide.Bounds.GetRow(i * 2)
 		lHigh := lSide.Bounds.GetRow(i*2 + 1)
