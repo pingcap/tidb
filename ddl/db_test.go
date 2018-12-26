@@ -888,10 +888,9 @@ LOOP:
 func (s *testDBSuite) TestCancelDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
-	s.mustExec(c, "create database if not exists test_drop_column")
-	s.mustExec(c, "drop table if exists t")
-	s.mustExec(c, "create table t(c1 int, c2 int)")
-	defer s.mustExec(c, "drop table t;")
+	s.mustExec(c, "drop table if exists test_drop_column")
+	s.mustExec(c, "create table test_drop_column(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table test_drop_column;")
 	testCases := []struct {
 		jobState       model.JobState
 		JobSchemaState model.SchemaState
@@ -941,13 +940,13 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	for i := range testCases {
 		testCase = &testCases[i]
-		s.mustExec(c, "alter table t add column c3 int")
-		rs, err := s.tk.Exec("alter table t drop column c3")
+		s.mustExec(c, "alter table test_drop_column add column c3 int")
+		rs, err := s.tk.Exec("alter table test_drop_column drop column c3")
 		if rs != nil {
 			rs.Close()
 		}
 		var col1 *table.Column
-		t := s.testGetTable(c, "t")
+		t := s.testGetTable(c, "test_drop_column")
 		for _, col := range t.Cols() {
 			if strings.EqualFold(col.Name.L, "c3") {
 				col1 = col
@@ -957,6 +956,7 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
+			c.Assert(col1, NotNil)
 			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 		} else {
 			c.Assert(col1, IsNil)
@@ -966,8 +966,8 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	s.mustExec(c, "alter table t add column c3 int")
-	s.mustExec(c, "alter table t drop column c3")
+	s.mustExec(c, "alter table test_drop_column add column c3 int")
+	s.mustExec(c, "alter table test_drop_column drop column c3")
 }
 
 func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
