@@ -211,8 +211,8 @@ func (tc *TiDBContext) CommitTxn(ctx context.Context) error {
 }
 
 // SetProcessInfo implements QueryCtx SetProcessInfo method.
-func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte, stmtType string) {
-	tc.session.SetProcessInfo(sql, t, command, stmtType)
+func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte) {
+	tc.session.SetProcessInfo(sql, t, command)
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.

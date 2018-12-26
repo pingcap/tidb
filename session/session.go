@@ -83,7 +83,7 @@ type Session interface {
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
 	SetCommandValue(byte)
-	SetProcessInfo(string, time.Time, byte, string)
+	SetProcessInfo(string, time.Time, byte)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -841,15 +841,14 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string, t time.Time, command byte, stmtType string) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	pi := util.ProcessInfo{
-		ID:       s.sessionVars.ConnectionID,
-		DB:       s.sessionVars.CurrentDB,
-		Command:  mysql.Command2Str[command],
-		Time:     t,
-		State:    s.Status(),
-		Info:     sql,
-		StmtType: stmtType,
+		ID:      s.sessionVars.ConnectionID,
+		DB:      s.sessionVars.CurrentDB,
+		Command: mysql.Command2Str[command],
+		Time:    t,
+		State:   s.Status(),
+		Info:    sql,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username

@@ -45,7 +45,7 @@ import (
 
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
-	SetProcessInfo(string, time.Time, byte, string)
+	SetProcessInfo(string, time.Time, byte)
 }
 
 // recordSet wraps an executor, implements sqlexec.RecordSet interface
@@ -156,11 +156,6 @@ func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
-// rootStmtType returns the SQL type label of root stmt.
-func (a *ExecStmt) rootStmtType() string {
-	return GetStmtLabel(a.StmtNode)
-}
-
 // IsPrepared returns true if stmt is a prepare statement.
 func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
@@ -233,7 +228,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
-		stmtType := a.rootStmtType()
 		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
 			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
 				// Use SecureText to avoid leak password information.
@@ -241,7 +235,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 			}
 		}
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, stmtType)
+		pi.SetProcessInfo(sql, time.Now(), cmd)
+		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.

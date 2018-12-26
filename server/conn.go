@@ -604,7 +604,12 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	} else {
 		metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 	}
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral).Observe(time.Since(startTime).Seconds())
+	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
+	sqlType := metrics.LblGeneral
+	if stmtType != "" {
+		sqlType = stmtType
+	}
+	metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -625,11 +630,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	cc.lastCmd = hack.String(data)
 	token := cc.server.getToken()
 	defer func() {
-		stmtType := cc.ctx.ShowProcess().StmtType
-		if stmtType != "" {
-			metrics.StmtDurationHistogram.WithLabelValues(stmtType).Observe(time.Since(t).Seconds())
-		}
-		cc.ctx.SetProcessInfo("", t, mysql.ComSleep, "")
+		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
@@ -641,9 +642,9 @@ func (cc *clientConn) dispatch(data []byte) error {
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
-		cc.ctx.SetProcessInfo("", t, cmd, "")
+		cc.ctx.SetProcessInfo("", t, cmd)
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd, "")
+		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
 	}
 
 	switch cmd {
