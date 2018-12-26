@@ -14,6 +14,7 @@
 package core
 
 import (
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
@@ -245,6 +246,36 @@ func MockTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
+	}
+	return table
+}
+
+// MockView is only used for plan related tests.
+func MockView() *model.TableInfo {
+	selectStmt := "select b,c,d from t"
+	col0 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 0,
+		Name:   model.NewCIStr("b"),
+		ID:     1,
+	}
+	col1 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 1,
+		Name:   model.NewCIStr("c"),
+		ID:     2,
+	}
+	col2 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 2,
+		Name:   model.NewCIStr("d"),
+		ID:     3,
+	}
+	view := &model.ViewInfo{SelectStmt: selectStmt, Security: model.SecurityDefiner, Definer: &auth.UserIdentity{Username: "root", Hostname: ""}, Cols: []model.CIStr{col0.Name, col1.Name, col2.Name}}
+	table := &model.TableInfo{
+		Name:    model.NewCIStr("v"),
+		Columns: []*model.ColumnInfo{col0, col1, col2},
+		View:    view,
 	}
 	return table
 }

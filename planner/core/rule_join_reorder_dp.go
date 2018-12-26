@@ -230,7 +230,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan LogicalPlan, e
 		}
 	}
 	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds)
-	_, err := join.deriveStats()
+	_, err := join.recursiveDeriveStats()
 	return join, err
 }
 
