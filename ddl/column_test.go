@@ -271,9 +271,17 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer ctx.Txn(true).Commit(context.Background())
+	defer func() {
+		if txn, err1 := ctx.Txn(true); err1 == nil {
+			txn.Commit(context.Background())
+		}
+	}()
 	key := t.RecordKey(handle)
-	data, err := ctx.Txn(true).Get(key)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	data, err := txn.Get(key)
 	if !isExist {
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			return nil
@@ -760,7 +768,9 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	handle, err := t.AddRecord(ctx, oldRow, false)
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	newColName := "c4"
@@ -823,7 +833,9 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
@@ -847,7 +859,9 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)), false)
 	c.Assert(err, IsNil)
 
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	checkOK := false
@@ -896,7 +910,9 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
@@ -945,6 +961,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 func (s *testColumnSuite) TestFieldCase(c *C) {
 	var fields = []string{"field", "Field"}
 	var colDefs = make([]*ast.ColumnDef, len(fields))
+	var colObjects []interface{}
 	for i, name := range fields {
 		colDefs[i] = &ast.ColumnDef{
 			Name: &ast.ColumnName{
@@ -953,6 +970,7 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 				Name:   model.NewCIStr(name),
 			},
 		}
+		colObjects = append(colObjects, colDefs[i])
 	}
-	c.Assert(checkDuplicateColumn(colDefs), NotNil)
+	c.Assert(checkDuplicateColumn(colObjects), NotNil)
 }

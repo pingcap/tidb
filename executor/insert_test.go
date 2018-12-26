@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
+func (s *testSuite3) TestInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -29,31 +29,39 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec(`create table t2(a2 bigint primary key, b2 bigint);`)
 	tk.MustExec(`insert into t1 values(1, 100);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustExec(`insert into t2 values(1, 200);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 
 	tk.MustExec(`insert into t1 select a2, b2 from t2 on duplicate key update b1 = a2;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 1"))
 
 	tk.MustExec(`insert into t1 select a2, b2 from t2 on duplicate key update b1 = b2;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 200"))
 
 	tk.MustExec(`insert into t1 select a2, b2 from t2 on duplicate key update a1 = a2;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.CheckLastMessage("Records: 1  Duplicates: 0  Warnings: 0")
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 200"))
 
 	tk.MustExec(`insert into t1 select a2, b2 from t2 on duplicate key update b1 = 300;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 300"))
 
 	tk.MustExec(`insert into t1 values(1, 1) on duplicate key update b1 = 400;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.CheckLastMessage("")
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 400"))
 
 	tk.MustExec(`insert into t1 select 1, 500 from t2 on duplicate key update b1 = 400;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.CheckLastMessage("Records: 1  Duplicates: 0  Warnings: 0")
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 400"))
 
 	tk.MustExec(`drop table if exists t1, t2;`)
@@ -85,57 +93,73 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec(`create table t2(a2 bigint primary key, b2 bigint);`)
 	tk.MustExec(`insert into t1 values(1, 100);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustExec(`insert into t2 values(1, 200);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustExec(`insert into t1 select * from t2 on duplicate key update b1 = values(b1) + b2;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
 	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1 400"))
 	tk.MustExec(`insert into t1 select * from t2 on duplicate key update b1 = values(b1) + b2;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.CheckLastMessage("Records: 1  Duplicates: 0  Warnings: 0")
 	tk.MustQuery(`select * from t1`).Check(testkit.Rows("1 400"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(k1 bigint, k2 bigint, val bigint, primary key(k1, k2));`)
 	tk.MustExec(`insert into t (val, k1, k2) values (3, 1, 2);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 3`))
 	tk.MustExec(`insert into t (val, k1, k2) select c, a, b from (select 1 as a, 2 as b, 4 as c) tmp on duplicate key update val = tmp.c;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.CheckLastMessage("Records: 1  Duplicates: 1  Warnings: 0")
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 4`))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(k1 double, k2 double, v double, primary key(k1, k2));`)
 	tk.MustExec(`insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("Records: 1  Duplicates: 0  Warnings: 0")
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 3`))
 	tk.MustExec(`insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.CheckLastMessage("Records: 1  Duplicates: 0  Warnings: 0")
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 3`))
 
 	tk.MustExec(`drop table if exists t1, t2;`)
 	tk.MustExec(`create table t1(id int, a int, b int);`)
 	tk.MustExec(`insert into t1 values (1, 1, 1);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustExec(`insert into t1 values (2, 2, 1);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustExec(`insert into t1 values (3, 3, 1);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustExec(`create table t2(a int primary key, b int, unique(b));`)
 	tk.MustExec(`insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(5))
+	tk.CheckLastMessage("Records: 3  Duplicates: 2  Warnings: 0")
 	tk.MustQuery(`select * from t2 order by a;`).Check(testkit.Rows(`3 1`))
 
 	tk.MustExec(`drop table if exists t1, t2;`)
 	tk.MustExec(`create table t1(id int, a int, b int);`)
 	tk.MustExec(`insert into t1 values (1, 1, 1);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustExec(`insert into t1 values (2, 1, 2);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustExec(`insert into t1 values (3, 3, 1);`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.CheckLastMessage("")
 	tk.MustExec(`create table t2(a int primary key, b int, unique(b));`)
 	tk.MustExec(`insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(4))
+	tk.CheckLastMessage("Records: 3  Duplicates: 1  Warnings: 0")
 	tk.MustQuery(`select * from t2 order by a;`).Check(testkit.Rows(`1 2`, `3 1`))
 
 	tk.MustExec(`drop table if exists t1, t2;`)
@@ -147,10 +171,20 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec(`create table t2(a int primary key, b int, c int, unique(b), unique(c));`)
 	tk.MustExec(`insert into t2 select a, b, c from t1 order by id on duplicate key update b=t2.b, c=t2.c;`)
 	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.CheckLastMessage("Records: 4  Duplicates: 0  Warnings: 0")
 	tk.MustQuery(`select * from t2 order by a;`).Check(testkit.Rows(`1 1 1`, `3 2 2`))
+
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1(a int primary key, b int);`)
+	tk.MustExec(`insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(5))
+	tk.CheckLastMessage("Records: 5  Duplicates: 0  Warnings: 0")
+	tk.MustExec(`insert into t1 values(4,14),(5,15),(6,16),(7,17),(8,18) on duplicate key update b=b+10`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(7))
+	tk.CheckLastMessage("Records: 5  Duplicates: 2  Warnings: 0")
 }
 
-func (s *testSuite) TestUpdateDuplicateKey(c *C) {
+func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -162,7 +196,7 @@ func (s *testSuite) TestUpdateDuplicateKey(c *C) {
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
 }
 
-func (s *testSuite) TestInsertWrongValueForField(c *C) {
+func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
@@ -171,7 +205,7 @@ func (s *testSuite) TestInsertWrongValueForField(c *C) {
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
 }
 
-func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
+func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`use test;`)
@@ -186,7 +220,7 @@ func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
 	))
 }
 
-func (s *testSuite) TestInsertZeroYear(c *C) {
+func (s *testSuite3) TestInsertZeroYear(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)

@@ -16,8 +16,8 @@ package session_test
 import (
 	"context"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -47,4 +47,17 @@ func (s *testSessionSuite) TestGetTSFailDirtyState(c *C) {
 	// affected by this fail flag.
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestGetTSFailDirtyStateInretry(c *C) {
+	defer gofail.Disable("github.com/pingcap/tidb/session/mockCommitError")
+	defer gofail.Disable("github.com/pingcap/tidb/session/mockGetTSErrorInRetry")
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int)")
+
+	gofail.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/session/mockGetTSErrorInRetry", `return(true)`)
+	tk.MustExec("insert into t values (2)")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
 }

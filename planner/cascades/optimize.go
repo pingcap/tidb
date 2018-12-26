@@ -73,7 +73,9 @@ func exploreGroup(g *memo.Group) error {
 		// Explore child groups firstly.
 		curExpr.Explored = true
 		for _, childGroup := range curExpr.Children {
-			exploreGroup(childGroup)
+			if err := exploreGroup(childGroup); err != nil {
+				return err
+			}
 			curExpr.Explored = curExpr.Explored && childGroup.Explored
 		}
 
@@ -127,7 +129,7 @@ func findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error)
 	return eraseCur, nil
 }
 
-// onPhaseImplementation starts implementating physical operators from given root Group.
+// onPhaseImplementation starts implementation physical operators from given root Group.
 func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.Plan, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
