@@ -1158,7 +1158,29 @@ type VariableExpr struct {
 
 // Restore implements Node interface.
 func (n *VariableExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if n.IsSystem {
+		ctx.WritePlain("@@")
+		if n.ExplicitScope {
+			if n.IsGlobal {
+				ctx.WriteKeyWord("GLOBAL")
+			} else {
+				ctx.WriteKeyWord("SESSION")
+			}
+			ctx.WritePlain(".")
+		}
+	} else {
+		ctx.WritePlain("@")
+	}
+	ctx.WriteName(n.Name)
+
+	if n.Value != nil {
+		ctx.WritePlain(":=")
+		if err := n.Value.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore VariableExpr.Value")
+		}
+	}
+
+	return nil
 }
 
 // Format the ExprNode into a Writer.
