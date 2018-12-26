@@ -310,9 +310,13 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 	return
 }
 
-// ReverseScan queries continuous kv pairs, starts from startKey and goes backwards, up to limit pairs.
-// startKey is the exclusive upper bound. If you want to include the startKey, append a '\0' to the key
-func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
+// ReverseScan queries continuous kv pairs in range [endKey, startKey), up to limit pairs.
+// Direction is different from Scan, upper to lower.
+// If endKey is empty, it means unbounded.
+// If you want to exclude the startKey or include the endKey, append a '\0' to the key. For example, to scan
+// (endKey, startKey], you can write:
+// `ReverseScan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
+func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() {
 		metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_reverse_scan").Observe(time.Since(start).Seconds())
@@ -327,6 +331,7 @@ func (c *RawKVClient) ReverseScan(startKey []byte, limit int) (keys [][]byte, va
 			Type: tikvrpc.CmdRawScan,
 			RawScan: &kvrpcpb.RawScanRequest{
 				StartKey: startKey,
+				EndKey:   endKey,
 				Limit:    uint32(limit - len(keys)),
 				Reverse:  true,
 			},
