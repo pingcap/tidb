@@ -125,7 +125,10 @@ func (a *aggregationEliminateChecker) wrapCastFunction(ctx sessionctx.Context, a
 func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, _ := a.optimize(child)
+		newChild, err := a.optimize(child)
+		if err != nil {
+			return nil, err
+		}
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
