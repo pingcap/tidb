@@ -1999,20 +1999,16 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 }
 
 func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
-	var (
-		selectNode        ast.StmtNode
-		selectLogicalPlan Plan
-		err               error
-	)
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
-	selectNode, err = parser.New().ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
+	selectNode, err := parser.New().ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err
 	}
-	selectLogicalPlan, err = b.Build(selectNode)
+	selectLogicalPlan, err := b.Build(selectNode)
 	if err != nil {
 		return nil, err
 	}
+
 	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
 	projExprs := make([]expression.Expression, 0, len(tableInfo.View.Cols))
 	for i := range tableInfo.View.Cols {
