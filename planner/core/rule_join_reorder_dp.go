@@ -67,16 +67,19 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds, otherConds
 	for _, cond := range otherConds {
 		cols := expression.ExtractColumns(cond)
 		mask := uint(0)
+		ids := make([]int, 0, len(cols))
 		for _, col := range cols {
 			idx, err := findNodeIndexInGroup(joinGroup, col)
 			if err != nil {
 				return nil, err
 			}
+			ids = append(ids, idx)
 			mask |= 1 << uint(idx)
 		}
 		totalNonEqEdges = append(totalNonEqEdges, joinGroupNonEqEdge{
-			idMask: mask,
-			expr:   cond,
+			nodeIDs: ids,
+			idMask:  mask,
+			expr:    cond,
 		})
 	}
 	visited := make([]bool, len(joinGroup))
@@ -90,17 +93,17 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds, otherConds
 		visitID2NodeID := s.bfsGraph(i, visited, adjacents, nodeID2VisitID)
 		nodeIDMask := uint(0)
 		for _, nodeID := range visitID2NodeID {
-			nodeIDMask |= uint(nodeID)
+			nodeIDMask |= 1 << uint(nodeID)
 		}
 		var subNonEqEdges []joinGroupNonEqEdge
 		for i := len(totalNonEqEdges) - 1; i >= 0; i-- {
 			// If this edge is not the subset of the current sub graph.
-			if totalNonEqEdges[i].idMask&nodeIDMask != nodeIDMask {
+			if totalNonEqEdges[i].idMask&nodeIDMask != totalNonEqEdges[i].idMask {
 				continue
 			}
 			newMask := uint(0)
 			for _, nodeID := range totalNonEqEdges[i].nodeIDs {
-				newMask |= uint(nodeID)
+				newMask |= 1 << uint(nodeID2VisitID[nodeID])
 			}
 			totalNonEqEdges[i].idMask = newMask
 			subNonEqEdges = append(subNonEqEdges, totalNonEqEdges[i])
@@ -240,6 +243,9 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, ot
 				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
 				break
 			}
+			// TODO:Since the other condition may involve no less than two tables, e.g. t1.a = t2.b+t3.c.
+			//  So We'll need a extra stage to deal with it.
+			// Currently, we just add it when building cartesianJoinGroup.
 			mergedSchema := expression.MergeSchema(cartesianJoinGroup[i].Schema(), cartesianJoinGroup[i+1].Schema())
 			var usedOtherConds []expression.Expression
 			for i := len(otherConds) - 1; i >= 0; i-- {
