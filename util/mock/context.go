@@ -88,8 +88,8 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(bool) kv.Transaction {
-	return &c.txn
+func (c *Context) Txn(bool) (kv.Transaction, error) {
+	return &c.txn, nil
 }
 
 // GetClient implements sessionctx.Context GetClient interface.
@@ -198,7 +198,8 @@ func (c *Context) GoCtx() context.Context {
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StmtCommit implements the sessionctx.Context interface.
-func (c *Context) StmtCommit() {
+func (c *Context) StmtCommit() error {
+	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.

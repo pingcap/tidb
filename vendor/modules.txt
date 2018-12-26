@@ -20,8 +20,6 @@ github.com/coreos/etcd/pkg/types
 github.com/cznic/mathutil
 # github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
 github.com/cznic/sortutil
-# github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a
-github.com/etcd-io/gofail/runtime
 # github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
 github.com/go-sql-driver/mysql
 # github.com/gogo/protobuf v1.1.1
@@ -65,6 +63,8 @@ github.com/opentracing/opentracing-go/log
 github.com/pingcap/check
 # github.com/pingcap/errors v0.11.0
 github.com/pingcap/errors
+# github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
+github.com/pingcap/gofail/runtime
 # github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 github.com/pingcap/goleveldb/leveldb
 github.com/pingcap/goleveldb/leveldb/comparer
@@ -100,7 +100,7 @@ github.com/pingcap/parser/charset
 github.com/pingcap/parser/format
 # github.com/pingcap/pd v2.1.0-rc.4+incompatible
 github.com/pingcap/pd/client
-# github.com/pingcap/tidb-tools v0.0.0-20181112132202-4860a0d5de03
+# github.com/pingcap/tidb-tools v2.1.1-0.20181218072513-b2235d442b06+incompatible
 github.com/pingcap/tidb-tools/tidb-binlog/pump_client
 github.com/pingcap/tidb-tools/tidb-binlog/node
 github.com/pingcap/tidb-tools/pkg/etcd

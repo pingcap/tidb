@@ -14,8 +14,8 @@
 package session_test
 
 import (
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -27,8 +27,8 @@ func (s *testSessionSuite) TestFailStatementCommit(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
 	gofail.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`)
-	tk.MustExec("insert into t values (2)")
-	_, err := tk.Exec("commit")
+	_, err := tk.Exec("insert into t values (2)")
 	c.Assert(err, NotNil)
-	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
 }

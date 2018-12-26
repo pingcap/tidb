@@ -1846,7 +1846,8 @@ func (s *testBypassSuite) TestBypassLatch(c *C) {
 
 	tk1.MustExec("truncate table t")
 	fn()
-	txn := tk1.Se.Txn(true)
+	txn, err := tk1.Se.Txn(true)
+	c.Assert(err, IsNil)
 	txn.SetOption(kv.BypassLatch, true)
 	// Bypass latch, there will be no conflicts.
 	tk1.MustExec("commit")
@@ -2092,7 +2093,9 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
+	txn, err := s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	tk.MustExec(`update t set b = 3 where a = 30001;`)
 	tk.MustExec(`insert into t (b) values (4);`)
