@@ -225,3 +225,25 @@ func (tc *testDMLSuite) TestDeleteTableListRestore(c *C) {
 	RunNodeRestoreTest(c, testCases, "DELETE %s FROM t1, t2;", extractNodeFunc)
 	RunNodeRestoreTest(c, testCases, "DELETE FROM %s USING t1, t2;", extractNodeFunc)
 }
+func (tc *testExpressionsSuite) TestByItemRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"a", "`a`"},
+		{"a desc", "`a` DESC"},
+		{"NULL", "NULL"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).OrderBy.Items[0]
+	}
+	RunNodeRestoreTest(c, testCases, "select * from t order by %s", extractNodeFunc)
+}
+
+func (tc *testExpressionsSuite) TestGroupByClauseRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"a,b desc", "`a`,`b` DESC"},
+		{"1 desc,b", "1 DESC,`b`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).GroupBy
+	}
+	RunNodeRestoreTest(c, testCases, "select * from t group by %s", extractNodeFunc)
+}
