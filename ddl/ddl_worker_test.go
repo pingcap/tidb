@@ -577,8 +577,6 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo1.ID, 0, model.ActionCreateSchema, []interface{}{dbInfo1}, &cancelState)
 	c.Check(checkErr, IsNil)
 	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
-
-
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
