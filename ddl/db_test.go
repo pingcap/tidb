@@ -894,7 +894,7 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 	testCases := []struct {
 		jobState       model.JobState
 		JobSchemaState model.SchemaState
-		cancelSucc       bool
+		cancelSucc     bool
 	}{
 		{model.JobStateNone, model.StateNone, true},
 		{model.JobStateRunning, model.StateWriteOnly, false},

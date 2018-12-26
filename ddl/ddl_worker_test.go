@@ -408,7 +408,7 @@ func (s *testDDLSuite) checkAddColumn(c *C, d *ddl, schemaID int64, tableID int6
 	c.Assert(found, Equals, success)
 }
 
-func (s *testDDLSuite) checkDropColumn(c *C, d *ddl, schemaID int64, tableID int64, colName string, success bool) {
+func (s *testDDLSuite) checkCancelDropColumn(c *C, d *ddl, schemaID int64, tableID int64, colName string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
 	notFound := true
 	for _, colInfo := range changedTable.Meta().Columns {
@@ -564,17 +564,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	dropColumnArgs := []interface{}{model.NewCIStr(dropColName)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, dropColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
-
-	test = &tests[14]
-	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, dropColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
-
-	test = &tests[15]
-	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, dropColumnArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
-	s.checkDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
+	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

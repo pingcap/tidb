@@ -282,7 +282,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func rollingbackDropColumn(job *model.Job, colInfo *model.ColumnInfo) error{
+func rollingbackDropColumn(job *model.Job, colInfo *model.ColumnInfo) error {
 	if job.Type == model.ActionDropColumn {
 		if colInfo.State == model.StatePublic {
 			return errCancelledDDLJob
@@ -291,7 +291,7 @@ func rollingbackDropColumn(job *model.Job, colInfo *model.ColumnInfo) error{
 		// We can not rollback now, so just continue to drop column.
 		job.State = model.JobStateRunning
 	}
-	return nil
+	return errCancelledDDLJob
 }
 
 func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
