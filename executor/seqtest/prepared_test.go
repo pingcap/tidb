@@ -231,6 +231,16 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		exec := &executor.ExecuteExec{}
 		exec.Next(ctx, nil)
 		exec.Close()
+
+		// issue 8065
+		stmtID, _, _, err = tk.Se.PrepareStmt("select ? from dual")
+		c.Assert(err, IsNil)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
+		c.Assert(err, IsNil)
+		stmtID, _, _, err = tk.Se.PrepareStmt("update prepare1 set a = ? where a = ?")
+		c.Assert(err, IsNil)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1, 1)
+		c.Assert(err, IsNil)
 	}
 }
 
