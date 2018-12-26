@@ -611,6 +611,7 @@ type GroupByClause struct {
 
 // Restore implements Node interface.
 func (n *GroupByClause) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("GROUP BY ")
 	for i, v := range n.Items {
 		if i != 0 {
 			ctx.WritePlain(",")

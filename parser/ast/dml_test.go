@@ -239,13 +239,13 @@ func (tc *testExpressionsSuite) TestByItemRestore(c *C) {
 
 func (tc *testExpressionsSuite) TestGroupByClauseRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
-		{"a,b desc", "`a`,`b` DESC"},
-		{"1 desc,b", "1 DESC,`b`"},
+		{"GROUP BY a,b desc", "GROUP BY `a`,`b` DESC"},
+		{"GROUP BY 1 desc,b", "GROUP BY 1 DESC,`b`"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).GroupBy
 	}
-	RunNodeRestoreTest(c, testCases, "select * from t group by %s", extractNodeFunc)
+	RunNodeRestoreTest(c, testCases, "select * from t %s", extractNodeFunc)
 }
 
 func (tc *testDMLSuite) TestOrderByClauseRestore(c *C) {
