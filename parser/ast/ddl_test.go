@@ -154,3 +154,15 @@ func (ts *testDDLSuite) TestDDLTruncateTableStmtRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
 }
+
+func (ts *testDDLSuite) TestColumnPositionRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"", ""},
+		{"first", "FIRST"},
+		{"after b", "AFTER `b`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*AlterTableStmt).Specs[0].Position
+	}
+	RunNodeRestoreTest(c, testCases, "alter table t add column a varchar(255) %s", extractNodeFunc)
+}
