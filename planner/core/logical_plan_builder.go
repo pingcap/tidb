@@ -608,12 +608,12 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 			oldLen++
 		}
 
-		hasWindow := ast.HasWindowFlag(field.Expr)
+		isWindowFuncField := ast.HasWindowFlag(field.Expr)
 		// When `considerWindow` is false, we will only build fields for non-window functions, so we add fake placeholders.
 		// When `considerWindow` is true, all the non-window fields have been built, so we just use the schema columns.
-		if (considerWindow && !hasWindow) || (!considerWindow && hasWindow) {
+		if (considerWindow && !isWindowFuncField) || (!considerWindow && isWindowFuncField) {
 			var expr expression.Expression
-			if hasWindow {
+			if isWindowFuncField {
 				expr = expression.Zero
 			} else {
 				expr = p.Schema().Columns[i]
