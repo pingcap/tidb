@@ -104,7 +104,7 @@ func (s *testMiscSuite) TestCompatibleParseGCTime(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(t.Equal(expectedTime), Equals, true)
 
-		formatted := t.In(beijing).Format(GcTimeFormat)
+		formatted := t.In(beijing).Format(GCTimeFormat)
 		c.Assert(formatted, Equals, expectedTimeFormatted)
 	}
 

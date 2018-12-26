@@ -931,7 +931,7 @@ func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, key string, t uint64) erro
 }
 
 func (w *GCWorker) saveTime(key string, t time.Time) error {
-	err := w.saveValueToSysTable(key, t.Format(tidbutil.GcTimeFormat))
+	err := w.saveValueToSysTable(key, t.Format(tidbutil.GCTimeFormat))
 	return errors.Trace(err)
 }
 
