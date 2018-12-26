@@ -62,7 +62,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/megacheck tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt lint tidy
+check: fmt errcheck lint tidy
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -89,6 +89,11 @@ check-slow:tools/bin/gometalinter tools/bin/gosec
 	tools/bin/gometalinter --disable-all \
 	  --enable errcheck \
 	  $$($(PACKAGE_DIRECTORIES))
+
+errcheck:tools/bin/errcheck
+	@echo "errcheck"
+	@$(GO) mod vendor
+	@tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:tools/bin/revive
 	@echo "linting"
@@ -221,3 +226,7 @@ tools/bin/gometalinter:
 tools/bin/gosec:
 	cd tools/check; \
 	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
+
+tools/bin/errcheck:
+	cd tools/check; \
+	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
