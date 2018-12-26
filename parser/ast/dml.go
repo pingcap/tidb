@@ -647,7 +647,11 @@ type HavingClause struct {
 
 // Restore implements Node interface.
 func (n *HavingClause) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("HAVING ")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore HavingClause.Expr")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
