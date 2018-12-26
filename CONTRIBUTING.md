@@ -65,7 +65,7 @@ The version of GO should be **1.11** or above.
 
 After installation, there are two ways to build TiDB binary.
 
-#### For a quick taste
+#### A quick taste
 
 The `GOPATH` is not necessary.
 
