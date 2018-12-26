@@ -229,20 +229,16 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
-
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if job.IsRollingback() && job.Type == model.ActionDropColumn {
-		if colInfo.State == model.StatePublic && job.SchemaState == model.StateNone {
+	if job.IsRollingback() {
+		if err = rollingbackDropColumn(job, colInfo); err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errCancelledDDLJob
+			return ver, errors.Trace(err)
 		}
-		// In the state of drop column `write only -> delete only -> reorganization`,
-		// We can not rollback now, so just continue to drop column.
-		job.State = model.JobStateRunning
 	}
 
 	originalState := colInfo.State
@@ -284,6 +280,18 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func rollingbackDropColumn(job *model.Job, colInfo *model.ColumnInfo) error{
+	if job.Type == model.ActionDropColumn {
+		if colInfo.State == model.StatePublic {
+			return errCancelledDDLJob
+		}
+		// In the state of drop column `write only -> delete only -> reorganization`,
+		// We can not rollback now, so just continue to drop column.
+		job.State = model.JobStateRunning
+	}
+	return nil
 }
 
 func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {

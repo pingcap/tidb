@@ -912,6 +912,7 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionDropColumn && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
 			jobIDs := []int64{job.ID}
+			jobID = job.ID
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.Background())
