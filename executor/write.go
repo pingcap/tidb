@@ -143,7 +143,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			return false, false, 0, errors.Trace(err)
 		}
 		// the `affectedRows` is increased when adding new record.
-		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
+		newHandle, err = t.AddRecord(ctx, newData[:len(t.Cols())], skipHandleCheck)
 		if err != nil {
 			return false, false, 0, errors.Trace(err)
 		}

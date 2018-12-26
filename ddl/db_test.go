@@ -2001,3 +2001,50 @@ func (s *testDBSuite) TestTransactionOnAddDropColumn(c *C) {
 	c.Assert(err, IsNil)
 	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 }
+
+func (s *testDBSuite) TestTransactionWithWriteOnlyColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (a int key);")
+
+	transactions := [][]string{
+		{
+			"begin",
+			"insert into t1 set a=1",
+			"update t1 set a=2 where a=1",
+			"commit",
+		},
+	}
+
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+		default:
+			return
+		}
+		// do transaction.
+		for _, transaction := range transactions {
+			for _, sql := range transaction {
+				s.mustExec(c, sql)
+			}
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	// test transaction on add column.
+	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
+	err := <-done
+	c.Assert(err, IsNil)
+	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
+	s.mustExec(c, "delete from t1")
+
+	// test transaction on drop column.
+	go backgroundExec(s.store, "alter table t1 drop column c", done)
+	err = <-done
+	c.Assert(err, IsNil)
+	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
+}
