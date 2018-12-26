@@ -89,7 +89,7 @@ func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		if mysql.HasNotNullFlag(expr.GetType().Flag) {
-			isNullExprs = append(isNullExprs, expression.One)
+			isNullExprs = append(isNullExprs, expression.Zero)
 		} else {
 			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 			isNullExprs = append(isNullExprs, isNullExpr)
