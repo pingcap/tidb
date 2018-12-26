@@ -331,7 +331,7 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions [
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
 	}
 	ranges, accessConds, _, _, err = detachCNFCondAndBuildRangeForIndex(sctx, conditions, cols, newTpSlice, lengths, false)
-	return ranges, accessConds, nil
+	return ranges, accessConds, errors.Trace(err)
 }
 
 func removeAccessConditions(conditions, accessConds []expression.Expression) []expression.Expression {
