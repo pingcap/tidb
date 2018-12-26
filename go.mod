@@ -18,7 +18,7 @@ require (
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
 	github.com/dustin/go-humanize v0.0.0-20180421182945-02af3965c54e // indirect
 	github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385 // indirect
-	github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a
+	github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a // indirect
 	github.com/fsnotify/fsnotify v1.4.7 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
@@ -45,11 +45,12 @@ require (
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
 	github.com/pingcap/errors v0.11.0
+	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929
 	github.com/pingcap/parser v0.0.0-20181207085916-6c21d4344dfa
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
-	github.com/pingcap/tidb-tools v0.0.0-20181112132202-4860a0d5de03
+	github.com/pingcap/tidb-tools v2.1.1-0.20181218072513-b2235d442b06+incompatible
 	github.com/pingcap/tipb v0.0.0-20180910045846-371b48b15d93
 	github.com/pkg/errors v0.8.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
@@ -79,3 +80,5 @@ require (
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v2 v2.2.1 // indirect
 )
+
+replace github.com/pingcap/parser => github.com/lysu/parser v0.0.0-20181221063414-a86a9ff7a7de

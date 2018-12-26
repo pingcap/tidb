@@ -14,6 +14,7 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 	"time"
@@ -21,9 +22,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pb "github.com/pingcap/tipb/go-binlog"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+)
+
+var (
+	// localPump is used to write local pump through unix socket connection.
+	localPump = "localPump"
 )
 
 // PumpStatus saves pump's status.
@@ -78,9 +83,16 @@ func (p *PumpStatus) createGrpcClient(security *tls.Config) error {
 		p.grpcConn.Close()
 	}
 
-	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
-		return net.DialTimeout("tcp", addr, timeout)
-	})
+	var dialerOpt grpc.DialOption
+	if p.NodeID == localPump {
+		dialerOpt = grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+			return net.DialTimeout("unix", addr, timeout)
+		})
+	} else {
+		dialerOpt = grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+			return net.DialTimeout("tcp", addr, timeout)
+		})
+	}
 	Logger.Debugf("[pumps client] create gcpc client at %s", p.Addr)
 	var clientConn *grpc.ClientConn
 	var err error

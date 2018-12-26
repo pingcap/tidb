@@ -176,11 +176,23 @@ func setupBinlogClient() {
 		binloginfo.SetIgnoreError(true)
 	}
 
-	client, err := pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), pd.SecurityOption{
+	var (
+		client *pumpcli.PumpsClient
+		err    error
+	)
+
+	securityOption := pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	})
+	}
+
+	if len(cfg.Binlog.BinlogSocket) == 0 {
+		client, err = pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+	} else {
+		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+	}
+
 	terror.MustNil(err)
 
 	binloginfo.SetPumpsClient(client)
@@ -393,7 +405,8 @@ func setGlobalVars() {
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 
-	plannercore.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
+	// For CI environment we default enable prepare-plan-cache.
+	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
 	if plannercore.PreparedPlanCacheEnabled() {
 		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
