@@ -247,3 +247,19 @@ func (tc *testExpressionsSuite) TestGroupByClauseRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select * from t group by %s", extractNodeFunc)
 }
+
+func (tc *testDMLSuite) TestOrderByClauseRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"ORDER BY a", "ORDER BY `a`"},
+		{"ORDER BY a,b", "ORDER BY `a`,`b`"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*SelectStmt).OrderBy
+	}
+	RunNodeRestoreTest(c, testCases, "SELECT 1 FROM t1 %s", extractNodeFunc)
+
+	extractNodeFromUnionStmtFunc := func(node Node) Node {
+		return node.(*UnionStmt).OrderBy
+	}
+	RunNodeRestoreTest(c, testCases, "SELECT 1 FROM t1 UNION SELECT 2 FROM t2 %s", extractNodeFromUnionStmtFunc)
+}
