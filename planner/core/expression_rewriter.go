@@ -314,7 +314,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.Node, bool) {
 	windowPlan, err := er.b.buildWindowFunction(er.p, v, er.aggrMap)
 	if err != nil {
-		er.err = errors.Trace(err)
+		er.err = err
 		return v, false
 	}
 	er.ctxStack = append(er.ctxStack, windowPlan.GetWindowResultColumn())

@@ -625,7 +625,7 @@ type LogicalWindow struct {
 	logicalSchemaProducer
 
 	WindowFuncDesc *aggregation.WindowFuncDesc
-	ByItems        []property.Item
+	ByItems        []property.Item // ByItems is composed of `PARTITION BY` and `ORDER BY` items.
 	// TODO: add frame clause
 }
 

@@ -1963,6 +1963,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select avg(a) over() as w from t having w > 1",
 			result: "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
 		},
+		{
+			sql:    "select sum(a) over() as sum_a from t group by sum_a",
+			result: "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)

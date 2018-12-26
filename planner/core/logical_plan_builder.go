@@ -1240,7 +1240,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		}
 		n, ok := field.Expr.Accept(extractor)
 		if !ok {
-			return nil, errors.Trace(extractor.err)
+			return nil, extractor.err
 		}
 		field.Expr = n.(ast.ExprNode)
 	}
@@ -1820,11 +1820,11 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		}
 	}
 
-	hasWindow := b.detectSelectWindow(sel)
-	if hasWindow {
+	hasWindowFuncField := b.detectSelectWindow(sel)
+	if hasWindowFuncField {
 		windowMap, err = b.resolveWindowFunction(sel, p)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	// We must resolve having and order by clause before build projection,
@@ -1874,11 +1874,11 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		}
 	}
 
-	if hasWindow {
+	if hasWindowFuncField {
 		// Now we build the window function fields.
 		p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, windowMap, true)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 
@@ -2565,7 +2565,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, byItems []*ast.ByI
 		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewrite(item.Expr, p, aggMap, true)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, err
 		}
 		p = np
 		if col, ok := it.(*expression.Column); ok {
