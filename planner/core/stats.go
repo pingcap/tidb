@@ -329,6 +329,7 @@ func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo) (*prope
 	return p.stats, nil
 }
 
+// DeriveStats implement LogicalPlan DeriveStats interface.
 func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	childLen := len(childProfile.Cardinality)
