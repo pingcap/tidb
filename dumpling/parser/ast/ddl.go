@@ -473,7 +473,58 @@ type Constraint struct {
 
 // Restore implements Node interface.
 func (n *Constraint) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	switch n.Tp {
+	case ConstraintNoConstraint:
+		return nil
+	case ConstraintPrimaryKey:
+		ctx.WriteKeyWord("PRIMARY KEY")
+	case ConstraintKey:
+		ctx.WriteKeyWord("KEY")
+	case ConstraintIndex:
+		ctx.WriteKeyWord("INDEX")
+	case ConstraintUniq:
+		ctx.WriteKeyWord("UNIQUE")
+	case ConstraintUniqKey:
+		ctx.WriteKeyWord("UNIQUE KEY")
+	case ConstraintUniqIndex:
+		ctx.WriteKeyWord("UNIQUE INDEX")
+	case ConstraintForeignKey:
+		ctx.WriteKeyWord("FOREIGN KEY")
+	case ConstraintFulltext:
+		ctx.WriteKeyWord("FULLTEXT")
+	}
+
+	if n.Name != "" {
+		ctx.WritePlain(" ")
+		ctx.WriteName(n.Name)
+	}
+
+	ctx.WritePlain("(")
+	for i, keys := range n.Keys {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := keys.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing Constraint Keys: [%v]", i)
+		}
+	}
+	ctx.WritePlain(")")
+
+	if n.Refer != nil {
+		ctx.WritePlain(" ")
+		if err := n.Refer.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing Constraint Refer")
+		}
+	}
+
+	if n.Option != nil {
+		ctx.WritePlain(" ")
+		if err := n.Option.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing Constraint Option")
+		}
+	}
+
+	return nil
 }
 
 // Accept implements Node Accept interface.
