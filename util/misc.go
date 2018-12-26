@@ -15,6 +15,7 @@ package util
 
 import (
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,6 +27,8 @@ const (
 	DefaultMaxRetries = 30
 	// RetryInterval indicates retry interval.
 	RetryInterval uint64 = 500
+	// GcTimeFormat is the format that gc_worker used to store times.
+	GcTimeFormat = "20060102-15:04:05 -0700"
 )
 
 // RunWithRetry will run the f with backoff and retry.
@@ -73,27 +76,22 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 	exec()
 }
 
-// ParseTimeFromPrefix tries to parse time from a prefix of `value`. The formatted time should be separated from
-// other texts. For example, you can parse "20060102-15:04:05 -0700" from a string like "20060102-15:04:05 -0700 FOO"
-// but you can't parse from a string like "20060102-15:04:05 -0700FOO".
-func ParseTimeFromPrefix(format string, value string) (time.Time, error) {
-	t, err := time.Parse(format, value)
+// CompatibleParseGCTime parses a string with `GcTimeFormat` and returns a time.Time. If `value` can't be parsed as that
+// format, truncate to last space and try again. This function is only useful when loading times that saved by
+// gc_worker. We have changed the format that gc_worker saves time (removed the last field), but when loading times it
+// should be compatible with the old format.
+func CompatibleParseGCTime(value string) (time.Time, error) {
+	t, err := time.Parse(GcTimeFormat, value)
 
-	i := len(value)
-	for err != nil && i > 0 {
-		// Cut from the last space
-		for i > 0 {
-			i--
-			if value[i] == ' ' {
-				break
-			}
-		}
-
-		t, err = time.Parse(format, value[0:i])
+	if err != nil {
+		// Remove the last field that separated by space
+		parts := strings.Split(value, " ")
+		prefix := strings.Join(parts[:len(parts)-1], " ")
+		t, err = time.Parse(GcTimeFormat, prefix)
 	}
 
 	if err != nil {
-		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\"", value, format)
+		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\"", value, GcTimeFormat)
 	}
 	return t, err
 }

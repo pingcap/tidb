@@ -194,8 +194,7 @@ func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 		return errors.New("can not get 'tikv_gc_safe_point'")
 	}
 	safePointString := rows[0].GetString(0)
-	const gcTimeFormat = "20060102-15:04:05 -0700"
-	safePointTime, err := util.ParseTimeFromPrefix(gcTimeFormat, safePointString)
+	safePointTime, err := util.CompatibleParseGCTime(safePointString)
 	if err != nil {
 		return errors.Trace(err)
 	}

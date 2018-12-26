@@ -71,14 +71,11 @@ func (s *testMiscSuite) TestRunWithRetry(c *C) {
 	c.Assert(cnt, Equals, 1)
 }
 
-func (s *testMiscSuite) TestParseTimeFromPrefix(c *C) {
-	format := "20060102-15:04:05 -0700"
-
+func (s *testMiscSuite) TestCompatibleParseGCTime(c *C) {
 	values := []string{
 		"20181218-19:53:37 +0800 CST",
-		"20181218-19:53:37 +0800 MST ",
+		"20181218-19:53:37 +0800 MST",
 		"20181218-19:53:37 +0800 FOO",
-		"20181218-19:53:37 +0800 aaa bbb ccc 1 2 3 ",
 		"20181218-19:53:37 +0800 +08",
 		"20181218-19:53:37 +0800",
 		"20181218-19:53:37 +0800 ",
@@ -91,6 +88,7 @@ func (s *testMiscSuite) TestParseTimeFromPrefix(c *C) {
 		"foo",
 		"20181218-11:53:37",
 		"20181218-19:53:37 +0800CST",
+		"20181218-19:53:37 +0800 FOO BAR",
 		"20181218-19:53:37 +0800FOOOOOOO BAR",
 		"20181218-19:53:37 ",
 	}
@@ -102,16 +100,16 @@ func (s *testMiscSuite) TestParseTimeFromPrefix(c *C) {
 	c.Assert(err, IsNil)
 
 	for _, value := range values {
-		t, err := ParseTimeFromPrefix(format, value)
+		t, err := CompatibleParseGCTime(value)
 		c.Assert(err, IsNil)
 		c.Assert(t.Equal(expectedTime), Equals, true)
 
-		formatted := t.In(beijing).Format(format)
+		formatted := t.In(beijing).Format(GcTimeFormat)
 		c.Assert(formatted, Equals, expectedTimeFormatted)
 	}
 
 	for _, value := range invalidValues {
-		_, err := ParseTimeFromPrefix(format, value)
+		_, err := CompatibleParseGCTime(value)
 		c.Assert(err, NotNil)
 	}
 }
