@@ -198,11 +198,16 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (bo
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	txn, err := h.ctx.Txn(true)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	startTS := txn.StartTS()
 	var sql string
 	if delta.Delta < 0 {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", h.ctx.Txn(true).StartTS(), -delta.Delta, delta.Count, id, -delta.Delta)
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 	} else {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn(true).StartTS(), delta.Delta, delta.Count, id)
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", startTS, delta.Delta, delta.Count, id)
 	}
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
@@ -222,7 +227,11 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := h.ctx.Txn(true).StartTS()
+	txn, err := h.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version := txn.StartTS()
 	values := make([]string, 0, len(delta.ColSize))
 	for histID, deltaColSize := range delta.ColSize {
 		if deltaColSize == 0 {

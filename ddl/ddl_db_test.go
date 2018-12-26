@@ -374,14 +374,18 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 		}
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
-		var err error
-		err = hookCtx.NewTxn()
+		err := hookCtx.NewTxn()
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		txn, err := hookCtx.Txn(true)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
 		}
 		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+		errs, err := admin.CancelJobs(txn, jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -391,7 +395,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 			checkErr = errors.Trace(errs[0])
 			return
 		}
-		err = hookCtx.Txn(true).Commit(context.Background())
+		err = txn.Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -467,7 +471,12 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -476,7 +485,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 				checkErr = errors.Trace(errs[0])
 				return
 			}
-			checkErr = hookCtx.Txn(true).Commit(context.Background())
+			checkErr = txn.Commit(context.Background())
 		}
 	}
 	s.dom.DDL().SetHook(hook)
@@ -708,12 +717,14 @@ LOOP:
 	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
-	ctx.Txn(true).Rollback()
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	txn.Rollback()
 
 	c.Assert(ctx.NewTxn(), IsNil)
-	defer ctx.Txn(true).Rollback()
+	defer txn.Rollback()
 
-	it, err := nidx.SeekFirst(ctx.Txn(true))
+	it, err := nidx.SeekFirst(txn)
 	c.Assert(err, IsNil)
 	defer it.Close()
 
@@ -809,9 +820,13 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 		handles := make(map[int64]struct{})
 
 		c.Assert(ctx.NewTxn(), IsNil)
-		defer ctx.Txn(true).Rollback()
+		txn, err := ctx.Txn(true)
+		c.Assert(err, IsNil)
+		defer txn.Rollback()
 
-		it, err := idx.SeekFirst(ctx.Txn(true))
+		txn, err = ctx.Txn(true)
+		c.Assert(err, IsNil)
+		it, err := idx.SeekFirst(txn)
 		c.Assert(err, IsNil)
 		defer it.Close()
 
@@ -1037,7 +1052,11 @@ LOOP:
 	i := 0
 	j := 0
 	ctx.NewTxn()
-	defer ctx.Txn(true).Rollback()
+	defer func() {
+		if txn, err1 := ctx.Txn(true); err1 == nil {
+			txn.Rollback()
+		}
+	}()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
@@ -1590,14 +1609,16 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 }
 
 func (s *testDBSuite) TestRenameTable(c *C) {
-	s.testRenameTable(c, "rename table %s to %s")
+	isAlterTable := false
+	s.testRenameTable(c, "rename table %s to %s", isAlterTable)
 }
 
 func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
-	s.testRenameTable(c, "alter table %s rename to %s")
+	isAlterTable := true
+	s.testRenameTable(c, "alter table %s rename to %s", isAlterTable)
 }
 
-func (s *testDBSuite) testRenameTable(c *C, sql string) {
+func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	// for different databases
@@ -1640,8 +1661,18 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
-	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t2")
-	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+
+	// for the same table name
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("create table if not exists t (c1 int, c2 int)")
+	s.tk.MustExec("create table if not exists t1 (c1 int, c2 int)")
+	if isAlterTable {
+		s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
+		s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.T1"))
+	} else {
+		s.testErrorCode(c, fmt.Sprintf(sql, "test1.t", "t"), tmysql.ErrTableExists)
+		s.testErrorCode(c, fmt.Sprintf(sql, "test1.t1", "test1.T1"), tmysql.ErrTableExists)
+	}
 
 	s.tk.MustExec("drop database test1")
 }
