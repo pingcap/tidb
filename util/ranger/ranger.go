@@ -330,7 +330,12 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 
 	// Take prefix index into consideration.
 	if hasPrefix(lengths) {
-		fixPrefixColRange(ranges, lengths, newTp)
+		if fixPrefixColRange(ranges, lengths, newTp) {
+			ranges, err = unionRanges(sc, ranges)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 	}
 
 	if len(ranges) > 0 && len(ranges[0].LowVal) < len(cols) {
@@ -413,23 +418,30 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
-func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) {
+func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
+	hasCut := false
 	for _, ran := range ranges {
-		lowCut := false
-		for i := 0; i < len(ran.LowVal); i++ {
-			lowCut = lowCut || fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
+		lowTail := len(ran.LowVal) - 1
+		for i := 0; i < lowTail; i++ {
+			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
 		}
+		lowCut := false
+		lowCut = fixRangeDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
 		if lowCut {
 			ran.LowExclude = false
 		}
-		highCut := false
-		for i := 0; i < len(ran.HighVal); i++ {
-			highCut = highCut || fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
+		highTail := len(ran.HighVal) - 1
+		for i := 0; i < highTail; i++ {
+			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
 		}
+		highCut := false
+		highCut = fixRangeDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
 		if highCut {
 			ran.HighExclude = false
 		}
+		hasCut = lowCut || highCut
 	}
+	return hasCut
 }
 
 func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) bool {
