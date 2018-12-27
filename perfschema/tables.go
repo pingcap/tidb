@@ -28,6 +28,10 @@ type perfSchemaTable struct {
 	cols []*table.Column
 }
 
+func tableFromMeta(alloc autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
+	return createPerfSchemaTable(meta), nil
+}
+
 // createPerfSchemaTable creates all perfSchemaTables
 func createPerfSchemaTable(meta *model.TableInfo) *perfSchemaTable {
 	columns := make([]*table.Column, 0, len(meta.Columns))
