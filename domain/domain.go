@@ -786,14 +786,18 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.bindHandle = infobind.NewHandle()
 
-	var err error
-	lastUpTime, _ := time.ParseInLocation("2006-01-02 15:04:05.000000", "1970-01-01 00:00:01.000000", time.Local)
+	hu := &infobind.HandleUpdater{
+		Handle: do.BindHandle(),
+		Parser: parser,
+		Ctx:    ctx,
+	}
 
-	err, lastUpTime = do.bindHandle.Update(ctx, lastUpTime, parser)
+	fullLoad := true
+	err := hu.Update(fullLoad)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	fullLoad = false
 	duration := 3 * time.Second
 	go func() {
 		defer recoverInDomain("loadBindInLoop", false)
@@ -803,7 +807,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 				return
 			case <-time.After(duration):
 			}
-			err, lastUpTime = do.bindHandle.Update(ctx, lastUpTime, parser)
+			err = hu.Update(fullLoad)
 			if err != nil {
 				log.Error("[domain] load bindinfo fail:", errors.ErrorStack(err))
 			} else {

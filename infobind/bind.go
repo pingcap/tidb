@@ -1,8 +1,8 @@
 package infobind
 
 import (
-	"time"
-
+	"fmt"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -11,16 +11,13 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var _ Manager = (*AstBind)(nil)
+var _ Manager = (*BindManager)(nil)
 
-// User implements privilege.Manager interface.
+// User implements infobind.Manager interface.
 // This is used to update or check ast.
-type AstBind struct {
-	parser         *parser.Parser
-	lastUpdateTime time.Time
+type BindManager struct {
 	is             infoschema.InfoSchema
-	ctx            sessionctx.Context
-	db             string
+	currentDB      string
 	*Handle
 }
 
@@ -32,12 +29,8 @@ func (k keyType) String() string {
 
 // Manager is the interface for providing bind related operations.
 type Manager interface {
-	GetMatchedAst(sql ,db string) *BindData
-	DeleteInvalidBind(key string)
-	MatchHint(originalNode, hintedNode ast.Node) bool
-	SetSchema(schema infoschema.InfoSchema)
-	SetCtx(sctx sessionctx.Context)
-	SetDB(db string)
+	GetMatchedAst(sql, db string) *BindData
+	MatchHint(originalNode ast.Node, is infoschema.InfoSchema, db string)
 }
 
 const key keyType = 0
@@ -54,31 +47,35 @@ func GetBindManager(ctx sessionctx.Context) Manager {
 	}
 	return nil
 }
-func (b *AstBind) GetMatchedAst(sql string, db string) *BindData {
-	bindInfo := b.Handle.Get()
-	if bindArray, ok := bindInfo.cache[sql]; ok {
-		for i:=0; i < len(bindArray); i++ {
-			if len(bindArray[i].DefaultDB) == 0 {
-				return bindArray[i]
+func (b *BindManager) GetMatchedAst(sql string, db string) *BindData {
+	bc := b.Handle.Get()
+	if bindArray, ok := bc.cache[sql]; ok {
+		for _, v := range bindArray {
+			if v.status != 1 {
+				continue
 			}
-			if bindArray[i].DefaultDB == db {
-				return bindArray[i]
+			if len(v.db) == 0 {
+				return v
+			}
+			if v.db == db {
+				return v
 			}
 		}
 	}
 	return nil
 }
 
-func (b *AstBind) DeleteInvalidBind(hash string) {
-	bindInfo := b.Handle.Get()
-	delete(bindInfo.cache, hash)
-	b.Handle.bind.Store(bindInfo)
-	//sql := fmt.Sprintf("delete from mysql.bind_info where update_time > \"%s\"", lastUpTime.Format("2006-01-02 15:04:05.000000"))
-	//tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
-	//if err != nil {
-	//	return errors.Trace(err), lastUpTime
-	//}
-
+func (b *BindManager) deleteBind(hash, db string) {
+	bc := b.Handle.Get()
+	if bindArray, ok := bc.cache[hash]; ok {
+		for _, v := range bindArray {
+			if v.db == db {
+				v.status = -1
+				break
+			}
+		}
+	}
+	b.Handle.bind.Store(bc)
 }
 
 func isPrimaryIndexHint(indexName model.CIStr) bool {
@@ -119,179 +116,177 @@ func checkHint(indexHints []*ast.IndexHint, tblInfo *model.TableInfo) bool {
 	}
 	return false
 }
-func (b *AstBind) dataSourceBind(originalNode, hintedNode *ast.TableName) bool {
+
+func (b *BindManager) dataSourceBind(originalNode, hintedNode *ast.TableName) (bool, error) {
 
 	if len(hintedNode.IndexHints) == 0 {
-		return true
+		return true, nil
 	}
 
 	dbName := originalNode.Schema
 	if dbName.L == "" {
-		if b.db != b.ctx.GetSessionVars().CurrentDB {
-			return false
-		}
+		dbName = model.NewCIStr(b.currentDB)
 	}
 
 	tbl, err := b.is.TableByName(dbName, originalNode.Name)
 	if err != nil {
-		return false
+		errMsg := fmt.Sprintf("table %s or db %s not exist",originalNode.Name.L, dbName.L)
+		return false, errors.New(errMsg)
 	}
 
 	tableInfo := tbl.Meta()
 	ok := checkHint(hintedNode.IndexHints, tableInfo)
 	if !ok {
-		log.Warning()
-		return false
+		errMsg := fmt.Sprintf("table %s missing hint", tableInfo.Name)
+		return false, errors.New(errMsg)
 	}
 
 	originalNode.IndexHints = append(originalNode.IndexHints, hintedNode.IndexHints...)
 
-	return true
+	return true, nil
 }
 
-func (b *AstBind) SetSchema(schema infoschema.InfoSchema) {
-	b.is = schema
-}
-
-func (b *AstBind) SetCtx(sctx sessionctx.Context) {
-	if b.ctx == nil {
-		b.ctx = sctx
-
-	}
-}
-func (b *AstBind) SetDB(db string) {
-	b.db = db
-}
-
-func (b *AstBind) joinBind(originalNode, hintedNode *ast.Join) bool {
+func (b *BindManager) joinBind(originalNode, hintedNode *ast.Join) (ok bool, err error) {
 	if originalNode.Right == nil {
 		if hintedNode.Right != nil {
-			return false
+			return
 		}
 		return b.resultSetNodeBind(originalNode.Left, hintedNode.Left)
 	}
 
-	ok := b.resultSetNodeBind(originalNode.Left, hintedNode.Left)
+	ok , err = b.resultSetNodeBind(originalNode.Left, hintedNode.Left)
 	if !ok {
-		return false
+		return
 	}
 
-	ok = b.resultSetNodeBind(originalNode.Right, hintedNode.Right)
-	return ok
+	ok, err = b.resultSetNodeBind(originalNode.Right, hintedNode.Right)
+	return
 
 }
 
-func (b *AstBind) resultSetNodeBind(originalNode, hintedNode ast.ResultSetNode) bool {
-	ok := false
+func (b *BindManager) resultSetNodeBind(originalNode, hintedNode ast.ResultSetNode) (ok bool, err error) {
 	switch x := originalNode.(type) {
 	case *ast.Join:
 		if join, iok := hintedNode.(*ast.Join); iok {
-			iok = b.joinBind(x, join)
-			if iok {
-				ok = true
-			}
+			ok, err = b.joinBind(x, join)
 		}
 	case *ast.TableSource:
 		ts, iok := hintedNode.(*ast.TableSource)
 		if !iok {
 			break
 		}
+
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
 			if value, iok := ts.Source.(*ast.SelectStmt); iok {
-				return b.selectBind(v, value)
+				ok, err = b.selectBind(v, value)
 			}
-			break
 		case *ast.UnionStmt:
 			ok = true
 		case *ast.TableName:
-			value, iok := ts.Source.(*ast.TableName)
-			if iok {
-				if iok := b.dataSourceBind(v, value); iok {
-					ok = true
-				}
+			if value, iok := ts.Source.(*ast.TableName); iok {
+				ok, err = b.dataSourceBind(v, value)
 			}
 		}
 	case *ast.SelectStmt:
 		if sel, iok := hintedNode.(*ast.SelectStmt); iok {
-			return b.selectBind(x, sel)
+			ok, err = b.selectBind(x, sel)
 		}
 	case *ast.UnionStmt:
 		ok = true
 	default:
+		ok = true
 	}
-	return ok
+	return
 }
 
-func (b *AstBind) selectionBind(where ast.ExprNode, hindedWhere ast.ExprNode) bool {
+func (b *BindManager) selectionBind(where ast.ExprNode, hindedWhere ast.ExprNode) (ok bool, err error) {
 	switch v := where.(type) {
 	case *ast.SubqueryExpr:
 		if v.Query != nil {
-			if value, ok := hindedWhere.(*ast.SubqueryExpr); ok {
-				return b.resultSetNodeBind(v.Query, value.Query)
+			if value, ok1 := hindedWhere.(*ast.SubqueryExpr); ok1 {
+				ok ,err  = b.resultSetNodeBind(v.Query, value.Query)
 			}
-			return false
 		}
 	case *ast.ExistsSubqueryExpr:
 		if v.Sel != nil {
-			value, ok := hindedWhere.(*ast.ExistsSubqueryExpr)
-			if !ok {
-				return false
+			value, ok1 := hindedWhere.(*ast.ExistsSubqueryExpr)
+			if ok1 && value.Sel != nil {
+				ok, err = b.resultSetNodeBind(v.Sel.(*ast.SubqueryExpr).Query, value.Sel.(*ast.SubqueryExpr).Query)
 			}
-			if value.Sel == nil {
-				return false
-			}
-
-			return b.resultSetNodeBind(v.Sel.(*ast.SubqueryExpr).Query, value.Sel.(*ast.SubqueryExpr).Query)
-
 		}
 	case *ast.PatternInExpr:
 		if v.Sel != nil {
-			value, ok := hindedWhere.(*ast.PatternInExpr)
-			if !ok {
-				return false
+			value, ok1 := hindedWhere.(*ast.PatternInExpr)
+			if ok1 && value.Sel != nil {
+				ok, err = b.resultSetNodeBind(v.Sel.(*ast.SubqueryExpr).Query, value.Sel.(*ast.SubqueryExpr).Query)
 			}
-			if value.Sel == nil {
-				return false
-			}
-			return b.resultSetNodeBind(v.Sel.(*ast.SubqueryExpr).Query, value.Sel.(*ast.SubqueryExpr).Query)
 		}
 	}
-	return true
+	return
 
 }
 
-func (b *AstBind) selectBind(originalNode, hintedNode *ast.SelectStmt) bool {
+func (b *BindManager) selectBind(originalNode, hintedNode *ast.SelectStmt) (ok bool,err error) {
 	if originalNode.TableHints != nil {
 		originalNode.TableHints = append(originalNode.TableHints, hintedNode.TableHints...)
 	}
 	if originalNode.From != nil {
 		if hintedNode.From == nil {
-			return false
+			return
 		}
-		ok := b.resultSetNodeBind(originalNode.From.TableRefs, hintedNode.From.TableRefs)
+		ok, err = b.resultSetNodeBind(originalNode.From.TableRefs, hintedNode.From.TableRefs)
 		if !ok {
-			return false
+			return
 		}
 	}
 	if originalNode.Where != nil {
 		if hintedNode.Where == nil {
-			return false
+			return
 		}
-		return b.selectionBind(originalNode.Where, hintedNode.Where)
+		ok, err = b.selectionBind(originalNode.Where, hintedNode.Where)
 	}
-	return true
+	return
 }
 
-func (b *AstBind) MatchHint(originalNode, hintedNode ast.Node) bool {
+func (b *BindManager) MatchHint(originalNode ast.Node, is infoschema.InfoSchema, db string)  {
+	var hintedNode ast.Node
+	bc := b.Handle.Get()
+	sql := originalNode.Text()
+	hash := parser.Digest(sql)
+	if bindArray, ok := bc.cache[hash]; ok {
+		for _, v := range bindArray {
+			if v.status != 1 {
+				continue
+			}
+			if len(v.db) == 0 || v.db == db {
+				hintedNode = v.ast
+			}
+		}
+	}
+	if hintedNode == nil {
+		log.Warnf("sql %s try match hint failed", sql)
+		return
+	}
+
+	b.currentDB = db
+	b.is = is
 
 	switch x := originalNode.(type) {
 	case *ast.SelectStmt:
 		if value, ok := hintedNode.(*ast.SelectStmt); ok {
-			log.Infof("sql %s match hint", originalNode.Text())
-			return b.selectBind(x, value)
+			success, err := b.selectBind(x, value)
+			if err != nil{
+				b.deleteBind(hash, db)
+			}
+			if success {
+				log.Warnf("sql %s try match hint success", sql)
+			} else {
+				log.Warnf("sql %s try match hint failed, err: %v", sql, err)
+			}
+			return
 		}
 	}
-	log.Infof("sql %s mismatch hint", originalNode.Text())
-	return false
+	log.Warnf("sql %s try match hint failed", sql)
+	return
 }
