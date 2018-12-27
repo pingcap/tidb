@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Note: All the tests in this file will be executed sequentially.
+
 package executor_test
 
 import (
@@ -653,12 +655,11 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
-	result := tk.MustQuery("desc select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
-	result.Check(testkit.Rows("HashAgg_8 8000.00 root group by:t.b, funcs:sum(t.a)",
-		"└─Projection_9 10000.00 root cast(test.t.a), test.t.b",
-		"  └─TableReader_11 10000.00 root data:TableScan_10",
-		"    └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+	// desc select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b
+	// HashAgg_8              | 2.40  | root | group by:t.b, funcs:sum(t.a)
+	// └─Projection_9         | 3.00  | root | cast(test.t.a), test.t.b
+	//   └─TableReader_11     | 3.00  | root | data:TableScan_10
+	//     └─TableScan_10     | 3.00  | cop  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
 	gofail.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`)
@@ -669,7 +670,7 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	rs := rss[0]
 	chk := rs.NewChunk()
 	err = rs.Next(ctx, chk)
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "HashAggExec.parallelExec error")
 }
 
 func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
@@ -688,7 +689,7 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 	rs := rss[0]
 	chk := rs.NewChunk()
 	err = rs.Next(ctx, chk)
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")
 }
 
 func checkGoroutineExists(keyword string) bool {
