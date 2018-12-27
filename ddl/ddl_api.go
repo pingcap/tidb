@@ -2193,15 +2193,31 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	return d.dropTableOrView(ctx, ti, false)
+	is := d.GetInformationSchema(ctx)
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
+	}
+
+	tb, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil || tb.Meta().IsView() {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionDropTable,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 // DropView will proceed even if some view in the list does not exists.
 func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	return d.dropTableOrView(ctx, ti, true)
-}
-
-func (d *ddl) dropTableOrView(ctx sessionctx.Context, ti ast.Ident, isView bool) (err error) {
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -2213,18 +2229,14 @@ func (d *ddl) dropTableOrView(ctx sessionctx.Context, ti ast.Ident, isView bool)
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	if tb.Meta().IsView() && !isView {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
-	}
-
-	if !tb.Meta().IsView() && isView {
+	if !tb.Meta().IsView() {
 		return errors.Trace(infoschema.ErrTableIsNotView.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
-		Type:       model.ActionDropTable,
+		Type:       model.ActionDropView,
 		BinlogInfo: &model.HistoryInfo{},
 	}
 
