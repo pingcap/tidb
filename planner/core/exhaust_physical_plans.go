@@ -380,7 +380,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		return nil
 	}
 	if isUnionScan {
-		ds = us.Children()[0].(*DataSource)
+		// The child of union scan may be union all for partition table.
+		ds, isDataSource = us.Children()[0].(*DataSource)
+		if !isDataSource {
+			return nil
+		}
 	}
 	var tblPath *accessPath
 	for _, path := range ds.possibleAccessPaths {

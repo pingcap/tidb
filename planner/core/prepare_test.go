@@ -259,9 +259,8 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 			_, err = tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 			c.Assert(terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached), IsTrue)
 			break
-		} else {
-			tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 		}
+		tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 	}
 }
 
