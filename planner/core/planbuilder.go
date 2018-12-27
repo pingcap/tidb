@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
-	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -120,7 +119,7 @@ type PlanBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
-	// Collect the visit information for privilege check.
+	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
@@ -276,7 +275,7 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	return p, nil
 }
 
-// Detect aggregate function or groupby clause.
+// detectSelectAgg detects an aggregate function or GROUP BY clause.
 func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
@@ -687,17 +686,8 @@ func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]i
 }
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) {
-	checker := privilege.GetPrivilegeManager(b.ctx)
 	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	for _, tbl := range as.TableNames {
-		// MySQL will analyze each table and stop on the first to error without privs
-		user := b.ctx.GetSessionVars().User
-		if checker != nil && user != nil &&
-			!(checker.RequestVerification(tbl.Schema.O, tbl.Name.O, "", mysql.SelectPriv) &&
-				checker.RequestVerification(tbl.Schema.O, tbl.Name.O, "", mysql.InsertPriv)) {
-			return nil, ErrTableaccessDenied.GenWithStackByArgs("SELECT, INSERT",
-				user.AuthUsername, user.AuthHostname, tbl.Name)
-		}
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs, err := getPhysicalIDs(tbl.TableInfo, as.PartitionNames)
 		if err != nil {
@@ -759,6 +749,10 @@ const (
 )
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	for _, tbl := range as.TableNames {
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "")
+	}
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
 	} else {

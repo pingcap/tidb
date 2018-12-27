@@ -50,7 +50,6 @@ const (
 	codeNonUniqTable                 = mysql.ErrNonuniqTable
 	codeWrongNumberOfColumnsInSelect = mysql.ErrWrongNumberOfColumnsInSelect
 	codeWrongValueCountOnRow         = mysql.ErrWrongValueCountOnRow
-	codeErrTableaccessDenied         = mysql.ErrTableaccessDenied
 	codeTablenameNotAllowedHere      = mysql.ErrTablenameNotAllowedHere
 )
 
@@ -88,7 +87,6 @@ var (
 	ErrMixOfGroupFuncAndFields      = terror.ClassOptimizer.New(codeMixOfGroupFuncAndFields, "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by")
 	ErrNonUniqTable                 = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 	ErrWrongValueCountOnRow         = terror.ClassOptimizer.New(mysql.ErrWrongValueCountOnRow, mysql.MySQLErrName[mysql.ErrWrongValueCountOnRow])
-	ErrTableaccessDenied            = terror.ClassOptimizer.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
 	ErrViewInvalid                  = terror.ClassOptimizer.New(mysql.ErrViewInvalid, mysql.MySQLErrName[mysql.ErrViewInvalid])
 )
 
@@ -117,7 +115,6 @@ func init() {
 		codeNonUniqTable:                 mysql.ErrNonuniqTable,
 		codeWrongNumberOfColumnsInSelect: mysql.ErrWrongNumberOfColumnsInSelect,
 		codeWrongValueCountOnRow:         mysql.ErrWrongValueCountOnRow,
-		codeErrTableaccessDenied:         mysql.ErrTableaccessDenied,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }
