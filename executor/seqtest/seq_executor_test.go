@@ -642,6 +642,50 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
+func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	result := tk.MustQuery("desc select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	result.Check(testkit.Rows("HashAgg_8 8000.00 root group by:t.b, funcs:sum(t.a)",
+		"└─Projection_9 10000.00 root cast(test.t.a), test.t.b",
+		"  └─TableReader_11 10000.00 root data:TableScan_10",
+		"    └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/executor/parallelHashAggError")
+	ctx := context.Background()
+	rss, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	chk := rs.NewChunk()
+	err = rs.Next(ctx, chk)
+	c.Assert(err, NotNil)
+}
+
+func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError")
+	ctx := context.Background()
+	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	chk := rs.NewChunk()
+	err = rs.Next(ctx, chk)
+	c.Assert(err, NotNil)
+}
+
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
