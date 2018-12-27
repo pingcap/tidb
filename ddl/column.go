@@ -223,17 +223,6 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if job.IsRollingback() && job.Type == model.ActionDropColumn {
-		// StateNone means when the job is not running yet.
-		if job.SchemaState == model.StateNone {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(errCancelledDDLJob)
-		}
-		// In the state of drop column `write only -> delete only -> reorganization`,
-		// We can not rollback now, so just continue to drop column.
-		job.State = model.JobStateRunning
-	}
-
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil {
 		job.State = model.JobStateCancelled
