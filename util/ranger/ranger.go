@@ -415,18 +415,24 @@ func hasPrefix(lengths []int) bool {
 
 func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) {
 	for _, ran := range ranges {
+		lowCut := false
 		for i := 0; i < len(ran.LowVal); i++ {
-			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
+			lowCut = lowCut || fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
 		}
-		ran.LowExclude = false
+		if lowCut {
+			ran.LowExclude = false
+		}
+		highCut := false
 		for i := 0; i < len(ran.HighVal); i++ {
-			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
+			highCut = highCut || fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
 		}
-		ran.HighExclude = false
+		if highCut {
+			ran.HighExclude = false
+		}
 	}
 }
 
-func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
+func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) bool {
 	// If this column is prefix and the prefix length is smaller than the range, cut it.
 	// In case of UTF8, prefix should be cut by characters rather than bytes
 	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
@@ -439,12 +445,15 @@ func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
 				truncateStr := string(rs[:length])
 				// truncate value and limit its length
 				v.SetString(truncateStr)
+				return true
 			}
 		} else if length != types.UnspecifiedLength && len(colValue) > length {
 			// truncate value and limit its length
 			v.SetBytes(colValue[:length])
+			return true
 		}
 	}
+	return false
 }
 
 // We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
