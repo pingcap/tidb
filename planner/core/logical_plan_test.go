@@ -1917,10 +1917,10 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, avg(a) over(partition by b) from t",
-			result: "TableReader(Table(t))->Sort->WindowFunc(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Sort->WindowFunc(avg(2_proj_window_3))->Projection",
 		},
 		{
-			sql:    "select a, avg(a) over(partition by (a+1)) from t",
+			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
 			result: "TableReader(Table(t))->Projection->Sort->WindowFunc(avg(test.t.a))->Projection",
 		},
 		{

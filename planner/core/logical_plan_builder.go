@@ -2550,26 +2550,37 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	return del, nil
 }
 
-func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, byItems []*ast.ByItem, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, error) {
+func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []expression.Expression, error) {
 	b.optFlag |= flagEliminateProjection
-	exprs := make([]property.Item, 0, len(byItems))
-	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)+len(byItems))}.Init(b.ctx)
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(p.Schema().Columns)+len(byItems))...)
+
+	var items []*ast.ByItem
+	spec := expr.Spec
+	if spec.PartitionBy != nil {
+		items = append(items, spec.PartitionBy.Items...)
+	}
+	if spec.OrderBy != nil {
+		items = append(items, spec.OrderBy.Items...)
+	}
+	projLen := len(p.Schema().Columns) + len(items) + len(expr.Args)
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, projLen)}.Init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, projLen)...)
 	for _, col := range p.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 		schema.Append(col)
 	}
+
 	transformer := &itemTransformer{}
-	for _, item := range byItems {
+	propertyItems := make([]property.Item, 0, len(items))
+	for _, item := range items {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewrite(item.Expr, p, aggMap, true)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		p = np
 		if col, ok := it.(*expression.Column); ok {
-			exprs = append(exprs, property.Item{Col: col, Desc: item.Desc})
+			propertyItems = append(propertyItems, property.Item{Col: col, Desc: item.Desc})
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, it)
@@ -2579,40 +2590,39 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, byItems []*ast.ByI
 			RetType:  it.GetType(),
 		}
 		schema.Append(col)
-		exprs = append(exprs, property.Item{Col: col, Desc: item.Desc})
-	}
-	proj.SetSchema(schema)
-	proj.SetChildren(p)
-	return proj, exprs, nil
-}
-
-func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
-	spec := expr.Spec
-	// Add sort for partition by and order by
-	var items []*ast.ByItem
-	if spec.PartitionBy != nil {
-		items = append(items, spec.PartitionBy.Items...)
-	}
-	if spec.OrderBy != nil {
-		items = append(items, spec.OrderBy.Items...)
-	}
-	var byItems []property.Item
-	if len(items) > 0 {
-		var err error
-		p, byItems, err = b.buildProjectionForWindow(p, items, aggMap)
-		if err != nil {
-			return nil, err
-		}
+		propertyItems = append(propertyItems, property.Item{Col: col, Desc: item.Desc})
 	}
 
 	newArgList := make([]expression.Expression, 0, len(expr.Args))
 	for _, arg := range expr.Args {
 		newArg, np, err := b.rewrite(arg, p, aggMap, true)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 		p = np
-		newArgList = append(newArgList, newArg)
+		if col, ok := newArg.(*expression.Column); ok {
+			newArgList = append(newArgList, col)
+			continue
+		}
+		proj.Exprs = append(proj.Exprs, newArg)
+		col := &expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), schema.Len())),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  newArg.GetType(),
+		}
+		schema.Append(col)
+		newArgList = append(newArgList, col)
+	}
+
+	proj.SetSchema(schema)
+	proj.SetChildren(p)
+	return proj, propertyItems, newArgList, nil
+}
+
+func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
+	p, byItems, newArgList, err := b.buildProjectionForWindow(p, expr, aggMap)
+	if err != nil {
+		return nil, err
 	}
 
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, newArgList)
