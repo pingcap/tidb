@@ -2048,3 +2048,47 @@ func (s *testDBSuite) TestTransactionWithWriteOnlyColumn(c *C) {
 	c.Assert(err, IsNil)
 	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 }
+
+func (s *testDBSuite) TestAddColumn2(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (a int key, b int);")
+
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	var writeOnlyTable table.Table
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			writeOnlyTable, _ = s.dom.InfoSchema().TableByID(job.TableID)
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	// test transaction on add column.
+	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
+	err := <-done
+	c.Assert(err, IsNil)
+
+	s.mustExec(c, "insert into t1 values (1,1,1)")
+	s.tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 1 1"))
+
+	// mock for outdated tidb update record.
+	c.Assert(writeOnlyTable, NotNil)
+	ctx := context.Background()
+	err = s.tk.Se.NewTxn(ctx)
+	c.Assert(err, IsNil)
+	oldRow, err := writeOnlyTable.RowWithCols(s.tk.Se, 1, writeOnlyTable.WritableCols())
+	c.Assert(err, IsNil)
+	c.Assert(len(oldRow), Equals, 3)
+	err = writeOnlyTable.RemoveRecord(s.tk.Se, 1, oldRow)
+	c.Assert(err, IsNil)
+	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), false, false)
+	c.Assert(err, IsNil)
+	err = s.tk.Se.StmtCommit()
+	c.Assert(err, IsNil)
+	err = s.tk.Se.CommitTxn(ctx)
+
+	s.tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 2 1"))
+}

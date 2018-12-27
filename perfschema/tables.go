@@ -107,7 +107,7 @@ func (vt *perfSchemaTable) RecordKey(h int64) kv.Key {
 }
 
 // AddRecord implements table.Table Type interface.
-func (vt *perfSchemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (vt *perfSchemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck, isInsert bool) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 

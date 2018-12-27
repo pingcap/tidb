@@ -142,10 +142,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if err = t.RemoveRecord(ctx, h, oldData); err != nil {
 			return false, false, 0, errors.Trace(err)
 		}
-		// the `affectedRows` is increased when adding new record.
-		// AddRecord will rewrite the value of column in write-only state.
-		// If `newData` contain the value of column in write only, AddRecord will think the value is `_tidb_rowid`.
-		newHandle, err = t.AddRecord(ctx, newData[:len(t.Cols())], skipHandleCheck)
+		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck, false)
 		if err != nil {
 			return false, false, 0, errors.Trace(err)
 		}

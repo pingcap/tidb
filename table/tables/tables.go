@@ -418,10 +418,11 @@ func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.Retrie
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck, isInsert bool) (recordID int64, err error) {
 	var hasRecordID bool
 	cols := t.Cols()
-	if len(r) > len(cols) {
+	// only insert can set _tidb_rowid
+	if len(r) > len(cols) && isInsert {
 		// The last value is _tidb_rowid.
 		recordID = r[len(r)-1].GetInt64()
 		hasRecordID = true
@@ -468,7 +469,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
-		if col.State != model.StatePublic {
+		if col.State != model.StatePublic && isInsert {
 			// If col is in write only or write reorganization state, we must add it with its default value.
 			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 			if err != nil {
