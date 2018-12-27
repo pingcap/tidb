@@ -178,4 +178,13 @@ var (
 			Name:      "region_cache_operations_total",
 			Help:      "Counter of region cache.",
 		}, []string{LblType, LblResult})
+
+	TiKVLocalLatchWaitTimeHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "local_latch_wait_seconds",
+			Help:      "Wait time of a get local latch.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
+		})
 )

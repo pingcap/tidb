@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
 	log "github.com/sirupsen/logrus"
@@ -893,13 +894,85 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	return errors.Trace(err)
 }
 
+// BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
+// The SQL string should be a create table statement.
+// Don't use this function to build a partitioned table.
+func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
+	return buildTableInfoWithCheck(mock.NewContext(), nil, s)
+}
+
+func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
+	colDefs := s.Cols
+	var colObjects []interface{}
+	for _, col := range colDefs {
+		colObjects = append(colObjects, col)
+	}
+	if err := checkTooLongTable(ident.Name); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err := checkDuplicateColumn(colObjects); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err := checkGeneratedColumn(colDefs); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err := checkTooLongColumn(colObjects); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err := checkTooManyColumns(colDefs); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err := checkColumnsAttributes(colDefs); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	err = checkConstraintNames(newConstraints)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var tbInfo *model.TableInfo
+	tbInfo, err = buildTableInfo(ctx, d, ident.Name, cols, newConstraints)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	pi, err := buildTablePartitionInfo(ctx, d, s)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if pi != nil {
+		switch pi.Type {
+		case model.PartitionTypeRange:
+			err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
+		case model.PartitionTypeHash:
+			err = checkPartitionByHash(pi)
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+			return nil, errors.Trace(err)
+		}
+		tbInfo.Partition = pi
+	}
+	return tbInfo, nil
+}
+
 func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if s.ReferTable != nil {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
 		return d.CreateTableWithLike(ctx, ident, referIdent, s.IfNotExists)
 	}
-	colDefs := s.Cols
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -913,64 +986,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
-	var colObjects []interface{}
-	for _, col := range colDefs {
-		colObjects = append(colObjects, col)
-	}
-	if err = checkTooLongTable(ident.Name); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkDuplicateColumn(colObjects); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkGeneratedColumn(colDefs); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkTooLongColumn(colObjects); err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkTooManyColumns(colDefs); err != nil {
-		return errors.Trace(err)
-	}
-
-	if err = checkColumnsAttributes(colDefs); err != nil {
-		return errors.Trace(err)
-	}
-
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints)
+	tbInfo, err := buildTableInfoWithCheck(ctx, d, s)
 	if err != nil {
 		return errors.Trace(err)
-	}
-
-	err = checkConstraintNames(newConstraints)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, newConstraints)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	pi, err := buildTablePartitionInfo(ctx, d, s)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if pi != nil {
-		switch pi.Type {
-		case model.PartitionTypeRange:
-			err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
-		case model.PartitionTypeHash:
-			err = checkPartitionByHash(pi)
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
-			return errors.Trace(err)
-		}
-		tbInfo.Partition = pi
 	}
 
 	job := &model.Job{
@@ -989,10 +1007,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(tbInfo.Charset) != 0 && strings.ToLower(tbInfo.Charset) != mysql.DefaultCharset {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf(`TiDB only supports the "utf8mb4" character set, so "%s" does not take effect.`, tbInfo.Charset))
-	}
-
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
