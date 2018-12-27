@@ -212,10 +212,10 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(t, job)
-	case model.ActionDropColumn:
-		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddindex(w, d, t, job)
+	case model.ActionDropColumn:
+		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropIndex:
 		ver, err = rollingbackDropIndex(t, job)
 	case model.ActionDropTable, model.ActionDropSchema:
