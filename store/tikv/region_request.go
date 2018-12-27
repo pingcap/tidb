@@ -127,6 +127,18 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		return nil, false, errors.Trace(e)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
+	if req.Cop != nil {
+		var txn uint64
+		if startTS := bo.ctx.Value(txnStartKey); startTS != nil {
+			txn = startTS.(uint64)
+		}
+		copReq := req.Cop
+
+		log.Infof("txn=%d send region request:%s", txn, copReq.Context.String())
+		for i, ran := range copReq.Ranges {
+			log.Infof("range %d = %#s\n", i, ran.String())
+		}
+	}
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
