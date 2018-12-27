@@ -331,7 +331,7 @@ func (j *antiLeftOuterSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk) {
 func (j *antiLeftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
 	if hasNull {
-		chk.AppendInt64(outer.Len(), 0)
+		chk.AppendNull(outer.Len())
 	} else {
 		chk.AppendInt64(outer.Len(), 1)
 	}
