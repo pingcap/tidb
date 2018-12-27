@@ -48,22 +48,17 @@ var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, prop
 var invalidTask = &rootTask{cst: math.MaxFloat64}
 
 // getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
-// consider the case that all expression are columns and all of them are asc or desc.
+// consider the case that all expression are columns.
 func getPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) {
-	desc := false
-	cols := make([]*expression.Column, 0, len(items))
-	for i, item := range items {
+	propItems := make([]property.Item, 0, len(items))
+	for _, item := range items {
 		col, ok := item.Expr.(*expression.Column)
 		if !ok {
 			return nil, false
 		}
-		cols = append(cols, col)
-		desc = item.Desc
-		if i > 0 && item.Desc != items[i-1].Desc {
-			return nil, false
-		}
+		propItems = append(propItems, property.Item{Col: col, Desc: item.Desc})
 	}
-	return &property.PhysicalProperty{Cols: cols, Desc: desc}, true
+	return &property.PhysicalProperty{Items: propItems}, true
 }
 
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
@@ -100,7 +95,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 
 	// If prop.enforced is true, cols of prop as parameter in exhaustPhysicalPlans should be nil
 	// And reset it for enforcing task prop and storing map<prop,task>
-	oldPropCols := prop.Cols
+	oldPropCols := prop.Items
 	if prop.Enforced {
 		// First, get the bestTask without enforced prop
 		prop.Enforced = false
@@ -110,16 +105,16 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		}
 		prop.Enforced = true
 		// Next, get the bestTask with enforced prop
-		prop.Cols = []*expression.Column{}
+		prop.Items = []property.Item{}
 	}
 	physicalPlans := p.self.exhaustPhysicalPlans(prop)
-	prop.Cols = oldPropCols
+	prop.Items = oldPropCols
 
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
 		for i, child := range p.children {
-			childTask, err := child.findBestTask(pp.getChildReqProps(i))
+			childTask, err := child.findBestTask(pp.GetChildReqProps(i))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -217,7 +212,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
-	oldPropCols := prop.Cols
+	oldPropCols := prop.Items
 	if prop.Enforced {
 		// First, get the bestTask without enforced prop
 		prop.Enforced = false
@@ -231,14 +226,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			return
 		}
 		// Next, get the bestTask with enforced prop
-		prop.Cols = []*expression.Column{}
+		prop.Items = []property.Item{}
 	}
 	defer func() {
 		if err != nil {
 			return
 		}
 		if prop.Enforced {
-			prop.Cols = oldPropCols
+			prop.Items = oldPropCols
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 		}
 		ds.storeTask(prop, t)
@@ -278,7 +273,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 		// this path's access cond is not nil or
 		// we have prop to match or
 		// this index is forced to choose.
-		if len(path.accessConds) > 0 || len(prop.Cols) > 0 || path.forced {
+		if len(path.accessConds) > 0 || len(prop.Items) > 0 || path.forced {
 			idxTask, err := ds.convertToIndexScan(prop, path)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -371,11 +366,12 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Check if this plan matches the property.
 	matchProperty := false
-	if !prop.IsEmpty() {
+	all, desc := prop.AllSameOrder()
+	if !prop.IsEmpty() && all {
 		for i, col := range idx.Columns {
 			// not matched
-			if col.Name.L == prop.Cols[0].ColName.L {
-				matchProperty = matchIndicesProp(idx.Columns[i:], prop.Cols)
+			if col.Name.L == prop.Items[0].Col.ColName.L {
+				matchProperty = matchIndicesProp(idx.Columns[i:], prop.Items)
 				break
 			} else if i >= path.eqCondCount {
 				break
@@ -394,7 +390,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
-		if prop.Desc {
+		if desc {
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
@@ -477,12 +473,12 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 }
 
-func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Column) bool {
-	if len(idxCols) < len(propCols) {
+func matchIndicesProp(idxCols []*model.IndexColumn, propItems []property.Item) bool {
+	if len(idxCols) < len(propItems) {
 		return false
 	}
-	for i, col := range propCols {
-		if idxCols[i].Length != types.UnspecifiedLength || col.ColName.L != idxCols[i].Name.L {
+	for i, item := range propItems {
+		if idxCols[i].Length != types.UnspecifiedLength || item.Col.ColName.L != idxCols[i].Name.L {
 			return false
 		}
 	}
@@ -535,7 +531,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := len(prop.Cols) == 1 && pkCol != nil && prop.Cols[0].Equal(nil, pkCol)
+	matchProperty := len(prop.Items) == 1 && pkCol != nil && prop.Items[0].Col.Equal(nil, pkCol)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
@@ -547,7 +543,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
 	copTask.cst = rowCount * scanFactor
 	if matchProperty {
-		if prop.Desc {
+		if prop.Items[0].Desc {
 			ts.Desc = true
 			copTask.cst = rowCount * descScanFactor
 		}

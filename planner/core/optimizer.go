@@ -43,6 +43,7 @@ const (
 	flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
+	flagJoinReOrderGreedy
 )
 
 var optRuleList = []logicalOptRule{
@@ -57,6 +58,7 @@ var optRuleList = []logicalOptRule{
 	&partitionProcessor{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
+	&joinReOrderGreedySolver{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
@@ -125,7 +127,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
-	if _, err := logic.deriveStats(); err != nil {
+	if _, err := logic.recursiveDeriveStats(); err != nil {
 		return nil, errors.Trace(err)
 	}
 

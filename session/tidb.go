@@ -18,7 +18,7 @@
 package session
 
 import (
-	"net/url"
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -34,11 +34,11 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type domainMap struct {
@@ -90,7 +90,6 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-	stores = make(map[string]kv.Driver)
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped     = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex
@@ -124,8 +123,12 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	log.Debug("compiling", src)
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
+	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
-	stmts, err := p.Parse(src, charset, collation)
+	stmts, warns, err := p.Parse(src, charset, collation)
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
 		return nil, errors.Trace(err)
@@ -140,6 +143,44 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, errors.Trace(err)
 }
 
+func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
+	if meetsErr != nil {
+		if !sessVars.InTxn() {
+			log.Info("RollbackTxn for ddl/autocommit error.")
+			terror.Log(se.RollbackTxn(ctx))
+		}
+		return meetsErr
+	}
+
+	if !sessVars.InTxn() {
+		return se.CommitTxn(ctx)
+	}
+
+	return checkStmtLimit(ctx, sctx, se, sessVars)
+}
+
+func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars) error {
+	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
+	// So we limit the statement count in a transaction here.
+	var err error
+	history := GetHistory(sctx)
+	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
+		if !sessVars.BatchCommit {
+			err1 := se.RollbackTxn(ctx)
+			terror.Log(errors.Trace(err1))
+			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+				history.Count(), sctx.GetSessionVars().IsAutocommit())
+		}
+		err = se.NewTxn(ctx)
+		// The transaction does not committed yet, we need to keep it in transaction.
+		// The last history could not be "commit"/"rollback" statement.
+		// It means it is impossible to start a new transaction at the end of the transaction.
+		// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
+		se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	}
+	return err
+}
+
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -152,39 +193,27 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	var rs sqlexec.RecordSet
 	se := sctx.(*session)
 	rs, err = s.Exec(ctx)
+	sessVars := se.GetSessionVars()
 	// All the history should be added here.
-	se.GetSessionVars().TxnCtx.StatementCount++
+	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly() {
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
-		if sctx.Txn(false).Valid() {
-			if err != nil {
-				sctx.StmtRollback()
-			} else {
-				sctx.StmtCommit()
+		if txn, err1 := sctx.Txn(false); err1 == nil {
+			if txn.Valid() {
+				if err != nil {
+					sctx.StmtRollback()
+				} else {
+					err = sctx.StmtCommit()
+				}
 			}
-		}
-	}
-	if !se.sessionVars.InTxn() {
-		if err != nil {
-			log.Info("RollbackTxn for ddl/autocommit error.")
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
 		} else {
-			err = se.CommitTxn(ctx)
-		}
-	} else {
-		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
-		// So we limit the statement count in a transaction here.
-		history := GetHistory(sctx)
-		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
-			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-				history.Count(), sctx.GetSessionVars().IsAutocommit())
+			log.Error(err1)
 		}
 	}
+
+	err = finishStmt(ctx, sctx, se, sessVars, err)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
@@ -201,12 +230,12 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
 func GetHistory(ctx sessionctx.Context) *StmtHistory {
-	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*StmtHistory)
+	hist, ok := ctx.GetSessionVars().TxnCtx.History.(*StmtHistory)
 	if ok {
 		return hist
 	}
 	hist = new(StmtHistory)
-	ctx.GetSessionVars().TxnCtx.Histroy = hist
+	ctx.GetSessionVars().TxnCtx.History = hist
 	return hist
 }
 
@@ -235,52 +264,6 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
-}
-
-// RegisterStore registers a kv storage with unique name and its associated Driver.
-func RegisterStore(name string, driver kv.Driver) error {
-	name = strings.ToLower(name)
-
-	if _, ok := stores[name]; ok {
-		return errors.Errorf("%s is already registered", name)
-	}
-
-	stores[name] = driver
-	return nil
-}
-
-// NewStore creates a kv Storage with path.
-//
-// The path must be a URL format 'engine://path?params' like the one for
-// session.Open() but with the dbname cut off.
-// Examples:
-//    goleveldb://relative/path
-//    boltdb:///absolute/path
-//
-// The engine should be registered before creating storage.
-func NewStore(path string) (kv.Storage, error) {
-	return newStoreWithRetry(path, util.DefaultMaxRetries)
-}
-
-func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
-	storeURL, err := url.Parse(path)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	name := strings.ToLower(storeURL.Scheme)
-	d, ok := stores[name]
-	if !ok {
-		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
-	}
-
-	var s kv.Storage
-	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
-		log.Infof("new store")
-		s, err = d.Open(path)
-		return kv.IsRetryableError(err), err
-	})
-	return s, errors.Trace(err)
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}

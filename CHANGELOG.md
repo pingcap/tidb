@@ -1,6 +1,119 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.1.2] 2018-12-21
+* Make TiDB compatible with TiDB-Binlog of the Kafka version [#8747](https://github.com/pingcap/tidb/pull/8747)
+* Improve the exit mechanism of TiDB in a rolling update [#8707](https://github.com/pingcap/tidb/pull/8707)
+* Fix the panic issue caused by adding the index for the generated column in some cases [#8676](https://github.com/pingcap/tidb/pull/8676)
+* Fix the issue that the optimizer cannot find the optimal query plan when `TIDB_SMJ Hint` exists in the SQL statement in some cases [#8729](https://github.com/pingcap/tidb/pull/8729)
+* Fix the issue that `AntiSemiJoin` returns an incorrect result in some cases [#8730](https://github.com/pingcap/tidb/pull/8730)
+* Improve the valid character check of the `utf8` character set [#8754](https://github.com/pingcap/tidb/pull/8754)
+* Fix the issue that the field of the time type might return an incorrect result when the write operation is performed before the read operation in a transaction [#8746](https://github.com/pingcap/tidb/pull/8746)
+
+
+## [2.1.1] 2018-12-12
+
+### SQL Optimizer/Executor
+
+* Fix the round error of the negative date [#8574](https://github.com/pingcap/tidb/pull/8574)
+* Fix the issue that the `uncompress` function does not check the data length [#8606](https://github.com/pingcap/tidb/pull/8606)
+* Reset bind arguments of the `prepare` statement after the `execute` command is executed [#8652](https://github.com/pingcap/tidb/pull/8652)
+* Support automatically collecting the statistics information of a partition table [#8649](https://github.com/pingcap/tidb/pull/8649)
+* Fix the wrongly configured integer type when pushing down the `abs` function [#8628](https://github.com/pingcap/tidb/pull/8628)
+* Fix the data race on the JSON column [#8660](https://github.com/pingcap/tidb/pull/8660)
+
+### Server
+
+* Fix the issue that the transaction obtained TSO is incorrect when PD breaks down [#8567](https://github.com/pingcap/tidb/pull/8567)
+* Fix the bootstrap failure caused by the statement that does not conform to ANSI standards [#8576](https://github.com/pingcap/tidb/pull/8576)
+* Fix the issue that incorrect parameters are used in transaction retries [#8638](https://github.com/pingcap/tidb/pull/8638)
+
+### DDL
+
+* Change the default character set and collation of tables into `utf8mb4` [#8590](https://github.com/pingcap/tidb/pull/8590)
+* Add the `ddl_reorg_batch_size` variable to control the speed of adding indexes [#8614](https://github.com/pingcap/tidb/pull/8614)
+* Make the character set and collation options content in DDL case-insensitive [#8611](https://github.com/pingcap/tidb/pull/8611)
+* Fix the issue of adding indexes for generated columns [#8655](https://github.com/pingcap/tidb/pull/8655)
+
+## [2.1.0-GA] 2018-11-30
+
+### Upgrade caveat
+* TiDB 2.1 does not support downgrading to v2.0.x or earlier due to the adoption of the new storage engine
+* Parallel DDL is enabled in TiDB 2.1, so the clusters with TiDB version earlier than 2.0.1 cannot upgrade to 2.1 using rolling update. You can choose either of the following two options:
+    - Stop the cluster and upgrade to 2.1 directly
+    - Roll update to 2.0.1 or later 2.0.x versions, and then roll update to the 2.1 version
+* `raft learner` is enabled in TiDB 2.1 by default. If you upgrade the TiDB platform from 1.x to 2.1, stop the cluster before the upgrade. You can also roll update TiKV to 2.1 and then roll update PD to 2.1.
+* If you upgrade from TiDB 2.0.6 or earlier to TiDB 2.1, make sure if there is any ongoing DDL operation, especially the time consuming `Add Index` operation, because the DDL operations slow down the upgrading process.
+
+### SQL Optimizer
+* Optimize the selection range of `Index Join` to improve the execution performance
+* Optimize the selection of outer table for `Index Join` and use the table with smaller estimated value of Row Count as the outer table
+* Optimize Join Hint `TIDB_SMJ` so that Merge Join can be used even without proper index available
+* Optimize Join Hint `TIDB_INLJ` to specify the Inner table to Join
+* Optimize correlated subquery, push down Filter, and extend the index selection range, to improve the efficiency of some queries by orders of magnitude
+* Support using Index Hint and Join Hint in the `UPDATE` and `DELETE` statement 
+* Support pushing down more functions:`ABS` / `CEIL` / `FLOOR` / `IS TRUE` / `IS FALSE`
+* Optimize the constant folding algorithm for the `IF` and `IFNULL` built-in functions
+* Optimize the output of the `EXPLAIN` statement and use hierarchy structure to show the relationship between operators
+
+### SQL executor
+* Refactor all the aggregation functions and improve execution efficiency of the `Stream` and `Hash` aggregation operators
+* Implement the parallel `Hash Aggregate` operators and improve the computing performance by 350% in some scenarios
+* Implement the parallel `Project` operators and improve the performance by 74% in some scenarios
+* Read the data of the Inner table and Outer table of `Hash Join` concurrently to improve the execution performance
+* Optimize the execution speed of the `REPLACE INTO` statement and increase the performance nearly by 10 times 
+* Optimize the memory usage of the time data type and decrease the memory usage of the time data type by fifty percent 
+* Optimize the point select performance and improve the point select efficiency result of Sysbench by 60% 
+* Improve the performance of TiDB on inserting or updating wide tables by 20 times
+* Support configuring the memory upper limit of a single statement in the configuration file
+* Optimize the execution of Hash Join, if the Join type is Inner Join or Semi Join and the inner table is empty, return the result without reading data from the outer table
+* Support using the [`EXPLAIN ANALYZE` statement](https://www.pingcap.com/docs/sql/understanding-the-query-execution-plan/#explain-analyze-output-format) to check the runtime statistics including the execution time and the number of returned rows of each operator
+
+### Statistics
+* Support enabling auto ANALYZE statistics only during certain period of the day
+* Support updating the table statistics automatically according to the feedback of the queries
+* Support configuring the number of buckets in the histogram using the `ANALYZE TABLE WITH BUCKETS` statement
+* Optimize the Row Count estimation algorithm using histogram for mixed queries of equality query and range queries
+
+### Expressions
+* Support following built-in function:
+    - `json_contains`  
+    - `json_contains_path` 
+    - `encode/decode` 
+
+### Server
+* Support queuing the locally conflicted transactions within tidb-server instance to optimize the performance of conflicted transactions
+* Support Server Side Cursor
+* Add the [HTTP API](https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md)
+    - Scatter the distribution of table Regions in the TiKV cluster
+    - Control whether to open the `general log`
+    - Support modifying the log level online
+    - Check the TiDB cluster information
+* [Add the `auto_analyze_ratio` system variables to contorl the ratio of Analyze](https://pingcap.com/docs/FAQ/#whats-the-trigger-strategy-for-auto-analyze-in-tidb)
+* [Add the `tidb_retry_limit` system variable to control the automatic retry times of transactions](https://pingcap.com/docs/sql/tidb-specific/#tidb-retry-limit)
+* [Add the `tidb_disable_txn_auto_retry` system variable to control whether the transaction retries automatically](https://pingcap.com/docs/sql/tidb-specific/#tidb-disable-txn-auto-retry)
+* [Support using `admin show slow` statement to obtain the slow queries ](https://pingcap.com/docs/sql/slow-query/#admin-show-slow-command)
+* [Add the `tidb_slow_log_threshold` environment variable to set the threshold of slow log automatically](https://pingcap.com/docs/sql/tidb-specific/#tidb_slow_log_threshold) 
+* [Add the `tidb_query_log_max_len` environment variable to set the length of the SQL statement to be truncated in the log dynamically](https://pingcap.com/docs/sql/tidb-specific/#tidb_query_log_max_len)
+
+### DDL
+* Support the parallel execution of the add index statement and other statements to avoid the time consuming add index operation blocking other operations
+* Optimize the execution speed of `ADD INDEX` and improve it greatly in some scenarios
+* Support the `select tidb_is_ddl_owner()` statement to facilitate deciding whether TiDB is `DDL Owner`
+* Support the `ALTER TABLE FORCE` syntax
+* Support the `ALTER TABLE RENAME KEY TO` syntax
+* Add the table name and database name in the output information of `admin show ddl jobs`
+* [Support using the `ddl/owner/resign` HTTP interface to release the DDL owner and start electing a new DDL owner](https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md)
+
+### Compatibility
+* Support more MySQL syntaxes
+* Make the `BIT` aggregate function support the `ALL` parameter
+* Support the `SHOW PRIVILEGES` statement
+* Support the `CHARACTER SET` syntax in the `LOAD DATA` statement 
+* Support the `IDENTIFIED WITH` syntax in the `CREATE USER` statement 
+* Support the `LOAD DATA IGNORE LINES` statement
+* The `Show ProcessList` statement returns more accurate information
+
 ## [2.1.0-rc.5] - 2018-11-12
 ### SQL Optimizer
 * Fix the issue that `IndexReader` reads the wrong handle in some cases [#8132](https://github.com/pingcap/tidb/pull/8132)

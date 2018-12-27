@@ -247,7 +247,7 @@ func (*testSuite) TestInfoTables(c *C) {
 	is := handle.Get()
 	c.Assert(is, NotNil)
 
-	info_tables := []string{
+	infoTables := []string{
 		"SCHEMATA",
 		"TABLES",
 		"COLUMNS",
@@ -280,7 +280,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
 		"PROCESSLIST",
 	}
-	for _, t := range info_tables {
+	for _, t := range infoTables {
 		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))
 		c.Assert(err1, IsNil)
 		c.Assert(tb, NotNil)

@@ -14,10 +14,11 @@
 package executor
 
 import (
+	"context"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // ExplainExec represents an explain executor.
@@ -81,9 +82,13 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 				break
 			}
 		}
-		e.analyzeExec.Close()
+		if err := e.analyzeExec.Close(); err != nil {
+			return nil, err
+		}
 	}
-	e.explain.RenderResult()
+	if err := e.explain.RenderResult(); err != nil {
+		return nil, err
+	}
 	if e.analyzeExec != nil {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	}

@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"time"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 // TiDBDriver implements IDriver.
@@ -223,6 +223,11 @@ func (tc *TiDBContext) RollbackTxn() error {
 // AffectedRows implements QueryCtx AffectedRows method.
 func (tc *TiDBContext) AffectedRows() uint64 {
 	return tc.session.AffectedRows()
+}
+
+// LastMessage implements QueryCtx LastMessage method.
+func (tc *TiDBContext) LastMessage() string {
+	return tc.session.LastMessage()
 }
 
 // CurrentDB implements QueryCtx CurrentDB method.

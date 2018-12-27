@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sort"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var _ Executor = &IndexLookUpJoin{}
@@ -146,9 +146,12 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
 	// so even txn is destroyed later, the dataReaderBuilder could still use the
 	// cached start ts to construct DAG.
-	e.innerCtx.readerBuilder.getStartTS()
+	_, err := e.innerCtx.readerBuilder.getStartTS()
+	if err != nil {
+		return err
+	}
 
-	err := e.children[0].Open(ctx)
+	err = e.children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

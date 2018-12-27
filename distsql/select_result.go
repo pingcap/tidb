@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -159,7 +159,7 @@ func (r *selectResult) getSelectResp() error {
 		}
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
-		sc.MergeExecDetails(re.result.GetExecDetails())
+		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}

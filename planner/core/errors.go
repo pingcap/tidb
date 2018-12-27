@@ -28,6 +28,7 @@ const (
 
 	codeWrongUsage                   = mysql.ErrWrongUsage
 	codeAmbiguous                    = mysql.ErrNonUniq
+	codeUnknown                      = mysql.ErrUnknown
 	codeUnknownColumn                = mysql.ErrBadField
 	codeUnknownTable                 = mysql.ErrUnknownTable
 	codeWrongArguments               = mysql.ErrWrongArguments
@@ -65,6 +66,7 @@ var (
 
 	ErrWrongUsage                   = terror.ClassOptimizer.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
 	ErrAmbiguous                    = terror.ClassOptimizer.New(codeAmbiguous, mysql.MySQLErrName[mysql.ErrNonUniq])
+	ErrUnknown                      = terror.ClassOptimizer.New(codeUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
 	ErrUnknownColumn                = terror.ClassOptimizer.New(codeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
 	ErrUnknownTable                 = terror.ClassOptimizer.New(codeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
 	ErrWrongArguments               = terror.ClassOptimizer.New(codeWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
@@ -87,6 +89,7 @@ var (
 	ErrNonUniqTable                 = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 	ErrWrongValueCountOnRow         = terror.ClassOptimizer.New(mysql.ErrWrongValueCountOnRow, mysql.MySQLErrName[mysql.ErrWrongValueCountOnRow])
 	ErrTableaccessDenied            = terror.ClassOptimizer.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
+	ErrViewInvalid                  = terror.ClassOptimizer.New(mysql.ErrViewInvalid, mysql.MySQLErrName[mysql.ErrViewInvalid])
 )
 
 func init() {

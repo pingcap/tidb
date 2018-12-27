@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"math"
 	"sync/atomic"
 	"time"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // reorgCtx is for reorganization.
@@ -250,6 +250,10 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	builder.Request.Priority = kv.PriorityLow
 
 	kvReq, err := builder.Build()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	sctx := newContext(d.store)
 	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {

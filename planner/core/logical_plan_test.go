@@ -45,7 +45,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable(), MockView()})
 	s.ctx = MockContext()
 	s.Parser = parser.New()
 }
@@ -82,7 +82,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t2)->Sel([like(cast(t2.d), abc, 92)])->DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])}(t2.b,t1.a)(t2.d,t1.d)->Projection",
+			best: "Join{DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])->DataScan(t2)->Sel([like(cast(t2.d), abc, 92)])}(t1.a,t2.b)(t1.d,t2.d)->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -421,27 +421,32 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 	}
 }
 
-func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
-	tableInfo := *MockTable()
-	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
-	cols = append(cols, tableInfo.Columns...)
-	cols = append(cols, &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    10,
-		Name:      model.NewCIStr("h"),
-		FieldType: newLongType(),
-		ID:        11,
-	})
-	partition := &model.PartitionInfo{
-		Type:        model.PartitionTypeRange,
-		Expr:        "h",
-		Enable:      true,
-		Definitions: definitions,
+func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql      string
+		best     string
+		joinType string
+	}{
+		{
+			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
+			best:     "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			joinType: "anti semi join",
+		},
 	}
-	tableInfo.Columns = cols
-	tableInfo.Partition = partition
-	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
-	return is
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, err = logicalOptimize(flagDecorrelate|flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(p), Equals, ca.best, comment)
+		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		joinType := fmt.Sprintf("%s", join.JoinType.String())
+		c.Assert(joinType, Equals, ca.joinType, comment)
+	}
 }
 
 func (s *testPlanSuite) TestTablePartition(c *C) {
@@ -473,11 +478,11 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			LessThan: []string{"maxvalue"},
 		},
 	}
-	is := newPartitionInfoSchema(definitions)
+	is := MockPartitionInfoSchema(definitions)
 	// is1 equals to is without maxvalue partition.
 	definitions1 := make([]model.PartitionDefinition, len(definitions)-1)
 	copy(definitions1, definitions)
-	is1 := newPartitionInfoSchema(definitions1)
+	is1 := MockPartitionInfoSchema(definitions1)
 
 	tests := []struct {
 		sql   string
@@ -751,15 +756,15 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
-			best: "Join{Join{Join{Join{DataScan(t3)->DataScan(t4)}->DataScan(t5)}->DataScan(t1)}->DataScan(t2)}->Projection",
+			best: "Join{Join{Join{DataScan(t3)->DataScan(t1)}->Join{DataScan(t2)->DataScan(t4)}}->DataScan(t5)}->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t2)->DataScan(t3)}(t2.a,t3.a)->DataScan(t1)}(t3.a,t1.a)->Projection}->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(t1.a,t3.a)->DataScan(t2)}(t3.a,t2.a)->Projection}->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}->DataScan(t2)}->Projection}->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t3)->DataScan(t1)}->DataScan(t2)}->Projection}->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -769,7 +774,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan))
+		p, err = logicalOptimize(flagPredicatePushDown|flagJoinReOrderGreedy, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -989,13 +994,6 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			ans: map[int][]string{
 				1: {"a"},
 				3: {"a"},
-			},
-		},
-		//issue 7833
-		{
-			sql: "drop view if exists v",
-			ans: map[int][]string{
-				1: {},
 			},
 		},
 	}
@@ -1835,6 +1833,37 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		},
 	}
 
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestSelectView(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from v",
+			best: "DataScan(t)->Projection",
+		},
+	}
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")

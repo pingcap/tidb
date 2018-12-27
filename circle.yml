@@ -3,7 +3,7 @@ version: 2
 jobs:
   build:
     docker:
-      - image: golang:1.11
+      - image: golang:1.11.3
     working_directory: /go/src/github.com/pingcap/tidb
     steps:
       - checkout
@@ -11,5 +11,5 @@ jobs:
           name: "Build & Test"
           command: make dev
       - run:
-          name: "Go mod tidy"
-          command: ./hack/check-tidy.sh
+          name: "Check go mod replace is removed"
+          command: ./tools/check/check_parser_replace.sh
