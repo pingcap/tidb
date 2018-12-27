@@ -65,7 +65,7 @@ The version of GO should be **1.11** or above.
 
 After installation, there are two ways to build TiDB binary.
 
-#### A quick taste
+#### For a quick taste
 
 The `GOPATH` is not necessary.
 
@@ -77,12 +77,11 @@ GO111MODULE=on go get github.com/pingcap/tidb@c385cbdcca83eeed283139814a7ea149e3
 GO111MODULE=on go build -o tidb-server github.com/pingcap/tidb/tidb-server
 ```
 
-The `c385cbdcca83eeed283139814a7ea149e3116e66` could be changed to the other commit hash, try the latest commit hash [here](https://github.com/pingcap/tidb/commits/master).
+The `c385cbdcca83eeed283139814a7ea149e3116e66` can be changed to any other commit hash. Try the latest commit hash [here](https://github.com/pingcap/tidb/commits/master).
 
 #### For development
 
-You'll need `GOPATH` defined,
-and `PATH` modified to access your Go binaries.
+You'll need `GOPATH` defined, and `PATH` modified to access your Go binaries.
 
 A common setup is the following but you could always google a setup for your own flavor.
 
