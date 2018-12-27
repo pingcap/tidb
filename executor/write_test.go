@@ -271,6 +271,12 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t (b) values(default(a))")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("create view v as select * from t")
+	_, err = tk.Exec("insert into v values(1,2)")
+	c.Assert(err.Error(), Equals, "insert into view v is not supported now.")
+	_, err = tk.Exec("replace into v values(1,2)")
+	c.Assert(err.Error(), Equals, "replace into view v is not supported now.")
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -1302,6 +1308,10 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("update t set b = ''")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 <nil>"))
 	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
+
+	tk.MustExec("create view v as select * from t")
+	_, err = tk.Exec("update v set a = '2000-11-11'")
+	c.Assert(err.Error(), Equals, "update view v is not supported now.")
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {

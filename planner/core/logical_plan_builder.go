@@ -2159,6 +2159,9 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
+		if t.TableInfo.IsView() {
+			return nil, errors.New(fmt.Sprintf("update view %s is not supported now.", t.Name.O))
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "")
 	}
 
