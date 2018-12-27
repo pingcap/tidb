@@ -163,46 +163,42 @@ func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparse
 	hash := parser.Digest(value.originalSql)
 	if value.status == 0 {
 		if bindArr, ok := b.cache[hash]; ok {
+			if len(bindArr) == 1 {
+				if bindArr[0].db == value.db {
+					delete(b.cache, hash)
+				}
+				return nil
+			}
 			for idx, v := range bindArr {
 				if v.db == value.db {
 					b.cache[hash] = append(b.cache[hash][:idx], b.cache[hash][idx+1:]...)
 				}
 			}
-			if len(b.cache[hash]) == 0 {
-				delete(b.cache, hash)
-			}
 		}
 		return nil
 	}
 
-	_, err := parseSQL(sctx, sparser, value.originalSql)
-	if err != nil {
-		log.Warnf("parse error:\n%v\n%s", err, value.originalSql)
-		return errors.Trace(err)
-	}
 	stmtNodes, err := parseSQL(sctx, sparser, value.bindSql)
 	if err != nil {
 		log.Warnf("parse error:\n%v\n%s", err, value.bindSql)
 		return errors.Trace(err)
 	}
+
+	newNode := &BindData{
+		bindRecord: value,
+		ast:         stmtNodes[0],
+	}
+
 	log.Infof("original sql [%s] bind sql [%s]", value.originalSql, value.bindSql)
-	bindArr, ok := b.cache[hash]
-	if ok {
+	if bindArr, ok := b.cache[hash]; ok {
 		for idx, v := range bindArr {
 			if v.db == value.db {
-				b.cache[hash][idx] = &BindData{
-					bindRecord: value,
-					ast:         stmtNodes[0],
-				}
+				b.cache[hash][idx] = newNode
 				return nil
 			}
 		}
 	}
-	bindArr = append(bindArr, &BindData{
-		bindRecord:value,
-		ast:         stmtNodes[0],
-	})
-	b.cache[hash] = bindArr
+	b.cache[hash] = append(b.cache[hash], newNode)
 	return nil
 
 }
