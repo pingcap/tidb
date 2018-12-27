@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -393,7 +394,9 @@ func (do *Domain) infoSyncerKeeper() {
 		select {
 		case <-do.info.Done():
 			log.Info("[ddl] server info syncer need to restart")
-			do.info.Restart(context.Background())
+			if err := do.info.Restart(context.Background()); err != nil {
+				log.Error(err)
+			}
 			log.Info("[ddl] server info syncer restarted.")
 		case <-do.exit:
 			return
@@ -584,6 +587,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
+	perfschema.Init()
 	if ebd, ok := do.store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
