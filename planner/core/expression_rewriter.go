@@ -1299,45 +1299,70 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 
 func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	stkLen := len(er.ctxStack)
-	col, ok := er.ctxStack[stkLen-1].(*expression.Column)
-	if !ok {
-		col, er.err = er.schema.FindColumn(v.Name)
+	var colExpr *expression.Column
+	switch c := er.ctxStack[stkLen-1].(type) {
+	case *expression.Column:
+		colExpr = c
+	case *expression.CorrelatedColumn:
+		colExpr = &c.Column
+	default:
+		colExpr, er.err = er.schema.FindColumn(v.Name)
 		if er.err != nil {
+			er.err = errors.Trace(er.err)
+			return
+		}
+		if colExpr == nil {
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field_list")
 			return
 		}
 	}
-
-	table, err := er.b.is.TableByName(col.DBName, col.OrigTblName)
-	if err != nil {
-		er.err = errors.Trace(err)
+	dbName := colExpr.DBName
+	if dbName.O == "" {
+		// if database name is not specified, use current database name
+		dbName = model.NewCIStr(er.ctx.GetSessionVars().CurrentDB)
+	}
+	if colExpr.OrigTblName.O == "" {
+		// column is evaluated by some expressions, for example:
+		// `select default(c) from (select (a+1) as c from t) as t0`
+		// in such case, a 'no default' error is returned
+		er.err = table.ErrNoDefaultValue.GenWithStackByArgs(colExpr.ColName)
 		return
 	}
-
+	var tbl table.Table
+	tbl, er.err = er.b.is.TableByName(dbName, colExpr.OrigTblName)
+	if er.err != nil {
+		return
+	}
+	colName := colExpr.OrigColName.O
+	if colName == "" {
+		// in some cases, OrigColName is empty, use ColName instead
+		colName = colExpr.ColName.O
+	}
+	col := table.FindCol(tbl.Cols(), colName)
+	if col == nil {
+		er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, "field_list")
+		return
+	}
+	isCurrentTimestamp := hasCurrentDatetimeDefault(col)
 	var val *expression.Constant
-	for _, col := range table.Cols() {
-		if col.Name.L != v.Name.Name.L {
-			continue
+	switch {
+	case isCurrentTimestamp && col.Tp == mysql.TypeDatetime:
+		// for DATETIME column with current_timestamp, use NULL to be compatible with MySQL 5.7
+		val = expression.Null
+	case isCurrentTimestamp && col.Tp == mysql.TypeTimestamp:
+		// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
+		zero := types.Time{
+			Time: types.ZeroTime,
+			Type: mysql.TypeTimestamp,
+			Fsp:  col.Decimal,
 		}
-		isCurrentTimestamp := hasCurrentDatetimeDefault(col)
-		switch {
-		case isCurrentTimestamp && col.Tp == mysql.TypeDatetime:
-			// for DATETIME column with current_timestamp, use NULL to be compatible with MySQL 5.7
-			val = expression.Null
-		case isCurrentTimestamp && col.Tp == mysql.TypeTimestamp:
-			// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
-			zero := types.Time{
-				Time: types.ZeroTime,
-				Type: mysql.TypeTimestamp,
-				Fsp:  col.Decimal,
-			}
-			val = &expression.Constant{
-				Value:   types.NewDatum(zero),
-				RetType: types.NewFieldType(mysql.TypeTimestamp),
-			}
-		default:
-			// for other columns, just use what it is
-			val, er.err = er.b.getDefaultValue(col)
+		val = &expression.Constant{
+			Value:   types.NewDatum(zero),
+			RetType: types.NewFieldType(mysql.TypeTimestamp),
 		}
+	default:
+		// for other columns, just use what it is
+		val, er.err = er.b.getDefaultValue(col)
 	}
 	if er.err != nil {
 		return

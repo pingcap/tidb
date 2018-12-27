@@ -87,6 +87,12 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 		default(e) as defe,
 		default(f) as deff
 		from t1`).Check(testutil.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|<nil>"))
+	_, err = tk.Exec("select default(x) from t1")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'x' in 'field list'")
+
+	tk.MustQuery("select default(a0) from (select a as a0 from t1) as t0").Check(testkit.Rows("def"))
+	_, err = tk.Exec("select default(a0) from (select a+1 as a0 from t1) as t0")
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'a0' doesn't have a default value")
 
 	tk.MustExec("create table t2(a varchar(10), b varchar(10))")
 	tk.MustExec("insert into t2 values ('1', '1')")
@@ -106,6 +112,14 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 		default(c) as defc,
 		default(d) as defd
 		from t3`).Check(testutil.RowsWithSep("|", "<nil>|0000-00-00 00:00:00|0000-00-00 00:00:00.000000|current_timestamp"))
+
+	tk.MustExec(`create table t4(a int default 1, b varchar(5))`)
+	tk.MustExec(`insert into t4 values (0, 'B'), (1, 'B'), (2, 'B')`)
+	tk.MustExec(`create table t5(d int default 0, e varchar(5))`)
+	tk.MustExec(`insert into t5 values (5, 'B')`)
+
+	tk.MustQuery(`select a from t4 where a > (select default(d) from t5 where t4.b = t5.e)`).Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`select a from t4 where a > (select default(a) from t5 where t4.b = t5.e)`).Check(testkit.Rows("2"))
 
 	tk.MustExec("prepare stmt from 'select default(a) from t1';")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("def"))
