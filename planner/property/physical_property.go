@@ -20,11 +20,16 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-// PhysicalProperty stands for the required physical property by parents.
-// It contains the orders, if the order is desc and the task types.
-type PhysicalProperty struct {
-	Cols []*expression.Column
+// Item wraps the column and its order.
+type Item struct {
+	Col  *expression.Column
 	Desc bool
+}
+
+// PhysicalProperty stands for the required physical property by parents.
+// It contains the orders and the task types.
+type PhysicalProperty struct {
+	Items []Item
 
 	// TaskTp means the type of task that an operator requires.
 	//
@@ -48,19 +53,43 @@ type PhysicalProperty struct {
 	Enforced bool
 }
 
+// NewPhysicalProperty builds property from columns.
+func NewPhysicalProperty(taskTp TaskType, cols []*expression.Column, desc bool, expectCnt float64, enforced bool) *PhysicalProperty {
+	return &PhysicalProperty{
+		Items:       ItemsFromCols(cols, desc),
+		TaskTp:      taskTp,
+		ExpectedCnt: expectCnt,
+		Enforced:    enforced,
+	}
+}
+
+// ItemsFromCols builds property items from columns.
+func ItemsFromCols(cols []*expression.Column, desc bool) []Item {
+	items := make([]Item, 0, len(cols))
+	for _, col := range cols {
+		items = append(items, Item{Col: col, Desc: desc})
+	}
+	return items
+}
+
 // AllColsFromSchema checks whether all the columns needed by this physical
 // property can be found in the given schema.
 func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {
-	return schema.ColumnsIndices(p.Cols) != nil
+	for _, col := range p.Items {
+		if schema.ColumnIndex(col.Col) == -1 {
+			return false
+		}
+	}
+	return true
 }
 
 // IsPrefix checks whether the order property is the prefix of another.
 func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
-	if len(p.Cols) > len(prop.Cols) || p.Desc != prop.Desc {
+	if len(p.Items) > len(prop.Items) {
 		return false
 	}
-	for i := range p.Cols {
-		if !p.Cols[i].Equal(nil, prop.Cols[i]) {
+	for i := range p.Items {
+		if !p.Items[i].Col.Equal(nil, prop.Items[i].Col) || p.Items[i].Desc != prop.Items[i].Desc {
 			return false
 		}
 	}
@@ -69,7 +98,7 @@ func (p *PhysicalProperty) IsPrefix(prop *PhysicalProperty) bool {
 
 // IsEmpty checks whether the order property is empty.
 func (p *PhysicalProperty) IsEmpty() bool {
-	return len(p.Cols) == 0
+	return len(p.Items) == 0
 }
 
 // HashCode calculates hash code for a PhysicalProperty object.
@@ -77,13 +106,8 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
-	hashcodeSize := 8 + 8 + 8 + 16*len(p.Cols) + 8
+	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.Items) + 8
 	p.hashcode = make([]byte, 0, hashcodeSize)
-	if p.Desc {
-		p.hashcode = codec.EncodeInt(p.hashcode, 1)
-	} else {
-		p.hashcode = codec.EncodeInt(p.hashcode, 0)
-	}
 	if p.Enforced {
 		p.hashcode = codec.EncodeInt(p.hashcode, 1)
 	} else {
@@ -91,13 +115,44 @@ func (p *PhysicalProperty) HashCode() []byte {
 	}
 	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.TaskTp))
 	p.hashcode = codec.EncodeFloat(p.hashcode, p.ExpectedCnt)
-	for i, length := 0, len(p.Cols); i < length; i++ {
-		p.hashcode = append(p.hashcode, p.Cols[i].HashCode(nil)...)
+	for _, item := range p.Items {
+		p.hashcode = append(p.hashcode, item.Col.HashCode(nil)...)
+		if item.Desc {
+			p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		} else {
+			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		}
 	}
 	return p.hashcode
 }
 
 // String implements fmt.Stringer interface. Just for test.
 func (p *PhysicalProperty) String() string {
-	return fmt.Sprintf("Prop{cols: %v, desc: %v, TaskTp: %s, expectedCount: %v}", p.Cols, p.Desc, p.TaskTp, p.ExpectedCnt)
+	return fmt.Sprintf("Prop{cols: %v, TaskTp: %s, expectedCount: %v}", p.Items, p.TaskTp, p.ExpectedCnt)
+}
+
+// Clone returns a copy of PhysicalProperty. Currently, this function is only used to build new
+// required property for children plan in `exhaustPhysicalPlans`, so we don't copy `Enforced` field
+// because if `Enforced` is true, the `Items` must be empty now, this makes `Enforced` meaningless
+// for children nodes.
+func (p *PhysicalProperty) Clone() *PhysicalProperty {
+	prop := &PhysicalProperty{
+		Items:       p.Items,
+		TaskTp:      p.TaskTp,
+		ExpectedCnt: p.ExpectedCnt,
+	}
+	return prop
+}
+
+// AllSameOrder checks if all the items have same order.
+func (p *PhysicalProperty) AllSameOrder() (bool, bool) {
+	if len(p.Items) == 0 {
+		return true, false
+	}
+	for i := 1; i < len(p.Items); i++ {
+		if p.Items[i].Desc != p.Items[i-1].Desc {
+			return false, false
+		}
+	}
+	return true, p.Items[0].Desc
 }
