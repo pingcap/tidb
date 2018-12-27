@@ -887,19 +887,20 @@ LOOP:
 // TestCancelDropColumn tests cancel ddl job which type is drop column.
 func (s *testDBSuite) TestCancelDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.mustExec(c, "use test_db")
+	s.tk.MustExec("use " + s.schemaName)
 	s.mustExec(c, "drop table if exists test_drop_column")
 	s.mustExec(c, "create table test_drop_column(c1 int, c2 int)")
 	defer s.mustExec(c, "drop table test_drop_column;")
 	testCases := []struct {
+		needAddColumn  bool
 		jobState       model.JobState
 		JobSchemaState model.SchemaState
 		cancelSucc     bool
 	}{
-		{model.JobStateNone, model.StateNone, true},
-		{model.JobStateRunning, model.StateWriteOnly, false},
-		{model.JobStateRunning, model.StateDeleteOnly, false},
-		{model.JobStateRunning, model.StateDeleteReorganization, false},
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
 	}
 	var checkErr error
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
@@ -914,7 +915,7 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 			jobID = job.ID
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.Background())
+			err := hookCtx.NewTxn(context.TODO())
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -936,15 +937,16 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 			checkErr = txn.Commit(context.Background())
 		}
 	}
+
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	var err1 error
 	for i := range testCases {
 		testCase = &testCases[i]
-		s.mustExec(c, "alter table test_drop_column add column c3 int")
-		rs, err := s.tk.Exec("alter table test_drop_column drop column c3")
-		if rs != nil {
-			rs.Close()
+		if testCase.needAddColumn {
+			s.mustExec(c, "alter table test_drop_column add column c3 int")
 		}
+		_, err1 = s.tk.Exec("alter table test_drop_column drop column c3")
 		var col1 *table.Column
 		t := s.testGetTable(c, "test_drop_column")
 		for _, col := range t.Cols() {
@@ -955,12 +957,12 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 		}
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
-			c.Assert(err, NotNil)
 			c.Assert(col1, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			c.Assert(col1.Name.L, Equals, "c3")
+			c.Assert(err1.Error(), Equals, "[ddl:12]cancelled DDL job")
 		} else {
 			c.Assert(col1, IsNil)
-			c.Assert(err, IsNil)
+			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
 		}
