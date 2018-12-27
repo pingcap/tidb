@@ -68,9 +68,12 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 }
 
 func (s *testCascadesSuite) TestInitGroupSchema(c *C) {
-	stmt, _ := s.ParseOneStmt("select a from t", "", "")
-	p, _ := plannercore.BuildLogicalPlan(s.sctx, stmt, s.is)
-	logic, _ := p.(plannercore.LogicalPlan)
+	stmt, err := s.ParseOneStmt("select a from t", "", "")
+	c.Assert(err, IsNil)
+	p, err := plannercore.BuildLogicalPlan(s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
 	g := convert2Group(logic)
 	c.Assert(g, NotNil)
 	c.Assert(g.Prop, NotNil)
