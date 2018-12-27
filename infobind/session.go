@@ -1,8 +1,10 @@
 package infobind
 
+import "github.com/pingcap/tidb/util/kvcache"
+
 type SessionBind struct {
 	GlobalBindAccessor GlobalBindAccessor
-	Handle             *Handle
+	LocalBindCache *kvcache.SimpleMap
 }
 
 func NewSessionBind() *SessionBind {
@@ -10,15 +12,62 @@ func NewSessionBind() *SessionBind {
 }
 
 func (s *SessionBind) SetBind(originSql string , bindData *BindData){
-	s.Handle.Get().cache[originSql] = bindData
+	bindDataArrInterface,ok := s.LocalBindCache.Get(originSql)
+	var newBindDataArr = make([] *BindData , 0)
+	if ok {
+		oldBindDataArr := bindDataArrInterface.([] *BindData)
+
+		for pos,bindDataInArr := range oldBindDataArr {
+			if bindDataInArr.DefaultDB == bindData.DefaultDB {
+				newBindDataArr = append(newBindDataArr , oldBindDataArr[:pos]...)
+				newBindDataArr = append(newBindDataArr , oldBindDataArr[pos+1:]...)
+			}
+		}
+		oldBindDataArr = append(oldBindDataArr, bindData)
+	}
+
+	newBindDataArr = append(newBindDataArr, bindData)
+	s.LocalBindCache.Put(originSql , newBindDataArr)
 }
 
-func (s *SessionBind) RemoveBind(originSql string) {
-	delete(s.Handle.Get().cache,originSql) //todo 这个地方是不是有问题，是否应该加上db，是否需要提供一个原子性的删除，加个锁啥的
+func (s *SessionBind) RemoveBind(originSql string, defaultDb string) {
+	bindDataArrInterface,ok := s.LocalBindCache.Get(originSql)
+	var newBindDataArr = make([] *BindData , 0)
+	if ok {
+		oldBindDataArr := bindDataArrInterface.([] *BindData)
+
+		for pos,bindDataInArr := range oldBindDataArr {
+			if bindDataInArr.DefaultDB == defaultDb {
+				newBindDataArr = append(newBindDataArr , oldBindDataArr[:pos]...)
+				newBindDataArr = append(newBindDataArr , oldBindDataArr[pos+1:]...)
+			}
+		}
+	}
+
+	s.LocalBindCache.Put(originSql , newBindDataArr)
 }
 
 func (s *SessionBind) GetBind(originSql string, defaultDb string) *BindData {
-	return s.Handle.Get().cache[originSql] //todo 这个地方是不是有问题，是否应该加上db
+	bindDataArrInterface,ok := s.LocalBindCache.Get(originSql)
+	if ok {
+		oldBindDataArr := bindDataArrInterface.([] *BindData)
+
+		for _,bindDataInArr := range oldBindDataArr {
+			if bindDataInArr.DefaultDB == defaultDb {
+				return bindDataInArr
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *SessionBind) GetAllBind() []*BindData {
+	bindDataArr := make([] *BindData,0)
+
+	for _,bindData := range s.LocalBindCache {
+
+	}
 }
 
 type GlobalBindAccessor interface {

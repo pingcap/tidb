@@ -153,7 +153,6 @@ type session struct {
 	ddlOwnerChecker owner.DDLOwnerChecker
 
 	localBindCache *kvcache.SimpleMap
-	bindHandle     *infobind.Handle
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -1220,12 +1219,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
-	lastUpTime, _ := time.ParseInLocation("2006-01-02 15:04:05.000000", "1970-01-01 00:00:01.000000", time.Local)
-
 	bm := &infobind.AstBind{
 		Handle:         do.BindHandle(),
-		Parser:         s.GetParser(),
-		LastUpdateTime: lastUpTime,
 	}
 	infobind.BindBinderManager(s, bm)
 	// Add stats collector, and it will be freed by background stats worker
@@ -1347,7 +1342,6 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars:     variable.NewSessionVars(),
 		sessionBind:	 infobind.NewSessionBind(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
-		bindHandle:      dom.BindHandle(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -1357,7 +1351,7 @@ func createSession(store kv.Storage) (*session, error) {
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionBind.GlobalBindAccessor = s
-	s.sessionBind.Handle = s.bindHandle
+	s.sessionBind.LocalBindCache = s.localBindCache
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()

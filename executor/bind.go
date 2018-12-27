@@ -86,6 +86,6 @@ func (e *DropBindExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	sessionBind.RemoveBind(e.originSql)
+	sessionBind.RemoveBind(e.originSql , e.defaultDb)
 	return nil
 }

@@ -16,6 +16,8 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/tidb/infobind"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -42,6 +44,21 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	infoSchema := GetInfoSchema(c.Ctx)
+
+	sql := stmtNode.Text()
+	if _, ok := stmtNode.(*ast.ExplainStmt); ok {
+		sql = sql[len("explain "):]
+	}
+	hash := parser.Digest(sql)
+	log.Infof("try to hint sql %s hash %s", sql, hash)
+	if bm := infobind.GetBindManager(c.Ctx); bm != nil {
+		if bindedNode := bm.GetMatchedAst(hash, c.Ctx.GetSessionVars().CurrentDB); bindedNode != nil {
+			bm.SetSchema(infoSchema)
+			bm.SetCtx(c.Ctx)
+			bm.SetDB(bindedNode.DefaultDB)
+			bm.MatchHint(stmtNode, bindedNode.Ast)
+		}
+	}
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
 		return nil, errors.Trace(err)
 	}

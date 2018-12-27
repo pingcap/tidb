@@ -151,8 +151,29 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowMasterStatus()
 	case ast.ShowPrivileges:
 		return e.fetchShowPrivileges()
+	case ast.ShowBind:
+		return e.fetchShowBind()
+
 	}
 	return nil
+}
+
+func (e *ShowExec) fetchShowBind() error {
+	if e.GlobalScope {
+		sql := "SELECT * FROM mysql.bindsql_info" ;
+		rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, row := range rows {
+			e.result.AppendRow(row)
+		}
+		return nil
+	} else {
+		sessionBind := e.ctx.GetSessionBind()
+
+	}
 }
 
 func (e *ShowExec) fetchShowEngines() error {
