@@ -149,8 +149,6 @@ type session struct {
 	statsCollector *statistics.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
-
-	localBindCache *kvcache.SimpleMap
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
