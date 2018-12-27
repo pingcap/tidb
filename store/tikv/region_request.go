@@ -136,7 +136,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 
 		log.Infof("txn=%d send region request:%s", txn, copReq.Context.String())
 		for i, ran := range copReq.Ranges {
-			log.Infof("range %d = %#s\n", i, ran.String())
+			log.Infof("range %d = %s\n", i, ran.String())
 		}
 	}
 	if err != nil {
