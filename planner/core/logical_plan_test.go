@@ -539,7 +539,7 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 		// Not deriving for AntiSemiJoin
 		{
 			sql:   "select * from t t1 where not exists (select * from t t2 where t2.e = t1.e)",
-			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
 			left:  "[]",
 			right: "[]",
 		},
@@ -550,7 +550,7 @@ func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil, comment)
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		c.Assert(ToString(p), Equals, ca.plan, comment)
 		join := p.(LogicalPlan).Children()[0].(*LogicalJoin)
