@@ -176,6 +176,11 @@ func (s *testSuite3) TestCreateView(c *C) {
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	//view with or_replace flag
+	tk.MustExec("drop table if exists v1")
+	tk.MustExec("create view v1 (c,d) as select a,b from t1")
+	_, err = tk.Exec("create or replace view v1 (c,d) as select a,b from t1 ")
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {
