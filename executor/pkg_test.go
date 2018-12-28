@@ -168,7 +168,7 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	err := hashJoinExec.Open(ctx)
 	c.Assert(err, IsNil)
 
-	innerResultCh := make(chan *chunk.Chunk, hashJoinExec.concurrency)
+	innerResultCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
 	go func() {
 		for range innerResultCh {
@@ -258,7 +258,7 @@ func BenchmarkPartitionInnerRows(b *testing.B) {
 
 	ctx := context.Background()
 	hashJoinExec.Open(ctx)
-	innerResultCh := make(chan *chunk.Chunk, hashJoinExec.concurrency)
+	innerResultCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
 	go func() {
 		for range innerResultCh {
