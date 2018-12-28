@@ -82,6 +82,7 @@ type Server struct {
 	tlsConfig         *tls.Config
 	driver            IDriver
 	listener          net.Listener
+	socket            net.Listener
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
@@ -135,15 +136,17 @@ func (s *Server) isUnixSocket() bool {
 	return s.cfg.Socket != ""
 }
 
-func (s *Server) forwardUnixSocketToTCP(socket string, addr string) {
-	if sock, err := net.Listen("unix", socket); err == nil {
-		log.Infof("Server redirecting [%s] to [%s]", socket, addr)
+func (s *Server) forwardUnixSocketToTCP() {
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	var err error
+	if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
+		log.Infof("Server redirecting [%s] to [%s]", s.cfg.Socket, addr)
 		for {
-			if uconn, err := sock.Accept(); err == nil {
-				log.Infof("server socket forwarding from [%s] to [%s]", socket, addr)
+			if uconn, err := s.socket.Accept(); err == nil {
+				log.Infof("server socket forwarding from [%s] to [%s]", s.cfg.Socket, addr)
 				go s.handleForwardedConnection(uconn, addr)
 			} else {
-				log.Errorf("server failed to forward from [%s] to [%s], err: %s", socket, addr, err)
+				log.Errorf("server failed to forward from [%s] to [%s], err: %s", s.cfg.Socket, addr, err)
 			}
 		}
 	} else {
@@ -152,15 +155,13 @@ func (s *Server) forwardUnixSocketToTCP(socket string, addr string) {
 }
 
 func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
+	defer terror.Call(uconn.Close)
 	if tconn, err := net.Dial("tcp", addr); err == nil {
 		if _, err := io.Copy(tconn, uconn); err != nil {
 			log.Warningf("socket forward copy failed: %s", err)
 		}
 	} else {
 		log.Warningf("socket forward failed: could not connect to [%s], err: %s", addr, err)
-	}
-	if err := uconn.Close(); err != nil {
-		log.Warningf("socket failed to close: %s", err)
 	}
 }
 
@@ -188,7 +189,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
 			log.Infof("Server is running MySQL Protocol at [%s]", addr)
 			if cfg.Socket != "" {
-				go s.forwardUnixSocketToTCP(cfg.Socket, addr) // listen on both
+				go s.forwardUnixSocketToTCP() // listen on both
 			}
 		}
 	} else if cfg.Socket != "" {
