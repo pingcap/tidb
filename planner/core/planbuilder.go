@@ -751,8 +751,8 @@ const (
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	for _, tbl := range as.TableNames {
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "")
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", ErrPrivilegeCheckFail)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", ErrPrivilegeCheckFail)
 	}
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
