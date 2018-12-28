@@ -143,7 +143,7 @@ func (s *Server) forwardUnixSocketToTCP(socket string, addr string) {
 				log.Infof("server socket forwarding from [%s] to [%s]", socket, addr)
 				go s.handleForwardedConnection(uconn, addr)
 			} else {
-				log.Warningf("server failed to forward from [%s] to [%s], err: %s", socket, addr, err)
+				log.Errorf("server failed to forward from [%s] to [%s], err: %s", socket, addr, err)
 			}
 		}
 	} else {
@@ -187,18 +187,16 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
 			log.Infof("Server is running MySQL Protocol at [%s]", addr)
-		}
-		if cfg.Socket != "" {
-			go s.forwardUnixSocketToTCP(cfg.Socket, addr) // listen on both
+			if cfg.Socket != "" {
+				go s.forwardUnixSocketToTCP(cfg.Socket, addr) // listen on both
+			}
 		}
 	} else if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
 			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
-		} else {
-			log.Fatalf("err: %s", err) // in use?
 		}
 	} else {
-		log.Fatal("Server not configured to listen on either -socket or -host and -port!")
+		err = errors.New("Server not configured to listen on either -socket or -host and -port")
 	}
 
 	if cfg.ProxyProtocol.Networks != "" {
@@ -449,7 +447,7 @@ func (s *Server) CleanupSocketFile() {
 	if s.cfg.Socket != "" {
 		log.Infof("[server] removing socket file [%s]", s.cfg.Socket)
 		if err := os.Remove(s.cfg.Socket); err != nil {
-			log.Warningf("[server] failed to remove socket file! err: %s", err)
+			log.Errorf("[server] failed to remove socket file! err: %s", err)
 		}
 	}
 }
@@ -468,7 +466,7 @@ func (s *Server) kickIdleConnection() {
 	for _, cc := range conns {
 		err := cc.Close()
 		if err != nil {
-			log.Error("close connection error:", err)
+			log.Errorf("close connection error: %s", err)
 		}
 	}
 }
