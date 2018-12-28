@@ -180,7 +180,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(tb, NotNil)
 
 	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
-		meta.NewMeta(txn).CreateTable(dbID, tblInfo)
+		meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
 		return errors.Trace(err)
 	})
 	c.Assert(err, IsNil)

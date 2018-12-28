@@ -141,7 +141,7 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 	case *ast.CreateIndexStmt:
 		return "CreateIndex"
 	case *ast.CreateTableStmt:
-		return "CreateTable"
+		return "CreateTableOrView"
 	case *ast.CreateUserStmt:
 		return "CreateUser"
 	case *ast.DeleteStmt:

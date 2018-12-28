@@ -796,7 +796,7 @@ func runTestStmtCount(t *C) {
 		dbt.mustExec("replace into test(a) values(6);")
 
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
-		t.Assert(currentStmtCnt["CreateTable"], Equals, originStmtCnt["CreateTable"]+1)
+		t.Assert(currentStmtCnt["CreateTableOrView"], Equals, originStmtCnt["CreateTableOrView"]+1)
 		t.Assert(currentStmtCnt["Insert"], Equals, originStmtCnt["Insert"]+5)
 		t.Assert(currentStmtCnt["Delete"], Equals, originStmtCnt["Delete"]+1)
 		t.Assert(currentStmtCnt["Update"], Equals, originStmtCnt["Update"]+2)
