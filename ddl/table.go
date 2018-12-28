@@ -110,7 +110,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 }
 
 func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, err := checkDropTable(t, job)
+	tblInfo, err := checkTableExist(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -147,32 +147,6 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func checkDropTable(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
-	schemaID := job.SchemaID
-	tableID := job.TableID
-	// Check this table's database.
-	tblInfo, err := t.GetTable(schemaID, tableID)
-	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
-			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
-				fmt.Sprintf("(Schema ID %d)", schemaID),
-			))
-		}
-		return nil, errors.Trace(err)
-	}
-
-	// Check the table.
-	if tblInfo == nil {
-		job.State = model.JobStateCancelled
-		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", schemaID),
-			fmt.Sprintf("(Table ID %d)", tableID),
-		))
-	}
-	return tblInfo, nil
-}
-
 type splitableStore interface {
 	SplitRegion(splitKey kv.Key) error
 }
@@ -196,7 +170,22 @@ func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table
 }
 
 func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
+	tblInfo, err := checkTableExist(t, job, schemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tblInfo.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
+	}
+
+	return tblInfo, nil
+}
+
+func checkTableExist(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tableID := job.TableID
+	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
@@ -206,19 +195,16 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 			))
 		}
 		return nil, errors.Trace(err)
-	} else if tblInfo == nil {
+	}
+
+	// Check the table.
+	if tblInfo == nil {
 		job.State = model.JobStateCancelled
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		))
 	}
-
-	if tblInfo.State != model.StatePublic {
-		job.State = model.JobStateCancelled
-		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
-	}
-
 	return tblInfo, nil
 }
 

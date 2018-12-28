@@ -17,7 +17,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/schemautil"
@@ -78,32 +77,13 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 
 func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	job.State = model.JobStateRollingback
-	col := &model.ColumnInfo{}
-	pos := &ast.ColumnPosition{}
-	offset := 0
-	err = job.DecodeArgs(col, pos, &offset)
+	tblInfo, columnInfo, col, _, _, err := checkAddColumn(t, job)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
-	}
-
-	if columnInfo.State == model.StatePublic {
-		// We already have a column with the same column name.
-		job.State = model.JobStateCancelled
-		return ver, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 	}
 
 	originalState := columnInfo.State
@@ -119,55 +99,27 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 }
 
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	tblInfo, colInfo, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-
-	var colName model.CIStr
-	err = job.DecodeArgs(&colName)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
-	if colInfo == nil {
-		job.State = model.JobStateCancelled
-		return ver, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
 
 	// StatePublic means when the job is not running yet.
 	if colInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-	} else {
-		// In the state of drop column `write only -> delete only -> reorganization`,
-		// We can not rollback now, so just continue to drop column.
-		job.State = model.JobStateRunning
-		return ver, errors.Trace(nil)
+		job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
+		return ver, errors.Trace(errCancelledDDLJob)
 	}
-	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
-	return ver, errors.Trace(errCancelledDDLJob)
+	// In the state of drop column `write only -> delete only -> reorganization`,
+	// We can not rollback now, so just continue to drop column.
+	job.State = model.JobStateRunning
+	return ver, errors.Trace(nil)
 }
 
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, indexInfo, err := checkDropIndex(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-
-	var indexName model.CIStr
-	err = job.DecodeArgs(&indexName)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
-	if indexInfo == nil {
-		job.State = model.JobStateCancelled
-		return ver, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
 	originalState := indexInfo.State
@@ -209,7 +161,7 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 }
 
 func rollingbackDropTable(t *meta.Meta, job *model.Job) error {
-	tblInfo, err := checkDropTable(t, job)
+	tblInfo, err := checkTableExist(t, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}

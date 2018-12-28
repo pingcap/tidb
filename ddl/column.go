@@ -121,6 +121,32 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 	return colInfo, position, nil
 }
 
+func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo, *ast.ColumnPosition, int, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		return nil, nil, nil, nil, 0, errors.Trace(err)
+	}
+	col := &model.ColumnInfo{}
+	pos := &ast.ColumnPosition{}
+	offset := 0
+	err = job.DecodeArgs(col, pos, &offset)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, nil, nil, 0, errors.Trace(err)
+	}
+
+	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
+	if columnInfo != nil {
+		if columnInfo.State == model.StatePublic {
+			// We already have a column with the same column name.
+			job.State = model.JobStateCancelled
+			return nil, nil, nil, nil, 0, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
+		}
+	}
+	return tblInfo, columnInfo, col, pos, offset, nil
+}
+
 func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
@@ -131,32 +157,16 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	}
 
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 	// gofail: var errorBeforeDecodeArgs bool
 	// if errorBeforeDecodeArgs {
 	// 	return ver, errors.New("occur an error before decode args")
 	// }
-	col := &model.ColumnInfo{}
-	pos := &ast.ColumnPosition{}
-	offset := 0
-	err = job.DecodeArgs(col, pos, &offset)
+
+	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
-	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
-	if columnInfo != nil {
-		if columnInfo.State == model.StatePublic {
-			// We already have a column with the same column name.
-			job.State = model.JobStateCancelled
-			return ver, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
-		}
-	} else {
+	if columnInfo == nil {
 		columnInfo, offset, err = createColumnInfo(tblInfo, col, pos)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -211,26 +221,8 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 }
 
 func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, colInfo, err := checkDropColumn(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	var colName model.CIStr
-	err = job.DecodeArgs(&colName)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
-	if colInfo == nil {
-		job.State = model.JobStateCancelled
-		return ver, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
-	}
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -273,6 +265,32 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	var colName model.CIStr
+	err = job.DecodeArgs(&colName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, errors.Trace(err)
+	}
+
+	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+	if colInfo == nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+	}
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, errors.Trace(err)
+	}
+	return tblInfo, colInfo, nil
 }
 
 func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
