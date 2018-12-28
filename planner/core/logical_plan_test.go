@@ -45,7 +45,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable(), MockView()})
 	s.ctx = MockContext()
 	s.Parser = parser.New()
 }
@@ -449,29 +449,6 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 	}
 }
 
-func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
-	tableInfo := *MockTable()
-	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
-	cols = append(cols, tableInfo.Columns...)
-	cols = append(cols, &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    10,
-		Name:      model.NewCIStr("h"),
-		FieldType: newLongType(),
-		ID:        11,
-	})
-	partition := &model.PartitionInfo{
-		Type:        model.PartitionTypeRange,
-		Expr:        "h",
-		Enable:      true,
-		Definitions: definitions,
-	}
-	tableInfo.Columns = cols
-	tableInfo.Partition = partition
-	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
-	return is
-}
-
 func (s *testPlanSuite) TestTablePartition(c *C) {
 	defer testleak.AfterTest(c)()
 	definitions := []model.PartitionDefinition{
@@ -501,11 +478,11 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			LessThan: []string{"maxvalue"},
 		},
 	}
-	is := newPartitionInfoSchema(definitions)
+	is := MockPartitionInfoSchema(definitions)
 	// is1 equals to is without maxvalue partition.
 	definitions1 := make([]model.PartitionDefinition, len(definitions)-1)
 	copy(definitions1, definitions)
-	is1 := newPartitionInfoSchema(definitions1)
+	is1 := MockPartitionInfoSchema(definitions1)
 
 	tests := []struct {
 		sql   string
@@ -1337,6 +1314,14 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			sql:  "select count(1) from (select count(1), a as b from t group by a) tt group by b",
 			best: "DataScan(t)->Projection->Projection",
 		},
+		{
+			sql:  "select a, count(b) from t group by a",
+			best: "DataScan(t)->Projection->Projection",
+		},
+		{
+			sql:  "select a, count(distinct a, b) from t group by a",
+			best: "DataScan(t)->Projection->Projection",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
@@ -1856,6 +1841,37 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		},
 	}
 
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestSelectView(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from v",
+			best: "DataScan(t)->Projection",
+		},
+	}
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")

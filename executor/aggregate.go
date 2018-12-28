@@ -199,7 +199,7 @@ func (e *HashAggExec) Close() error {
 		e.childResult = nil
 		e.groupSet = nil
 		e.partialResultMap = nil
-		return nil
+		return e.baseExecutor.Close()
 	}
 	// `Close` may be called after `Open` without calling `Next` in test.
 	if !e.prepared {
@@ -216,7 +216,7 @@ func (e *HashAggExec) Close() error {
 	}
 	for range e.finalOutputCh {
 	}
-	return errors.Trace(e.baseExecutor.Close())
+	return e.baseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
@@ -611,6 +611,12 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepare4ParallelExec(ctx)
 		e.prepared = true
 	}
+
+	// gofail: var parallelHashAggError bool
+	// if parallelHashAggError {
+	// 	return errors.New("HashAggExec.parallelExec error")
+	// }
+
 	for {
 		result, ok := <-e.finalOutputCh
 		if !ok || result.err != nil || result.chk.NumRows() == 0 {
@@ -682,6 +688,12 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		// gofail: var unparallelHashAggError bool
+		// if unparallelHashAggError {
+		// 	return errors.New("HashAggExec.unparallelExec error")
+		// }
+
 		// no more data.
 		if e.childResult.NumRows() == 0 {
 			return nil
