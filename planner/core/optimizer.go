@@ -109,19 +109,16 @@ func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	finalPlan, err := postOptimize(physical)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	finalPlan := postOptimize(physical)
 	return finalPlan, nil
 }
 
-func postOptimize(plan PhysicalPlan) (PhysicalPlan, error) {
+func postOptimize(plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
 
 	// build projection below aggregation
 	plan = buildProjBelowAgg(plan)
-	return plan, nil
+	return plan
 }
 
 // buildProjBelowAgg builds a ProjOperator below AggOperator.
