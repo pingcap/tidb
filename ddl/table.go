@@ -85,7 +85,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
-	if err != nil && !orReplace{
+	if err != nil && !orReplace {
 		return ver, errors.Trace(err)
 	}
 	ver, err = updateSchemaVersion(t, job)
