@@ -130,7 +130,7 @@ func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 		TableID:    tblInfo.ID,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
+		Args:       []interface{}{&model.TableInfo{}, tblInfo, false},
 	}
 
 	c.Assert(tblInfo.IsView(), IsTrue)
