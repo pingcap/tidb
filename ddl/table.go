@@ -100,13 +100,11 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if oldTbInfoID > 0 && orReplace {
 			err = t.DropTable(schemaID, oldTbInfoID, true)
 			if err != nil {
-				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
 		}
 		err = t.CreateTableOrView(schemaID, tbInfo)
 		if err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
