@@ -18,8 +18,10 @@ import (
 	"sort"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -203,7 +205,34 @@ func (s *joinReOrderGreedySolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 func (s *joinReOrderGreedySolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
 	var err error
 	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
-	if len(curJoinGroup) > 1 {
+	var outerJoinOneSideConditions, outerJoinOtherConditions [][]expression.Expression
+	var outerJoinEqConditions [][]*expression.ScalarFunction
+	var outerJoinInnerChild []LogicalPlan
+	for i, node := range curJoinGroup {
+		join, ok := node.(*LogicalJoin)
+		if !ok {
+			continue
+		}
+		switch join.JoinType {
+		case LeftOuterJoin:
+			outerJoinInnerChild = append(outerJoinInnerChild, join.children[1])
+			outerJoinEqConditions = append(outerJoinEqConditions, join.EqualConditions)
+			outerJoinOneSideConditions = append(outerJoinOneSideConditions, join.LeftConditions)
+			outerJoinOtherConditions = append(outerJoinOtherConditions, join.OtherConditions)
+			curJoinGroup[i] = join.children[0]
+		case RightOuterJoin:
+			outerJoinInnerChild = append(outerJoinInnerChild, join.children[0])
+			eqConds := make([]*expression.ScalarFunction, 0, len(join.EqualConditions))
+			for _, eqCond := range join.EqualConditions {
+				eqConds = append(eqConds, expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), eqCond.GetArgs()[1], eqCond.GetArgs()[0]).(*expression.ScalarFunction))
+			}
+			outerJoinEqConditions = append(outerJoinEqConditions, eqConds)
+			outerJoinOneSideConditions = append(outerJoinOneSideConditions, join.RightConditions)
+			outerJoinOtherConditions = append(outerJoinOtherConditions, join.OtherConditions)
+			curJoinGroup[i] = join.children[1]
+		}
+	}
+	if len(curJoinGroup)+len(outerJoinEqConditions) > 2 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
 			if err != nil {
@@ -219,6 +248,22 @@ func (s *joinReOrderGreedySolver) optimizeRecursive(ctx sessionctx.Context, p Lo
 		p, err = groupSolver.solve()
 		if err != nil {
 			return nil, err
+		}
+		for i := range outerJoinEqConditions {
+			outerJoin := LogicalJoin{
+				JoinType:  LeftOuterJoin,
+				reordered: true,
+			}.Init(ctx)
+			outerJoin.SetSchema(expression.MergeSchema(p.Schema(), outerJoinInnerChild[i].Schema()))
+			outerJoin.SetChildren(p, outerJoinInnerChild[i])
+			outerJoin.EqualConditions = outerJoinEqConditions[i]
+			outerJoin.LeftConditions = outerJoinOneSideConditions[i]
+			outerJoin.OtherConditions = outerJoinOtherConditions[i]
+			for _, eqCond := range outerJoin.EqualConditions {
+				outerJoin.LeftJoinKeys = append(outerJoin.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
+				outerJoin.RightJoinKeys = append(outerJoin.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
+			}
+			p = outerJoin
 		}
 		return p, nil
 	}
