@@ -118,8 +118,8 @@ func (n *Join) Restore(ctx *RestoreCtx) error {
 	ctx.JoinLevel--
 
 	if n.On != nil {
-		ctx.WriteKeyWord(" ON ")
-		if err := n.On.Expr.Restore(ctx); err != nil {
+		ctx.WritePlain(" ")
+		if err := n.On.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore Join.On")
 		}
 	}
@@ -325,7 +325,11 @@ type OnCondition struct {
 
 // Restore implements Node interface.
 func (n *OnCondition) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("ON ")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore OnCondition.Expr")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -551,7 +555,10 @@ type TableRefsClause struct {
 
 // Restore implements Node interface.
 func (n *TableRefsClause) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.TableRefs.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore TableRefsClause.TableRefs")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
