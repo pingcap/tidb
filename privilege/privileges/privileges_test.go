@@ -363,6 +363,7 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "setglobal_b", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), `set global innodb_commit_concurrency=16`)
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+}
 
 func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 
