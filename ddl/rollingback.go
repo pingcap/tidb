@@ -208,6 +208,36 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	return
 }
 
+func rollingbackDropTable(t *meta.Meta, job *model.Job) error {
+	tblInfo, err := checkDropTable(t, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// To simplify the rollback logic, cannot be canceled after job start to run.
+	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+	if tblInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return nil
+}
+
+func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
+	dbInfo, err := checkDropSchema(t, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// To simplify the rollback logic, cannot be canceled after job start to run.
+	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+	if dbInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return nil
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -218,8 +248,10 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropIndex:
 		ver, err = rollingbackDropIndex(t, job)
-	case model.ActionDropTable, model.ActionDropSchema:
-		job.State = model.JobStateRollingback
+	case model.ActionDropTable:
+		err = rollingbackDropTable(t, job)
+	case model.ActionDropSchema:
+		err = rollingbackDropSchema(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob

@@ -110,37 +110,9 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 }
 
 func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	schemaID := job.SchemaID
-	tableID := job.TableID
-	// Check this table's database.
-	tblInfo, err := t.GetTable(schemaID, tableID)
+	tblInfo, err := checkDropTable(t, job)
 	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
-				fmt.Sprintf("(Schema ID %d)", schemaID),
-			))
-		}
 		return ver, errors.Trace(err)
-	}
-
-	// Check the table.
-	if tblInfo == nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", schemaID),
-			fmt.Sprintf("(Table ID %d)", tableID),
-		))
-	}
-
-	if job.IsRollingback() {
-		// To simplify the rollback logic, cannot be canceled after job start to run.
-		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
-		if tblInfo.State == model.StatePublic {
-			job.State = model.JobStateCancelled
-			return ver, errCancelledDDLJob
-		}
-		job.State = model.JobStateRunning
 	}
 
 	originalState := job.SchemaState
@@ -161,18 +133,44 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTable(job.SchemaID, tableID, true); err != nil {
+		if err = t.DropTable(job.SchemaID, job.TableID, true); err != nil {
 			break
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		startKey := tablecodec.EncodeTablePrefix(tableID)
+		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
 		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func checkDropTable(t *meta.Meta, job *model.Job) (*model.TableInfo, error) {
+	schemaID := job.SchemaID
+	tableID := job.TableID
+	// Check this table's database.
+	tblInfo, err := t.GetTable(schemaID, tableID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
+				fmt.Sprintf("(Schema ID %d)", schemaID),
+			))
+		}
+		return nil, errors.Trace(err)
+	}
+
+	// Check the table.
+	if tblInfo == nil {
+		job.State = model.JobStateCancelled
+		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", schemaID),
+			fmt.Sprintf("(Table ID %d)", tableID),
+		))
+	}
+	return tblInfo, nil
 }
 
 type splitableStore interface {
