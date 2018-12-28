@@ -666,7 +666,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 			if !e.evalRadixBit() {
 				return
 			}
-			e.partitionInnerRows()
+			_ = e.partitionInnerRows()
 		}, nil)
 		return
 	}

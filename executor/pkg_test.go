@@ -184,7 +184,8 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	radixBits := hashJoinExec.radixBits
 	c.Assert(radixBits, Equals, uint32(0x00ff))
 
-	hashJoinExec.partitionInnerRows()
+	err = hashJoinExec.partitionInnerRows()
+	c.Assert(err, IsNil)
 	totalRowCnt := 0
 	for i, part := range hashJoinExec.innerParts {
 		if part == nil {
