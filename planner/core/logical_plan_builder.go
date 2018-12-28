@@ -1903,7 +1903,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
 	if tableInfo.IsView() {
-		return b.buildDataSourceFromView(dbName, tableInfo)
+		return b.BuildDataSourceFromView(dbName, tableInfo)
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
@@ -1998,7 +1998,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	return result, nil
 }
 
-func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	selectNode, err := parser.New().ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
