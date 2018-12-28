@@ -1067,7 +1067,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		TableID:    tbInfo.ID,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldViewMeta, tbInfo, s.OrReplace},
+		Args:       []interface{}{tbInfo, s.OrReplace, oldViewMeta.ID},
 	}
 	err = d.doDDLJob(ctx, job)
 

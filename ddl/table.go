@@ -76,9 +76,9 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
-	oldTbInfo := &model.TableInfo{}
 	var orReplace bool
-	if err := job.DecodeArgs(oldTbInfo, tbInfo, &orReplace); err != nil {
+	var oldTbInfoID int64
+	if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -97,8 +97,8 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		if oldTbInfo.View != nil && orReplace {
-			err = t.DropTable(schemaID, oldTbInfo.ID, true)
+		if oldTbInfoID > 0 && orReplace {
+			err = t.DropTable(schemaID, oldTbInfoID, true)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
