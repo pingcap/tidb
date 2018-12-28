@@ -56,7 +56,7 @@ type iface struct {
 // AuditManifest presents a sub-manifest that every audit plugin must provide.
 type AuditManifest struct {
 	Manifest
-	NotifyEvent func(ctx context.Context) error
+	NotifyEvent func(ctx context.Context, sctx *variable.SessionVars) error
 }
 
 // AuthenticationManifest presents a sub-manifest that every audit plugin must provide.

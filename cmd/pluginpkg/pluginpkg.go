@@ -133,7 +133,9 @@ func main() {
 		"-ldflags", pluginPath,
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
-	buildCmd.Env = append(os.Environ(), "GO111MODULE=on")
+	buildCmd.Stderr = os.Stderr
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Env = append(os.Environ(), "GO111MODULE=off")
 	err = buildCmd.Run()
 	if err != nil {
 		log.Printf("compile plugin source code failurd, %+v\n", err)

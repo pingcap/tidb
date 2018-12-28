@@ -462,6 +462,7 @@ func (cc *clientConn) Run() {
 		for _, p := range audits {
 			plugin.DeclareAuditManifest(p.Manifest).NotifyEvent(
 				context.WithValue(context.Background(), "ip", ip),
+				cc.ctx.GetSessionVars(),
 			)
 		}
 	}
