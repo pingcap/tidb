@@ -56,7 +56,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = t.CreateTable(schemaID, tbInfo)
+		err = t.CreateTableOrView(schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -76,15 +76,16 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
+	oldTbInfo := &model.TableInfo{}
 	var orReplace bool
-	if err := job.DecodeArgs(tbInfo, &orReplace); err != nil {
+	if err := job.DecodeArgs(oldTbInfo, tbInfo, &orReplace); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
-	if err != nil {
+	if err != nil && !orReplace{
 		return ver, errors.Trace(err)
 	}
 	ver, err = updateSchemaVersion(t, job)
@@ -96,8 +97,16 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = t.CreateTable(schemaID, tbInfo)
+		if oldTbInfo.View != nil && orReplace {
+			err = t.DropTable(schemaID, oldTbInfo.ID, true)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+		err = t.CreateTableOrView(schemaID, tbInfo)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
@@ -247,7 +256,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	}
 
 	tblInfo.ID = newTableID
-	err = t.CreateTable(schemaID, tblInfo)
+	err = t.CreateTableOrView(schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -366,7 +375,7 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	//	return ver, errors.New("occur an error after renaming table.")
 	// }
 	tblInfo.Name = tableName
-	err = t.CreateTable(newSchemaID, tblInfo)
+	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

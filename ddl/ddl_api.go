@@ -1030,9 +1030,15 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
-	if is.TableExists(ident.Schema, ident.Name) {
+	oldView, err := is.TableByName(ident.Schema, ident.Name)
+	if err == nil && !s.OrReplace {
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
+	var oldViewMeta *model.TableInfo
+	if oldView != nil {
+		oldViewMeta = oldView.Meta()
+	}
+
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return err
 	}
@@ -1061,7 +1067,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		TableID:    tbInfo.ID,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo, s.OrReplace},
+		Args:       []interface{}{oldViewMeta, tbInfo, s.OrReplace},
 	}
 	err = d.doDDLJob(ctx, job)
 

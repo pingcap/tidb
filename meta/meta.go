@@ -274,8 +274,8 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 	return m.txn.HSet(mDBs, dbKey, data)
 }
 
-// CreateTable creates a table with tableInfo in database.
-func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
+// CreateTableOrView creates a table with tableInfo in database.
+func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
