@@ -350,7 +350,6 @@ func (s *testPrivilegeSuite) TestUseDb(c *C) {
 }
 
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
-
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER setglobal_a@localhost`)
 	mustExec(c, se, `CREATE USER setglobal_b@localhost`)
