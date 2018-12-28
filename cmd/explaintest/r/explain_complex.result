@@ -179,7 +179,7 @@ CREATE TABLE `tbl_008` (`a` int, `b` int);
 CREATE TABLE `tbl_009` (`a` int, `b` int);
 explain select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
 id	count	task	operator info
-HashAgg_34	72000.00	root	group by:group_0, funcs:sum(sum_0)
+HashAgg_34	72000.00	root	group by:col_1, funcs:sum(col_0)
 └─Projection_63	90000.00	root	cast(x.a), x.b
   └─Union_35	90000.00	root	
     ├─TableReader_38	10000.00	root	data:TableScan_37
