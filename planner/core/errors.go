@@ -51,6 +51,7 @@ const (
 	codeWrongNumberOfColumnsInSelect = mysql.ErrWrongNumberOfColumnsInSelect
 	codeWrongValueCountOnRow         = mysql.ErrWrongValueCountOnRow
 	codeTablenameNotAllowedHere      = mysql.ErrTablenameNotAllowedHere
+	codePrivilegeCheckFail           = mysql.ErrUnknown
 )
 
 // error definitions.
@@ -88,6 +89,7 @@ var (
 	ErrNonUniqTable                 = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 	ErrWrongValueCountOnRow         = terror.ClassOptimizer.New(mysql.ErrWrongValueCountOnRow, mysql.MySQLErrName[mysql.ErrWrongValueCountOnRow])
 	ErrViewInvalid                  = terror.ClassOptimizer.New(mysql.ErrViewInvalid, mysql.MySQLErrName[mysql.ErrViewInvalid])
+	ErrPrivilegeCheckFail           = terror.ClassOptimizer.New(codePrivilegeCheckFail, "privilege check fail")
 )
 
 func init() {

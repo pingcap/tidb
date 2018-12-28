@@ -83,13 +83,16 @@ func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoS
 }
 
 // CheckPrivilege checks the privilege for a user.
-func CheckPrivilege(pm privilege.Manager, vs []visitInfo) bool {
+func CheckPrivilege(pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
 		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
-			return false
+			if v.err == nil {
+				return ErrPrivilegeCheckFail
+			}
+			return v.err
 		}
 	}
-	return true
+	return nil
 }
 
 // DoOptimize optimizes a logical plan to a physical plan.
