@@ -175,8 +175,8 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
 
-	tk.MustQuery("show tables").Check(testkit.Rows("t","v"))
-	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE","v VIEW"))
+	tk.MustQuery("show tables").Check(testkit.Rows("t", "v"))
+	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE", "v VIEW"))
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
