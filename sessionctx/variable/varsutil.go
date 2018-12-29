@@ -301,7 +301,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
 		}
-		return value, nil
+		_, err := parseTimeZone(value)
+		return value, err
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
