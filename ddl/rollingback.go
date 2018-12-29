@@ -76,8 +76,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 }
 
 func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	job.State = model.JobStateRollingback
-	tblInfo, columnInfo, col, _, _, err := checkAddColumn(t, job)
+	tblInfo, columnInfo, _, _, _, err := checkAddColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -87,11 +86,26 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 
 	originalState := columnInfo.State
-	columnInfo.State = model.StateDeleteOnly
-	job.SchemaState = model.StateDeleteOnly
-
-	job.Args = []interface{}{col.Name}
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
+	switch columnInfo.State {
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		job.SchemaState = model.StateDeleteReorganization
+		columnInfo.State = model.StateDeleteReorganization
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
+	case model.StateDeleteReorganization:
+		// reorganization -> absent
+		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
+		columnInfo.State = model.StateNone
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+	default:
+		columnInfo.State = model.StateDeleteOnly
+		job.SchemaState = model.StateDeleteOnly
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
+	}
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -108,12 +122,12 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	if colInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
-		return ver, errors.Trace(errCancelledDDLJob)
+		return ver, errCancelledDDLJob
 	}
 	// In the state of drop column `write only -> delete only -> reorganization`,
 	// We can not rollback now, so just continue to drop column.
 	job.State = model.JobStateRunning
-	return ver, errors.Trace(nil)
+	return ver, nil
 }
 
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {

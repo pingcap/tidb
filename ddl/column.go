@@ -148,15 +148,6 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 }
 
 func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	// Handle the rolling back job.
-	if job.IsRollingback() {
-		ver, err = onDropColumn(t, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		return ver, nil
-	}
-
 	// gofail: var errorBeforeDecodeArgs bool
 	// if errorBeforeDecodeArgs {
 	// 	return ver, errors.New("occur an error before decode args")
