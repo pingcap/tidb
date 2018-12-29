@@ -64,7 +64,7 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 	chk.Reset()
 	handleIdx := e.schema.Len() - 1
 	for {
-		err := e.result.Next(ctx, e.srcChunk)
+		err := e.result.Next(ctx, e.srcChunk, e.maxChunkSize)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -333,7 +333,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 	result.scanRowCount = 0
 
 	for {
-		err := srcResult.Next(ctx, e.srcChunk)
+		err := srcResult.Next(ctx, e.srcChunk, e.maxChunkSize)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -553,7 +553,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 
 	sc := e.ctx.GetSessionVars().StmtCtx
 	for {
-		err := result.Next(ctx, e.idxChunk)
+		err := result.Next(ctx, e.idxChunk, e.maxChunkSize)
 		if err != nil {
 			return errors.Trace(err)
 		}
