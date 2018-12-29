@@ -598,78 +598,74 @@ func ParseDateFormat(format string) []string {
 	return seps
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-// The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
-func splitDateTime(format string) (seps []string, fracStr string) {
-	if i := strings.LastIndex(format, "."); i > 0 {
-		fracStr = strings.TrimSpace(format[i+1:])
-		format = format[:i]
-	}
-
-	seps = ParseDateFormat(format)
-	return
-}
-
-func parseWhenLen0(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, currentPart string, totalPartCount *int, seps []string) ([]string, error) {
+func parseWhenLen0(lastSepChar uint8, currentSepChar uint8, currentPart string, totalPartCountIn int, sepsIn []string) (totalPartCount int, seps []string, err error) {
+	seps = sepsIn
+	totalPartCount = totalPartCountIn
 	if lastSepChar == '-' || currentSepChar == '-' {
 		seps = append(seps, currentPart)
-		*totalPartCount = *totalPartCount + 1
+		totalPartCount = totalPartCount + 1
 	} else {
-
-		var partsWithYear, validLen, err = parseNoDelimiterHavingYear(currentPart)
+		var partsWithYear [7]string
+		var validLen int
+		partsWithYear, validLen, err = parseNoDelimiterHavingYear(currentPart)
 		if err != nil {
-			return seps, err
+			return
 		}
 
 		for j := 0; j < validLen; j++ {
 			seps = append(seps, partsWithYear[j])
 		}
-		*totalPartCount = validLen
+		totalPartCount = validLen
 	}
-	return seps, nil
+	return
 }
 
-func parseWhenLen6(lastSepChar uint8, selfDecideFsp bool, currentPart string, realFsp *int, seps []string) []string {
+func parseWhenLen6(lastSepChar uint8, selfDecideFsp bool, currentPart string, realFsp int, seps []string) ([]string, int) {
 	if '.' == lastSepChar {
 		if selfDecideFsp {
 			if currentPart[0] == '0' {
-				*realFsp = len(currentPart)
-				if *realFsp > MaxFsp {
-					*realFsp = MaxFsp
+				realFsp = len(currentPart)
+				if realFsp > MaxFsp {
+					realFsp = MaxFsp
 				}
 			} else {
-				*realFsp = MaxFsp
+				realFsp = MaxFsp
 			}
 		}
 		seps = append(seps, currentPart)
 	}
-	return seps
+	return seps, realFsp
 }
 
-func parseWhenLenLess6(lastSepChar uint8, currentSepChar uint8, currentPart string, totalPartCount *int, seps []string) (sepsRet []string, warning bool, err error) {
+func parseWhenLenLess6(format string, lastSepChar uint8, currentSepChar uint8, currentPart string, totalPartCountIn int, sepsIn []string) (totalPartCount int, seps []string, warn, err error) {
+	seps = sepsIn
+	totalPartCount = totalPartCountIn
 	if lastSepChar == '-' || currentSepChar == '-' {
 		seps = append(seps, currentPart)
-		*totalPartCount = *totalPartCount + 1
+		totalPartCount = totalPartCount + 1
 	} else {
 		var beforeLen = len(seps)
 		var MaxLenTemp = maxSQLTimeParts
 		if beforeLen < maxSQLTimeParts-1 {
 			MaxLenTemp = maxSQLTimeParts - 1
 		}
-		var partsNoYear, validLen, err = parseNoDelimiterNoYear(currentPart)
+		var partsNoYear [6]string
+		var validLen int
+		partsNoYear, validLen, err = parseNoDelimiterNoYear(currentPart)
 		if err != nil {
-			return seps, false, err
+			return
 		}
 		var j = 0
 		for j = 0; len(seps) < MaxLenTemp && j < validLen; j++ {
 			seps = append(seps, partsNoYear[j])
-			*totalPartCount = *totalPartCount + 1
+			totalPartCount = totalPartCount + 1
 		}
 		if len(seps) == MaxLenTemp && j < validLen {
-			return seps, true, nil
+			warn = ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format)
+			return
 		}
 	}
-	return seps, false, nil
+	return
 }
 
 func parseOnePartAsWhole(currentPart string, totalPartCount *int, seps []string) ([]string, error) {
@@ -678,197 +674,196 @@ func parseOnePartAsWhole(currentPart string, totalPartCount *int, seps []string)
 	return seps, nil
 }
 
-func parseOnePart(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, currentPart string, realFsp *int, totalPartCount *int, seps []string) ([]string, bool, error) {
-	var warning = false
-	var err error = nil
+func parseOnePart(format string, lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, currentPart string, realFspIn int, totalPartCountIn int, sepsIn []string) (realFsp, totalPartCount int, seps []string, warn error, err error) {
+	realFsp = realFspIn
+	totalPartCount = totalPartCountIn
+	seps = sepsIn
 	if len(seps) == 0 {
-		seps, err = parseWhenLen0(lastSepChar, currentSepChar, selfDecideFsp, currentPart, totalPartCount, seps)
+		totalPartCount, seps, err = parseWhenLen0(lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
 	} else if len(seps) == maxSQLTimeParts-1 {
-		seps = parseWhenLen6(lastSepChar, selfDecideFsp, currentPart, realFsp, seps)
+		seps, realFsp = parseWhenLen6(lastSepChar, selfDecideFsp, currentPart, realFsp, seps)
 	} else {
 		if lastSepChar == '.' { //'2017.0112 00~00~00.333' -> 2017-01-12 00:00:00.333
-			seps, warning, err = parseWhenLenLess6(lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
+			totalPartCount, seps, warn, err = parseWhenLenLess6(format, lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
 		} else { //'2017@0112 00~00~00.333' -> Incorrect DATETIME value
-			seps, err = parseOnePartAsWhole(currentPart, totalPartCount, seps)
+			seps, err = parseOnePartAsWhole(currentPart, &totalPartCount, seps)
 		}
 	}
-	return seps, warning, err
+	return
 }
 
-func splitDateTimeV2(sc *stmtctx.StatementContext, format string, fsp int, selfDecideFsp bool, isFloat bool) ([]string, int, error) {
-	format = strings.TrimSpace(format)
-	var err error = nil
-	var warning = false
-	var realFsp = fsp
-	var start = 0
-	var lastSepChar uint8 = 0
-	var currentSepChar uint8 = 0
-	var totalPartCount = 0
-	var seps = make([]string, 0, maxSQLTimeParts)
-	if len(format) == 0 {
-		return seps, realFsp, nil
+func nextTimePart(format string, start, totalPartCount int, lastSepChar uint8) (currentSepChar uint8, currentPart string, nextStart int, warn error, err error) {
+	var i = start + 1
+	if '.' == lastSepChar && !unicode.IsNumber(rune(format[start])) {
+		//"1101020304.a5aaaaa" => "2011-01-02 03:04:00"
+		warn = ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format)
+		return
 	}
+
+	for ; i < len(format); i++ {
+		var isNumberI_1 = unicode.IsNumber(rune(format[i-1]))
+		var isNumberI = unicode.IsNumber(rune(format[i]))
+
+		//if i-1 is not number,i is number,meaning the beginning of one sep
+		if !isNumberI_1 && isNumberI {
+			start = i
+			currentSepChar = 0
+			continue
+		}
+
+		if totalPartCount >= 4 && !isNumberI_1 && unicode.IsLetter(rune(format[i])) {
+			warn = ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format)
+			err = nil
+			return
+		}
+
+		if isNumberI_1 && !isNumberI {
+			currentPart = format[start:i]
+			currentSepChar = format[i]
+			nextStart = i + 1
+			return
+		}
+	}
+
+	currentPart = format[start:i]
+	nextStart = i + 1
+
+	return
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
+// The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
+func splitDateTime(format string, fsp int, selfDecideFsp bool, isFloat bool) (seps []string, realFsp int, warn error, err error) {
+	format = strings.TrimSpace(format)
+	realFsp = fsp
+	var lastSepChar uint8 = 0
+	//var currentSepChar uint8 = 0
+	var totalPartCount = 0
+	//var seps = make([]string, 0, maxSQLTimeParts)
+	if len(format) == 0 {
+		return
+	}
+
 	var isFirstPartHasYMD = false
 	var firstSepChar uint8 = 0
 
 	if !unicode.IsNumber(rune(format[0])) {
 		// Date format must start with number.
-		return nil, realFsp, err
+		seps = nil
+		return
 	}
-
-	for i := 1; i < len(format) && len(seps) < maxSQLTimeParts; i++ {
-		var isNumberIB1 = unicode.IsNumber(rune(format[i-1]))
-		var isNumberI = unicode.IsNumber(rune(format[i]))
-
-		//if i-1 is not number,i is number,meaning the beginning of one sep
-		if !isNumberIB1 && isNumberI {
-			start = i
-			lastSepChar = format[i-1]
-			currentSepChar = 0
-			continue
+	var start = 0
+	for {
+		if start >= len(format) {
+			return
 		}
 
-		if totalPartCount >= 4 && !isNumberIB1 && unicode.IsLetter(rune(format[i])) {
-			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format))
-			err = nil
-			return seps, realFsp, nil
+		var currentSepChar, currentPart, nextStart, warnRet, errRet = nextTimePart(format, start, totalPartCount, lastSepChar)
+		err = errRet
+		warn = warnRet
+		if err != nil || warn != nil {
+			return
 		}
 
-		//if i - 1 is number,i is not number,meaning the ending of one sep
-		if isNumberIB1 && !isNumberI {
-			var currentPart = format[start:i]
-			currentSepChar = format[i]
-
-			seps, warning, err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, currentPart, &realFsp, &totalPartCount, seps)
-			if err != nil {
-				return nil, realFsp, err
-			}
-
-			if start == 0 {
-				firstSepChar = currentSepChar
-			}
-
-			if start == 0 && totalPartCount == 3 {
-				isFirstPartHasYMD = true
-			}
-
-			if start == 0 && isFirstPartHasYMD && firstSepChar != '.' {
-				//"20111111#"-->nil
-				//"20111111 "-->nil
-				//"20111111 10:10:10"-->nil
-				//"20111111.10:10:10"-->2011-11-11 10:10:10
-				return seps, realFsp, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(format))
-			}
-
-			if totalPartCount >= 4 && format[i] >= 'A' && format[i] <= 'z' { //{"150101.1a1"=>"2015-01-01 01:00:00"},
-				sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format))
-				err = nil
-				return seps, realFsp, nil
-			}
-
-			if totalPartCount >= maxSQLTimeParts {
-				return seps, realFsp, nil
-			}
-
-			start = -1
-		}
-
-	}
-
-	var lastPart = ""
-	if start >= 0 {
-		lastPart = format[start:]
-	}
-
-	if len(lastPart) == 0 {
-		if (format[len(format)-1] > '9' || format[len(format)-1] < '0') && sc != nil {
-			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format))
-			err = nil
-		}
-		return seps, realFsp, nil
-	}
-
-	if isFloat && totalPartCount < maxSQLTimeParts-1 {
-		// 20170118.999-->"2017-01-18 00:00:00.000"
-		if totalPartCount == 0 { // 20170118-->"2017-01-18 00:00:00.000"
-			seps, warning, err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, seps)
-			if err != nil {
-				return nil, realFsp, err
-			}
-		}
-	} else {
-		seps, warning, err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, seps)
+		realFsp, totalPartCount, seps, warn, err = parseOnePart(format, lastSepChar, currentSepChar, selfDecideFsp, currentPart, realFsp, totalPartCount, seps)
 		if err != nil {
-			return nil, realFsp, err
+			return
 		}
+
+		if start == 0 {
+			firstSepChar = currentSepChar
+		}
+
+		if start == 0 && totalPartCount == 3 {
+			isFirstPartHasYMD = true
+		}
+
+		if start == 0 && isFirstPartHasYMD && firstSepChar != '.' && firstSepChar != 0 {
+			//"20111111#"-->nil
+			//"20111111 "-->nil
+			//"20111111 10:10:10"-->nil
+			//"20111111.10:10:10"-->2011-11-11 10:10:10
+			err = errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(format))
+			return
+		}
+
+		if totalPartCount >= 4 && currentSepChar >= 'A' && currentSepChar <= 'z' { //{"150101.1a1"=>"2015-01-01 01:00:00"},
+			warn = ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format)
+			err = nil
+			return
+		}
+
+		if totalPartCount >= maxSQLTimeParts {
+			return
+		}
+
+		start = nextStart
+		lastSepChar = currentSepChar
 	}
-	if warning {
-		sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format))
-	}
-	return seps, realFsp, nil
+
+	return
 }
 
 func parseNoDelimiterNoYear(strNoDelimiter string) ([6]string, int, error) {
-	var seps = [6]string{"", "", "", "", "", ""}
-	var validLen = 0 // valid length
+	var seps = [6]string{"", "", "", "", "", ""} //at most 6 parts without year
+	var validLen = 0                             // valid length
 	var err error
-	var month = &seps[0]
-	var day = &seps[1]
-	var hour = &seps[2]
-	var minute = &seps[3]
-	var second = &seps[4]
-	var microsecond = &seps[5]
+	var part1 = &seps[0]
+	var part2 = &seps[1]
+	var part3 = &seps[2]
+	var part4 = &seps[3]
+	var part5 = &seps[4]
+	var part6 = &seps[5]
 	len := len(strNoDelimiter)
 
 	var micsFormat = "%" + strconv.Itoa(MaxFsp) + "s"
 
 	if len > 11 {
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s%2s"+micsFormat, month, day, hour, minute, second, microsecond)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s%2s"+micsFormat, part1, part2, part3, part4, part5, part6)
 		validLen = 6
 	}
 
 	switch len {
 	case 11:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s%2s%"+micsFormat, month, day, hour, minute, second, microsecond)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s%2s%"+micsFormat, part1, part2, part3, part4, part5, part6)
 		validLen = 6
 	case 10:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s%2s", month, day, hour, minute, second)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s%2s", part1, part2, part3, part4, part5)
 		validLen = 5
 
 	case 9:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s%1s", month, day, hour, minute, second)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s%1s", part1, part2, part3, part4, part5)
 		validLen = 5
 	case 8:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s", month, day, hour, minute)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%2s", part1, part2, part3, part4)
 		validLen = 4
 	case 7:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%1s", month, day, hour, minute)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s%1s", part1, part2, part3, part4)
 		validLen = 4
 	case 6:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s", month, day, hour)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%2s", part1, part2, part3)
 		validLen = 3
 	case 5:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%1s", month, day, hour)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s%1s", part1, part2, part3)
 		validLen = 3
 	case 4:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s", month, day)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%2s", part1, part2)
 		validLen = 2
 	case 3:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s%1s", month, day)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s%1s", part1, part2)
 		validLen = 2
 	case 2:
-		_, err = fmt.Sscanf(strNoDelimiter, "%2s", month)
+		_, err = fmt.Sscanf(strNoDelimiter, "%2s", part1)
 		validLen = 1
 	case 1:
-		_, err = fmt.Sscanf(strNoDelimiter, "%1s", month)
+		_, err = fmt.Sscanf(strNoDelimiter, "%1s", part1)
 		validLen = 1
 	}
 	return seps, validLen, err
 }
 func parseNoDelimiterHavingYear(strNoDelimiter string) ([7]string, int, error) {
-	//var seps = [7]int{-1,-2,-3,-4,-5,-6,-7}
-	var seps = [7]string{"", "", "", "", "", "", ""}
-	var validLen = 0 // valid length
+	var seps = [7]string{"", "", "", "", "", "", ""} //at most 7 parts with year
+	var validLen = 0                                 // valid length
 	var err error
 	var year = &seps[0]
 	var month = &seps[1]
@@ -955,9 +950,12 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		err                                                 error
 	)
 
-	seps, realFsp, err := splitDateTimeV2(sc, str, fsp, selfDecideFsp, isFloat)
+	seps, realFsp, warn, err := splitDateTime(str, fsp, selfDecideFsp, isFloat)
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
+	}
+	if warn != nil {
+		sc.AppendWarning(warn)
 	}
 
 	var overflow = false
@@ -994,7 +992,18 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	} else if len(seps[0]) == 2 {
 		year = adjustYear(year)
 	}
-
+	if hour > 23 {
+		//		{float("20170118.999")=>"2017-01-18 00:00:00.000"},
+		//		{str("20170118.999")=>nil},
+		if isFloat {
+			hour = 0
+			minute = 0
+			second = 0
+			microsecond = 0
+		} else {
+			return ZeroDatetime, errors.Trace(ErrTruncatedWrongValue.GenWithStackByArgs("hour too big", str))
+		}
+	}
 	tmp := FromDate(year, month, day, hour, minute, second, microsecond)
 	if overflow {
 		// Convert to Go time and add 1 second, to handle input like 2017-01-05 08:40:59.575601
@@ -1556,7 +1565,6 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFlo
 
 // ParseDatetime is a helper function wrapping ParseTime with datetime type and default fsp.
 func ParseDatetime(sc *stmtctx.StatementContext, str string) (Time, error) {
-	//return ParseTime(sc, str, mysql.TypeDatetime, GetFsp(str))
 	return parseTimeNoFsp(sc, str, mysql.TypeDatetime, false)
 }
 
