@@ -87,16 +87,16 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 		default(e) as defe,
 		default(f) as deff
 		from t1`).Check(testutil.RowsWithSep("|", "def|<nil>|10|3.14|2018-01-01 00:00:00|<nil>"))
-	_, err = tk.Exec("select default(x) from t1")
+	err = tk.ExecToErr("select default(x) from t1")
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'x' in 'field list'")
 
 	tk.MustQuery("select default(a0) from (select a as a0 from t1) as t0").Check(testkit.Rows("def"))
-	_, err = tk.Exec("select default(a0) from (select a+1 as a0 from t1) as t0")
+	err = tk.ExecToErr("select default(a0) from (select a+1 as a0 from t1) as t0")
 	c.Assert(err.Error(), Equals, "[table:1364]Field 'a0' doesn't have a default value")
 
 	tk.MustExec("create table t2(a varchar(10), b varchar(10))")
 	tk.MustExec("insert into t2 values ('1', '1')")
-	_, err = tk.Exec("select default(a) from t1, t2")
+	err = tk.ExecToErr("select default(a) from t1, t2")
 	c.Assert(err, NotNil)
 	tk.MustQuery("select default(t1.a) from t1, t2").Check(testkit.Rows("def"))
 
