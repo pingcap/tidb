@@ -185,10 +185,26 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 	}
 
 	keyBuf = keyBuf[:0]
-	keyBuf, err = codec.HashChunkRow(e.ctx.GetSessionVars().StmtCtx, keyBuf, row, allTypes, keyColIdx)
-	if err != nil {
-		err = errors.Trace(err)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	for idx, i := range keyColIdx {
+		d := row.GetDatum(i, allTypes[i])
+		if !isOuterKey {
+			outerType := e.outerExec.retTypes()[e.outerKeyColIdx[idx]]
+			// convert inner key to the type of outer key
+			converted, err := d.ConvertTo(sc, outerType)
+			if err != nil {
+				return false, keyBuf, errors.Trace(err)
+			}
+			d = converted
+		}
+
+		var err error
+		keyBuf, err = codec.EncodeKey(sc, keyBuf, d)
+		if err != nil {
+			return false, keyBuf, errors.Trace(err)
+		}
 	}
+
 	return false, keyBuf, err
 }
 

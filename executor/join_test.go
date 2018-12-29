@@ -15,6 +15,8 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -987,4 +989,53 @@ func (s *testSuite2) TestHashJoin(c *C) {
 	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "0")
 	innerExecInfo = row[3][4].(string)
 	c.Assert(innerExecInfo[len(innerExecInfo)-1:], LessEqual, "5")
+}
+
+func (s *testSuite2) TestJoinDecimal(c *C) {
+	// Test joining decimals with different fraction
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b decimal(13,2), c decimal(14,4), index b (b) , index c (c))")
+	tk.MustExec("insert into t value(1, 1.12, 1.12)")
+
+	result := tk.MustQuery("explain select /*+ TIDB_INLJ(t1,t2) */ t1.a from t t1 join t t2 on t1.b = t2.c")
+	rows := result.Rows()
+	joinRow := fmt.Sprintf("%v", rows[1])
+	isIndexJoin := strings.Contains(joinRow, "IndexJoin")
+	c.Assert(isIndexJoin, Equals, true)
+	//| Projection_5             | 1.00  | root | t1.a                                                                        |
+	//| └─IndexJoin_9            | 1.00  | root | inner join, inner:IndexReader_8, outer key:t1.b, inner key:t2.c             |
+	//|   ├─TableReader_11       | 1.00  | root | data:TableScan_10                                                           |
+	//|   │ └─TableScan_10       | 1.00  | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo                 |
+	//|   └─IndexReader_8        | 0.00  | root | index:IndexScan_7                                                           |
+	//|     └─IndexScan_7        | 0.00  | cop  | table:t2, index:c, range: decided by [t1.b], keep order:false, stats:pseudo |
+	tk.MustQuery("select /*+ TIDB_INLJ(t1,t2) */ t1.a from t t1 join t t2 on t1.b = t2.c").Check(testkit.Rows("1"))
+
+	result = tk.MustQuery("explain select /*+ TIDB_HJ(t1,t2) */ t1.a from t t1 join t t2 on t1.b = t2.c")
+	rows = result.Rows()
+	joinRow = fmt.Sprintf("%v", rows[1])
+	isHashJoin := strings.Contains(joinRow, "HashLeftJoin")
+	c.Assert(isHashJoin, Equals, true)
+	//| Projection_5             | 1.00  | root | t1.a                                                        |
+	//| └─HashLeftJoin_14        | 1.00  | root | inner join, inner:TableReader_19, equal:[eq(t1.b, t2.c)]    |
+	//|   ├─TableReader_17       | 1.00  | root | data:TableScan_16                                           |
+	//|   │ └─TableScan_16       | 1.00  | cop  | table:t1, range:[-inf,+inf], keep order:false, stats:pseudo |
+	//|   └─TableReader_19       | 1.00  | root | data:TableScan_18                                           |
+	//|     └─TableScan_18       | 1.00  | cop  | table:t2, range:[-inf,+inf], keep order:false, stats:pseudo |
+	tk.MustQuery("select /*+ TIDB_SMJ(t1,t2) */ t1.a from t t1 join t t2 on t1.b = t2.c").Check(testkit.Rows("1"))
+
+	result = tk.MustQuery("explain select /*+ TIDB_SMJ(t1,t2) */ t1.a from t t1 join t t2 on t1.b = t2.c")
+	rows = result.Rows()
+	joinRow = fmt.Sprintf("%v", rows[1])
+	isMergeJoin := strings.Contains(joinRow, "MergeJoin")
+	c.Assert(isMergeJoin, Equals, true)
+	//| Projection_5            | 1.00  | root | t1.a                                                                |
+	//| └─MergeJoin_6           | 1.00  | root | inner join, left key:t1.b, right key:t2.c                           |
+	//|   ├─IndexLookUp_10      | 1.00  | root |                                                                     |
+	//|   │ ├─IndexScan_8       | 1.00  | cop  | table:t1, index:b, range:[NULL,+inf], keep order:true, stats:pseudo |
+	//|   │ └─TableScan_9       | 1.00  | cop  | table:t, keep order:false, stats:pseudo                             |
+	//|   └─IndexReader_17      | 1.00  | root | index:IndexScan_16                                                  |
+	//|     └─IndexScan_16      | 1.00  | cop  | table:t2, index:c, range:[NULL,+inf], keep order:true, stats:pseudo |
+	tk.MustQuery("select /*+ TIDB_SMJ(t1,t2) */ t1.a from t t1 join t t2 on t1.b = t2.c").Check(testkit.Rows("1"))
 }
