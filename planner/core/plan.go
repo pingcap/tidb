@@ -49,10 +49,10 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		return tsk
 	}
 	tsk = finishCopTask(ctx, tsk)
-	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.Cols, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Cols))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
-	for _, col := range p.Cols {
-		sort.ByItems = append(sort.ByItems, &ByItems{col, p.Desc})
+	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
+	for _, col := range p.Items {
+		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
 	}
 	return sort.attach2Task(tsk)
 }
@@ -82,8 +82,11 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
-	// deriveStats derives statistic info between plans.
-	deriveStats() (*property.StatsInfo, error)
+	// recursiveDeriveStats derives statistic info between plans.
+	recursiveDeriveStats() (*property.StatsInfo, error)
+
+	// DeriveStats derives statistic info for current plan node given child stats.
+	DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -125,7 +128,7 @@ type PhysicalPlan interface {
 	ExplainInfo() string
 
 	// getChildReqProps gets the required property by child index.
-	getChildReqProps(idx int) *property.PhysicalProperty
+	GetChildReqProps(idx int) *property.PhysicalProperty
 
 	// StatsCount returns the count of property.StatsInfo for this plan.
 	StatsCount() float64
@@ -161,7 +164,7 @@ type basePhysicalPlan struct {
 	children         []PhysicalPlan
 }
 
-func (p *basePhysicalPlan) getChildReqProps(idx int) *property.PhysicalProperty {
+func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return p.childrenReqProps[idx]
 }
 

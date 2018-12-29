@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -40,10 +41,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -51,6 +54,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
+	"github.com/struCoder/pidusage"
 )
 
 // Flag Names
@@ -148,10 +152,10 @@ func main() {
 }
 
 func registerStores() {
-	err := session.RegisterStore("tikv", tikv.Driver{})
+	err := kvstore.Register("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
-	err = session.RegisterStore("mocktikv", mockstore.MockDriver{})
+	err = kvstore.Register("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
 }
 
@@ -162,7 +166,7 @@ func registerMetrics() {
 func createStoreAndDomain() {
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
-	storage, err = session.NewStore(fullPath)
+	storage, err = kvstore.New(fullPath)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
 	dom, err = session.BootstrapSession(storage)
@@ -178,11 +182,23 @@ func setupBinlogClient() {
 		binloginfo.SetIgnoreError(true)
 	}
 
-	client, err := pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), pd.SecurityOption{
+	var (
+		client *pumpcli.PumpsClient
+		err    error
+	)
+
+	securityOption := pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	})
+	}
+
+	if len(cfg.Binlog.BinlogSocket) == 0 {
+		client, err = pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+	} else {
+		client, err = pumpcli.NewLocalPumpsClient(cfg.Path, cfg.Binlog.BinlogSocket, parseDuration(cfg.Binlog.WriteTimeout), securityOption)
+	}
+
 	terror.MustNil(err)
 
 	binloginfo.SetPumpsClient(client)
@@ -378,6 +394,11 @@ func validateConfig() {
 		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
 		os.Exit(-1)
 	}
+
+	if cfg.TxnLocalLatches.Enabled && cfg.TxnLocalLatches.Capacity == 0 {
+		log.Errorf("txn-local-latches.capacity can not be 0")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
@@ -391,7 +412,9 @@ func setGlobalVars() {
 	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
 	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
-	ddl.EnableSplitTableRegion = cfg.SplitTable
+	if cfg.SplitTable {
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	}
 	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	variable.ForcePriority = int32(mysql.Str2Priority(cfg.Performance.ForcePriority))
@@ -403,6 +426,16 @@ func setGlobalVars() {
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
 	if plannercore.PreparedPlanCacheEnabled() {
 		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+		plannercore.PreparedPlanCacheMemoryGuardRatio = cfg.PreparedPlanCache.MemoryGuardRatio
+		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
+			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
+		}
+		plannercore.PreparedPlanCacheMaxMemory = cfg.Performance.MaxMemory
+		total, err := memory.MemTotal()
+		terror.MustNil(err)
+		if plannercore.PreparedPlanCacheMaxMemory > total || plannercore.PreparedPlanCacheMaxMemory <= 0 {
+			plannercore.PreparedPlanCacheMaxMemory = total
+		}
 	}
 
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
@@ -468,11 +501,20 @@ func setupMetrics() {
 		if callBackCount >= 5 {
 			callBackCount = 0
 			metrics.KeepAliveCounter.Inc()
+			updateCPUUsageMetrics()
 		}
 	}
 	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
 
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
+}
+
+func updateCPUUsageMetrics() {
+	sysInfo, err := pidusage.GetStat(os.Getpid())
+	if err != nil {
+		return
+	}
+	metrics.CPUUsagePercentageGauge.Set(sysInfo.CPU)
 }
 
 func setupTracing() {
@@ -502,6 +544,8 @@ func closeDomainAndStorage() {
 func cleanup() {
 	if graceful {
 		svr.GracefulDown()
+	} else {
+		svr.KillAllConnections()
 	}
 	closeDomainAndStorage()
 }

@@ -14,6 +14,7 @@
 package util_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -22,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 const (

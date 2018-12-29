@@ -123,12 +123,27 @@ func setTypeFlag(flag *uint, flagItem uint, on bool) {
 func DefaultParamTypeForValue(value interface{}, tp *FieldType) {
 	switch value.(type) {
 	case nil:
-		tp.Tp = mysql.TypeUnspecified
+		tp.Tp = mysql.TypeVarString
 		tp.Flen = UnspecifiedLength
 		tp.Decimal = UnspecifiedLength
 	default:
 		DefaultTypeForValue(value, tp)
+		if hasVariantFieldLength(tp) {
+			tp.Flen = UnspecifiedLength
+		}
+		if tp.Tp == mysql.TypeUnspecified {
+			tp.Tp = mysql.TypeVarString
+		}
 	}
+}
+
+func hasVariantFieldLength(tp *FieldType) bool {
+	switch tp.Tp {
+	case mysql.TypeLonglong, mysql.TypeVarString, mysql.TypeDouble, mysql.TypeBlob,
+		mysql.TypeBit, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeEnum, mysql.TypeSet:
+		return true
+	}
+	return false
 }
 
 // DefaultTypeForValue returns the default FieldType for the value.
@@ -166,8 +181,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		// TODO: tp.Flen should be len(x) * 3 (max bytes length of CharsetUTF8)
 		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
-		tp.Charset = mysql.DefaultCharset
-		tp.Collate = mysql.DefaultCollationName
+		tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
 	case float64:
 		tp.Tp = mysql.TypeDouble
 		s := strconv.FormatFloat(x, 'f', -1, 64)

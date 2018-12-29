@@ -28,6 +28,7 @@ const (
 
 	codeWrongUsage                   = mysql.ErrWrongUsage
 	codeAmbiguous                    = mysql.ErrNonUniq
+	codeUnknown                      = mysql.ErrUnknown
 	codeUnknownColumn                = mysql.ErrBadField
 	codeUnknownTable                 = mysql.ErrUnknownTable
 	codeWrongArguments               = mysql.ErrWrongArguments
@@ -49,6 +50,7 @@ const (
 	codeNonUniqTable                 = mysql.ErrNonuniqTable
 	codeWrongNumberOfColumnsInSelect = mysql.ErrWrongNumberOfColumnsInSelect
 	codeWrongValueCountOnRow         = mysql.ErrWrongValueCountOnRow
+	codeTablenameNotAllowedHere      = mysql.ErrTablenameNotAllowedHere
 )
 
 // error definitions.
@@ -59,9 +61,11 @@ var (
 	ErrStmtNotFound                = terror.ClassOptimizer.New(codeStmtNotFound, "Prepared statement not found")
 	ErrWrongParamCount             = terror.ClassOptimizer.New(codeWrongParamCount, "Wrong parameter count")
 	ErrSchemaChanged               = terror.ClassOptimizer.New(codeSchemaChanged, "Schema has changed")
+	ErrTablenameNotAllowedHere     = terror.ClassOptimizer.New(codeTablenameNotAllowedHere, "Table '%s' from one of the %ss cannot be used in %s")
 
 	ErrWrongUsage                   = terror.ClassOptimizer.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
 	ErrAmbiguous                    = terror.ClassOptimizer.New(codeAmbiguous, mysql.MySQLErrName[mysql.ErrNonUniq])
+	ErrUnknown                      = terror.ClassOptimizer.New(codeUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
 	ErrUnknownColumn                = terror.ClassOptimizer.New(codeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
 	ErrUnknownTable                 = terror.ClassOptimizer.New(codeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
 	ErrWrongArguments               = terror.ClassOptimizer.New(codeWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
@@ -83,6 +87,7 @@ var (
 	ErrMixOfGroupFuncAndFields      = terror.ClassOptimizer.New(codeMixOfGroupFuncAndFields, "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by")
 	ErrNonUniqTable                 = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
 	ErrWrongValueCountOnRow         = terror.ClassOptimizer.New(mysql.ErrWrongValueCountOnRow, mysql.MySQLErrName[mysql.ErrWrongValueCountOnRow])
+	ErrViewInvalid                  = terror.ClassOptimizer.New(mysql.ErrViewInvalid, mysql.MySQLErrName[mysql.ErrViewInvalid])
 )
 
 func init() {

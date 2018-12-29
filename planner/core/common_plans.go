@@ -61,6 +61,12 @@ type ShowDDLJobQueries struct {
 	JobIDs []int64
 }
 
+// ShowNextRowID is for showing the next global row ID.
+type ShowNextRowID struct {
+	baseSchemaProducer
+	TableName *ast.TableName
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	baseSchemaProducer
@@ -515,10 +521,10 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		if taskType == "cop" {
-			row = append(row, "") //TODO: wait collect resp from tikv
-		} else {
+		if runtimeStatsColl.Exists(p.ExplainID()) {
 			row = append(row, runtimeStatsColl.Get(p.ExplainID()).String())
+		} else {
+			row = append(row, "") //TODO: wait collect more executor info from tikv
 		}
 	}
 	e.Rows = append(e.Rows, row)

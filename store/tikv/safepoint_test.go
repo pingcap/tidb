@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -21,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"golang.org/x/net/context"
 )
 
 type testSafePointSuite struct {
@@ -100,7 +100,7 @@ func (s *testSafePointSuite) TestSafePoint(c *C) {
 
 	s.waitUntilErrorPlugIn(txn3.startTS)
 
-	_, seekerr := txn3.Seek(encodeKey(s.prefix, ""))
+	_, seekerr := txn3.Iter(encodeKey(s.prefix, ""), nil)
 	c.Assert(seekerr, NotNil)
 	isFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrGCTooEarly)
 	isMayFallBehind = terror.ErrorEqual(errors.Cause(geterr2), ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point"))

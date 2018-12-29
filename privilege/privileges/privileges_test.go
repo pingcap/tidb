@@ -14,6 +14,7 @@
 package privileges_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/privilege"
@@ -29,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -239,9 +240,13 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
 	mustExec(c, se, `DROP USER 'show'@'localhost'`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
+
+	// This should now return an error
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
-	c.Assert(err, IsNil)
-	c.Assert(gs, HasLen, 0)
+	c.Assert(err, NotNil)
+	// cant show grants for non-existent
+	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	c.Assert(terror.ErrorEqual(err, errNonexistingGrant), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
@@ -268,6 +273,26 @@ func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	se = newSession(c, s.store, s.dbName)
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "drop", Hostname: "localhost"}
 	mustExec(c, se, `DROP TABLE todrop;`)
+}
+
+func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
+
+	se := newSession(c, s.store, s.dbName)
+
+	// high privileged user setting password for other user (passes)
+	mustExec(c, se, "CREATE USER 'superuser'")
+	mustExec(c, se, "CREATE USER 'nobodyuser'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'superuser'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "superuser", Hostname: "localhost", AuthUsername: "superuser", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "SET PASSWORD for 'nobodyuser' = 'newpassword'")
+
+	// low privileged user trying to set password for other user (fails)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nobodyuser", Hostname: "localhost", AuthUsername: "nobodyuser", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "SET PASSWORD for 'superuser' = 'newpassword'")
+	c.Assert(err, NotNil)
+
 }
 
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
@@ -297,6 +322,68 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil), IsFalse)
+}
+
+func (s *testPrivilegeSuite) TestUseDb(c *C) {
+
+	se := newSession(c, s.store, s.dbName)
+	// high privileged user
+	mustExec(c, se, "CREATE USER 'usesuper'")
+	mustExec(c, se, "CREATE USER 'usenobody'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'usesuper'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "use mysql")
+	// low privileged user
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "use mysql")
+	c.Assert(err, NotNil)
+
+	// try again after privilege granted
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usesuper", Hostname: "localhost", AuthUsername: "usesuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "GRANT SELECT ON mysql.* TO 'usenobody'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "use mysql")
+	c.Assert(err, IsNil)
+
+}
+
+func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
+
+	se := newSession(c, s.store, s.dbName)
+	// high privileged user
+	mustExec(c, se, "CREATE USER 'asuper'")
+	mustExec(c, se, "CREATE USER 'anobody'")
+	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	mustExec(c, se, "CREATE DATABASE atest")
+	mustExec(c, se, "use atest")
+	mustExec(c, se, "CREATE TABLE t1 (a int)")
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "analyze table mysql.user")
+	// low privileged user
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "analyze table t1")
+	c.Assert(err, NotNil) // fails
+
+	// try again after SELECT privilege granted
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "GRANT SELECT ON atest.* TO 'anobody'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "analyze table t1")
+	c.Assert(err, NotNil) // stll fails (only select)
+
+	// Add INSERT privilege and it should work.
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, "GRANT INSERT ON atest.* TO 'anobody'")
+	mustExec(c, se, "FLUSH PRIVILEGES")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "analyze table t1")
+	c.Assert(err, IsNil)
+
 }
 
 func (s *testPrivilegeSuite) TestInformationSchema(c *C) {

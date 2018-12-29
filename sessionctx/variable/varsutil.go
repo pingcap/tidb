@@ -46,6 +46,23 @@ func GetDDLReorgWorkerCounter() int32 {
 	return atomic.LoadInt32(&ddlReorgWorkerCounter)
 }
 
+// SetDDLReorgBatchSize sets ddlReorgBatchSize size.
+// Max batch size is MaxDDLReorgBatchSize.
+func SetDDLReorgBatchSize(cnt int32) {
+	if cnt > MaxDDLReorgBatchSize {
+		cnt = MaxDDLReorgBatchSize
+	}
+	if cnt < MinDDLReorgBatchSize {
+		cnt = MinDDLReorgBatchSize
+	}
+	atomic.StoreInt32(&ddlReorgBatchSize, cnt)
+}
+
+// GetDDLReorgBatchSize gets ddlReorgBatchSize.
+func GetDDLReorgBatchSize() int32 {
+	return atomic.LoadInt32(&ddlReorgBatchSize)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -236,6 +253,16 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case FlushTime:
 		return checkUInt64SystemVar(name, value, 0, secondsPerYear, vars)
+	case ForeignKeyChecks:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			// TiDB does not yet support foreign keys.
+			// For now, resist the change and show a warning.
+			vars.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(name, value))
+			return "OFF", nil
+		} else if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case GroupConcatMaxLen:
 		// The reasonable range of 'group_concat_max_len' is 4~18446744073709551615(64-bit platforms)
 		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len for details
@@ -280,15 +307,22 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 400, 524288, vars)
 	case TmpTableSize:
 		return checkUInt64SystemVar(name, value, 1024, math.MaxUint64, vars)
+	case WaitTimeout:
+		return checkUInt64SystemVar(name, value, 1, 31536000, vars)
+	case MaxPreparedStmtCount:
+		return checkInt64SystemVar(name, value, -1, 1048576, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
 		}
-		return value, nil
+		_, err := parseTimeZone(value)
+		return value, err
+	case ValidatePasswordLength, ValidatePasswordNumberCount:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
-		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates, TiDBConstraintCheckInPlace:
+		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
@@ -296,13 +330,25 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
-		TiDBOptInSubqToJoinAndAgg, TiDBEnableTablePartition,
+		TiDBOptInSubqToJoinAndAgg,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
-		TiDBBatchDelete, TiDBEnableCascadesPlanner:
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
 			return value, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBEnableTablePartition:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		case strings.EqualFold(value, "AUTO"):
+			return "auto", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBDDLReorgBatchSize:
+		return checkUInt64SystemVar(name, value, uint64(MinDDLReorgBatchSize), uint64(MaxDDLReorgBatchSize), vars)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,
@@ -343,6 +389,17 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", errors.Trace(err)
 		}
 		return v, nil
+	case TxnIsolation, TransactionIsolation:
+		upVal := strings.ToUpper(value)
+		_, exists := TxIsolationNames[upVal]
+		if !exists {
+			return "", ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		switch upVal {
+		case "SERIALIZABLE", "READ-UNCOMMITTED":
+			return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
+		}
+		return upVal, nil
 	}
 	return value, nil
 }
