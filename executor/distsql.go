@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"io"
 	"math"
 	"runtime"
 	"sort"
@@ -97,15 +98,9 @@ func (task *lookupTableTask) Swap(i, j int) {
 	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
 }
 
-// Closeable is a interface for closeable structures.
-type Closeable interface {
-	// Close closes the object.
-	Close() error
-}
-
 // closeAll closes all objects even if an object returns an error.
 // If multiple objects returns error, the first error will be returned.
-func closeAll(objs ...Closeable) error {
+func closeAll(objs ...io.Closer) error {
 	var err error
 	for _, obj := range objs {
 		if obj != nil {
@@ -257,7 +252,7 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-	err := e.result.Next(ctx, chk)
+	err := e.result.Next(ctx, chk, e.maxChunkSize)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
@@ -437,7 +432,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		finished:     e.finished,
 		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrder,
-		batchSize:    e.maxChunkSize,
+		batchSize:    1,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
 	}
@@ -544,7 +539,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
@@ -556,7 +551,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		for resultTask.cursor < len(resultTask.rows) {
 			chk.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if chk.NumRows() >= e.maxChunkSize {
+			if chk.NumRows() >= chk.Capacity() {
 				return nil
 			}
 		}
@@ -617,7 +612,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
+	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.batchSize, w.maxChunkSize)
 	for {
 		handles, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {
@@ -646,23 +641,23 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	handles = make([]int64, 0, w.batchSize)
-	for len(handles) < w.batchSize {
-		err = errors.Trace(idxResult.Next(ctx, chk))
+	for {
+		err = errors.Trace(idxResult.Next(ctx, chk, w.maxChunkSize))
 		if err != nil {
 			return handles, err
 		}
 		if chk.NumRows() == 0 {
 			return handles, nil
 		}
-		for i := 0; i < chk.NumRows(); i++ {
-			handles = append(handles, chk.GetRow(i).GetInt64(0))
+		handles = append(handles, chunk.GetInt64InColumn(chk, 0)...)
+		if len(handles) >= w.batchSize {
+			if w.batchSize < w.maxBatchSize {
+				w.batchSize *= 2
+			}
+			return handles, nil
 		}
+		chk.Reset() // reset ahead so result.Next never grow chunk until `handles` reach batchSize
 	}
-	w.batchSize *= 2
-	if w.batchSize > w.maxBatchSize {
-		w.batchSize = w.maxBatchSize
-	}
-	return handles, nil
 }
 
 func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {

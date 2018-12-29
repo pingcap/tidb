@@ -287,7 +287,7 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (maxR
 	defer terror.Call(result.Close)
 
 	chk := chunk.New(getColumnsTypes(columns), 1, 1)
-	err = result.Next(ctx, chk)
+	err = result.Next(ctx, chk, 1)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)
 	}
