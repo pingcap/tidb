@@ -14,8 +14,6 @@
 package executor_test
 
 import (
-	"time"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -89,7 +87,6 @@ func (s *testSuite2) TestDirtyTransaction(c *C) {
 			PARTITION p3 VALUES LESS THAN (MAXVALUE)
 	)`)
 	tk.MustExec("begin")
-	time.Sleep(3)
 	tk.MustExec("insert into t values (1, 1)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t where c1 < 5").Check(testkit.Rows("1 1"))
