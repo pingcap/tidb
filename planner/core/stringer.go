@@ -221,9 +221,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str = fmt.Sprintf("%s->Insert", ToString(x.SelectPlan))
 		}
 	case *LogicalWindow:
-		str = fmt.Sprintf("WindowFunc(%s)", x.WindowFuncDesc.String())
+		str = fmt.Sprintf("Window(%s)", x.WindowFuncDesc.String())
 	case *PhysicalWindow:
-		str = fmt.Sprintf("WindowFunc(%s)", x.WindowFuncDesc.String())
+		str = fmt.Sprintf("Window(%s)", x.WindowFuncDesc.String())
 	default:
 		str = fmt.Sprintf("%T", in)
 	}

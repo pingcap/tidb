@@ -2620,12 +2620,12 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 }
 
 func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
-	p, byItems, newArgList, err := b.buildProjectionForWindow(p, expr, aggMap)
+	p, byItems, args, err := b.buildProjectionForWindow(p, expr, aggMap)
 	if err != nil {
 		return nil, err
 	}
 
-	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, newArgList)
+	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
 	window := LogicalWindow{
 		WindowFuncDesc: desc,
 		ByItems:        byItems,
