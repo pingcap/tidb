@@ -37,7 +37,6 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
-	"os"
 	// For pprof
 	_ "net/http/pprof"
 	"sync"
@@ -139,11 +138,16 @@ func (s *Server) isUnixSocket() bool {
 func (s *Server) forwardUnixSocketToTCP() {
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	for {
+		if s.listener == nil {
+			return // server shutdown has started
+		}
 		if uconn, err := s.socket.Accept(); err == nil {
 			log.Infof("server socket forwarding from [%s] to [%s]", s.cfg.Socket, addr)
 			go s.handleForwardedConnection(uconn, addr)
 		} else {
-			log.Errorf("server failed to forward from [%s] to [%s], err: %s", s.cfg.Socket, addr, err)
+			if s.listener != nil {
+				log.Errorf("server failed to forward from [%s] to [%s], err: %s", s.cfg.Socket, addr, err)
+			}
 		}
 	}
 }
@@ -335,12 +339,6 @@ func (s *Server) Close() {
 		err := s.statusServer.Close()
 		terror.Log(errors.Trace(err))
 		s.statusServer = nil
-	}
-	if s.cfg.Socket != "" {
-		log.Infof("[server] removing socket file [%s]", s.cfg.Socket)
-		if err := os.Remove(s.cfg.Socket); err != nil {
-			log.Errorf("[server] failed to remove socket file! err: %s", err)
-		}
 	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
