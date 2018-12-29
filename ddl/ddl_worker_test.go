@@ -374,6 +374,10 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionCreateTable, jobIDs: []int64{firstID + 10}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
 		// Test create database, watch out, database id will alloc a globalID.
 		{act: model.ActionCreateSchema, jobIDs: []int64{firstID + 12}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
+
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 13}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 13)}, cancelState: model.StateDeleteOnly, ddlRetErr: err},
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 14}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 14)}, cancelState: model.StateWriteOnly, ddlRetErr: err},
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 15}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 15)}, cancelState: model.StateWriteReorganization, ddlRetErr: err},
 	}
 
 	return tests
@@ -401,6 +405,18 @@ func (s *testDDLSuite) checkAddColumn(c *C, d *ddl, schemaID int64, tableID int6
 		}
 	}
 	c.Assert(found, Equals, success)
+}
+
+func (s *testDDLSuite) checkCancelDropColumn(c *C, d *ddl, schemaID int64, tableID int64, colName string, success bool) {
+	changedTable := testGetTable(c, d, schemaID, tableID)
+	notFound := true
+	for _, colInfo := range changedTable.Meta().Columns {
+		if colInfo.Name.O == colName {
+			notFound = false
+			break
+		}
+	}
+	c.Assert(notFound, Equals, success)
 }
 
 func (s *testDDLSuite) TestCancelJob(c *C) {
@@ -541,6 +557,23 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
 
+	// for drop column.
+	test = &tests[10]
+	dropColName := "c2"
+	dropColumnArgs := []interface{}{model.NewCIStr(dropColName)}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, dropColumnArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
+
+	test = &tests[11]
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, dropColumnArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
+
+	test = &tests[12]
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, dropColumnArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
