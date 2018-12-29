@@ -947,6 +947,14 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "select * from t t1 natural join t t2",
 			plan: "Join{DataScan(t1)->DataScan(t2)}->Projection",
 		},
+		{
+			sql: "delete from t where a in (select b from t where c = 666) or b in (select a from t where c = 42)",
+			// Note the Projection before Delete: the final schema should be the schema of
+			// table t rather than Join.
+			// If this schema is not set correctly, table.RemoveRecord would fail when adding
+			// binlog columns, because the schema and data are not consistent.
+			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(6_aux_0, 10_aux_0)])->Projection->Delete",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
