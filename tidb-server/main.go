@@ -548,5 +548,4 @@ func cleanup() {
 		svr.KillAllConnections()
 	}
 	closeDomainAndStorage()
-	svr.CleanupSocketFile()
 }

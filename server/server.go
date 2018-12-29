@@ -138,19 +138,13 @@ func (s *Server) isUnixSocket() bool {
 
 func (s *Server) forwardUnixSocketToTCP() {
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-	var err error
-	if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
-		log.Infof("Server redirecting [%s] to [%s]", s.cfg.Socket, addr)
-		for {
-			if uconn, err := s.socket.Accept(); err == nil {
-				log.Infof("server socket forwarding from [%s] to [%s]", s.cfg.Socket, addr)
-				go s.handleForwardedConnection(uconn, addr)
-			} else {
-				log.Errorf("server failed to forward from [%s] to [%s], err: %s", s.cfg.Socket, addr, err)
-			}
+	for {
+		if uconn, err := s.socket.Accept(); err == nil {
+			log.Infof("server socket forwarding from [%s] to [%s]", s.cfg.Socket, addr)
+			go s.handleForwardedConnection(uconn, addr)
+		} else {
+			log.Errorf("server failed to forward from [%s] to [%s], err: %s", s.cfg.Socket, addr, err)
 		}
-	} else {
-		log.Fatalf("err: %s", err) // in use?
 	}
 }
 
@@ -189,7 +183,10 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
 			log.Infof("Server is running MySQL Protocol at [%s]", addr)
 			if cfg.Socket != "" {
-				go s.forwardUnixSocketToTCP() // listen on both
+				if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
+					log.Infof("Server redirecting [%s] to [%s]", s.cfg.Socket, addr)
+					go s.forwardUnixSocketToTCP()
+				}
 			}
 		}
 	} else if cfg.Socket != "" {
@@ -330,10 +327,20 @@ func (s *Server) Close() {
 		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
+	if s.socket != nil {
+		err := s.socket.Close()
+		terror.Log(errors.Trace(err))
+	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
 		terror.Log(errors.Trace(err))
 		s.statusServer = nil
+	}
+	if s.cfg.Socket != "" {
+		log.Infof("[server] removing socket file [%s]", s.cfg.Socket)
+		if err := os.Remove(s.cfg.Socket); err != nil {
+			log.Errorf("[server] failed to remove socket file! err: %s", err)
+		}
 	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
 }
@@ -439,16 +446,6 @@ func (s *Server) GracefulDown() {
 		// Print information for every 30s.
 		if i%30 == 0 {
 			log.Infof("graceful shutdown...connection count %d\n", count)
-		}
-	}
-}
-
-// CleanupSocketFile cleans up socket file if it was created.
-func (s *Server) CleanupSocketFile() {
-	if s.cfg.Socket != "" {
-		log.Infof("[server] removing socket file [%s]", s.cfg.Socket)
-		if err := os.Remove(s.cfg.Socket); err != nil {
-			log.Errorf("[server] failed to remove socket file! err: %s", err)
 		}
 	}
 }
