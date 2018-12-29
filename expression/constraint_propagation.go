@@ -16,7 +16,6 @@ package expression
 import (
 	"bytes"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -238,7 +237,7 @@ func ruleColumnXXConst(ctx sessionctx.Context, i, j int, exprs *exprSet, GT stri
 	// The extended case:
 	// col > c1, f(col) < c2, f is monotonous, f(c1) <= c2 => false
 	//
-	// Prove:
+	// Proof:
 	// col > c1, f is monotonous => f(col) > f(c1)
 	// f(col) > f(c1), f(col) < c2, f(c1) >= c2 => false
 	if f2.FuncName.L == LT {
@@ -258,7 +257,7 @@ func ruleColumnXXConst(ctx sessionctx.Context, i, j int, exprs *exprSet, GT stri
 			if !ok {
 				return
 			}
-			_, ok = monotoneFuncs[scalarFunc.FuncName.L]
+			_, ok = monotoneIncFuncs[scalarFunc.FuncName.L]
 			if !ok {
 				return
 			}
@@ -289,15 +288,16 @@ func ruleColumnXXConst(ctx sessionctx.Context, i, j int, exprs *exprSet, GT stri
 	return
 }
 
-var monotoneFuncs = map[string]struct{}{
+// monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)
+var monotoneIncFuncs = map[string]struct{}{
 	ast.ToDays: {},
 }
 
 // compareConstant compares two expressions. c1 and c2 should be constant with the same type.
 func compareConstant(ctx sessionctx.Context, fn string, c1, c2 Expression) (int64, bool, error) {
-	cmp, err := NewFunction(ctx, fn, c1.GetType(), c1, c2)
+	cmp, err := NewFunction(ctx, fn, types.NewFieldType(mysql.TypeTiny), c1, c2)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, false, err
 	}
 	return cmp.EvalInt(ctx, chunk.Row{})
 }
