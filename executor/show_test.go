@@ -302,11 +302,11 @@ func (s *testSuite2) TestShowEscape(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists `t``abl\"e`")
-	tk.MustExec("create table `t``abl\"e`(`c``olum\"n` int(11) charset 'utf8' primary key)")
+	tk.MustExec("create table `t``abl\"e`(`c``olum\"n` int(11) primary key)")
 	tk.MustQuery("show create table `t``abl\"e`").Check(testutil.RowsWithSep("|",
 		""+
 			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
-			"  `c``olum\"n` int(11) CHARSET utf8 COLLATE utf8_bin NOT NULL,\n"+
+			"  `c``olum\"n` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`c``olum\"n`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
@@ -317,7 +317,7 @@ func (s *testSuite2) TestShowEscape(c *C) {
 	tk.MustQuery("show create table \"t`abl\"\"e\"").Check(testutil.RowsWithSep("|",
 		""+
 			"t`abl\"e CREATE TABLE \"t`abl\"\"e\" (\n"+
-			"  \"c`olum\"\"n\" int(11) CHARSET utf8 COLLATE utf8_bin NOT NULL,\n"+
+			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (\"c`olum\"\"n\")\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
