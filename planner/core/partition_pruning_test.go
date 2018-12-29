@@ -1,0 +1,55 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+// // Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package core_test
+
+import (
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/core"
+	// "github.com/pingcap/tidb/sessionctx"
+	// "github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/mock"
+)
+
+var _ = Suite(&testPartitionPruningSuite{})
+
+type testPartitionPruningSuite struct{}
+
+func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("create table t (d datetime not null)", "", "")
+	c.Assert(err, IsNil)
+	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	c.Assert(err, IsNil)
+
+	// For the following case:
+	// CREATE TABLE t1 ( recdate  DATETIME NOT NULL )
+	// PARTITION BY RANGE( TO_DAYS(recdate) ) (
+	// 	PARTITION p0 VALUES LESS THAN ( TO_DAYS('2007-03-08') ),
+	// 	PARTITION p1 VALUES LESS THAN ( TO_DAYS('2007-04-01') )
+	// );
+	// SELECT * FROM t1 WHERE recdate < '2007-03-08 00:00:00';
+
+	ctx := mock.NewContext()
+	partitionExpr, err := expression.ParseSimpleExprWithTableInfo(ctx, "to_days(d) < to_days('2007-03-08') and to_days(d) > to_days('2007-03-07')", tblInfo)
+	c.Assert(err, IsNil)
+	queryExpr, err := expression.ParseSimpleExprWithTableInfo(ctx, "d < '2000-03-08 00:00:00'", tblInfo)
+	c.Assert(err, IsNil)
+
+	succ, err := core.CanBePrune(ctx, partitionExpr, []expression.Expression{queryExpr})
+	c.Assert(err, IsNil)
+	c.Assert(succ, IsTrue)
+}

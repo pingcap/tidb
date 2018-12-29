@@ -14,6 +14,7 @@ package core
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
@@ -87,15 +88,13 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
-		if col != nil {
-			// If the selection condition would never be satisified, prune that partition.
-			prune, err := s.canBePrune(ds.context(), col, expr, ds.pushedDownConds)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if prune {
-				continue
-			}
+		// If the selection condition would never be satisified, prune that partition.
+		prune, err := s.canBePrune(ds.context(), col, expr, ds.pushedDownConds)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if prune {
+			continue
 		}
 
 		// Not a deep copy.
@@ -126,6 +125,8 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	return unionAll, nil
 }
 
+var solver = expression.NewPartitionPruneSolver()
+
 // canBePrune checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
 func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
@@ -133,12 +134,28 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 	conds = append(conds, partitionCond)
 	conds = append(conds, copConds...)
 	conds = expression.PropagateConstant(ctx, conds)
+	conds = solver.Solve(ctx, conds)
+
+	if len(conds) == 1 {
+		// Constant false.
+		if c, ok := conds[0].(*expression.Constant); ok {
+			if c.GetType().Tp == mysql.TypeTiny {
+				if c.Value.GetInt64() == 0 {
+					return true, nil
+				}
+			}
+		}
+	}
 
 	// Calculate the column range to prune.
-	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
-	r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
-	if err != nil {
-		return false, errors.Trace(err)
+	// TODO: Remove prune by calculating range.
+	if col != nil {
+		accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
+		r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		return len(r) == 0, nil
 	}
-	return len(r) == 0, nil
+	return false, nil
 }

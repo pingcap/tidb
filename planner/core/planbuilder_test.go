@@ -17,7 +17,15 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 )
+
+// CanBePrune is provided for testing.
+func CanBePrune(ctx sessionctx.Context, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
+	var s partitionProcessor
+	return s.canBePrune(ctx, nil, partitionCond, copConds)
+}
 
 var _ = Suite(&testPlanBuilderSuite{})
 

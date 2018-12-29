@@ -15,7 +15,6 @@ package expression
 
 import (
 	"bytes"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -265,6 +264,7 @@ func ruleColumnXXConst(ctx sessionctx.Context, i, j int, exprs *exprSet, GT stri
 			if !ok {
 				return
 			}
+
 			var err error
 			fc1, err = NewFunction(ctx, scalarFunc.FuncName.L, scalarFunc.RetType, con1)
 			if err != nil {
@@ -272,7 +272,8 @@ func ruleColumnXXConst(ctx sessionctx.Context, i, j int, exprs *exprSet, GT stri
 				return
 			}
 		}
-		if !col1.Equal(ctx, col2) {
+
+		if col1.ColName.L != col2.ColName.L {
 			return
 		}
 		v, isNull, err := compareConstant(ctx, GE, fc1, con2)
@@ -300,4 +301,9 @@ func compareConstant(ctx sessionctx.Context, fn string, c1, c2 Expression) (int6
 		return 0, false, err
 	}
 	return cmp.EvalInt(ctx, chunk.Row{})
+}
+
+// NewPartitionPruneSolver returns a constraintSolver for partition pruning.
+func NewPartitionPruneSolver() constraintSolver {
+	return newConstraintSolver(ruleColumnGTConst, ruleColumnLTConst)
 }
