@@ -513,7 +513,9 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
-		e.ctx.Txn(true)
+		if _, err := e.ctx.Txn(true); err != nil {
+			b.err = errors.Trace(err)
+		}
 	}
 	if len(v.Conditions) == 0 {
 		return e

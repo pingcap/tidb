@@ -447,12 +447,6 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 	}
 
 	sessVars := ctx.GetSessionVars()
-	// when LightningMode or BatchCheck is true,
-	// no needs to check the key constrains, so we names the variable skipCheck.
-	skipCheck := sessVars.LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
-	if skipCheck {
-		txn.SetOption(kv.SkipCheckForWrite, true)
-	}
 
 	rm, err := t.getRollbackableMemStore(ctx)
 	// Insert new entries into indices.
@@ -565,7 +559,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			return 0, errors.Trace(err2)
 		}
 		var dupKeyErr error
-		if !skipCheck && (v.Meta().Unique || v.Meta().Primary) {
+		if !skipCheck && v.Meta().Unique {
 			entryKey, err1 := t.genIndexKeyStr(indexVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
@@ -949,6 +943,9 @@ func (t *tableCommon) Seek(ctx sessionctx.Context, h int64) (int64, bool, error)
 	}
 	seekKey := tablecodec.EncodeRowKeyWithHandle(t.physicalTableID, h)
 	iter, err := txn.Iter(seekKey, t.RecordPrefix().PrefixNext())
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
 		// No more records in the table, skip to the end.
 		return 0, false, nil

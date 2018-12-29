@@ -111,6 +111,7 @@ type StatementContext struct {
 	IndexIDs         []int64
 	NowTs            time.Time
 	SysTs            time.Time
+	StmtType         string
 }
 
 // AddAffectedRows adds affected rows.
@@ -356,14 +357,17 @@ func (sc *StatementContext) ResetForRetry() {
 
 // MergeExecDetails merges a single region execution details into self, used to print
 // the information in slow query log.
-func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails) {
+func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
 	sc.mu.Lock()
-	sc.mu.execDetails.ProcessTime += details.ProcessTime
-	sc.mu.execDetails.WaitTime += details.WaitTime
-	sc.mu.execDetails.BackoffTime += details.BackoffTime
-	sc.mu.execDetails.RequestCount++
-	sc.mu.execDetails.TotalKeys += details.TotalKeys
-	sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+	if details != nil {
+		sc.mu.execDetails.ProcessTime += details.ProcessTime
+		sc.mu.execDetails.WaitTime += details.WaitTime
+		sc.mu.execDetails.BackoffTime += details.BackoffTime
+		sc.mu.execDetails.RequestCount++
+		sc.mu.execDetails.TotalKeys += details.TotalKeys
+		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+	}
+	sc.mu.execDetails.CommitDetail = commitDetails
 	sc.mu.Unlock()
 }
 
