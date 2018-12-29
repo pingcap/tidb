@@ -88,6 +88,7 @@ type StatementContext struct {
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	TableIDs         []int64
 	IndexIDs         []int64
+	StmtType         string
 }
 
 // AddAffectedRows adds affected rows.

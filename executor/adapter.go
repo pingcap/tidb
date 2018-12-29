@@ -41,6 +41,7 @@ import (
 	"golang.org/x/net/context"
 )
 
+// processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string)
 }
@@ -230,6 +231,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		}
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql)
+		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
 	}
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
