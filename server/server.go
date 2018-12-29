@@ -155,7 +155,11 @@ func (s *Server) forwardUnixSocketToTCP() {
 func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
 	defer terror.Call(uconn.Close)
 	if tconn, err := net.Dial("tcp", addr); err == nil {
-		go io.Copy(uconn, tconn)
+		go func() {
+			if _, err := io.Copy(uconn, tconn); err != nil {
+				log.Warningf("copy server to socket failed: %s", err)
+			}
+		}()
 		if _, err := io.Copy(tconn, uconn); err != nil {
 			log.Warningf("socket forward copy failed: %s", err)
 		}
