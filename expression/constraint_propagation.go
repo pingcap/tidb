@@ -102,8 +102,8 @@ func (s constraintSolver) Solve(ctx sessionctx.Context, conditions []Expression)
 // fixPoint is the core of the constraint propagation algorithm.
 // It will iterate the expression set over and over again, pick two expressions,
 // apply one to another.
-// If new conditions can be infered, they will be append into the expression set.
-// Until no more conditions can be infered from the set, the algorithm finish.
+// If new conditions can be inferred, they will be append into the expression set.
+// Until no more conditions can be inferred from the set, the algorithm finish.
 func (s constraintSolver) fixPoint(ctx sessionctx.Context, exprs *exprSet) {
 	for {
 		saveLen := len(exprs.data)

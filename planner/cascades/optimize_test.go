@@ -15,11 +15,41 @@ package cascades
 
 import (
 	"math"
+	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/testleak"
 )
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	TestingT(t)
+}
+
+var _ = Suite(&testCascadesSuite{})
+
+type testCascadesSuite struct {
+	*parser.Parser
+	is   infoschema.InfoSchema
+	sctx sessionctx.Context
+}
+
+func (s *testCascadesSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockTable()})
+	s.sctx = plannercore.MockContext()
+	s.Parser = parser.New()
+}
+
+func (s *testCascadesSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)()
+}
 
 func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	stmt, err := s.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
@@ -29,14 +59,37 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
 	rootGroup := convert2Group(logic)
-	// TODO remove these hard code about logical property after we support deriving stats in exploration phase.
-	rootGroup.prop = &property.LogicalProperty{}
-	rootGroup.prop.Stats = property.NewSimpleStats(10.0)
-
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
 	impl, err := implGroup(rootGroup, prop, 0.0)
 	c.Assert(impl, IsNil)
 	c.Assert(err, IsNil)
+}
+
+func (s *testCascadesSuite) TestInitGroupSchema(c *C) {
+	stmt, err := s.ParseOneStmt("select a from t", "", "")
+	c.Assert(err, IsNil)
+	p, err := plannercore.BuildLogicalPlan(s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	g := convert2Group(logic)
+	c.Assert(g, NotNil)
+	c.Assert(g.Prop, NotNil)
+	c.Assert(g.Prop.Schema.Len(), Equals, 1)
+	c.Assert(g.Prop.Stats, IsNil)
+}
+
+func (s *testCascadesSuite) TestFillGroupStats(c *C) {
+	stmt, err := s.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
+	c.Assert(err, IsNil)
+	p, err := plannercore.BuildLogicalPlan(s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	rootGroup := convert2Group(logic)
+	err = fillGroupStats(rootGroup)
+	c.Assert(err, IsNil)
+	c.Assert(rootGroup.Prop.Stats, NotNil)
 }
