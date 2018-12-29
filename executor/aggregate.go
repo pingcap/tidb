@@ -199,7 +199,7 @@ func (e *HashAggExec) Close() error {
 		e.childResult = nil
 		e.groupSet = nil
 		e.partialResultMap = nil
-		return nil
+		return e.baseExecutor.Close()
 	}
 	// `Close` may be called after `Open` without calling `Next` in test.
 	if !e.prepared {
@@ -216,7 +216,7 @@ func (e *HashAggExec) Close() error {
 	}
 	for range e.finalOutputCh {
 	}
-	return errors.Trace(e.baseExecutor.Close())
+	return e.baseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
@@ -474,7 +474,9 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 	for groupKey := range w.groupSet {
 		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, []byte(groupKey), w.partialResultMap)
 		for i, af := range w.aggFuncs {
-			af.AppendFinalResult2Chunk(sctx, partialResults[i], result)
+			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i], result); err != nil {
+				log.Error(errors.ErrorStack(err))
+			}
 		}
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
@@ -609,6 +611,12 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepare4ParallelExec(ctx)
 		e.prepared = true
 	}
+
+	// gofail: var parallelHashAggError bool
+	// if parallelHashAggError {
+	// 	return errors.New("HashAggExec.parallelExec error")
+	// }
+
 	for {
 		result, ok := <-e.finalOutputCh
 		if !ok || result.err != nil || result.chk.NumRows() == 0 {
@@ -660,7 +668,9 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
 		}
 		for i, af := range e.PartialAggFuncs {
-			af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk)
+			if err := (af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk)); err != nil {
+				return err
+			}
 		}
 		if chk.NumRows() == e.maxChunkSize {
 			e.cursor4GroupKey++
@@ -678,6 +688,12 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		// gofail: var unparallelHashAggError bool
+		// if unparallelHashAggError {
+		// 	return errors.New("HashAggExec.unparallelExec error")
+		// }
+
 		// no more data.
 		if e.childResult.NumRows() == 0 {
 			return nil
