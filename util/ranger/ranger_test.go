@@ -346,14 +346,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			exprStr:     `a LIKE 'abc%'`,
 			accessConds: `[like(test.t.a, abc%, 92)]`,
 			filterConds: "[]",
-			resultStr:   "[[\"abc\" NULL,\"abd\" NULL)]",
+			resultStr:   "[[\"abc\",\"abd\")]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc_'",
 			accessConds: "[like(test.t.a, abc_, 92)]",
 			filterConds: "[like(test.t.a, abc_, 92)]",
-			resultStr:   "[(\"abc\" +inf,\"abd\" NULL)]",
+			resultStr:   "[(\"abc\",\"abd\")]",
 		},
 		{
 			indexPos:    0,
@@ -395,7 +395,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			exprStr:     `a LIKE "\\\\a%"`,
 			accessConds: `[like(test.t.a, \\a%, 92)]`,
 			filterConds: "[]",
-			resultStr:   "[[\"\\a\" NULL,\"\\b\" NULL)]",
+			resultStr:   "[[\"\\a\",\"\\b\")]",
 		},
 		{
 			indexPos:    0,
@@ -444,7 +444,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			exprStr:     "c not in (1, 2, 3)",
 			accessConds: "[not(in(test.t.c, 1, 2, 3))]",
 			filterConds: "[]",
-			resultStr:   "[(NULL +inf,1 NULL) (1 +inf,2 NULL) (2 +inf,3 NULL) (3 +inf,+inf +inf]]",
+			resultStr:   "[(NULL,1) (1,2) (2,3) (3,+inf]]",
 		},
 		{
 			indexPos:    1,
@@ -500,28 +500,28 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			exprStr:     "(a > 'b' and a < 'bbb') or (a < 'cb' and a > 'a')",
 			accessConds: "[or(and(gt(test.t.a, b), lt(test.t.a, bbb)), and(lt(test.t.a, cb), gt(test.t.a, a)))]",
 			filterConds: "[]",
-			resultStr:   "[(\"a\" +inf,\"cb\" NULL)]",
+			resultStr:   "[(\"a\",\"cb\")]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "(a > 'a' and a < 'b') or (a >= 'b' and a < 'c')",
 			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
 			filterConds: "[]",
-			resultStr:   "[(\"a\" +inf,\"c\" NULL)]",
+			resultStr:   "[(\"a\",\"c\")]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "(a > 'a' and a < 'b' and b < 1) or (a >= 'b' and a < 'c')",
 			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
 			filterConds: "[or(and(and(gt(test.t.a, a), lt(test.t.a, b)), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
-			resultStr:   "[(\"a\" +inf,\"c\" NULL)]",
+			resultStr:   "[(\"a\",\"c\")]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     "(a in ('a', 'b') and b < 1) or (a >= 'b' and a < 'c')",
 			accessConds: "[or(and(in(test.t.a, a, b), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
 			filterConds: "[]",
-			resultStr:   `[["a" -inf,"a" 1) ["b" NULL,"c" NULL)]`,
+			resultStr:   `[["a" -inf,"a" 1) ["b","c")]`,
 		},
 		{
 			indexPos:    0,
@@ -926,11 +926,38 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
-		conds = ranger.ExtractAccessConditionsForColumn(conds, col.ColName)
+		conds = ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
 	}
+}
+
+func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
+	testKit.MustExec("insert into t values(1,2)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
+		"Union_11 2.00 root ",
+		"├─IndexReader_17 1.00 root index:IndexScan_16",
+		"│ └─IndexScan_16 1.00 cop table:t, index:a, b, range:(0,+inf], keep order:false",
+		"└─IndexReader_23 1.00 root index:IndexScan_22",
+		"  └─IndexScan_22 1.00 cop table:t, index:a, b, range:(0,+inf], keep order:false",
+	))
+	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
+		"1 2",
+		"1 2",
+	))
 }

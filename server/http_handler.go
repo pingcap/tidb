@@ -15,6 +15,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -50,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -61,6 +62,7 @@ const (
 	pRegionID   = "regionID"
 	pStartTS    = "startTS"
 	pTableName  = "table"
+	pTableID    = "tableID"
 	pColumnID   = "colID"
 	pColumnTp   = "colTp"
 	pColumnFlag = "colFlag"
@@ -73,8 +75,11 @@ const qTableID = "table_id"
 const qLimit = "limit"
 
 const (
+	protocol          = "http://"
 	headerContentType = "Content-Type"
 	contentTypeJSON   = "application/json"
+	hotRead           = "/pd/api/v1/hotspot/regions/read"
+	hotWrite          = "/pd/api/v1/hotspot/regions/write"
 )
 
 type kvStore interface {
@@ -303,6 +308,149 @@ func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
 	return jobs, nil
 }
 
+func (t *tikvHandlerTool) scrapeHotInfo(rw string) (map[tblIndex]regionMetric, error) {
+	regionMetrics, err := t.fetchHotRegion(rw)
+	if err != nil {
+		return nil, err
+	}
+
+	tblIdx, err := t.fetchRegionTableIndex(regionMetrics)
+	if err != nil {
+		return nil, err
+	}
+	return tblIdx, nil
+}
+
+// storeHotRegionInfos records all hog region stores.
+// it's the response of PD.
+type storeHotRegionInfos struct {
+	AsPeer   map[uint64]*hotRegionsStat `json:"as_peer"`
+	AsLeader map[uint64]*hotRegionsStat `json:"as_leader"`
+}
+
+// hotRegions records echo store's hot region.
+// it's the response of PD.
+type hotRegionsStat struct {
+	RegionsStat []regionStat `json:"statistics"`
+}
+
+// regionStat records each hot region's statistics
+// it's the response of PD.
+type regionStat struct {
+	RegionID  uint64 `json:"region_id"`
+	FlowBytes uint64 `json:"flow_bytes"`
+	HotDegree int    `json:"hot_degree"`
+}
+
+// regionMetric presents the final metric output entry.
+type regionMetric struct {
+	FlowBytes    uint64 `json:"flow_bytes"`
+	MaxHotDegree int    `json:"max_hot_degree"`
+	Count        int    `json:"region_count"`
+}
+
+// tblIndex presents the aggregate key that combined with db,table,index
+type tblIndex struct {
+	DbName    string `json:"db_name"`
+	TableName string `json:"table_name"`
+	IndexName string `json:"index_name"`
+}
+
+func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, error) {
+	etcd, ok := t.store.(domain.EtcdBackend)
+	if !ok {
+		return nil, errors.New("not implemented")
+	}
+	pdHosts := etcd.EtcdAddrs()
+	if len(pdHosts) == 0 {
+		return nil, errors.New("pd unavailable")
+	}
+	req, err := http.NewRequest("GET", protocol+pdHosts[0]+rw, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	timeout, cancelFunc := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
+	cancelFunc()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			log.Error(err)
+		}
+	}()
+	var regionResp storeHotRegionInfos
+	err = json.NewDecoder(resp.Body).Decode(&regionResp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	metric := make(map[uint64]regionMetric)
+	for _, hotRegions := range regionResp.AsLeader {
+		for _, region := range hotRegions.RegionsStat {
+			metric[region.RegionID] = regionMetric{FlowBytes: region.FlowBytes, MaxHotDegree: region.HotDegree}
+		}
+	}
+	return metric, nil
+}
+
+func (t *tikvHandlerTool) fetchRegionTableIndex(metrics map[uint64]regionMetric) (map[tblIndex]regionMetric, error) {
+	schema, err := t.schema()
+	if err != nil {
+		return nil, err
+	}
+
+	idxMetrics := make(map[tblIndex]regionMetric)
+	for regionID, regionMetric := range metrics {
+		region, err := t.regionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
+		if err != nil {
+			log.Error(err)
+			continue
+		}
+
+		hotRange, err := NewRegionFrameRange(region)
+		if err != nil {
+			return nil, err
+		}
+
+		f := t.findTableIndexOfRegion(schema, hotRange)
+		if f != nil {
+			idx := tblIndex{DbName: f.DBName, TableName: f.TableName, IndexName: f.IndexName}
+			metric, exists := idxMetrics[idx]
+			if !exists {
+				metric = regionMetric
+				metric.Count++
+				idxMetrics[idx] = metric
+			} else {
+				metric.FlowBytes += regionMetric.FlowBytes
+				if metric.MaxHotDegree < regionMetric.MaxHotDegree {
+					metric.MaxHotDegree = regionMetric.MaxHotDegree
+				}
+				metric.Count++
+			}
+		}
+	}
+
+	return idxMetrics, nil
+}
+
+func (t *tikvHandlerTool) findTableIndexOfRegion(schema infoschema.InfoSchema, hotRange *RegionFrameRange) *FrameItem {
+	for _, db := range schema.AllSchemas() {
+		for _, tbl := range db.Tables {
+			if f := hotRange.getRecordFrame(tbl.ID, db.Name.O, tbl.Name.O); f != nil {
+				return f
+			}
+			for _, idx := range tbl.Indices {
+				if f := hotRange.getIndexFrame(tbl.ID, idx.ID, db.Name.O, tbl.Name.O, idx.Name.O); f != nil {
+					return f
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
 }
@@ -314,6 +462,10 @@ type binlogRecover struct{}
 
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
+	*tikvHandlerTool
+}
+
+type dbTableHandler struct {
 	*tikvHandlerTool
 }
 
@@ -769,8 +921,8 @@ func (h tableHandler) addScatterSchedule(startKey, endKey []byte, name string) e
 	}
 	input := map[string]string{
 		"name":       "scatter-range",
-		"start_key":  url.QueryEscape(string(startKey)),
-		"end_key":    url.QueryEscape(string(endKey)),
+		"start_key":  string(startKey),
+		"end_key":    string(endKey),
 		"range_name": name,
 	}
 	v, err := json.Marshal(input)
@@ -952,26 +1104,73 @@ func (h tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl t
 	writeData(w, stats.StorageSize)
 }
 
+type hotRegion struct {
+	tblIndex
+	regionMetric
+}
+type hotRegions []hotRegion
+
+func (rs hotRegions) Len() int {
+	return len(rs)
+}
+
+func (rs hotRegions) Less(i, j int) bool {
+	return rs[i].MaxHotDegree > rs[j].MaxHotDegree || (rs[i].MaxHotDegree == rs[j].MaxHotDegree && rs[i].FlowBytes > rs[j].FlowBytes)
+}
+
+func (rs hotRegions) Swap(i, j int) {
+	rs[i], rs[j] = rs[j], rs[i]
+}
+
 // ServeHTTP handles request of get region by ID.
 func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse and check params
 	params := mux.Vars(req)
 	if _, ok := params[pRegionID]; !ok {
-		startKey := []byte{'m'}
-		endKey := []byte{'n'}
+		router := mux.CurrentRoute(req).GetName()
+		if router == "RegionsMeta" {
+			startKey := []byte{'m'}
+			endKey := []byte{'n'}
 
-		recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
-		if err != nil {
-			writeError(w, err)
+			recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+
+			recordRegions, err := h.getRegionsMeta(recordRegionIDs)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			writeData(w, recordRegions)
 			return
 		}
-
-		recordRegions, err := h.getRegionsMeta(recordRegionIDs)
-		if err != nil {
-			writeError(w, err)
+		if router == "RegionHot" {
+			hotRead, err := h.scrapeHotInfo(hotRead)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			hotWrite, err := h.scrapeHotInfo(hotWrite)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			asSortedEntry := func(metric map[tblIndex]regionMetric) hotRegions {
+				hs := make(hotRegions, 0, len(metric))
+				for key, value := range metric {
+					hs = append(hs, hotRegion{key, value})
+				}
+				sort.Sort(hs)
+				return hs
+			}
+			writeData(w, map[string]interface{}{
+				"write": asSortedEntry(hotWrite),
+				"read":  asSortedEntry(hotRead),
+			})
 			return
 		}
-		writeData(w, recordRegions)
 		return
 	}
 
@@ -1361,4 +1560,46 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		clusterInfo.AllServersDiffVersions = allVersions
 	}
 	writeData(w, clusterInfo)
+}
+
+// dbTableInfo is used to report the database, table information and the current schema version.
+type dbTableInfo struct {
+	DBInfo        *model.DBInfo    `json:"db_info"`
+	TableInfo     *model.TableInfo `json:"table_info"`
+	SchemaVersion int64            `json:"schema_version"`
+}
+
+//ServeHTTP handles request of database information and table information by tableID.
+func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	tableID := params[pTableID]
+	tblID, err := strconv.Atoi(tableID)
+	if err != nil {
+		writeError(w, errors.Errorf("Wrong tableID: %v", tableID))
+		return
+	}
+
+	schema, err := h.schema()
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	dbTblInfo := dbTableInfo{
+		SchemaVersion: schema.SchemaMetaVersion(),
+	}
+	tbl, ok := schema.TableByID(int64(tblID))
+	if !ok {
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
+		return
+	}
+	dbTblInfo.TableInfo = tbl.Meta()
+	dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
+	if !ok {
+		log.Warnf("can not find the database of table id: %v, table name: %v", dbTblInfo.TableInfo.ID, dbTblInfo.TableInfo.Name)
+		writeData(w, dbTblInfo)
+		return
+	}
+	dbTblInfo.DBInfo = dbInfo
+	writeData(w, dbTblInfo)
 }

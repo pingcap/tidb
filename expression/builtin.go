@@ -141,15 +141,15 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 			Tp:      mysql.TypeJSON,
 			Flen:    mysql.MaxBlobWidth,
 			Decimal: 0,
-			Charset: charset.CharsetUTF8,
-			Collate: charset.CollationUTF8,
+			Charset: mysql.DefaultCharset,
+			Collate: mysql.DefaultCollationName,
 			Flag:    mysql.BinaryFlag,
 		}
 	}
 	if mysql.HasBinaryFlag(fieldType.Flag) && fieldType.Tp != mysql.TypeJSON {
 		fieldType.Charset, fieldType.Collate = charset.CharsetBin, charset.CollationBin
 	} else {
-		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
+		fieldType.Charset, fieldType.Collate = charset.GetDefaultCharsetAndCollate()
 	}
 	return baseBuiltinFunc{
 		args: args,
@@ -199,7 +199,7 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 			b.tp.Tp = mysql.TypeMediumBlob
 		}
 		if len(b.tp.Charset) <= 0 {
-			b.tp.Charset, b.tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+			b.tp.Charset, b.tp.Collate = charset.GetDefaultCharsetAndCollate()
 		}
 	}
 	return b.tp
@@ -413,6 +413,7 @@ var funcs = map[string]functionClass{
 	ast.Year:             &yearFunctionClass{baseFunctionClass{ast.Year, 1, 1}},
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
 	ast.LastDay:          &lastDayFunctionClass{baseFunctionClass{ast.LastDay, 1, 1}},
+	ast.TiDBParseTso:     &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},

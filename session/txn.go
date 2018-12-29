@@ -14,6 +14,12 @@
 package session
 
 import (
+	"context"
+	"fmt"
+	"runtime/debug"
+	"strings"
+
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -24,13 +30,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
 // 1. It holds all statement related modification in the buffer before flush to the txn,
 // so if execute statement meets error, the txn won't be made dirty.
-// 2. It's a lazy transaction, that means it's a txnFuture befort StartTS() is really need.
+// 2. It's a lazy transaction, that means it's a txnFuture before StartTS() is really need.
 type TxnState struct {
 	// States of a TxnState should be one of the followings:
 	// Invalid: kv.Transaction == nil && txnFuture == nil
@@ -42,10 +47,6 @@ type TxnState struct {
 	buf          kv.MemBuffer
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
-
-	// If StmtCommit meets error (which should not happen, just in case), mark it.
-	// And rollback the whole transaction when it commit.
-	fail error
 }
 
 func (st *TxnState) init() {
@@ -53,9 +54,13 @@ func (st *TxnState) init() {
 	st.mutations = make(map[int64]*binlog.TableMutation)
 }
 
-// Valid overrides Transaction interface.
+// Valid implements the kv.Transaction interface.
 func (st *TxnState) Valid() bool {
 	return st.Transaction != nil && st.Transaction.Valid()
+}
+
+func (st *TxnState) pending() bool {
+	return st.Transaction == nil && st.txnFuture != nil
 }
 
 func (st *TxnState) validOrPending() bool {
@@ -70,6 +75,29 @@ func (st *TxnState) String() string {
 		return "txnFuture"
 	}
 	return "invalid transaction"
+}
+
+// GoString implements the "%#v" format for fmt.Printf.
+func (st *TxnState) GoString() string {
+	var s strings.Builder
+	s.WriteString("Txn{")
+	if st.pending() {
+		s.WriteString("state=pending")
+	} else if st.Valid() {
+		s.WriteString("state=valid")
+		fmt.Fprintf(&s, ", startTS=%d", st.Transaction.StartTS())
+		if len(st.dirtyTableOP) > 0 {
+			fmt.Fprintf(&s, ", len(dirtyTable)=%d", len(st.dirtyTableOP))
+		}
+		if len(st.mutations) > 0 {
+			fmt.Fprintf(&s, ", len(mutations)=%d", len(st.mutations))
+		}
+	} else {
+		s.WriteString("state=invalid")
+	}
+
+	s.WriteString("}")
+	return s.String()
 }
 
 func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
@@ -116,22 +144,17 @@ type dirtyTableOperation struct {
 
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
-	if st.fail != nil {
-		// If any error happen during StmtCommit, don't commit this transaction.
-		err := st.fail
-		st.fail = nil
-		return errors.Trace(err)
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
+			st,
+			st.mutations,
+			st.dirtyTableOP,
+			st.buf,
+			debug.Stack())
+		st.cleanup()
+		return errors.New("invalid transaction")
 	}
 	return errors.Trace(st.Transaction.Commit(ctx))
-}
-
-// Rollback overrides the Transaction interface.
-func (st *TxnState) Rollback() error {
-	if st.fail != nil {
-		log.Error(errors.Trace(st.fail))
-		st.fail = nil
-	}
-	return errors.Trace(st.Transaction.Rollback())
 }
 
 // Get overrides the Transaction interface.
@@ -139,6 +162,9 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 	val, err := st.buf.Get(k)
 	if kv.IsErrNotFound(err) {
 		val, err = st.Transaction.Get(k)
+		if kv.IsErrNotFound(err) {
+			return nil, err
+		}
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -159,26 +185,26 @@ func (st *TxnState) Delete(k kv.Key) error {
 	return st.buf.Delete(k)
 }
 
-// Seek overrides the Transaction interface.
-func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.Seek(k)
+// Iter overrides the Transaction interface.
+func (st *TxnState) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.Seek(k)
+	retrieverIt, err := st.Transaction.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekReverse overrides the Transaction interface.
-func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.SeekReverse(k)
+// IterReverse overrides the Transaction interface.
+func (st *TxnState) IterReverse(k kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.SeekReverse(k)
+	retrieverIt, err := st.Transaction.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -191,6 +217,10 @@ func (st *TxnState) cleanup() {
 		delete(st.mutations, key)
 	}
 	if st.dirtyTableOP != nil {
+		empty := dirtyTableOperation{}
+		for i := 0; i < len(st.dirtyTableOP); i++ {
+			st.dirtyTableOP[i] = empty
+		}
 		st.dirtyTableOP = st.dirtyTableOP[:0]
 	}
 }
@@ -231,9 +261,28 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 type txnFuture struct {
 	future oracle.Future
 	store  kv.Storage
+
+	mockFail bool
 }
 
+// mockGetTSErrorInRetryOnce use to make sure gofail mockGetTSErrorInRetry only mock get TS error once.
+var mockGetTSErrorInRetryOnce = true
+
 func (tf *txnFuture) wait() (kv.Transaction, error) {
+	if tf.mockFail {
+		return nil, errors.New("mock get timestamp fail")
+	}
+
+	// mockGetTSErrorInRetry should wait mockCommitErrorOnce first, then will run into retry() logic.
+	// Then mockGetTSErrorInRetry will return retryable error when first retry.
+	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
+	// This may cause duplicate data to be written.
+	// gofail: var mockGetTSErrorInRetry bool
+	// if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
+	//	 mockGetTSErrorInRetryOnce = false
+	//	 return nil, errors.Errorf("PD server timeout[try again later]")
+	// }
+
 	startTS, err := tf.future.Wait()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
@@ -244,17 +293,22 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	oracleStore := s.store.GetOracle()
 	tsFuture := oracleStore.GetTimestampAsync(ctx)
-	return &txnFuture{tsFuture, s.store}
+	ret := &txnFuture{future: tsFuture, store: s.store}
+	if x := ctx.Value("mockGetTSFail"); x != nil {
+		ret.mockFail = true
+	}
+	return ret
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() {
-	if s.txn.fail != nil {
-		return
-	}
-
+func (s *session) StmtCommit() error {
 	defer s.txn.cleanup()
 	st := &s.txn
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
@@ -268,8 +322,7 @@ func (s *session) StmtCommit() {
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
 	if err != nil {
-		s.txn.fail = errors.Trace(err)
-		return
+		return errors.Trace(err)
 	}
 
 	// Need to flush binlog.
@@ -284,6 +337,7 @@ func (s *session) StmtCommit() {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.

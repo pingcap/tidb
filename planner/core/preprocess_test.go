@@ -14,6 +14,8 @@
 package core_test
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testValidatorSuite{})
@@ -194,6 +195,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from ( select 1 ) a, (select 2) b;", true, nil},
 		{"select * from (select * from ( select 1 ) a join (select 2) b) b join (select 3) a;", false, nil},
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
+
+		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
 	}
 
 	store, dom, err := newStoreWithBootstrap()

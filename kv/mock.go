@@ -14,9 +14,10 @@
 package kv
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"golang.org/x/net/context"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.
@@ -68,11 +69,11 @@ func (t *mockTxn) Get(k Key) ([]byte, error) {
 	return nil, nil
 }
 
-func (t *mockTxn) Seek(k Key) (Iterator, error) {
+func (t *mockTxn) Iter(k Key, upperBound Key) (Iterator, error) {
 	return nil, nil
 }
 
-func (t *mockTxn) SeekReverse(k Key) (Iterator, error) {
+func (t *mockTxn) IterReverse(k Key) (Iterator, error) {
 	return nil, nil
 }
 
@@ -211,10 +212,10 @@ func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-func (s *mockSnapshot) Seek(k Key) (Iterator, error) {
-	return s.store.Seek(k)
+func (s *mockSnapshot) Iter(k Key, upperBound Key) (Iterator, error) {
+	return s.store.Iter(k, upperBound)
 }
 
-func (s *mockSnapshot) SeekReverse(k Key) (Iterator, error) {
-	return s.store.SeekReverse(k)
+func (s *mockSnapshot) IterReverse(k Key) (Iterator, error) {
+	return s.store.IterReverse(k)
 }

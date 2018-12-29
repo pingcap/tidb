@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package memo
 
 import (
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -60,43 +60,43 @@ const (
 )
 
 // GetOperand maps logical plan operator to Operand.
-func GetOperand(p plannercore.LogicalPlan) (Operand, error) {
-	switch x := p.(type) {
+func GetOperand(p plannercore.LogicalPlan) Operand {
+	switch p.(type) {
 	case *plannercore.LogicalJoin:
-		return OperandJoin, nil
+		return OperandJoin
 	case *plannercore.LogicalAggregation:
-		return OperandAggregation, nil
+		return OperandAggregation
 	case *plannercore.LogicalProjection:
-		return OperandProjection, nil
+		return OperandProjection
 	case *plannercore.LogicalSelection:
-		return OperandSelection, nil
+		return OperandSelection
 	case *plannercore.LogicalApply:
-		return OperandApply, nil
+		return OperandApply
 	case *plannercore.LogicalMaxOneRow:
-		return OperandMaxOneRow, nil
+		return OperandMaxOneRow
 	case *plannercore.LogicalTableDual:
-		return OperandTableDual, nil
+		return OperandTableDual
 	case *plannercore.DataSource:
-		return OperandDataSource, nil
+		return OperandDataSource
 	case *plannercore.LogicalUnionScan:
-		return OperandUnionScan, nil
+		return OperandUnionScan
 	case *plannercore.LogicalUnionAll:
-		return OperandUnionAll, nil
+		return OperandUnionAll
 	case *plannercore.LogicalSort:
-		return OperandSort, nil
+		return OperandSort
 	case *plannercore.LogicalTopN:
-		return OperandTopN, nil
+		return OperandTopN
 	case *plannercore.LogicalLock:
-		return OperandLock, nil
+		return OperandLock
 	case *plannercore.LogicalLimit:
-		return OperandLimit, nil
+		return OperandLimit
 	default:
-		return OperandUnsupported, plannercore.ErrUnsupportedType.GenWithStack("Unsupported LogicalPlan(%T) for GetOperand", x)
+		return OperandUnsupported
 	}
 }
 
-// match checks if current Operand matches specified one.
-func (o Operand) match(t Operand) bool {
+// Match checks if current Operand matches specified one.
+func (o Operand) Match(t Operand) bool {
 	if o == OperandAny || t == OperandAny {
 		return true
 	}
@@ -106,18 +106,28 @@ func (o Operand) match(t Operand) bool {
 	return false
 }
 
-// Pattern defines the match pattern for a rule.
+// Pattern defines the Match pattern for a rule.
 // It describes a piece of logical expression.
 // It's a tree-like structure and each node in the tree is an Operand.
 type Pattern struct {
-	operand  Operand
-	children []*Pattern
+	Operand
+	Children []*Pattern
+}
+
+// NewPattern creats a pattern node according to the Operand.
+func NewPattern(operand Operand) *Pattern {
+	return &Pattern{Operand: operand}
+}
+
+// SetChildren sets the Children information for a pattern node.
+func (p *Pattern) SetChildren(children ...*Pattern) {
+	p.Children = children
 }
 
 // BuildPattern builds a Pattern from Operand and child Patterns.
 // Used in GetPattern() of Transformation interface to generate a Pattern.
 func BuildPattern(operand Operand, children ...*Pattern) *Pattern {
-	p := &Pattern{operand: operand}
-	p.children = children
+	p := &Pattern{Operand: operand}
+	p.Children = children
 	return p
 }

@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -137,7 +137,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
-	c.Assert(r, IsNil)
+	c.Assert(len(r), Equals, 0)
 }
 
 func (s *testTableCodecSuite) TestTimeCodec(c *C) {

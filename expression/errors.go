@@ -31,7 +31,8 @@ var (
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
-	errZlibZData                     = terror.ClassTypes.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
+	errZlibZData                     = terror.ClassExpression.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
+	errZlibZBuf                      = terror.ClassExpression.New(mysql.ErrZlibZBuf, mysql.MySQLErrName[mysql.ErrZlibZBuf])
 	errIncorrectArgs                 = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	errUnknownCharacterSet           = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
 	errDefaultValue                  = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
@@ -48,6 +49,7 @@ func init() {
 		mysql.ErrDivisionByZero:                    mysql.ErrDivisionByZero,
 		mysql.ErrSpDoesNotExist:                    mysql.ErrSpDoesNotExist,
 		mysql.ErrZlibZData:                         mysql.ErrZlibZData,
+		mysql.ErrZlibZBuf:                          mysql.ErrZlibZBuf,
 		mysql.ErrWrongArguments:                    mysql.ErrWrongArguments,
 		mysql.ErrUnknownCharacterSet:               mysql.ErrUnknownCharacterSet,
 		mysql.ErrInvalidDefault:                    mysql.ErrInvalidDefault,

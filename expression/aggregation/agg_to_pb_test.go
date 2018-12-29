@@ -74,13 +74,9 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
 	}
-	for i, funcName := range funcNames {
-		aggFunc := &AggFuncDesc{
-			Name:        funcName,
-			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			HasDistinct: true,
-			RetTp:       funcTypes[i],
-		}
+	for _, funcName := range funcNames {
+		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+		aggFunc := NewAggFuncDesc(s.ctx, funcName, args, true)
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
@@ -88,21 +84,18 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 	}
 
 	jsons := []string{
-		`{"tp":3002,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}`,
-		`{"tp":3001,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0,"field_type":{"tp":8,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}`,
-		`{"tp":3003,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}`,
+		`{"tp":3002,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
+		`{"tp":3001,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":8,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
+		`{"tp":3003,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
 		"null",
-		`{"tp":3005,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}`,
-		`{"tp":3004,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}`,
-		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":83,"charset":""}}`,
+		`{"tp":3005,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
+		`{"tp":3004,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
+		`{"tp":3006,"children":[{"tp":201,"val":"gAAAAAAAAAE=","sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}],"sig":0,"field_type":{"tp":5,"flag":0,"flen":-1,"decimal":-1,"collate":46,"charset":""}}`,
 	}
 	for i, funcName := range funcNames {
-		aggFunc := &AggFuncDesc{
-			Name:        funcName,
-			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
-			HasDistinct: false,
-			RetTp:       funcTypes[i],
-		}
+		args := []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)}
+		aggFunc := NewAggFuncDesc(s.ctx, funcName, args, false)
+		aggFunc.RetTp = funcTypes[i]
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
 		c.Assert(err, IsNil)
