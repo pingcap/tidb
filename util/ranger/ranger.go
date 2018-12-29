@@ -418,6 +418,13 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
+// fixPrefixColRange checks whether the range of one column exceeds the length and needs to be cut.
+// It specially handles the last column of each range point. If the last one need to be cut, it will
+// change the exclude status of that point and return `true` to tell
+// that we need do a range merging since that interval may have intersection.
+// e.g. if the interval is (-inf -inf, a xxxxx), (a xxxxx, +inf +inf) and the length of the last column is 3,
+//      then we'll change it to (-inf -inf, a xxx], [a xxx, +inf +inf). You can see that this two interval intersect,
+//      so we need a merge operation.
 func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
 	hasCut := false
 	for _, ran := range ranges {
