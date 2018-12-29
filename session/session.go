@@ -32,13 +32,13 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser"
+	"github.com/zhaoxiaojie0415/parser/ast"
+	"github.com/zhaoxiaojie0415/parser/auth"
+	"github.com/zhaoxiaojie0415/parser/charset"
+	"github.com/zhaoxiaojie0415/parser/model"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infobind"
@@ -148,11 +148,11 @@ type session struct {
 
 	sessionBind 	*infobind.SessionBind
 
+	localBindCache	*infobind.BindCache
+
 	statsCollector *statistics.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
-
-	localBindCache *kvcache.SimpleMap
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -803,8 +803,9 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	return errors.Trace(err)
 }
 
-func (s *session) GetAllBindAccessor() (map[string]string, error){
-	return nil, nil
+func (s *session) GetAllBindAccessor() []*infobind.BindData {
+	bm := infobind.GetBindManager(s)
+	return bm.GetAllBindData()
 }
 
 func (s *session) DropGlobalBind(originSql string, defaultDb string) error {
@@ -905,8 +906,8 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 	label := s.getSQLLabel()
 	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
-	//dig := parser.Digest(sql)
-	//log.Infof("%s %s", sql, dig)
+	dig := parser.Digest(sql)
+	log.Infof("%s %s", sql, dig)
 	compiler := executor.Compiler{Ctx: s}
 	for _, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
@@ -1219,10 +1220,16 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
-	bm := &infobind.AstBind{
+	bm := &infobind.BindManager{
 		Handle:         do.BindHandle(),
 	}
 	infobind.BindBinderManager(s, bm)
+
+	s.localBindCache = &infobind.BindCache{Cache: make(map[string][]*infobind.BindData, 1),}
+	s.sessionBind = infobind.NewSessionBind()
+	s.sessionBind.GlobalBindAccessor = s
+	s.sessionBind.BindManager = s.localBindCache
+
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
@@ -1340,7 +1347,6 @@ func createSession(store kv.Storage) (*session, error) {
 		store:           store,
 		parser:          parser.New(),
 		sessionVars:     variable.NewSessionVars(),
-		sessionBind:	 infobind.NewSessionBind(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
@@ -1350,8 +1356,6 @@ func createSession(store kv.Storage) (*session, error) {
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
-	s.sessionBind.GlobalBindAccessor = s
-	s.sessionBind.LocalBindCache = s.localBindCache
 	s.sessionVars.GlobalVarsAccessor = s
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()

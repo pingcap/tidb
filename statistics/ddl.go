@@ -18,9 +18,9 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/model"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"

@@ -14,7 +14,7 @@
 package perfschema
 
 import (
-	"github.com/pingcap/parser/model"
+	"github.com/zhaoxiaojie0415/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"

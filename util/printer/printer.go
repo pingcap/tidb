@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/israce"
 	log "github.com/sirupsen/logrus"

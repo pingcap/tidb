@@ -167,6 +167,12 @@ github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d h1:ggUgChAeyge4NZ4
 github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d/go.mod h1:tu82oB5W2ykJRVioYsB+IQKcft7ryBr7w12qMBUPyXg=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 h1:MPPkRncZLN9Kh4MEFmbnK4h3BD7AUmskWv2+EeZJCCs=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
+github.com/zhaoxiaojie0415/parser v0.0.0-20181227090825-062ef9373b37 h1:OZVyPkZfMpKMHDMQypC4OAEvBZ9TuR5YFMV77H2No44=
+github.com/zhaoxiaojie0415/parser v0.0.0-20181227090825-062ef9373b37/go.mod h1:cFzMp88tsCE3mZ1QXUC7HK6VwuRnW5rhI8/YEpwia+A=
+github.com/zhaoxiaojie0415/parser v0.0.0-20181227110714-2f5598d7140e h1:4KsKmNmC3739WNGMIWB5CM1ynn7wyhxArY7JIqpHO4U=
+github.com/zhaoxiaojie0415/parser v0.0.0-20181227110714-2f5598d7140e/go.mod h1:cFzMp88tsCE3mZ1QXUC7HK6VwuRnW5rhI8/YEpwia+A=
+github.com/zhaoxiaojie0415/tidb v2.0.8+incompatible h1:J56Pwckc3DP0RpZjX0thB0wtIs0SrpcLLoFqIhnavq8=
+github.com/zhaoxiaojie0415/tidb v2.0.8+incompatible/go.mod h1:HShX4cRuFBHAN3dhMs+TpBqcUQql8ytbtTbeeLR1JAY=
 go.uber.org/atomic v1.3.2 h1:2Oa65PReHzfn29GpvgsYwloV9AVFHPDk8tYxt2c2tr4=
 go.uber.org/atomic v1.3.2/go.mod h1:gD2HeocX3+yG+ygLZcrzQJaqmWj9AIm7n08wl/qW/PE=
 go.uber.org/multierr v1.1.0 h1:HoEmRHQPVSqub6w2z2d2EOVs2fjyFRGyofhKuyDq0QI=

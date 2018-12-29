@@ -16,10 +16,10 @@ package expression
 import (
 	"math"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/ast"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/opcode"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"

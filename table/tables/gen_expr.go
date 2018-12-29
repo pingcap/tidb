@@ -17,10 +17,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
+	"github.com/zhaoxiaojie0415/parser"
+	"github.com/zhaoxiaojie0415/parser/ast"
+	"github.com/zhaoxiaojie0415/parser/charset"
+	"github.com/zhaoxiaojie0415/parser/model"
 )
 
 // nameResolver is the visitor to resolve table name and column name.

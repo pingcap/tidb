@@ -20,8 +20,8 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
+	"github.com/zhaoxiaojie0415/parser/ast"
+	"github.com/zhaoxiaojie0415/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 )
 

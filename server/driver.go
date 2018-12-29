@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pingcap/parser/auth"
+	"github.com/zhaoxiaojie0415/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"

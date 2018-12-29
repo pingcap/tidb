@@ -19,9 +19,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
+	"github.com/zhaoxiaojie0415/parser"
+	"github.com/zhaoxiaojie0415/parser/ast"
+	"github.com/zhaoxiaojie0415/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"

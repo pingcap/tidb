@@ -16,9 +16,9 @@ package types
 import (
 	"strconv"
 
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	ast "github.com/pingcap/parser/types"
+	"github.com/zhaoxiaojie0415/parser/charset"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	ast "github.com/zhaoxiaojie0415/parser/types"
 	"github.com/pingcap/tidb/types/json"
 )
 

@@ -19,11 +19,11 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
+	"github.com/zhaoxiaojie0415/parser/ast"
+	"github.com/zhaoxiaojie0415/parser/charset"
+	"github.com/zhaoxiaojie0415/parser/model"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/opcode"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -199,9 +199,9 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildSimple(node.(ast.StmtNode)), nil
 	case ast.DDLNode:
 		return b.buildDDL(x)
-	case *CreateBindStmt:
+	case *ast.CreateBindingStmt:
 		return b.buildCreateBind(x)
-	case *DropBindStmt:
+	case *ast.DropBindingStmt:
 		return b.buildDropBind(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
@@ -279,30 +279,30 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildDropBind(v *DropBindStmt) (Plan, error) {
+func (b *PlanBuilder) buildDropBind(v *ast.DropBindingStmt) (Plan, error) {
 	p := &DropBindPlan{}
 
-	p.OriginSql = v.OriginSql
-	p.IsGlobal = v.isGlobal
+	p.OriginSql = v.OriginSel.Text()
+	p.IsGlobal = v.IsGlobal
 
-	p.DefaultDb = b.ctx.GetSessionVars().CurrentDB
+	p.DefaultDb = b.ctx.GetSessionVars().CurrentDB	//todo  这个地方也得注意一下，需不需要填写？ 需要遍历一把ast
 
 	return p, nil
 }
 
-func (b *PlanBuilder) buildCreateBind(v *CreateBindStmt) (Plan, error) {
+func (b *PlanBuilder) buildCreateBind(v *ast.CreateBindingStmt) (Plan, error) {
 	p := &CreateBindPlan{}
 
-	p.OriginSql = v.originStmt.Text()
-	p.BindSql = v.bindStmt.Text()
-	p.IsGlobal = v.isGlobal
-	p.BindStmt = v.bindStmt
+	p.OriginSql = v.OriginSel.Text()
+	p.BindSql = v.HintedSel.Text()
+	p.IsGlobal = v.IsGlobal
+	p.BindStmt = v.HintedSel	//todo 讨论一下这个地方要不要加指针
 	p.DefaultDb = b.ctx.GetSessionVars().CurrentDB
 
 	return p, nil
 }
 
-type CreateBindStmt struct {
+/*type CreateBindStmt struct {
 	ast.StmtNode
 
 	isGlobal bool
@@ -311,7 +311,7 @@ type CreateBindStmt struct {
 
 	bindStmt *ast.SelectStmt
 }
-
+*/
 type DropBindStmt struct {
 	ast.StmtNode
 
@@ -320,7 +320,7 @@ type DropBindStmt struct {
 	OriginSql string
 }
 
-func (n *CreateBindStmt) Accept(v ast.Visitor) (ast.Node, bool) {
+/*func (n *CreateBindStmt) Accept(v ast.Visitor) (ast.Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
@@ -347,7 +347,7 @@ func (n *CreateBindStmt) Accept(v ast.Visitor) (ast.Node, bool) {
 	}
 
 	return v.Leave(n)
-}
+}*/
 
 // Detect aggregate function or groupby clause.
 func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
@@ -1779,6 +1779,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	case ast.ShowPrivileges:
 		names = []string{"Privilege", "Context", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowBind:
+		names = []string{"original_sql", "bind_sql", "default_db", "status", "create_time", "update_time"}
+		ftypes= []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeInt24, mysql.TypeTimestamp, mysql.TypeTimestamp}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

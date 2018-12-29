@@ -14,8 +14,8 @@
 package privileges
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/terror"
 )
 
 // privilege error codes.

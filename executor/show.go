@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/infobind"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,12 +25,12 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/ast"
+	"github.com/zhaoxiaojie0415/parser/auth"
+	"github.com/zhaoxiaojie0415/parser/charset"
+	"github.com/zhaoxiaojie0415/parser/model"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -159,21 +160,29 @@ func (e *ShowExec) fetchAll() error {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	if e.GlobalScope {
-		sql := "SELECT * FROM mysql.bindsql_info" ;
-		rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	sessionBind := e.ctx.GetSessionBind()
 
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, row := range rows {
-			e.result.AppendRow(row)
-		}
-		return nil
-	} else {
-		sessionBind := e.ctx.GetSessionBind()
+	var bindDataMap map[string][]*infobind.BindData
+	if !e.GlobalScope {
+		bindDataMap = sessionBind.GetAllBind()
 
+		for _,bindDataArr := range bindDataMap {
+			for _,bindData := range bindDataArr{
+				e.appendRow([]interface{}{bindData.OriginalSql , bindData.BindSql, bindData.Db, bindData.Status, bindData.CreateTime , bindData.UpdateTime})
+			}
+		}
 	}
+
+	bm := infobind.GetBindManager(e.ctx)
+	globalBindDataArr := bm.GetAllBindData()
+
+	for _,bindData := range globalBindDataArr {
+		if sessionBind.GetBind(bindData.OriginalSql , bindData.Db) == nil {
+			e.appendRow([]interface{}{bindData.OriginalSql , bindData.BindSql, bindData.Db, bindData.Status, bindData.CreateTime , bindData.UpdateTime})
+		}
+	}
+
+	return nil
 }
 
 func (e *ShowExec) fetchShowEngines() error {

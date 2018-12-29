@@ -30,7 +30,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/parser/mysql"
+	tmysql "github.com/zhaoxiaojie0415/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"

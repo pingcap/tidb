@@ -19,7 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
+	"github.com/zhaoxiaojie0415/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"

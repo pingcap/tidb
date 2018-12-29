@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infobind"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/zhaoxiaojie0415/parser/ast"
+	"time"
 )
 
 type CreateBindExec struct {
@@ -34,7 +36,7 @@ type CreateBindExec struct {
 
 	isGlobal bool
 
-	bindData *infobind.BindData
+	bindAst ast.StmtNode
 }
 
 // Next implements the Executor Next interface.
@@ -55,7 +57,21 @@ func (e *CreateBindExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if sessionBind.GetBind(e.originSql , e.defaultDb) != nil {
 		return errors.Trace(errors.New(fmt.Sprintf("%s bind alreay exist" , e.originSql)))
 	}
-	sessionBind.SetBind(e.originSql , e.bindData)
+
+	bindRecord := infobind.BindRecord{
+		OriginalSql: e.originSql,
+		BindSql: e.bindSql,
+		Db:         e.defaultDb,
+		Status: 0,
+		CreateTime: time.Now() ,
+		UpdateTime: time.Now() ,
+	}
+
+	bindingData := &infobind.BindData{
+		BindRecord: bindRecord,
+		Ast:        e.bindAst,
+	}
+	sessionBind.SetBind(e.originSql , bindingData)
 	return nil
 }
 

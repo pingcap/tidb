@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/storage"
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
 )

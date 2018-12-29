@@ -15,7 +15,7 @@ package tables
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
+	"github.com/zhaoxiaojie0415/parser/ast"
 )
 
 var _ = Suite(&testGenExprSuite{})

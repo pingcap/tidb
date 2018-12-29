@@ -17,7 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser"
+	"github.com/zhaoxiaojie0415/parser"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"

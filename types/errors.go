@@ -14,9 +14,9 @@
 package types
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	parser_types "github.com/pingcap/parser/types"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/terror"
+	parser_types "github.com/zhaoxiaojie0415/parser/types"
 )
 
 var (

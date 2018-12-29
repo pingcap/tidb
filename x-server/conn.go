@@ -18,7 +18,7 @@ import (
 	"net"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/util/arena"
 	log "github.com/sirupsen/logrus"
 )

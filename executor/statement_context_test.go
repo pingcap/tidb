@@ -18,7 +18,7 @@ import (
 	"unicode/utf8"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
 )

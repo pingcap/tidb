@@ -17,7 +17,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

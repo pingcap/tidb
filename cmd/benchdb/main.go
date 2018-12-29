@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/tikv"

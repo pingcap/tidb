@@ -21,11 +21,11 @@ import (
 	"io"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
-	ast "github.com/pingcap/parser/types"
+	"github.com/zhaoxiaojie0415/parser/charset"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/opcode"
+	"github.com/zhaoxiaojie0415/parser/terror"
+	ast "github.com/zhaoxiaojie0415/parser/types"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.

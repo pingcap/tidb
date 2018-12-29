@@ -27,9 +27,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/auth"
+	"github.com/zhaoxiaojie0415/parser/mysql"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -212,13 +212,13 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql VARCHAR(1024) NOT NULL,
-		bind_sql VARCHAR(1024) NOT NULL,
-		db VARCHAR(1024) NOT NULL,
+		original_sql varchar(1024) NOT NULL  ,
+      	bind_sql varchar(1024) NOT NULL ,
+      	default_db varchar(1024)  NOT NULL,
 		status int(10) NOT NULL DEFAULT 1,
-		create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		UNIQUE index orisql (original_sql)
+		create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ 		UNIQUE KEY sql_db (original_sql, default_db)
 	); `
 )
 

@@ -17,7 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
+	"github.com/zhaoxiaojie0415/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 )

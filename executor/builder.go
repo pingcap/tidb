@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/infobind"
 	"math"
 	"sort"
 	"strings"
@@ -27,9 +26,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -50,6 +46,9 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/zhaoxiaojie0415/parser/ast"
+	"github.com/zhaoxiaojie0415/parser/model"
+	"github.com/zhaoxiaojie0415/parser/mysql"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -198,17 +197,14 @@ func (b *executorBuilder) buildCreateBind(v *plannercore.CreateBindPlan) Executo
 
 	databases := make([]string , 0)
 	databases = append(databases , v.DefaultDb)
-	bindData := &infobind.BindData{
-		Ast : v.BindStmt,
-		DB: databases,
-	}
+
 	e := &CreateBindExec{
 		baseExecutor: base,
 		originSql:    v.OriginSql,
 		bindSql:      v.BindSql,
 		defaultDb:    v.DefaultDb,
 		isGlobal:     v.IsGlobal,
-		bindData:     bindData,
+		bindAst:     v.BindStmt,
 	}
 	return e
 }

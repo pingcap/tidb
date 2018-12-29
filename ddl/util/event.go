@@ -16,7 +16,7 @@ package util
 import (
 	"fmt"
 
-	"github.com/pingcap/parser/model"
+	"github.com/zhaoxiaojie0415/parser/model"
 )
 
 // Event is an event that a ddl operation happened.

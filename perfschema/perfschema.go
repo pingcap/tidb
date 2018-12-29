@@ -14,7 +14,7 @@
 package perfschema
 
 import (
-	"github.com/pingcap/parser/model"
+	"github.com/zhaoxiaojie0415/parser/model"
 	"github.com/pingcap/tidb/table"
 )
 

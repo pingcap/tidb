@@ -21,7 +21,7 @@ import (
 
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
+	"github.com/zhaoxiaojie0415/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	. "github.com/pingcap/tidb/store/tikv"

@@ -15,7 +15,7 @@ package infoschema_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/auth"
+	"github.com/zhaoxiaojie0415/parser/auth"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
