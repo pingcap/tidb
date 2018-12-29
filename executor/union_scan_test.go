@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -76,6 +78,21 @@ func (s *testSuite2) TestDirtyTransaction(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values(1, 2, 3, 4)")
 	tk.MustQuery("select * from t use index(idx) where c > 1 and d = 4").Check(testkit.Rows("1 2 3 4"))
+	tk.MustExec("commit")
+
+	// Test partitioned table use wrong table ID.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (c1 smallint(6) NOT NULL, c2 char(5) DEFAULT NULL) PARTITION BY RANGE ( c1 ) (
+			PARTITION p0 VALUES LESS THAN (10),
+			PARTITION p1 VALUES LESS THAN (20),
+			PARTITION p2 VALUES LESS THAN (30),
+			PARTITION p3 VALUES LESS THAN (MAXVALUE)
+	)`)
+	tk.MustExec("begin")
+	time.Sleep(3)
+	tk.MustExec("insert into t values (1, 1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t where c1 < 5").Check(testkit.Rows("1 1"))
 	tk.MustExec("commit")
 }
 

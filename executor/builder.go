@@ -771,6 +771,16 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.conditions = v.Conditions
 		us.columns = x.columns
 		err = us.buildAndSortAddedRows()
+	case *UnionExec:
+		// For partitioned table, table reader may be transformed to UnionAll.
+		if x.fromPartition != nil {
+			us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.fromPartition.Meta().ID)
+			us.conditions = v.Conditions
+			us.columns = x.fromPartition.Meta().Cols()
+			err = us.buildAndSortAddedRows()
+		} else {
+			return reader, nil
+		}
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return reader, nil
@@ -1332,7 +1342,8 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 		}
 	}
 	e := &UnionExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExecs...),
+		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExecs...),
+		fromPartition: v.FromPartition,
 	}
 	return e
 }
