@@ -737,10 +737,8 @@ func splitDateTime(format string, fsp int, selfDecideFsp bool, isFloat bool) (se
 	format = strings.TrimSpace(format)
 	realFsp = fsp
 	var lastSepChar uint8 = 0
-	//var currentSepChar uint8 = 0
 	var totalPartCount = 0
-	//var seps = make([]string, 0, maxSQLTimeParts)
-	if len(format) == 0 {
+-	if len(format) == 0 {
 		return
 	}
 
