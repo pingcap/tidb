@@ -877,18 +877,12 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			charset := table.Charset
-			definer := ""
 			if collation == "" {
 				collation = mysql.DefaultCollationName
 			}
 			if charset == "" {
 				charset = mysql.DefaultCharset
 			}
-			/*
-				if table.View.Definer != nil {
-					definer = table.View.Definer.String()
-				}
-			*/
 			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
@@ -900,7 +894,7 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 					table.View.SelectStmt,           // VIEW_DEFINITION
 					table.View.CheckOption.String(), // CHECK_OPTION
 					"NO",                            // IS_UPDATABLE
-					definer,                         // DEFINER
+					table.View.Definer.String(),     // DEFINER
 					table.View.Security.String(),    // SECURITY_TYPE
 					charset,                         // CHARACTER_SET_CLIENT
 					collation,                       // COLLATION_CONNECTION
