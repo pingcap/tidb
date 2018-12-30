@@ -701,23 +701,23 @@ func nextTimePart(format string, start, totalPartCount int, lastSepChar uint8) (
 	}
 
 	for ; i < len(format); i++ {
-		var isNumberI_1 = unicode.IsNumber(rune(format[i-1]))
+		var isNumberI1 = unicode.IsNumber(rune(format[i-1]))
 		var isNumberI = unicode.IsNumber(rune(format[i]))
 
 		//if i-1 is not number,i is number,meaning the beginning of one sep
-		if !isNumberI_1 && isNumberI {
+		if !isNumberI1 && isNumberI {
 			start = i
 			currentSepChar = 0
 			continue
 		}
 
-		if totalPartCount >= 4 && !isNumberI_1 && unicode.IsLetter(rune(format[i])) {
+		if totalPartCount >= 4 && !isNumberI1 && unicode.IsLetter(rune(format[i])) {
 			warn = ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format)
 			err = nil
 			return
 		}
 
-		if isNumberI_1 && !isNumberI {
+		if isNumberI1 && !isNumberI {
 			currentPart = format[start:i]
 			currentSepChar = format[i]
 			nextStart = i + 1
@@ -738,7 +738,7 @@ func splitDateTime(format string, fsp int, selfDecideFsp bool, isFloat bool) (se
 	realFsp = fsp
 	var lastSepChar uint8 = 0
 	var totalPartCount = 0
--	if len(format) == 0 {
+	if len(format) == 0 {
 		return
 	}
 
