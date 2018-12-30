@@ -84,6 +84,7 @@ type Server struct {
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
 	capability        uint32
+	startTime         time.Time
 
 	// stopListenerCh is used when a critical error occurred, we don't want to exit the process, because there may be
 	// a supervisor automatically restart it, then new client connection will be created, but we can't server it.
@@ -142,6 +143,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		rwlock:            &sync.RWMutex{},
 		clients:           make(map[uint32]*clientConn),
 		stopListenerCh:    make(chan struct{}, 1),
+		startTime:         time.Now(),
 	}
 	s.loadTLSCertificates()
 
@@ -176,6 +178,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	variable.RegisterStatistics(s)
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
