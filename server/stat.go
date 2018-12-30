@@ -14,8 +14,9 @@
 package server
 
 import (
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"time"
+
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 var (
