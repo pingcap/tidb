@@ -875,6 +875,9 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
+			if !table.IsView() {
+				continue
+			}
 			collation := table.Collate
 			charset := table.Charset
 			if collation == "" {
@@ -886,21 +889,19 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-			if table.IsView() {
-				record := types.MakeDatums(
-					catalogVal,                      // TABLE_CATALOG
-					schema.Name.O,                   // TABLE_SCHEMA
-					table.Name.O,                    // TABLE_NAME
-					table.View.SelectStmt,           // VIEW_DEFINITION
-					table.View.CheckOption.String(), // CHECK_OPTION
-					"NO",                            // IS_UPDATABLE
-					table.View.Definer.String(),     // DEFINER
-					table.View.Security.String(),    // SECURITY_TYPE
-					charset,                         // CHARACTER_SET_CLIENT
-					collation,                       // COLLATION_CONNECTION
-				)
-				rows = append(rows, record)
-			}
+			record := types.MakeDatums(
+				catalogVal,                      // TABLE_CATALOG
+				schema.Name.O,                   // TABLE_SCHEMA
+				table.Name.O,                    // TABLE_NAME
+				table.View.SelectStmt,           // VIEW_DEFINITION
+				table.View.CheckOption.String(), // CHECK_OPTION
+				"NO",                            // IS_UPDATABLE
+				table.View.Definer.String(),     // DEFINER
+				table.View.Security.String(),    // SECURITY_TYPE
+				charset,                         // CHARACTER_SET_CLIENT
+				collation,                       // COLLATION_CONNECTION
+			)
+			rows = append(rows, record)
 		}
 	}
 	return rows, nil
