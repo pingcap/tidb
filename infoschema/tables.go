@@ -871,24 +871,24 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 }
 
 func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-
 	checker := privilege.GetPrivilegeManager(ctx)
-
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			collation := table.Collate
 			charset := table.Charset
-			var definer string
+			definer := ""
 			if collation == "" {
 				collation = mysql.DefaultCollationName
 			}
 			if charset == "" {
 				charset = mysql.DefaultCharset
 			}
-			if table.View.Definer != nil {
-				definer = table.View.Definer.String()
-			}
+			/*
+				if table.View.Definer != nil {
+					definer = table.View.Definer.String()
+				}
+			*/
 			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}

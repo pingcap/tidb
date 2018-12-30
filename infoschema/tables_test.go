@@ -205,6 +205,6 @@ func (s *testSuite) TestViews(c *C) {
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("CREATE VIEW test.v1 AS SELECT 1")
-	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 CASCADED NO <nil> DEFINER utf8mb4 utf8mb4_bin"))
+	tk.MustQuery("SELECT * FROM information_schema.views WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 SELECT 1 CASCADED NO  DEFINER utf8mb4 utf8mb4_bin"))
 	tk.MustQuery("SELECT * FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
 }
