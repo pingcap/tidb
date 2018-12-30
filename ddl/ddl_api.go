@@ -2219,7 +2219,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil || tb.Meta().IsView() {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
 
 	job := &model.Job{
@@ -2244,11 +2244,11 @@ func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
 
 	if !tb.Meta().IsView() {
-		return errors.Trace(infoschema.ErrTableIsNotView.GenWithStackByArgs(ti.Schema, ti.Name))
+		return ErrTableIsNotView.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
 
 	job := &model.Job{

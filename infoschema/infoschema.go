@@ -58,8 +58,6 @@ var (
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
-	// ErrTableIsNotView returns for table is not view.
-	ErrTableIsNotView = terror.ClassSchema.New(codeTableIsNotView, "'%s.%s' is not VIEW")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -295,7 +293,6 @@ const (
 	codeDatabaseNotExists                = 1049
 	codeTableNotExists                   = 1146
 	codeColumnNotExists                  = 1054
-	codeTableIsNotView                   = 1347
 
 	codeCannotAddForeign    = 1215
 	codeForeignKeyNotExists = 1091
@@ -330,7 +327,6 @@ func init() {
 		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
 		codeKeyNameDuplicate:    mysql.ErrDupKeyName,
 		codeKeyNotExists:        mysql.ErrKeyDoesNotExist,
-		codeTableIsNotView:      mysql.ErrWrongObject,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()
