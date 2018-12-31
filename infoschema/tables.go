@@ -988,7 +988,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					nil,           // INDEX_LENGTH
 					nil,           // DATA_FREE
 					nil,           // AUTO_INCREMENT
-					nil,           // CREATE_TIME
+					createTime,    // CREATE_TIME
 					nil,           // UPDATE_TIME
 					nil,           // CHECK_TIME
 					nil,           // TABLE_COLLATION
