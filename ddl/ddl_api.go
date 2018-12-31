@@ -1270,15 +1270,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	is := d.GetInformationSchema(ctx)
-	_, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists)
-	}
-	t, err := is.TableByName(ident.Schema, ident.Name)
-	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
-	}
-	if t.Meta().IsView() {
+	t, _ := is.TableByName(ident.Schema, ident.Name)
+	if t != nil && t.Meta().IsView() {
 		return ErrTableIsNotBaseTable.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
 
