@@ -637,7 +637,7 @@ func parseWhenLen6(lastSepChar uint8, selfDecideFsp bool, currentPart string, re
 	return seps, realFsp
 }
 
-func parseWhenLenLess6(format string, lastSepChar uint8, currentSepChar uint8, currentPart string, totalPartCountIn int, sepsIn []string) (totalPartCount int, seps []string, warn, err error) {
+func parseWhenLenLess6(format string, lastSepChar uint8, currentSepChar uint8, currentPart string, totalPartCountIn int, sepsIn []string) (totalPartCount int, seps []string, warnMsg string, err error) {
 	seps = sepsIn
 	totalPartCount = totalPartCountIn
 	if lastSepChar == '-' || currentSepChar == '-' {
@@ -661,7 +661,7 @@ func parseWhenLenLess6(format string, lastSepChar uint8, currentSepChar uint8, c
 			totalPartCount = totalPartCount + 1
 		}
 		if len(seps) == MaxLenTemp && j < validLen {
-			warn = ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format)
+			warnMsg = "datetime"
 			return
 		}
 	}
@@ -674,7 +674,7 @@ func parseOnePartAsWhole(currentPart string, totalPartCount *int, seps []string)
 	return seps, nil
 }
 
-func parseOnePart(format string, lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, currentPart string, realFspIn int, totalPartCountIn int, sepsIn []string) (realFsp, totalPartCount int, seps []string, warn error, err error) {
+func parseOnePart(format string, lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, currentPart string, realFspIn int, totalPartCountIn int, sepsIn []string) (realFsp, totalPartCount int, seps []string, warnMsg string, err error) {
 	realFsp = realFspIn
 	totalPartCount = totalPartCountIn
 	seps = sepsIn
@@ -684,7 +684,7 @@ func parseOnePart(format string, lastSepChar uint8, currentSepChar uint8, selfDe
 		seps, realFsp = parseWhenLen6(lastSepChar, selfDecideFsp, currentPart, realFsp, seps)
 	} else {
 		if lastSepChar == '.' { //'2017.0112 00~00~00.333' -> 2017-01-12 00:00:00.333
-			totalPartCount, seps, warn, err = parseWhenLenLess6(format, lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
+			totalPartCount, seps, warnMsg, err = parseWhenLenLess6(format, lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
 		} else { //'2017@0112 00~00~00.333' -> Incorrect DATETIME value
 			seps, err = parseOnePartAsWhole(currentPart, &totalPartCount, seps)
 		}
@@ -692,11 +692,11 @@ func parseOnePart(format string, lastSepChar uint8, currentSepChar uint8, selfDe
 	return
 }
 
-func nextTimePart(format string, start, totalPartCount int, lastSepChar uint8) (currentSepChar uint8, currentPart string, nextStart int, warn error, err error) {
+func nextTimePart(format string, start, totalPartCount int, lastSepChar uint8) (currentSepChar uint8, currentPart string, nextStart int, warnMsg string, err error) {
 	var i = start + 1
 	if '.' == lastSepChar && !unicode.IsNumber(rune(format[start])) {
 		//"1101020304.a5aaaaa" => "2011-01-02 03:04:00"
-		warn = ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format)
+		warnMsg = "datetime"
 		return
 	}
 
@@ -712,7 +712,7 @@ func nextTimePart(format string, start, totalPartCount int, lastSepChar uint8) (
 		}
 
 		if totalPartCount >= 4 && !isNumberI1 && unicode.IsLetter(rune(format[i])) {
-			warn = ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format)
+			warnMsg = "datetime"
 			err = nil
 			return
 		}
@@ -733,7 +733,7 @@ func nextTimePart(format string, start, totalPartCount int, lastSepChar uint8) (
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 // The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
-func splitDateTime(format string, fsp int, selfDecideFsp bool, isFloat bool) (seps []string, realFsp int, warn error, err error) {
+func splitDateTime(format string, fsp int, selfDecideFsp bool, isFloat bool) (seps []string, realFsp int, warnMsg string, err error) {
 	format = strings.TrimSpace(format)
 	realFsp = fsp
 	var lastSepChar uint8 = 0
@@ -756,14 +756,14 @@ func splitDateTime(format string, fsp int, selfDecideFsp bool, isFloat bool) (se
 			return
 		}
 
-		var currentSepChar, currentPart, nextStart, warnRet, errRet = nextTimePart(format, start, totalPartCount, lastSepChar)
+		var currentSepChar, currentPart, nextStart, warnMsgRet, errRet = nextTimePart(format, start, totalPartCount, lastSepChar)
 		err = errRet
-		warn = warnRet
-		if err != nil || warn != nil {
+		warnMsg = warnMsgRet
+		if err != nil || warnMsg != "" {
 			return
 		}
 
-		realFsp, totalPartCount, seps, warn, err = parseOnePart(format, lastSepChar, currentSepChar, selfDecideFsp, currentPart, realFsp, totalPartCount, seps)
+		realFsp, totalPartCount, seps, warnMsg, err = parseOnePart(format, lastSepChar, currentSepChar, selfDecideFsp, currentPart, realFsp, totalPartCount, seps)
 		if err != nil {
 			return
 		}
@@ -786,7 +786,7 @@ func splitDateTime(format string, fsp int, selfDecideFsp bool, isFloat bool) (se
 		}
 
 		if totalPartCount >= 4 && currentSepChar >= 'A' && currentSepChar <= 'z' { //{"150101.1a1"=>"2015-01-01 01:00:00"},
-			warn = ErrTruncatedWrongValue.GenWithStackByArgs("datetime", format)
+			warnMsg = "datetime"
 			err = nil
 			return
 		}
@@ -948,12 +948,12 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		err                                                 error
 	)
 
-	seps, realFsp, warn, err := splitDateTime(str, fsp, selfDecideFsp, isFloat)
+	seps, realFsp, warnMsg, err := splitDateTime(str, fsp, selfDecideFsp, isFloat)
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
 	}
-	if warn != nil {
-		sc.AppendWarning(warn)
+	if warnMsg != "" {
+		sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(warnMsg, str))
 	}
 
 	var overflow = false
