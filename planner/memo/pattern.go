@@ -106,6 +106,46 @@ func (o Operand) Match(t Operand) bool {
 	return false
 }
 
+func (o Operand) String() (result string) {
+	switch o {
+	case OperandAny:
+		result = "Any "
+	case OperandJoin:
+		result = "Join"
+	case OperandAggregation:
+		result = "Aggregation"
+	case OperandProjection:
+		result = "Projection"
+	case OperandSelection:
+		result = "Selection"
+	case OperandApply:
+		result = "Apply"
+	case OperandMaxOneRow:
+		result = "MaxOneRow"
+	case OperandTableDual:
+		result = "TableDual"
+	case OperandDataSource:
+		result = "DataSource"
+	case OperandUnionScan:
+		result = "UnionScan"
+	case OperandUnionAll:
+		result = "UnionAll"
+	case OperandSort:
+		result = "Sort"
+	case OperandTopN:
+		result = "TopN"
+	case OperandLock:
+		result = "Lock"
+	case OperandLimit:
+		result = "Limit"
+	case OperandUnsupported:
+		result = "Unsupported"
+	default:
+		result = "<Operand.String():FAILED!>"
+	}
+	return result
+}
+
 // Pattern defines the Match pattern for a rule.
 // It describes a piece of logical expression.
 // It's a tree-like structure and each node in the tree is an Operand.
@@ -122,6 +162,24 @@ func NewPattern(operand Operand) *Pattern {
 // SetChildren sets the Children information for a pattern node.
 func (p *Pattern) SetChildren(children ...*Pattern) {
 	p.Children = children
+}
+
+func (p *Pattern) String() (result string) {
+	result = p.Operand.String()
+
+	if len(p.Children) == 0 {
+		return result
+	}
+
+	result += "("
+	for i, numChildren := 0, len(p.Children); i < numChildren; i++ {
+		result += p.Children[i].String()
+		if i+1 < numChildren {
+			result += ", "
+		}
+	}
+
+	return result + ")"
 }
 
 // BuildPattern builds a Pattern from Operand and child Patterns.

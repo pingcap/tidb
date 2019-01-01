@@ -134,5 +134,10 @@ func Convert2Group(node core.LogicalPlan) *Group {
 		childGroup := Convert2Group(child)
 		e.Children = append(e.Children, childGroup)
 	}
-	return NewGroup(e)
+	g := NewGroup(e)
+
+	// Stats property for `Group` would be computed after exploration phase.
+	g.Prop = &property.LogicalProperty{Schema: node.Schema()}
+	return g
+
 }

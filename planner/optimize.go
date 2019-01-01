@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
+	"github.com/pingcap/tidb/planner/transformation"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -63,9 +65,18 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if ctx.GetSessionVars().EnableCascadesPlanner {
-		return cascades.FindBestPlan(ctx, logic)
+		c := cascades.NewDefaultCascadesPlanner(ctx)
+		c.TransformationRules = transformationMap
+		return c.FindBestPlan(logic)
 	}
 	return plannercore.DoOptimize(builder.GetOptFlag(), logic)
+}
+
+var transformationMap = map[memo.Operand][]cascades.Transformation{
+	memo.OperandSelection: {
+		transformation.NewFilterAggregateTransposeRule(),
+	},
+	memo.OperandProjection: nil,
 }
 
 func init() {

@@ -14,11 +14,11 @@
 package transformation
 
 import (
-	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/cascades"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/sessionctx"
@@ -46,9 +46,10 @@ func (s *testFilterSuite) TearDownSuite(c *C) {
 
 func (s *testFilterSuite) TestCoveredByGbyCols(c *C) {
 	charsetInfo, collation := s.sctx.GetSessionVars().GetCharsetInfo()
-	stmts, err := s.Parser.Parse("select count(*), a, b from t group by a, b having a > 10 and b < 10;", charsetInfo, collation)
+	stmts, warns, err := s.Parser.Parse("select count(*), a, b from t group by a, b having a > 10 and b < 10;", charsetInfo, collation)
 	c.Assert(err, IsNil)
-	c.Assert(stmts, HasLen, 1)
+	c.Assert(warns, IsNil)
+	c.Assert(len(stmts), Equals, 1)
 
 	err = core.Preprocess(s.sctx, stmts[0], s.is, false)
 	c.Assert(err, IsNil)
@@ -57,7 +58,7 @@ func (s *testFilterSuite) TestCoveredByGbyCols(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(plan, NotNil)
 
-	logicalPlan, err := core.PreProcess(plan.(core.LogicalPlan))
+	logicalPlan, err := core.PreOptimize(plan.(core.LogicalPlan))
 	c.Assert(err, IsNil)
 	c.Assert(logicalPlan, NotNil)
 
@@ -65,7 +66,20 @@ func (s *testFilterSuite) TestCoveredByGbyCols(c *C) {
 	c.Assert(g, NotNil)
 
 	result := memo.DumpGroupLogicalPlans(g)
-	for i := range result {
-		fmt.Printf("%s\n", result[i])
+	c.Assert(len(result), Equals, 1)
+	c.Assert(result[0], Equals, "Projection_5(Selection_4(Aggregation_2(TableScan_1)))")
+
+	cp := cascades.NewDefaultCascadesPlanner(s.sctx)
+	cp.TransformationRules = map[memo.Operand][]cascades.Transformation{
+		memo.OperandSelection: {
+			NewFilterAggregateTransposeRule(),
+		},
 	}
+
+	err = cp.OnPhaseExploration(g)
+	c.Assert(err, IsNil)
+
+	result = memo.DumpGroupLogicalPlans(g)
+	c.Assert(len(result), Equals, 1)
+	c.Assert(result[0], Equals, "Projection_5(Aggregation_7(Selection_6(TableScan_1)))")
 }

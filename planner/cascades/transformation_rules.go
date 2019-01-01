@@ -14,9 +14,7 @@
 package cascades
 
 import (
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
-	"github.com/pingcap/tidb/planner/transformation"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
@@ -25,17 +23,4 @@ type Transformation interface {
 	GetPattern() *memo.Pattern
 	Match(expr *memo.ExprIter) (matched bool)
 	OnTransform(sctx sessionctx.Context, old *memo.ExprIter) (new *memo.GroupExpr, eraseOld bool, err error)
-}
-
-// GetTransformationRules gets the all the candidate transformation rules based
-// on the logical plan node.
-func GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
-	return transformationMap[memo.GetOperand(node)]
-}
-
-var transformationMap = map[memo.Operand][]Transformation{
-	memo.OperandSelection: {
-		transformation.NewFilterAggregateTransposeRule(),
-	},
-	memo.OperandProjection: nil,
 }

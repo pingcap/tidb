@@ -2,7 +2,7 @@ package transformation
 
 import (
 	"github.com/pingcap/tidb/expression"
-	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/set"
@@ -34,13 +34,13 @@ func (r *FilterAggregateTransposeRule) OnTransform(sctx sessionctx.Context, old 
 		return nil, false, nil
 	}
 	// construct the first selection before aggregation.
-	newSel := plannercore.LogicalSelection{Conditions: pushed}.Init(sctx)
+	newSel := core.LogicalSelection{Conditions: pushed}.Init(sctx)
 	newSelGroupExpr := memo.NewGroupExpr(newSel)
 	newSelGroupExpr.Children = aggGroupExpr.Children
 	newSelGroup := memo.NewGroup(newSelGroupExpr)
 	// construct the new aggregation upon the new selection.
-	agg := aggGroupExpr.ExprNode.(*plannercore.LogicalAggregation)
-	newAgg := plannercore.LogicalAggregation{
+	agg := aggGroupExpr.ExprNode.(*core.LogicalAggregation)
+	newAgg := core.LogicalAggregation{
 		AggFuncs:     agg.AggFuncs,
 		GroupByItems: agg.GroupByItems,
 	}.Init(sctx)
@@ -52,15 +52,15 @@ func (r *FilterAggregateTransposeRule) OnTransform(sctx sessionctx.Context, old 
 	}
 	// otherwise, construct a new selection upon the new aggregation.
 	newAggGroup := memo.NewGroup(newAggGroupExpr)
-	newSel = plannercore.LogicalSelection{Conditions: remained}.Init(sctx)
+	newSel = core.LogicalSelection{Conditions: remained}.Init(sctx)
 	newSelGroupExpr = memo.NewGroupExpr(newSel)
 	newSelGroupExpr.Children = []*memo.Group{newAggGroup}
 	return newSelGroupExpr, true, nil
 }
 
 func (r *FilterAggregateTransposeRule) collectPushedFilters(selGroupExpr, aggGroupExpr *memo.GroupExpr) (pushed, remained []expression.Expression) {
-	sel := selGroupExpr.ExprNode.(*plannercore.LogicalSelection)
-	agg := aggGroupExpr.ExprNode.(*plannercore.LogicalAggregation)
+	sel := selGroupExpr.ExprNode.(*core.LogicalSelection)
+	agg := aggGroupExpr.ExprNode.(*core.LogicalAggregation)
 	gbyColIds := r.collectGbyCols(agg)
 	for _, cond := range sel.Conditions {
 		if !r.coveredByGbyCols(cond, gbyColIds) {
@@ -78,7 +78,7 @@ func (r *FilterAggregateTransposeRule) collectPushedFilters(selGroupExpr, aggGro
 	return pushed, remained
 }
 
-func (r *FilterAggregateTransposeRule) collectGbyCols(agg *plannercore.LogicalAggregation) set.Int64Set {
+func (r *FilterAggregateTransposeRule) collectGbyCols(agg *core.LogicalAggregation) set.Int64Set {
 	gbyColIds := set.NewInt64Set()
 	for i := range agg.GroupByItems {
 		gbyCol, isCol := agg.GroupByItems[i].(*expression.Column)

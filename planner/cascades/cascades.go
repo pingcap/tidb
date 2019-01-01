@@ -23,22 +23,47 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
+// Cascades implements the cascades planner.
+type Cascades struct {
+	// SCtx is the session context.
+	SCtx sessionctx.Context
+
+	// TransformationRules is the registered transformation rules.
+	// NOTE: read-only, should not be modified during the optimization.
+	TransformationRules map[memo.Operand][]Transformation
+
+	// ImplementationRules is the registered implementation rules.
+	// NOTE: read-only, should not be modified during the optimization.
+	ImplementationRules map[memo.Operand][]ImplementationRule
+
+	// mapExpr2Group maps a GroupExpr to its Group.
+	mapExpr2Group map[string]*memo.Group
+}
+
+func NewDefaultCascadesPlanner(sctx sessionctx.Context) *Cascades {
+	return &Cascades{
+		SCtx:                sctx,
+		ImplementationRules: implementationMap,
+		mapExpr2Group:       make(map[string]*memo.Group),
+	}
+}
+
 // FindBestPlan is the optimization entrance of the cascades planner. The
 // optimization is composed of 2 phases: exploration and implementation.
-func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (plannercore.Plan, error) {
+func (c *Cascades) FindBestPlan(logical plannercore.LogicalPlan) (plannercore.Plan, error) {
 	rootGroup := memo.Convert2Group(logical)
-	err := OnPhaseExploration(sctx, rootGroup)
+	err := c.OnPhaseExploration(rootGroup)
 	if err != nil {
 		return nil, err
 	}
-	best, err := onPhaseImplementation(sctx, rootGroup)
+	best, err := c.onPhaseImplementation(rootGroup)
 	return best, err
 }
 
 // OnPhaseExploration is the exploration phase.
-func OnPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
+func (c *Cascades) OnPhaseExploration(g *memo.Group) error {
 	for !g.Explored {
-		err := exploreGroup(sctx, g)
+		err := c.exploreGroup(g)
 		if err != nil {
 			return err
 		}
@@ -46,13 +71,13 @@ func OnPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
 	return nil
 }
 
-func exploreGroup(sctx sessionctx.Context, g *memo.Group) error {
+func (c *Cascades) exploreGroup(g *memo.Group) error {
 	if g.Explored {
 		return nil
 	}
 
 	g.Explored = true
-	for elem := g.Equivalents.Front(); elem != nil; elem.Next() {
+	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		curExpr := elem.Value.(*memo.GroupExpr)
 		if curExpr.Explored {
 			continue
@@ -61,13 +86,13 @@ func exploreGroup(sctx sessionctx.Context, g *memo.Group) error {
 		// Explore child groups firstly.
 		curExpr.Explored = true
 		for _, childGroup := range curExpr.Children {
-			if err := exploreGroup(sctx, childGroup); err != nil {
+			if err := c.exploreGroup(childGroup); err != nil {
 				return err
 			}
 			curExpr.Explored = curExpr.Explored && childGroup.Explored
 		}
 
-		eraseCur, err := findMoreEquiv(sctx, g, elem)
+		eraseCur, err := c.findMoreEquiv(g, elem)
 		if err != nil {
 			return err
 		}
@@ -81,9 +106,9 @@ func exploreGroup(sctx sessionctx.Context, g *memo.Group) error {
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func findMoreEquiv(sctx sessionctx.Context, g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
+func (c *Cascades) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
 	expr := elem.Value.(*memo.GroupExpr)
-	for _, rule := range GetTransformationRules(expr.ExprNode) {
+	for _, rule := range c.GetTransformationRules(expr.ExprNode) {
 		pattern := rule.GetPattern()
 		if !pattern.Operand.Match(memo.GetOperand(expr.ExprNode)) {
 			continue
@@ -96,7 +121,7 @@ func findMoreEquiv(sctx sessionctx.Context, g *memo.Group, elem *list.Element) (
 				continue
 			}
 
-			newExpr, erase, err := rule.OnTransform(sctx, iter)
+			newExpr, erase, err := rule.OnTransform(c.SCtx, iter)
 			if err != nil {
 				return false, err
 			}
@@ -122,35 +147,19 @@ func findMoreEquiv(sctx sessionctx.Context, g *memo.Group, elem *list.Element) (
 	return eraseCur, nil
 }
 
-// fillGroupStats computes Stats property for each Group recursively.
-func fillGroupStats(g *memo.Group) (err error) {
-	if g.Prop.Stats != nil {
-		return nil
-	}
-	// All GroupExpr in a Group should share same LogicalProperty, so just use
-	// first one to compute Stats property.
-	elem := g.Equivalents.Front()
-	expr := elem.Value.(*memo.GroupExpr)
-	childStats := make([]*property.StatsInfo, len(expr.Children))
-	for i, childGroup := range expr.Children {
-		err = fillGroupStats(childGroup)
-		if err != nil {
-			return err
-		}
-		childStats[i] = childGroup.Prop.Stats
-	}
-	planNode := expr.ExprNode
-	g.Prop.Stats, err = planNode.DeriveStats(childStats)
-	return err
+// GetTransformationRules gets the all the candidate transformation rules based
+// on the logical plan node.
+func (c *Cascades) GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
+	return c.TransformationRules[memo.GetOperand(node)]
 }
 
 // onPhaseImplementation starts implementation physical operators from given root Group.
-func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.Plan, error) {
+func (c *Cascades) onPhaseImplementation(g *memo.Group) (plannercore.Plan, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
-	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
-	impl, err := implGroup(g, prop, math.MaxFloat64)
+	// TODO replace MaxFloat64 costLimit by variable from c.SCtx, or other sources.
+	impl, err := c.implGroup(g, prop, math.MaxFloat64)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +170,7 @@ func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.
 }
 
 // implGroup picks one implementation with lowest cost for a Group, which satisfies specified physical property.
-func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit float64) (memo.Implementation, error) {
+func (c *Cascades) implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit float64) (memo.Implementation, error) {
 	groupImpl := g.GetImpl(reqPhysProp)
 	if groupImpl != nil {
 		if groupImpl.GetCost() <= costLimit {
@@ -173,14 +182,14 @@ func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit 
 	var cumCost float64
 	var childCosts []float64
 	var childPlans []plannercore.PhysicalPlan
-	err := fillGroupStats(g)
+	err := c.fillGroupStats(g)
 	if err != nil {
 		return nil, err
 	}
 	outCount := math.Min(g.Prop.Stats.RowCount, reqPhysProp.ExpectedCnt)
 	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		curExpr := elem.Value.(*memo.GroupExpr)
-		impls, err := implGroupExpr(curExpr, reqPhysProp)
+		impls, err := c.implGroupExpr(curExpr, reqPhysProp)
 		if err != nil {
 			return nil, err
 		}
@@ -189,7 +198,7 @@ func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit 
 			childCosts = childCosts[:0]
 			childPlans = childPlans[:0]
 			for i, childGroup := range curExpr.Children {
-				childImpl, err := implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
+				childImpl, err := c.implGroup(childGroup, impl.GetPlan().GetChildReqProps(i), costLimit-cumCost)
 				if err != nil {
 					return nil, err
 				}
@@ -220,7 +229,7 @@ func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit 
 	for _, rule := range GetEnforcerRules(reqPhysProp) {
 		newReqPhysProp := rule.NewProperty(reqPhysProp)
 		enforceCost := rule.GetEnforceCost(outCount)
-		childImpl, err := implGroup(g, newReqPhysProp, costLimit-enforceCost)
+		childImpl, err := c.implGroup(g, newReqPhysProp, costLimit-enforceCost)
 		if err != nil {
 			return nil, err
 		}
@@ -242,8 +251,30 @@ func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit 
 	return groupImpl, nil
 }
 
-func implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.PhysicalProperty) (impls []memo.Implementation, err error) {
-	for _, rule := range GetImplementationRules(cur.ExprNode) {
+// fillGroupStats computes Stats property for each Group recursively.
+func (c *Cascades) fillGroupStats(g *memo.Group) (err error) {
+	if g.Prop.Stats != nil {
+		return nil
+	}
+	// All GroupExpr in a Group should share same LogicalProperty, so just use
+	// first one to compute Stats property.
+	elem := g.Equivalents.Front()
+	expr := elem.Value.(*memo.GroupExpr)
+	childStats := make([]*property.StatsInfo, len(expr.Children))
+	for i, childGroup := range expr.Children {
+		err = c.fillGroupStats(childGroup)
+		if err != nil {
+			return err
+		}
+		childStats[i] = childGroup.Prop.Stats
+	}
+	planNode := expr.ExprNode
+	g.Prop.Stats, err = planNode.DeriveStats(childStats)
+	return err
+}
+
+func (c *Cascades) implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.PhysicalProperty) (impls []memo.Implementation, err error) {
+	for _, rule := range c.GetImplementationRules(cur.ExprNode) {
 		if !rule.Match(cur, reqPhysProp) {
 			continue
 		}
@@ -254,4 +285,10 @@ func implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.PhysicalProperty) 
 		impls = append(impls, impl)
 	}
 	return impls, nil
+}
+
+// GetImplementationRules gets the all the candidate implementation rules based
+// on the logical plan node.
+func (c *Cascades) GetImplementationRules(node plannercore.LogicalPlan) []ImplementationRule {
+	return c.ImplementationRules[memo.GetOperand(node)]
 }

@@ -63,7 +63,8 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
-	impl, err := implGroup(rootGroup, prop, 0.0)
+	cp := NewDefaultCascadesPlanner(s.sctx)
+	impl, err := cp.implGroup(rootGroup, prop, 0.0)
 	c.Assert(impl, IsNil)
 	c.Assert(err, IsNil)
 }
@@ -90,7 +91,8 @@ func (s *testCascadesSuite) TestFillGroupStats(c *C) {
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
 	rootGroup := memo.Convert2Group(logic)
-	err = fillGroupStats(rootGroup)
+	cp := NewDefaultCascadesPlanner(s.sctx)
+	err = cp.fillGroupStats(rootGroup)
 	c.Assert(err, IsNil)
 	c.Assert(rootGroup.Prop.Stats, NotNil)
 }

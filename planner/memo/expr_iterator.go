@@ -149,7 +149,7 @@ func NewExprIterFromGroupElem(elem *list.Element, p *Pattern) *ExprIter {
 
 // newExprIterFromGroupExpr creates the iterator on the Group expression.
 func newExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
-	if len(p.Children) != len(expr.Children) {
+	if len(p.Children) != len(expr.Children) && len(p.Children) != 0 {
 		return nil
 	}
 
