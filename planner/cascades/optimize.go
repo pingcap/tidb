@@ -27,12 +27,10 @@ import (
 // optimization is composed of 2 phases: exploration and implementation.
 func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (plannercore.Plan, error) {
 	rootGroup := memo.Convert2Group(logical)
-
 	err := OnPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, err
 	}
-
 	best, err := onPhaseImplementation(sctx, rootGroup)
 	return best, err
 }
@@ -63,7 +61,9 @@ func exploreGroup(sctx sessionctx.Context, g *memo.Group) error {
 		// Explore child groups firstly.
 		curExpr.Explored = true
 		for _, childGroup := range curExpr.Children {
-			exploreGroup(sctx, childGroup)
+			if err := exploreGroup(sctx, childGroup); err != nil {
+				return err
+			}
 			curExpr.Explored = curExpr.Explored && childGroup.Explored
 		}
 
@@ -122,7 +122,29 @@ func findMoreEquiv(sctx sessionctx.Context, g *memo.Group, elem *list.Element) (
 	return eraseCur, nil
 }
 
-// onPhaseImplementation starts implementating physical operators from given root Group.
+// fillGroupStats computes Stats property for each Group recursively.
+func fillGroupStats(g *memo.Group) (err error) {
+	if g.Prop.Stats != nil {
+		return nil
+	}
+	// All GroupExpr in a Group should share same LogicalProperty, so just use
+	// first one to compute Stats property.
+	elem := g.Equivalents.Front()
+	expr := elem.Value.(*memo.GroupExpr)
+	childStats := make([]*property.StatsInfo, len(expr.Children))
+	for i, childGroup := range expr.Children {
+		err = fillGroupStats(childGroup)
+		if err != nil {
+			return err
+		}
+		childStats[i] = childGroup.Prop.Stats
+	}
+	planNode := expr.ExprNode
+	g.Prop.Stats, err = planNode.DeriveStats(childStats)
+	return err
+}
+
+// onPhaseImplementation starts implementation physical operators from given root Group.
 func onPhaseImplementation(sctx sessionctx.Context, g *memo.Group) (plannercore.Plan, error) {
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
@@ -151,7 +173,11 @@ func implGroup(g *memo.Group, reqPhysProp *property.PhysicalProperty, costLimit 
 	var cumCost float64
 	var childCosts []float64
 	var childPlans []plannercore.PhysicalPlan
-	outCount := math.Min(g.LogicalProperty.Stats.RowCount, reqPhysProp.ExpectedCnt)
+	err := fillGroupStats(g)
+	if err != nil {
+		return nil, err
+	}
+	outCount := math.Min(g.Prop.Stats.RowCount, reqPhysProp.ExpectedCnt)
 	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		curExpr := elem.Value.(*memo.GroupExpr)
 		impls, err := implGroupExpr(curExpr, reqPhysProp)

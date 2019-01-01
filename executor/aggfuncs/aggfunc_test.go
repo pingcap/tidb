@@ -28,6 +28,7 @@ var _ = Suite(&testSuite{})
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
 	TestingT(t)
 }
 

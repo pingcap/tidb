@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
@@ -99,16 +100,16 @@ func (p *mockBinlogPump) WriteBinlog(ctx context.Context, in *binlog.WriteBinlog
 	return &binlog.WriteBinlogResp{}, nil
 }
 
-type mockPump_PullBinlogsClient struct {
+type mockPumpPullBinlogsClient struct {
 	grpc.ClientStream
 }
 
-func (m mockPump_PullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
+func (m mockPumpPullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
 	return nil, nil
 }
 
 func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return mockPump_PullBinlogsClient{mocktikv.MockGRPCClientStream()}, nil
+	return mockPumpPullBinlogsClient{mocktikv.MockGRPCClientStream()}, nil
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
@@ -233,14 +234,59 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 2)
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
+func (s *testSessionSuite) TestLastMessage(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id TEXT)")
+
+	// Insert
+	tk.MustExec(`INSERT INTO t VALUES ("a");`)
+	tk.CheckLastMessage("")
+	tk.MustExec(`INSERT INTO t VALUES ("b"), ("c");`)
+	tk.CheckLastMessage("Records: 2  Duplicates: 0  Warnings: 0")
+
+	// Update
+	tk.MustExec(`UPDATE t set id = 'c' where id = 'a';`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 1)
+	tk.CheckLastMessage("Rows matched: 1  Changed: 1  Warnings: 0")
+	tk.MustExec(`UPDATE t set id = 'a' where id = 'a';`)
+	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
+	tk.CheckLastMessage("Rows matched: 0  Changed: 0  Warnings: 0")
+
+	// Replace
+	tk.MustExec(`drop table if exists t, t1;
+        create table t (c1 int PRIMARY KEY, c2 int);
+        create table t1 (a1 int, a2 int);`)
+	tk.MustExec(`INSERT INTO t VALUES (1,1)`)
+	tk.MustExec(`REPLACE INTO t VALUES (2,2)`)
+	tk.CheckLastMessage("")
+	tk.MustExec(`INSERT INTO t1 VALUES (1,10), (3,30);`)
+	tk.CheckLastMessage("Records: 2  Duplicates: 0  Warnings: 0")
+	tk.MustExec(`REPLACE INTO t SELECT * from t1`)
+	tk.CheckLastMessage("Records: 2  Duplicates: 1  Warnings: 0")
+
+	// Check insert with CLIENT_FOUND_ROWS is set
+	tk.Se.SetClientCapability(mysql.ClientFoundRows)
+	tk.MustExec(`drop table if exists t, t1;
+        create table t (c1 int PRIMARY KEY, c2 int);
+        create table t1 (a1 int, a2 int);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1, 10), (2, 2), (3, 30);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1, 10), (2, 20), (3, 30);`)
+	tk.MustExec(`INSERT INTO t SELECT * FROM t1 ON DUPLICATE KEY UPDATE c2=a2;`)
+	tk.CheckLastMessage("Records: 6  Duplicates: 3  Warnings: 0")
+}
+
+// TestRowLock . See http://dev.mysql.com/doc/refman/5.7/en/commit.html.
 func (s *testSessionSuite) TestRowLock(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 	tk.MustExec("insert t values (12, 2, 3)")
@@ -269,7 +315,7 @@ func (s *testSessionSuite) TestRowLock(c *C) {
 	tk1.MustExec("commit")
 }
 
-// See https://dev.mysql.com/doc/internals/en/status-flags.html
+// TestAutocommit . See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestAutocommit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -327,7 +373,9 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("set @@autocommit = 0")
-	c.Assert(tk.Se.Txn(false).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
@@ -343,15 +391,21 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 
 	// Begin statement should start a new transaction.
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
 
 	tk.MustExec("select * from t")
-	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
 
 	tk.MustExec("insert into t values (1)")
-	c.Assert(tk.Se.Txn(false).Valid(), IsTrue)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
 }
 
@@ -415,6 +469,10 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result = tk.MustQuery("select @@autocommit;")
 	result.Check(testkit.Rows("ON"))
 	tk.MustExec("set @@global.autocommit=1")
+
+	_, err = tk.Exec("set global time_zone = 'timezone'")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
 }
 
 func (s *testSessionSuite) TestGetSysVariables(c *C) {
@@ -480,7 +538,9 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	history.Add(0, stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	c.Assert(tk.Se.GetSessionVars().InTxn(), IsFalse)
 }
 
@@ -548,46 +608,48 @@ func (s *testSessionSuite) TestExecRestrictedSQL(c *C) {
 	c.Assert(len(r), Equals, 1)
 }
 
-// See https://dev.mysql.com/doc/internals/en/status-flags.html
+// TestInTrans . See https://dev.mysql.com/doc/internals/en/status-flags.html
 func (s *testSessionSuite) TestInTrans(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	tk.MustExec("insert t values ()")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("drop table if exists t;")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("commit")
 	tk.MustExec("insert t values ()")
 
 	tk.MustExec("set autocommit=0")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 
 	tk.MustExec("set autocommit=1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)")
 	tk.MustExec("begin")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("insert t values ()")
-	c.Assert(tk.Se.Txn(true).Valid(), IsTrue)
+	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("rollback")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	c.Assert(txn.Valid(), IsFalse)
 }
 
 func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
@@ -596,7 +658,9 @@ func (s *testSessionSuite) TestRetryPreparedStmt(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t")
-	c.Assert(tk.Se.Txn(true).Valid(), IsFalse)
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsFalse)
 	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
 	tk.MustExec("insert t values (11, 2, 3)")
 
@@ -756,6 +820,58 @@ func (s *testSessionSuite) TestAutoIncrementID(c *C) {
 
 	tk.MustQuery("select last_insert_id(20)").Check(testkit.Rows(fmt.Sprint(20)))
 	tk.MustQuery("select last_insert_id()").Check(testkit.Rows(fmt.Sprint(20)))
+
+	// Corner cases for unsigned bigint auto_increment Columns.
+	tk.MustExec("drop table if exists autoid")
+	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
+	tk.MustExec("insert into autoid values(9223372036854775808);")
+	tk.MustExec("insert into autoid values();")
+	tk.MustExec("insert into autoid values();")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9223372036854775808", "9223372036854775810", "9223372036854775812"))
+	tk.MustExec("insert into autoid values(18446744073709551614);")
+	_, err := tk.Exec("insert into autoid values()")
+	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
+	// FixMe: MySQL works fine with the this sql.
+	_, err = tk.Exec("insert into autoid values(18446744073709551615)")
+	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
+
+	tk.MustExec("drop table if exists autoid")
+	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
+	tk.MustExec("insert into autoid values()")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1"))
+	tk.MustExec("insert into autoid values(5000)")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000"))
+	tk.MustExec("insert into autoid values()")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000", "9001"))
+
+	// Corner cases for signed bigint auto_increment Columns.
+	tk.MustExec("drop table if exists autoid")
+	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
+	tk.MustExec("insert into autoid values(9223372036854775806);")
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+	_, err = tk.Exec("insert into autoid values();")
+	c.Assert(terror.ErrorEqual(err, autoid.ErrAutoincReadFailed), IsTrue)
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+	tk.MustQuery("select auto_inc_id, _tidb_rowid from autoid use index(auto_inc_id)").Check(testkit.Rows("9223372036854775806 9223372036854775807"))
+
+	tk.MustExec("drop table if exists autoid")
+	tk.MustExec("create table autoid(`auto_inc_id` bigint(20) NOT NULL AUTO_INCREMENT,UNIQUE KEY `auto_inc_id` (`auto_inc_id`))")
+	tk.MustExec("insert into autoid values()")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1"))
+	tk.MustExec("insert into autoid values(5000)")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	_, err = tk.Exec("update autoid set auto_inc_id = 8000")
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("1", "5000"))
+	tk.MustExec("update autoid set auto_inc_id = 9000 where auto_inc_id=1")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000"))
+	tk.MustExec("insert into autoid values()")
+	tk.MustQuery("select * from autoid").Check(testkit.Rows("9000", "5000", "9001"))
 }
 
 func (s *testSessionSuite) TestAutoIncrementWithRetry(c *C) {
@@ -1496,7 +1612,7 @@ func (s *testSessionSuite) TestCaseInsensitive(c *C) {
 	tk.MustQuery("select b from T").Check(testkit.Rows("3"))
 }
 
-// for delete panic
+// TestDeletePanic is for delete panic
 func (s *testSessionSuite) TestDeletePanic(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c int)")
@@ -2268,7 +2384,7 @@ func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
 	tk1.MustExec("commit")
 }
 
-// For issue #7034
+// TestSetGroupConcatMaxLen is for issue #7034
 func (s *testSessionSuite) TestSetGroupConcatMaxLen(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -2346,10 +2462,13 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists gostr;")
 	tk.MustExec("create table gostr (id int);")
-	str1 := fmt.Sprintf("%#v", tk.Se.Txn(false))
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	str1 := fmt.Sprintf("%#v", txn)
 	c.Assert(str1, Equals, "Txn{state=invalid}")
 	tk.MustExec("begin")
-	txn := tk.Se.Txn(false)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, fmt.Sprintf("Txn{state=valid, startTS=%d}", txn.StartTS()))
 
 	tk.MustExec("insert into gostr values (1)")
