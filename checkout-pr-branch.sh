@@ -17,7 +17,7 @@ fork="https://github.com/$username/tidb"
 exists=`git show-ref refs/heads/$local_branch`
 if [ -n "$exists" ]; then
 	git checkout $local_branch
-	git pull $fork $branch:$local_branch
+	git pull -f $fork $branch:$local_branch
 else
 	git fetch $fork $branch:$local_branch
 	git checkout $local_branch
