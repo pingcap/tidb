@@ -111,11 +111,50 @@ func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	simplifyOuterJoin(p, predicates)
-	joinGroup := getCartesianJoinGroup(p)
-	if joinGroup != nil {
+	curJoinGroup := getCartesianJoinGroup(p)
+	if curJoinGroup != nil {
+		var outerJoinOneSideConditions, outerJoinOtherConditions [][]expression.Expression
+		var outerJoinEqConditions [][]*expression.ScalarFunction
+		var outerJoinInnerChild []LogicalPlan
+		for i, node := range curJoinGroup {
+			join, ok := node.(*LogicalJoin)
+			if !ok {
+				continue
+			}
+			switch join.JoinType {
+			case LeftOuterJoin:
+				outerJoinInnerChild = append(outerJoinInnerChild, join.children[1])
+				outerJoinEqConditions = append(outerJoinEqConditions, join.EqualConditions)
+				outerJoinOneSideConditions = append(outerJoinOneSideConditions, join.LeftConditions)
+				outerJoinOtherConditions = append(outerJoinOtherConditions, join.OtherConditions)
+				curJoinGroup[i] = join.children[0]
+			case RightOuterJoin:
+				outerJoinInnerChild = append(outerJoinInnerChild, join.children[0])
+				eqConds := make([]*expression.ScalarFunction, 0, len(join.EqualConditions))
+				for _, eqCond := range join.EqualConditions {
+					eqConds = append(eqConds, expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), eqCond.GetArgs()[1], eqCond.GetArgs()[0]).(*expression.ScalarFunction))
+				}
+				outerJoinEqConditions = append(outerJoinEqConditions, eqConds)
+				outerJoinOneSideConditions = append(outerJoinOneSideConditions, join.RightConditions)
+				outerJoinOtherConditions = append(outerJoinOtherConditions, join.OtherConditions)
+				curJoinGroup[i] = join.children[1]
+			}
+		}
 		e := joinReOrderSolver{ctx: p.ctx}
-		e.reorderJoin(joinGroup, predicates)
+		e.reorderJoin(curJoinGroup, predicates)
 		newJoin := e.resultJoin
+		for i := range outerJoinEqConditions {
+			outerJoin := LogicalJoin{
+				JoinType:  LeftOuterJoin,
+				reordered: true,
+			}.init(p.ctx)
+			outerJoin.SetSchema(expression.MergeSchema(newJoin.Schema(), outerJoinInnerChild[i].Schema()))
+			outerJoin.SetChildren(newJoin, outerJoinInnerChild[i])
+			outerJoin.EqualConditions = outerJoinEqConditions[i]
+			outerJoin.LeftConditions = outerJoinOneSideConditions[i]
+			outerJoin.OtherConditions = outerJoinOtherConditions[i]
+			newJoin = outerJoin
+		}
 		return newJoin.PredicatePushDown(predicates)
 	}
 	leftPlan := p.children[0]
