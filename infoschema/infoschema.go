@@ -185,7 +185,6 @@ func (is *infoSchema) TableIsView(schema, table model.CIStr) bool {
 			return t.Meta().IsView()
 		}
 	}
-
 	return false
 }
 
