@@ -251,6 +251,7 @@ func (e *ShowExec) fetchShowTables() error {
 	}
 	// sort for tables
 	var tableNames []string
+	var tableTypes = make(map[string]string)
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
@@ -258,13 +259,16 @@ func (e *ShowExec) fetchShowTables() error {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
+		if v.Meta().IsView() {
+			tableTypes[v.Meta().Name.O] = "VIEW"
+		} else {
+			tableTypes[v.Meta().Name.O] = "BASE TABLE"
+		}
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
-			// TODO: support "VIEW" later if we have supported view feature.
-			// now, just use "BASE TABLE".
-			e.appendRow([]interface{}{v, "BASE TABLE"})
+			e.appendRow([]interface{}{v, tableTypes[v]})
 		} else {
 			e.appendRow([]interface{}{v})
 		}
