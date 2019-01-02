@@ -146,7 +146,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	testCheckJobDone(c, d, tJob1, true)
 	tbl1 := testGetTable(c, d, dbInfo.ID, tblInfo1.ID)
 	for i := 1; i <= 100; i++ {
-		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i), false)
+		_, err := tbl1.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 	// create table t1 with 1034 records.
@@ -156,7 +156,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 	testCheckJobDone(c, d, tJob2, true)
 	tbl2 := testGetTable(c, d, dbInfo.ID, tblInfo2.ID)
 	for i := 1; i <= 1034; i++ {
-		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i), false)
+		_, err := tbl2.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 	job, v := testDropSchema(c, ctx, d, dbInfo)
