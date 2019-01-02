@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
