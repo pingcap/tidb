@@ -436,7 +436,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
-	_, err = originTable.AddRecord(ctx, row, false)
+	_, err = originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
@@ -709,9 +709,9 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	testCreateTable(c, ctx, d, dbInfo1, tblInfo1)
 	// insert t1 values (10, 10), (20, 20)
 	tbl1 := testGetTable(c, d, dbInfo1.ID, tblInfo1.ID)
-	_, err = tbl1.AddRecord(ctx, types.MakeDatums(1, 1), false)
+	_, err = tbl1.AddRecord(ctx, types.MakeDatums(1, 1))
 	c.Assert(err, IsNil)
-	_, err = tbl1.AddRecord(ctx, types.MakeDatums(2, 2), false)
+	_, err = tbl1.AddRecord(ctx, types.MakeDatums(2, 2))
 	c.Assert(err, IsNil)
 	// create table t2 (c1 int primary key, c2 int, c3 int);
 	tblInfo2 := testTableInfo(c, d, "t2", 3)
@@ -720,11 +720,11 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	testCreateTable(c, ctx, d, dbInfo1, tblInfo2)
 	// insert t2 values (1, 1), (2, 2), (3, 3)
 	tbl2 := testGetTable(c, d, dbInfo1.ID, tblInfo2.ID)
-	_, err = tbl2.AddRecord(ctx, types.MakeDatums(1, 1, 1), false)
+	_, err = tbl2.AddRecord(ctx, types.MakeDatums(1, 1, 1))
 	c.Assert(err, IsNil)
-	_, err = tbl2.AddRecord(ctx, types.MakeDatums(2, 2, 2), false)
+	_, err = tbl2.AddRecord(ctx, types.MakeDatums(2, 2, 2))
 	c.Assert(err, IsNil)
-	_, err = tbl2.AddRecord(ctx, types.MakeDatums(3, 3, 3), false)
+	_, err = tbl2.AddRecord(ctx, types.MakeDatums(3, 3, 3))
 	c.Assert(err, IsNil)
 	// create database test_parallel_ddl_2;
 	dbInfo2 := testSchemaInfo(c, d, "test_parallel_ddl_2")
@@ -734,7 +734,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	testCreateTable(c, ctx, d, dbInfo2, tblInfo3)
 	// insert t3 values (11, 22, 33, 44)
 	tbl3 := testGetTable(c, d, dbInfo2.ID, tblInfo3.ID)
-	_, err = tbl3.AddRecord(ctx, types.MakeDatums(11, 22, 33, 44), false)
+	_, err = tbl3.AddRecord(ctx, types.MakeDatums(11, 22, 33, 44))
 	c.Assert(err, IsNil)
 
 	// set hook to execute jobs after all jobs are in queue.

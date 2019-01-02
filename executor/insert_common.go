@@ -585,7 +585,7 @@ func (e *InsertValues) addRecord(row []types.Datum) (int64, error) {
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
 		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
-	h, err := e.Table.AddRecord(e.ctx, row, false)
+	h, err := e.Table.AddRecord(e.ctx, row)
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, errors.Trace(err)
