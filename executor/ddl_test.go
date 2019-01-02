@@ -229,7 +229,7 @@ func (s *testSuite3) TestCreateDropView(c *C) {
 
 	tk.MustExec("create table t_v(a int)")
 	_, err = tk.Exec("drop view t_v")
-	c.Assert(err.Error(), Equals, "[schema:1347]'test.t_v' is not VIEW")
+	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
 }
 
 func (s *testSuite3) TestCreateDropIndex(c *C) {
