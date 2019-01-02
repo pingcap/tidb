@@ -436,7 +436,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// insert t values (1, 2, 3, 4, 5);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2, 3, 4, 5)
-	_, err = originTable.AddRecord(ctx, row, false)
+	_, err = originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
