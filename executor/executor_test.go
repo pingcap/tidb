@@ -85,6 +85,7 @@ var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testBypassSuite{})
+var _ = Suite(&testUpdateSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
