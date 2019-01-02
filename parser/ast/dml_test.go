@@ -300,3 +300,21 @@ func (ts *testDMLSuite) TestHavingClauseRestore(c *C) {
 	}
 	RunNodeRestoreTest(c, testCases, "select 1 from t1 group by 1 %s", extractNodeFunc)
 }
+
+func (ts *testDMLSuite) TestFrameBoundRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"CURRENT ROW", "CURRENT ROW"},
+		{"UNBOUNDED PRECEDING", "UNBOUNDED PRECEDING"},
+		{"1 PRECEDING", "1 PRECEDING"},
+		{"? PRECEDING", "? PRECEDING"},
+		{"INTERVAL 5 DAY PRECEDING", "INTERVAL 5 DAY PRECEDING"},
+		{"UNBOUNDED FOLLOWING", "UNBOUNDED FOLLOWING"},
+		{"1 FOLLOWING", "1 FOLLOWING"},
+		{"? FOLLOWING", "? FOLLOWING"},
+		{"INTERVAL '2:30' MINUTE_SECOND FOLLOWING", "INTERVAL '2:30' MINUTE_SECOND FOLLOWING"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return &node.(*SelectStmt).Fields.Fields[0].Expr.(*WindowFuncExpr).Spec.Frame.Extent.Start
+	}
+	RunNodeRestoreTest(c, testCases, "select avg(val) over (rows between %s and current row) from t", extractNodeFunc)
+}

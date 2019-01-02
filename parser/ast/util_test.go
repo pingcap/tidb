@@ -116,6 +116,7 @@ type NodeRestoreTestCase struct {
 
 func RunNodeRestoreTest(c *C, nodeTestCases []NodeRestoreTestCase, template string, extractNodeFunc func(node Node) Node) {
 	parser := parser.New()
+	parser.EnableWindowFunc(true)
 	for _, testCase := range nodeTestCases {
 		sourceSQL := fmt.Sprintf(template, testCase.sourceSQL)
 		expectSQL := fmt.Sprintf(template, testCase.expectSQL)
