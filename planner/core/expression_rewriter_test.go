@@ -97,7 +97,7 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 	tk.MustExec("create table t2(a varchar(10), b varchar(10))")
 	tk.MustExec("insert into t2 values ('1', '1')")
 	err = tk.ExecToErr("select default(a) from t1, t2")
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1052]Column 'a' in field list is ambiguous")
 	tk.MustQuery("select default(t1.a) from t1, t2").Check(testkit.Rows("def"))
 
 	tk.MustExec(`create table t3(
