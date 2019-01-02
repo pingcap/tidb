@@ -172,7 +172,10 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	if onDup {
 		sc.AddAffectedRows(2)
 	} else {
-		sc.AddAffectedRows(1)
+		// if handleChanged == true, the `affectedRows` is calculated when add new record.
+		if !handleChanged {
+			sc.AddAffectedRows(1)
+		}
 	}
 	colSize := make(map[int64]int64)
 	for id, col := range t.Cols() {

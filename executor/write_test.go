@@ -1690,3 +1690,20 @@ func (s *testSuite) TestDefEnumInsert(c *C) {
 	tk.MustExec("insert into test (id)  values (1)")
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
 }
+
+func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table a(id int auto_increment, a int default null, primary key(id))")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set id = id*10 where a = 1001")
+	ctx := tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+
+	tk.MustExec("drop table a")
+	tk.MustExec("create table a ( a bigint, b bigint)")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set a = a*10 where b = 1001")
+	ctx = tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+}
