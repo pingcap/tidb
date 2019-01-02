@@ -216,6 +216,7 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 
 // EvalReal returns real representation of Column.
 func (col *Column) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+	log.Warning(col.Index)
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}

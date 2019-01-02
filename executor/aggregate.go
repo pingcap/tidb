@@ -760,10 +760,7 @@ type StreamAggExec struct {
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
 	isChildReturnEmpty bool
 	defaultVal         *chunk.Chunk
-	StmtCtx            *stmtctx.StatementContext
-	GroupByItems       []expression.Expression
-	curGroupKey        []types.Datum
-	tmpGroupKey        []types.Datum
+	group              *group
 	inputIter          *chunk.Iterator4Chunk
 	inputRow           chunk.Row
 	aggFuncs           []aggfuncs.AggFunc
@@ -824,7 +821,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 			return errors.Trace(err)
 		}
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			meetNewGroup, err := e.meetNewGroup(e.inputRow)
+			meetNewGroup, err := e.group.meetNewGroup(e.inputRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -911,8 +908,22 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	return nil
 }
 
+type group struct {
+	StmtCtx      *stmtctx.StatementContext
+	GroupByItems []expression.Expression
+	curGroupKey  []types.Datum
+	tmpGroupKey  []types.Datum
+}
+
+func newGroup(stmtCtx *stmtctx.StatementContext, items []expression.Expression) *group {
+	return &group{
+		StmtCtx:      stmtCtx,
+		GroupByItems: items,
+	}
+}
+
 // meetNewGroup returns a value that represents if the new group is different from last group.
-func (e *StreamAggExec) meetNewGroup(row chunk.Row) (bool, error) {
+func (e *group) meetNewGroup(row chunk.Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}
