@@ -175,6 +175,9 @@ const (
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
+	// tidb_init_chunk_capacity is used to control the max chunk size during query execution.
+	TiDBInitChunkSize = "tidb_init_chunk_size"
+
 	// tidb_enable_cascades_planner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
 
@@ -249,7 +252,8 @@ const (
 	DefBatchDelete                   = false
 	DefBatchCommit                   = false
 	DefCurretTS                      = 0
-	DefMaxChunkSize                  = 32
+	DefInitChunkSize                 = 32
+	DefMaxChunkSize                  = 1024
 	DefDMLBatchSize                  = 20000
 	DefMaxPreparedStmtCount          = -1
 	DefWaitTimeout                   = 28800
