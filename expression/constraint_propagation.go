@@ -171,23 +171,19 @@ func ruleColumnEQConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	}
 }
 
-// ruleColumnLTConst propagates the "column > const" condition.
-func ruleColumnGTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
-	ruleColumnXXConst(ctx, i, j, exprs, ast.GT, ast.LT, ast.GE)
-}
-
-// ruleColumnLTConst propagates the "column < const" condition.
-func ruleColumnLTConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
-	ruleColumnXXConst(ctx, i, j, exprs, ast.LT, ast.GT, ast.LE)
-}
-
-// ruleColumnXXConst propagates the "column OP const" condition, where op may be '>' and '<'
-func ruleColumnXXConst(ctx sessionctx.Context, i, j int, exprs *exprSet, GT string, LT string, GE string) {
+// ruleColumnOPConst propagates the "column OP const" condition.
+func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	cond := exprs.data[i]
 	f1, ok := cond.(*ScalarFunction)
-	if !ok || f1.FuncName.L != GT {
+	if !ok {
 		return
 	}
+	if f1.FuncName.L != ast.GE && f1.FuncName.L != ast.GT &&
+		f1.FuncName.L != ast.LE && f1.FuncName.L != ast.LT {
+		return
+	}
+	OP1 := f1.FuncName.L
+
 	var col1 *Column
 	var con1 *Constant
 	col1, ok = f1.GetArgs()[0].(*Column)
@@ -205,88 +201,91 @@ func ruleColumnXXConst(ctx sessionctx.Context, i, j int, exprs *exprSet, GT stri
 		return
 	}
 
-	// col > c1, col > c2, c1 > c2 => col > c1
-	if f2.FuncName.L == GT {
-		col2, ok := f2.GetArgs()[0].(*Column)
-		if !ok || !col1.Equal(ctx, col2) {
-			return
-		}
-		con2, ok := f2.GetArgs()[1].(*Constant)
-		if !ok {
-			return
-		}
-		if !con1.RetType.Equal(con2.RetType) {
-			return
-		}
-
-		v, isNull, err := compareConstant(ctx, GT, con1, con2)
-		if err != nil {
-			log.Warn(err)
-			return
-		}
-		if !isNull && v > 0 {
-			exprs.tombstone[j] = true
-		}
-		return
-	}
-
 	// The simple case:
-	// col > c1, col < c2, c1 >= c2 => false
+	// col >= c1, col < c2, c1 >= c2 => false
+	// col >= c1, col <= c2, c1 > c2 => false
+	// col >= c1, col OP c2, c1 ^OP c2, where OP in [< , <=] => false
+	// col OP1 c1 where OP1 in [>= , <], col OP2 c2 where OP1 opsite OP2, c1 ^OP2 c2 => false
 	//
 	// The extended case:
-	// col > c1, f(col) < c2, f is monotonous, f(c1) <= c2 => false
+	// col >= c1, f(col) < c2, f is monotonous, f(c1) >= c2 => false
 	//
 	// Proof:
 	// col > c1, f is monotonous => f(col) > f(c1)
 	// f(col) > f(c1), f(col) < c2, f(c1) >= c2 => false
-	if f2.FuncName.L == LT {
-		con2, ok := f2.GetArgs()[1].(*Constant)
+	OP2 := f2.FuncName.L
+	if !opsiteOP(OP1, OP2) {
+		return
+	}
+
+	con2, ok := f2.GetArgs()[1].(*Constant)
+	if !ok {
+		return
+	}
+	arg0 := f2.GetArgs()[0]
+	// The simple case.
+	var fc1 Expression
+	col2, ok := arg0.(*Column)
+	if ok {
+		fc1 = con1
+	} else {
+		// The extended case.
+		scalarFunc, ok := arg0.(*ScalarFunction)
 		if !ok {
 			return
 		}
-		arg0 := f2.GetArgs()[0]
-		// The simple case.
-		var fc1 Expression
-		col2, ok := arg0.(*Column)
-		if ok {
-			fc1 = con1
-		} else {
-			// The extended case.
-			scalarFunc, ok := arg0.(*ScalarFunction)
-			if !ok {
-				return
-			}
-			_, ok = monotoneIncFuncs[scalarFunc.FuncName.L]
-			if !ok {
-				return
-			}
-			col2, ok = scalarFunc.GetArgs()[0].(*Column)
-			if !ok {
-				return
-			}
-
-			var err error
-			fc1, err = NewFunction(ctx, scalarFunc.FuncName.L, scalarFunc.RetType, con1)
-			if err != nil {
-				log.Warn(err)
-				return
-			}
-		}
-
-		if col1.ColName.L != col2.ColName.L {
+		_, ok = monotoneIncFuncs[scalarFunc.FuncName.L]
+		if !ok {
 			return
 		}
-		v, isNull, err := compareConstant(ctx, GE, fc1, con2)
+		col2, ok = scalarFunc.GetArgs()[0].(*Column)
+		if !ok {
+			return
+		}
+		var err error
+		fc1, err = NewFunction(ctx, scalarFunc.FuncName.L, scalarFunc.RetType, con1)
 		if err != nil {
 			log.Warn(err)
 			return
 		}
-		if !isNull && v > 0 {
-			exprs.SetConstFalse()
-		}
+	}
+	if !col1.Equal(ctx, col2) {
 		return
 	}
+	v, isNull, err := compareConstant(ctx, negOP(OP2), fc1, con2)
+	if err != nil {
+		log.Warn(err)
+		return
+	}
+	if !isNull && v > 0 {
+		exprs.SetConstFalse()
+	}
 	return
+}
+
+// opsiteOP the opsite direction of a compare operation, used in ruleColumnOPConst.
+func opsiteOP(op1, op2 string) bool {
+	switch {
+	case op1 == ast.GE || op1 == ast.GT:
+		return op2 == ast.LT || op2 == ast.LE
+	case op1 == ast.LE || op1 == ast.LT:
+		return op2 == ast.GT || op2 == ast.GE
+	}
+	return false
+}
+
+func negOP(cmp string) string {
+	switch cmp {
+	case ast.LT:
+		return ast.GE
+	case ast.LE:
+		return ast.GT
+	case ast.GT:
+		return ast.LE
+	case ast.GE:
+		return ast.LT
+	}
+	return ""
 }
 
 // monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)
@@ -305,5 +304,5 @@ func compareConstant(ctx sessionctx.Context, fn string, c1, c2 Expression) (int6
 
 // NewPartitionPruneSolver returns a constraintSolver for partition pruning.
 func NewPartitionPruneSolver() constraintSolver {
-	return newConstraintSolver(ruleColumnGTConst, ruleColumnLTConst)
+	return newConstraintSolver(ruleColumnOPConst)
 }

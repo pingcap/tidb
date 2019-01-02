@@ -44,7 +44,7 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 	// SELECT * FROM t1 WHERE recdate < '2007-03-08 00:00:00';
 
 	ctx := mock.NewContext()
-	partitionExpr, err := expression.ParseSimpleExprWithTableInfo(ctx, "to_days(d) < to_days('2007-03-08') and to_days(d) > to_days('2007-03-07')", tblInfo)
+	partitionExpr, err := expression.ParseSimpleExprWithTableInfo(ctx, "to_days(d) < to_days('2007-03-08') and to_days(d) >= to_days('2007-03-07')", tblInfo)
 	c.Assert(err, IsNil)
 	queryExpr, err := expression.ParseSimpleExprWithTableInfo(ctx, "d < '2000-03-08 00:00:00'", tblInfo)
 	c.Assert(err, IsNil)
