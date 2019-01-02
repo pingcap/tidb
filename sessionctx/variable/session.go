@@ -381,6 +381,7 @@ func NewSessionVars() *SessionVars {
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
 		IndexLookupSize:    DefIndexLookupSize,
+		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
 		DMLBatchSize:       DefDMLBatchSize,
 	}
@@ -644,6 +645,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
+		if s.InitChunkSize > s.MaxChunkSize {
+			s.InitChunkSize = s.MaxChunkSize
+		}
+	case TiDBInitChunkSize:
+		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
+		if s.InitChunkSize > s.MaxChunkSize {
+			s.InitChunkSize = s.MaxChunkSize
+		}
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
@@ -783,6 +792,9 @@ type BatchSize struct {
 
 	// IndexLookupSize is the number of handles for an index lookup task in index double read executor.
 	IndexLookupSize int
+
+	// InitChunkSize defines init row count of a Chunk during query execution.
+	InitChunkSize int
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
