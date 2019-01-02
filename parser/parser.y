@@ -4714,7 +4714,7 @@ WindowFrameStart:
 	}
 |	paramMarker "PRECEDING"
 	{
-		$$ = ast.FrameBound{Type: ast.Preceding, Expr: ast.NewValueExpr($1),}
+		$$ = ast.FrameBound{Type: ast.Preceding, Expr: ast.NewParamMarkerExpr(yyS[yypt].offset),}
 	}
 |	"INTERVAL" Expression TimeUnit "PRECEDING"
 	{
@@ -4746,7 +4746,7 @@ WindowFrameBound:
 	}
 |	paramMarker "FOLLOWING"
 	{
-		$$ = ast.FrameBound{Type: ast.Following, Expr: ast.NewValueExpr($1),}
+		$$ = ast.FrameBound{Type: ast.Following, Expr: ast.NewParamMarkerExpr(yyS[yypt].offset),}
 	}
 |	"INTERVAL" Expression TimeUnit "FOLLOWING"
 	{

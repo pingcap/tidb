@@ -10061,7 +10061,7 @@ yynewstate:
 		}
 	case 884:
 		{
-			parser.yyVAL.item = ast.FrameBound{Type: ast.Preceding, Expr: ast.NewValueExpr(yyS[yypt-1].item)}
+			parser.yyVAL.item = ast.FrameBound{Type: ast.Preceding, Expr: ast.NewParamMarkerExpr(yyS[yypt].offset)}
 		}
 	case 885:
 		{
@@ -10089,7 +10089,7 @@ yynewstate:
 		}
 	case 891:
 		{
-			parser.yyVAL.item = ast.FrameBound{Type: ast.Following, Expr: ast.NewValueExpr(yyS[yypt-1].item)}
+			parser.yyVAL.item = ast.FrameBound{Type: ast.Following, Expr: ast.NewParamMarkerExpr(yyS[yypt].offset)}
 		}
 	case 892:
 		{
