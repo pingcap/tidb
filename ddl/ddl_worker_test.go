@@ -427,15 +427,15 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	dbInfo := testSchemaInfo(c, d, "test_cancel_job")
 	testCreateSchema(c, testNewContext(d), d, dbInfo)
 
-	// create table t (c1 int, c2 int);
-	tblInfo := testTableInfo(c, d, "t", 2)
+	// create table t (c1 int, c2 int, c3 int, c4 int, c5 int);
+	tblInfo := testTableInfo(c, d, "t", 5)
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	job := testCreateTable(c, ctx, d, dbInfo, tblInfo)
-	// insert t values (1, 2);
+	// insert t values (1, 2, 3, 4, 5);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
-	row := types.MakeDatums(1, 2)
+	row := types.MakeDatums(1, 2, 3, 4, 5)
 	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
@@ -559,7 +559,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 	// for drop column.
 	test = &tests[10]
-	dropColName := "c1"
+	dropColName := "c3"
 	dropColumnArgs := []interface{}{model.NewCIStr(dropColName)}
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
 	testCancelDropColumn(c, ctx, d, dbInfo, tblInfo, dropColumnArgs)
@@ -568,7 +568,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 	test = &tests[11]
 
-	dropColName = "c2"
+	dropColName = "c4"
 	dropColumnArgs = []interface{}{model.NewCIStr(dropColName)}
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
 	testCancelDropColumn(c, ctx, d, dbInfo, tblInfo, dropColumnArgs)
@@ -576,7 +576,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
 	test = &tests[12]
-	dropColName = "c3"
+	dropColName = "c5"
 	dropColumnArgs = []interface{}{model.NewCIStr(dropColName)}
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
 	testCancelDropColumn(c, ctx, d, dbInfo, tblInfo, dropColumnArgs)
