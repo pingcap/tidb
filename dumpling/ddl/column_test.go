@@ -124,7 +124,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i), false)
+		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i))
 		c.Assert(err, IsNil)
 	}
 
@@ -164,7 +164,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(num))
 
-	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14), false)
+	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14))
 	c.Assert(err, IsNil)
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
@@ -359,7 +359,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow, false)
+	newHandle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -463,7 +463,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow, false)
+	newHandle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -563,7 +563,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow, false)
+	newHandle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -660,7 +660,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33), int64(44))
-	handle, err = t.AddRecord(ctx, newRow, false)
+	handle, err = t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -765,7 +765,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
-	handle, err := t.AddRecord(ctx, oldRow, false)
+	handle, err := t.AddRecord(ctx, oldRow)
 	c.Assert(err, IsNil)
 
 	txn, err := ctx.Txn(true)
@@ -856,7 +856,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
-	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)), false)
+	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
 	c.Assert(err, IsNil)
 
 	txn, err := ctx.Txn(true)
