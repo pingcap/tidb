@@ -458,8 +458,8 @@ func (d *ddl) GetLease() time.Duration {
 }
 
 // GetInfoSchemaWithInterceptor gets the infoschema binding to d. It's exported for testing.
-// Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to interceptor the GetInfoSchema, use d.infoHandle.Get() instead.
-// Otherwise, the TestParallelDDLBeforeRunDDLJob maybe hang up forever.
+// Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to intercept the calling of d.infoHandle.Get(), use d.infoHandle.Get() instead.
+// Otherwise, the TestParallelDDLBeforeRunDDLJob will hang up forever.
 func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
 	is := d.infoHandle.Get()
 
