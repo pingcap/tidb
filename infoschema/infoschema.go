@@ -58,10 +58,6 @@ var (
 	ErrMultiplePriKey = terror.ClassSchema.New(codeMultiplePriKey, "Multiple primary key defined")
 	// ErrTooManyKeyParts returns for too many key parts.
 	ErrTooManyKeyParts = terror.ClassSchema.New(codeTooManyKeyParts, "Too many key parts specified; max %d parts allowed")
-	// ErrTableIsNotBaseTable returns for table is not base table.
-	ErrTableIsNotBaseTable = terror.ClassSchema.New(codeErrWrongObject, "'%s.%s' is not BASE TABLE")
-	// ErrTableIsNotView returns for table is not view.
-	ErrTableIsNotView = terror.ClassSchema.New(codeErrWrongObject, "'%s.%s' is not VIEW")
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -73,7 +69,6 @@ type InfoSchema interface {
 	SchemaExists(schema model.CIStr) bool
 	TableByName(schema, table model.CIStr) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
-	ViewByName(schema, table model.CIStr) (table.Table, error)
 	SchemaByID(id int64) (*model.DBInfo, bool)
 	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
@@ -173,24 +168,13 @@ func (is *infoSchema) SchemaExists(schema model.CIStr) bool {
 	return ok
 }
 
-func (is *infoSchema) getTableByName(schema, table model.CIStr) (t table.Table, err error) {
+func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if t, ok = tbNames.tables[table.L]; ok {
 			return
 		}
 	}
 	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
-}
-
-func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err error) {
-	t, err = is.getTableByName(schema, table)
-	if err != nil {
-		return
-	}
-	if t.Meta().IsView() {
-		return nil, ErrTableIsNotBaseTable.GenWithStackByArgs(schema, table)
-	}
-	return
 }
 
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
@@ -200,17 +184,6 @@ func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
 		}
 	}
 	return false
-}
-
-func (is *infoSchema) ViewByName(schema, table model.CIStr) (t table.Table, err error) {
-	t, err = is.getTableByName(schema, table)
-	if err != nil {
-		return
-	}
-	if !t.Meta().IsView() {
-		return nil, ErrTableIsNotView.GenWithStackByArgs(schema, table)
-	}
-	return
 }
 
 func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
@@ -334,7 +307,6 @@ const (
 	codeTooManyKeyParts  = 1070
 	codeKeyNameDuplicate = 1061
 	codeKeyNotExists     = 1176
-	codeErrWrongObject   = mysql.ErrWrongObject
 )
 
 func init() {
@@ -355,7 +327,6 @@ func init() {
 		codeTooManyKeyParts:     mysql.ErrTooManyKeyParts,
 		codeKeyNameDuplicate:    mysql.ErrDupKeyName,
 		codeKeyNotExists:        mysql.ErrKeyDoesNotExist,
-		codeErrWrongObject:      mysql.ErrWrongObject,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassSchema] = schemaMySQLErrCodes
 	initInfoSchemaDB()

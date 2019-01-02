@@ -1269,6 +1269,12 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		return errRunMultiSchemaChanges
 	}
 
+	is := d.infoHandle.Get()
+	t, _ := is.TableByName(ident.Schema, ident.Name)
+	if t != nil && t.Meta().IsView() {
+		return ErrTableIsNotBaseTable.GenWithStackByArgs(ident.Schema, ident.Name)
+	}
+
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
 		switch spec.Tp {
