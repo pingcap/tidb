@@ -552,7 +552,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 		}
 	}
 
-	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
+	if odValue == strings.ToUpper(ast.CurrentTimestamp) &&
 		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
 		odValue = time.Now().Format(types.TimeFormat)
 	}
