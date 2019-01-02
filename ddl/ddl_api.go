@@ -1270,8 +1270,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	is := d.infoHandle.Get()
-	t, err := is.TableByName(ident.Schema, ident.Name)
-	if err == nil && t.Meta().IsView() {
+	if is.TableIsView(ident.Schema, ident.Name) {
 		return ErrTableIsNotBaseTable.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
 
