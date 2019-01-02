@@ -3676,7 +3676,7 @@ func (s *testDBSuite) TestTransactionOnAddDropColumn(c *C) {
 		},
 	}
 
-	originHook := s.dom.DDL().GetHook()
+	originHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -3723,7 +3723,7 @@ func (s *testDBSuite) TestTransactionWithWriteOnlyColumn(c *C) {
 		},
 	}
 
-	originHook := s.dom.DDL().GetHook()
+	originHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -3762,7 +3762,7 @@ func (s *testDBSuite) TestAddColumn2(c *C) {
 	s.mustExec(c, "create table t1 (a int key, b int);")
 	defer s.mustExec(c, "drop table if exists t1, t2")
 
-	originHook := s.dom.DDL().GetHook()
+	originHook := s.dom.DDL().(ddl.DDLForTest).GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
 	var writeOnlyTable table.Table
@@ -3784,7 +3784,7 @@ func (s *testDBSuite) TestAddColumn2(c *C) {
 	// mock for outdated tidb update record.
 	c.Assert(writeOnlyTable, NotNil)
 	ctx := context.Background()
-	err = s.tk.Se.NewTxn(ctx)
+	err = s.tk.Se.NewTxn()
 	c.Assert(err, IsNil)
 	oldRow, err := writeOnlyTable.RowWithCols(s.tk.Se, 1, writeOnlyTable.WritableCols())
 	c.Assert(err, IsNil)
