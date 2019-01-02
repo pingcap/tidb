@@ -119,12 +119,47 @@ func rollingbackAddindex(d *ddl, t *meta.Meta, job *model.Job) (ver int64, err e
 	}
 	return
 }
+
+func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	var colName model.CIStr
+	err = job.DecodeArgs(&colName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+	if colInfo == nil {
+		job.State = model.JobStateCancelled
+		return ver, ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
+	}
+
+	// StatePublic means when the job is not running yet.
+	if colInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+	} else {
+		// In the state of drop column `write only -> delete only -> reorganization`,
+		// We can not rollback now, so just continue to drop column.
+		job.State = model.JobStateRunning
+		return ver, errors.Trace(nil)
+	}
+	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
+	return ver, errors.Trace(errCancelledDDLJob)
+}
+
 func convertJob2RollbackJob(d *ddl, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddindex(d, t, job)
+	case model.ActionDropColumn:
+		ver, err = rollingbackDropColumn(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
