@@ -15,6 +15,7 @@ package session
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/table"
 	"runtime/debug"
 
 	"github.com/opentracing/opentracing-go"
@@ -219,11 +220,11 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 	switch op.kind {
-	case executor.DirtyTableAddRow:
+	case table.DirtyTableAddRow:
 		dirtyDB.AddRow(op.tid, op.handle, op.row)
-	case executor.DirtyTableDeleteRow:
+	case table.DirtyTableDeleteRow:
 		dirtyDB.DeleteRow(op.tid, op.handle)
-	case executor.DirtyTableTruncate:
+	case table.DirtyTableTruncate:
 		dirtyDB.TruncateTable(op.tid)
 	}
 }
