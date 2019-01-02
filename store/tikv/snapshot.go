@@ -67,6 +67,10 @@ func (s *tikvSnapshot) SetPriority(priority int) {
 // BatchGet gets all the keys' value from kv-server and returns a map contains key/value pairs.
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	m := make(map[string][]byte)
+	if len(keys) == 0 {
+		return m, nil
+	}
 	metrics.TiKVTxnCmdCounter.WithLabelValues("batch_get").Inc()
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds()) }()
@@ -78,7 +82,6 @@ func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 
 	// Create a map to collect key-values from region servers.
 	var mu sync.Mutex
-	m := make(map[string][]byte)
 	err := s.batchGetKeysByRegions(bo, bytesKeys, func(k, v []byte) {
 		if len(v) == 0 {
 			return
