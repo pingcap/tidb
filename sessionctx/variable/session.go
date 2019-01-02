@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/klauspost/cpuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -644,9 +645,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBCurrentTS, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
-		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
-		if s.InitChunkSize > s.MaxChunkSize {
-			s.InitChunkSize = s.MaxChunkSize
+		maxChunkSize := tidbOptPositiveInt32(val, DefMaxChunkSize)
+		if s.InitChunkSize > maxChunkSize {
+			s.MaxChunkSize = mathutil.Max(s.InitChunkSize, DefMaxChunkSize)
+			s.StmtCtx.AppendWarning(errors.Errorf("Try to set TiDB MaxChunkSize to %d small than InitChunkSize %d so force use %d",
+				maxChunkSize, s.InitChunkSize, s.MaxChunkSize))
+		} else {
+			s.MaxChunkSize = maxChunkSize
 		}
 	case TiDBInitChunkSize:
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
