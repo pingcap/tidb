@@ -603,12 +603,19 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 }
 
 func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
-	sql1 := `alter table t_part add partition (
+	sql1 := `alter table t_part_parallel add partition (
     partition p2 values less than (30)
    );`
 	f := func(c *C, err1, err2 error) {
-		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+		var oneErr error
+		if (err1 != nil && err2 == nil) || (err1 == nil && err2 != nil) {
+			if err1 != nil {
+				oneErr = err1
+			} else {
+				oneErr = err2
+			}
+		}
+		c.Assert(oneErr.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
 }
@@ -670,9 +677,11 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table t")
 
-	_, err = s.se.Execute(context.Background(), "drop database if exists t_part")
+	_, err = s.se.Execute(context.Background(), "set @@tidb_enable_table_partition = 1")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), `create table t_part (a int key)
+	_, err = s.se.Execute(context.Background(), "drop database if exists t_part_parallel")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table t_part_parallel (a int key)
 	 partition by range(a) (
 	 partition p0 values less than (10),
 	 partition p1 values less than (20)
