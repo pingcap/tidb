@@ -425,7 +425,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	}
 	var hasRecordID bool
 	cols := t.Cols()
-	if len(r) > len(cols) {
+	if len(r) > len(cols) && !opt.IsUpdate {
 		// The last value is _tidb_rowid.
 		recordID = r[len(r)-1].GetInt64()
 		hasRecordID = true
@@ -466,11 +466,18 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
-		if col.State != model.StatePublic {
+		if col.State != model.StatePublic && !opt.IsUpdate {
 			// If col is in write only or write reorganization state, we must add it with its default value.
 			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 			if err != nil {
 				return 0, errors.Trace(err)
+			}
+			// add value to `r` for dirty db in transaction.
+			// Otherwise when update will panic cause by get value of column in write only state from dirty db.
+			if col.Offset < len(r) {
+				r[col.Offset] = value
+			} else {
+				r = append(r, value)
 			}
 		} else {
 			value = r[col.Offset]
