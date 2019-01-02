@@ -14,6 +14,9 @@
 package executor
 
 import (
+	"context"
+
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
@@ -21,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // DeleteExec represents a delete executor.
@@ -43,6 +45,11 @@ type DeleteExec struct {
 
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("delete.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	chk.Reset()
 	if e.IsMultiTable {
 		return errors.Trace(e.deleteMultiTablesByChunk(ctx))
@@ -109,8 +116,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				e.ctx.StmtCommit()
-				if err = e.ctx.NewTxn(); err != nil {
+				if err = e.ctx.StmtCommit(); err != nil {
+					return errors.Trace(err)
+				}
+				if err = e.ctx.NewTxn(ctx); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 				}

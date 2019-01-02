@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 var errStopped = errors.New("stopped")
@@ -229,7 +229,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	// Cover Seek request.
 	client.priority = pb.CommandPri_High
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	iter, err := txn.Seek([]byte("key"))
+	iter, err := txn.Iter([]byte("key"), nil)
 	c.Assert(err, IsNil)
 	for iter.Valid() {
 		c.Assert(iter.Next(), IsNil)

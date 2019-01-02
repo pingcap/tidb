@@ -15,11 +15,11 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"golang.org/x/net/context"
 )
 
 type testRawKVSuite struct {
@@ -103,7 +103,17 @@ func (s *testRawKVSuite) mustBatchDelete(c *C, keys [][]byte) {
 }
 
 func (s *testRawKVSuite) mustScan(c *C, startKey string, limit int, expect ...string) {
-	keys, values, err := s.client.Scan([]byte(startKey), limit)
+	keys, values, err := s.client.Scan([]byte(startKey), nil, limit)
+	c.Assert(err, IsNil)
+	c.Assert(len(keys)*2, Equals, len(expect))
+	for i := range keys {
+		c.Assert(string(keys[i]), Equals, expect[i*2])
+		c.Assert(string(values[i]), Equals, expect[i*2+1])
+	}
+}
+
+func (s *testRawKVSuite) mustScanRange(c *C, startKey string, endKey string, limit int, expect ...string) {
+	keys, values, err := s.client.Scan([]byte(startKey), []byte(endKey), limit)
 	c.Assert(err, IsNil)
 	c.Assert(len(keys)*2, Equals, len(expect))
 	for i := range keys {
@@ -127,7 +137,7 @@ func (s *testRawKVSuite) mustDeleteRange(c *C, startKey, endKey []byte, expected
 }
 
 func (s *testRawKVSuite) checkData(c *C, expected map[string]string) {
-	keys, values, err := s.client.Scan([]byte(""), len(expected)+1)
+	keys, values, err := s.client.Scan([]byte(""), nil, len(expected)+1)
 	c.Assert(err, IsNil)
 
 	c.Assert(len(expected), Equals, len(keys))
@@ -203,6 +213,11 @@ func (s *testRawKVSuite) TestScan(c *C) {
 		s.mustScan(c, "", 10, "k1", "v1", "k3", "v3", "k5", "v5", "k7", "v7")
 		s.mustScan(c, "k2", 2, "k3", "v3", "k5", "v5")
 		s.mustScan(c, "k2", 3, "k3", "v3", "k5", "v5", "k7", "v7")
+		s.mustScanRange(c, "", "k1", 1)
+		s.mustScanRange(c, "k1", "k3", 2, "k1", "v1")
+		s.mustScanRange(c, "k1", "k5", 10, "k1", "v1", "k3", "v3")
+		s.mustScanRange(c, "k1", "k5\x00", 10, "k1", "v1", "k3", "v3", "k5", "v5")
+		s.mustScanRange(c, "k5\x00", "k5\x00\x00", 10)
 	}
 
 	check()

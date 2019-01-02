@@ -14,15 +14,20 @@
 package core_test
 
 import (
+	"math"
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )
 
@@ -38,14 +43,22 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx1(b, a), index idx2(b))")
@@ -68,6 +81,9 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	tk.MustExec(`prepare stmt5 from "select c from t order by c"`)
 	tk.MustQuery("execute stmt5").Check(testkit.Rows("1", "2", "2", "3", "4", "5"))
 	tk.MustQuery("execute stmt5").Check(testkit.Rows("1", "2", "2", "3", "4", "5"))
+	tk.MustExec(`prepare stmt6 from "select distinct a from t order by a"`)
+	tk.MustQuery("execute stmt6").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	tk.MustQuery("execute stmt6").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
 func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
@@ -77,14 +93,22 @@ func (s *testPrepareSuite) TestPrepareCacheIndexScan(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, primary key (a, b))")
@@ -103,14 +127,22 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 
 	defer testleak.AfterTest(c)()
 
@@ -120,7 +152,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 	tk.MustExec("prepare sel1 from 'select id, c1 from t1 where c1 < now(3)'")
 
 	sql1 := "execute sel1"
-	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].000\)\]\)`
+	expectedPattern := `IndexReader\(Index\(t1.idx1\)\[\[-inf,[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1]) (2[0-3]|[01][0-9]):[0-5][0-9]:[0-5][0-9].[0-9][0-9][0-9]\)\]\)`
 
 	var cnt [2]float64
 	var planStr [2]string
@@ -144,9 +176,9 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 		counter.Write(pb)
 		cnt[i] = pb.GetCounter().GetValue()
 		c.Check(cnt[i], Equals, float64(i))
-		time.Sleep(time.Second * 1)
+		time.Sleep(time.Millisecond * 10)
 	}
-	c.Assert(planStr[0] < planStr[1], IsTrue)
+	c.Assert(planStr[0] < planStr[1], IsTrue, Commentf("plan 1: %v, plan 2: %v", planStr[0], planStr[1]))
 }
 
 func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
@@ -156,32 +188,87 @@ func (s *testPrepareSuite) TestPrepareCacheNow(c *C) {
 	tk := testkit.NewTestKit(c, store)
 	orgEnable := core.PreparedPlanCacheEnabled()
 	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
 		core.SetPreparedPlanCache(orgEnable)
 		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
 	core.SetPreparedPlanCache(true)
 	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	tk.MustExec("use test")
-	tk.MustExec(`prepare stmt1 from "select now(), sleep(1), now()"`)
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
+	tk.MustExec(`prepare stmt1 from "select now(), current_timestamp(), utc_timestamp(), unix_timestamp(), sleep(0.1), now(), current_timestamp(), utc_timestamp(), unix_timestamp()"`)
+	// When executing one statement at the first time, we don't usTestPrepareCacheDeferredFunctione cache, so we need to execute it at least twice to test the cache.
+	_ = tk.MustQuery("execute stmt1").Rows()
 	rs := tk.MustQuery("execute stmt1").Rows()
-	c.Assert(rs[0][0].(string), Equals, rs[0][2].(string))
+	c.Assert(rs[0][0].(string), Equals, rs[0][5].(string))
+	c.Assert(rs[0][1].(string), Equals, rs[0][6].(string))
+	c.Assert(rs[0][2].(string), Equals, rs[0][7].(string))
+	c.Assert(rs[0][3].(string), Equals, rs[0][8].(string))
+}
 
-	tk.MustExec(`prepare stmt2 from "select current_timestamp(), sleep(1), current_timestamp()"`)
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
-	rs = tk.MustQuery("execute stmt2").Rows()
-	c.Assert(rs[0][0].(string), Equals, rs[0][2].(string))
+func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
 
-	tk.MustExec(`prepare stmt3 from "select utc_timestamp(), sleep(1), utc_timestamp()"`)
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
-	rs = tk.MustQuery("execute stmt3").Rows()
-	c.Assert(rs[0][0].(string), Equals, rs[0][2].(string))
+	// test prepare and deallocate.
+	prePrepared := readGaugeInt(metrics.PreparedStmtGauge)
+	tk.MustExec(`prepare stmt1 from "select 1"`)
+	onePrepared := readGaugeInt(metrics.PreparedStmtGauge)
+	c.Assert(prePrepared+1, Equals, onePrepared)
+	tk.MustExec(`deallocate prepare stmt1`)
+	deallocPrepared := readGaugeInt(metrics.PreparedStmtGauge)
+	c.Assert(prePrepared, Equals, deallocPrepared)
 
-	tk.MustExec(`prepare stmt4 from "select unix_timestamp(), sleep(1), unix_timestamp()"`)
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
-	rs = tk.MustQuery("execute stmt4").Rows()
-	c.Assert(rs[0][0].(string), Equals, rs[0][2].(string))
+	// test change global limit and make it affected in test session.
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("-1"))
+	tk.MustExec("set @@global.max_prepared_stmt_count = 2")
+	tk.MustQuery("select @@global.max_prepared_stmt_count").Check(testkit.Rows("2"))
+
+	// Disable global variable cache, so load global session variable take effect immediate.
+	dom.GetGlobalVarsCache().Disable()
+
+	// test close session to give up all prepared stmt
+	tk.MustExec(`prepare stmt2 from "select 1"`)
+	prePrepared = readGaugeInt(metrics.PreparedStmtGauge)
+	tk.Se.Close()
+	drawPrepared := readGaugeInt(metrics.PreparedStmtGauge)
+	c.Assert(prePrepared-1, Equals, drawPrepared)
+
+	// test meet max limit.
+	tk.Se = nil
+	tk.MustQuery("select @@max_prepared_stmt_count").Check(testkit.Rows("2"))
+	for i := 1; ; i++ {
+		prePrepared = readGaugeInt(metrics.PreparedStmtGauge)
+		if prePrepared >= 2 {
+			_, err = tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
+			c.Assert(terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached), IsTrue)
+			break
+		}
+		tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
+	}
+}
+
+func readGaugeInt(g prometheus.Gauge) int {
+	ch := make(chan prometheus.Metric, 1)
+	g.Collect(ch)
+	m := <-ch
+	mm := &dto.Metric{}
+	m.Write(mm)
+	return int(mm.GetGauge().GetValue())
 }

@@ -104,6 +104,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 
+	sc.AddTouchedRows(1)
 	// If no changes, nothing to do, return directly.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
@@ -128,7 +129,6 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
 	var err error
 	if handleChanged {
-		skipHandleCheck := false
 		if sc.DupKeyAsWarning {
 			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
 			// If the new handle exists, this will avoid to remove the record.
@@ -136,30 +136,32 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			if err != nil {
 				return false, handleChanged, newHandle, errors.Trace(err)
 			}
-			skipHandleCheck = true
 		}
 		if err = t.RemoveRecord(ctx, h, oldData); err != nil {
 			return false, false, 0, errors.Trace(err)
 		}
-		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
+		// the `affectedRows` is increased when adding new record.
+		newHandle, err = t.AddRecord(ctx, newData,
+			&table.AddRecordOpt{CreateIdxOpt: table.CreateIdxOpt{SkipHandleCheck: sc.DupKeyAsWarning}})
 		if err != nil {
 			return false, false, 0, errors.Trace(err)
+		}
+		if onDup {
+			sc.AddAffectedRows(1)
 		}
 	} else {
 		// Update record to new value and update index.
 		if err = t.UpdateRecord(ctx, h, oldData, newData, modified); err != nil {
 			return false, false, 0, errors.Trace(err)
 		}
-	}
-
-	if onDup {
-		sc.AddAffectedRows(2)
-	} else {
-		// if handleChanged == true, the `affectedRows` is calculated when add new record.
-		if !handleChanged {
+		if onDup {
+			sc.AddAffectedRows(2)
+		} else {
 			sc.AddAffectedRows(1)
 		}
 	}
+	sc.AddUpdatedRows(1)
+	sc.AddCopiedRows(1)
 
 	return true, handleChanged, newHandle, nil
 }

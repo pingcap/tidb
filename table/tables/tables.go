@@ -18,6 +18,7 @@
 package tables
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -42,7 +43,6 @@ import (
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
-	"golang.org/x/net/context"
 )
 
 // tableCommon is shared by both Table and partition.
@@ -271,13 +271,16 @@ func (t *tableCommon) FirstKey() kv.Key {
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
-	txn := ctx.Txn()
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// TODO: reuse bs, like AddRecord does.
 	bs := kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
 
 	// rebuild index
-	err := t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
+	err = t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -396,22 +399,30 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
 // Just add the kv to transaction's membuf directly.
-func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMutator {
+func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) (kv.RetrieverMutator, error) {
 	if ctx.GetSessionVars().LightningMode {
-		return ctx.Txn()
+		return ctx.Txn(true)
 	}
 
 	bs := ctx.GetSessionVars().GetWriteStmtBufs().BufStore
 	if bs == nil {
-		bs = kv.NewBufferStore(ctx.Txn(), kv.DefaultTxnMembufCap)
+		txn, err := ctx.Txn(true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		bs = kv.NewBufferStore(txn, kv.DefaultTxnMembufCap)
 	} else {
 		bs.Reset()
 	}
-	return bs
+	return bs, nil
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+	opt := &table.AddRecordOpt{}
+	if len(opts) != 0 {
+		opt = opts[0]
+	}
 	var hasRecordID bool
 	cols := t.Cols()
 	if len(r) > len(cols) {
@@ -434,18 +445,16 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 		}
 	}
 
-	txn := ctx.Txn()
-	sessVars := ctx.GetSessionVars()
-	// when LightningMode or BatchCheck is true,
-	// no needs to check the key constrains, so we names the variable skipCheck.
-	skipCheck := sessVars.LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
-	if skipCheck {
-		txn.SetOption(kv.SkipCheckForWrite, true)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 
-	rm := t.getRollbackableMemStore(ctx)
+	sessVars := ctx.GetSessionVars()
+
+	rm, err := t.getRollbackableMemStore(ctx)
 	// Insert new entries into indices.
-	h, err := t.addIndices(ctx, recordID, r, rm, skipHandleCheck)
+	h, err := t.addIndices(ctx, recordID, r, rm, &opt.CreateIdxOpt)
 	if err != nil {
 		return h, errors.Trace(err)
 	}
@@ -531,12 +540,16 @@ func (t *tableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
 }
 
 // addIndices adds data into indices. If any key is duplicated, returns the original handle.
-func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator, skipHandleCheck bool) (int64, error) {
-	txn := ctx.Txn()
+func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []types.Datum, rm kv.RetrieverMutator,
+	opt *table.CreateIdxOpt) (int64, error) {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
-	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
+	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
 		if err := CheckHandleExists(ctx, t, recordID, nil); err != nil {
 			return recordID, errors.Trace(err)
 		}
@@ -551,7 +564,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			return 0, errors.Trace(err2)
 		}
 		var dupKeyErr error
-		if !skipCheck && (v.Meta().Unique || v.Meta().Primary) {
+		if !skipCheck && v.Meta().Unique {
 			entryKey, err1 := t.genIndexKeyStr(indexVals)
 			if err1 != nil {
 				return 0, errors.Trace(err1)
@@ -559,7 +572,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
-		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID); err != nil {
+		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, errors.Trace(dupKeyErr)
 			}
@@ -576,7 +589,11 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 func (t *tableCommon) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	// Get raw row data from kv.
 	key := t.RecordKey(h)
-	value, err := ctx.Txn().Get(key)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	value, err := txn.Get(key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -725,7 +742,11 @@ func (t *tableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, c
 
 func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	// Remove row data.
-	err := ctx.Txn().Delete([]byte(t.RecordKey(h)))
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = txn.Delete([]byte(t.RecordKey(h)))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -734,17 +755,22 @@ func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 
 // removeRowIndices removes all the indices of a row.
 func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []types.Datum) error {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
-			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS(), h, rec)
+			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, txn.StartTS(), h, rec)
 			return errors.Trace(err)
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, ctx.Txn(), vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS(), h)
+				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), txn.StartTS(), h)
 				continue
 			}
 			return errors.Trace(err)
@@ -782,7 +808,13 @@ func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMu
 // IterRecords implements table.Table IterRecords interface.
 func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	it, err := ctx.Txn().Seek(startKey)
+	prefix := t.RecordPrefix()
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	it, err := txn.Iter(startKey, prefix.PrefixNext())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -798,7 +830,6 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 	for _, col := range cols {
 		colMap[col.ID] = &col.FieldType
 	}
-	prefix := t.RecordPrefix()
 	defaultVals := make([]types.Datum, len(cols))
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
@@ -911,8 +942,15 @@ func (t *tableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetS
 
 // Seek implements table.Table Seek interface.
 func (t *tableCommon) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
 	seekKey := tablecodec.EncodeRowKeyWithHandle(t.physicalTableID, h)
-	iter, err := ctx.Txn().Seek(seekKey)
+	iter, err := txn.Iter(seekKey, t.RecordPrefix().PrefixNext())
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
 	if !iter.Valid() || !iter.Key().HasPrefix(t.RecordPrefix()) {
 		// No more records in the table, skip to the end.
 		return 0, false, nil
@@ -999,13 +1037,16 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, da
 		}
 		t = pt.GetPartition(pid)
 	}
-	txn := ctx.Txn()
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 	txn.SetOption(kv.PresumeKeyNotExistsError, e)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	_, err := txn.Get(recordKey)
+	_, err = txn.Get(recordKey)
 	if err == nil {
 		return errors.Trace(e)
 	} else if !kv.ErrNotExist.Equal(err) {
@@ -1037,12 +1078,12 @@ func newCtxForPartitionExpr() sessionctx.Context {
 // NewTxn creates a new transaction for further execution.
 // If old transaction is valid, it is committed first.
 // It's used in BEGIN statement and DDL statements to commit old transaction.
-func (ctx *ctxForPartitionExpr) NewTxn() error {
+func (ctx *ctxForPartitionExpr) NewTxn(ctx1 context.Context) error {
 	panic("not support")
 }
 
 // Txn returns the current transaction which is created before executing a statement.
-func (ctx *ctxForPartitionExpr) Txn() kv.Transaction {
+func (ctx *ctxForPartitionExpr) Txn(bool) (kv.Transaction, error) {
 	panic("not support")
 }
 
@@ -1082,12 +1123,6 @@ func (ctx *ctxForPartitionExpr) RefreshTxnCtx(context.Context) error {
 	panic("not support")
 }
 
-// ActivePendingTxn receives the pending transaction from the transaction channel.
-// It should be called right before we builds an executor.
-func (ctx *ctxForPartitionExpr) ActivePendingTxn() error {
-	panic("not support")
-}
-
 // InitTxnWithStartTS initializes a transaction with startTS.
 // It should be called right before we builds an executor.
 func (ctx *ctxForPartitionExpr) InitTxnWithStartTS(startTS uint64) error {
@@ -1110,7 +1145,7 @@ func (ctx *ctxForPartitionExpr) StoreQueryFeedback(feedback interface{}) {
 }
 
 // StmtCommit flush all changes by the statement to the underlying transaction.
-func (ctx *ctxForPartitionExpr) StmtCommit() {
+func (ctx *ctxForPartitionExpr) StmtCommit() error {
 	panic("not support")
 }
 

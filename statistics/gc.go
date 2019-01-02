@@ -14,15 +14,14 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
@@ -31,7 +30,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := mathutil.MaxInt64(int64(h.Lease), int64(ddlLease))
-	offset := oracle.ComposeTS(10*lease, 0)
+	offset := DurationToTS(10 * time.Duration(lease))
 	if h.LastUpdateVersion() < offset {
 		return nil
 	}
@@ -99,6 +98,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
@@ -107,8 +107,13 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	startTS := txn.StartTS()
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), physicalID))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", startTS, physicalID))
 	if err != nil {
 		return
 	}
@@ -134,8 +139,13 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	startTS := txn.StartTS()
 	// We only update the version so that other tidb will know that this table is deleted.
-	sql := fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), physicalID)
+	sql := fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", startTS, physicalID)
 	_, err = exec.Execute(context.Background(), sql)
 	if err != nil {
 		return

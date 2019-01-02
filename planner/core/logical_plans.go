@@ -85,8 +85,8 @@ func (tp JoinType) String() string {
 }
 
 const (
-	preferLeftAsIndexOuter = 1 << iota
-	preferRightAsIndexOuter
+	preferLeftAsIndexInner = 1 << iota
+	preferRightAsIndexInner
 	preferHashJoin
 	preferMergeJoin
 )
