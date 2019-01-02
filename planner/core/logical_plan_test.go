@@ -1913,23 +1913,23 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 	}{
 		{
 			sql:    "select a, avg(a) over(partition by a) from t",
-			result: "TableReader(Table(t))->WindowFunc(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(partition by b) from t",
-			result: "TableReader(Table(t))->Sort->WindowFunc(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
-			result: "TableReader(Table(t))->Projection->Sort->WindowFunc(avg(2_proj_window_3))->Projection",
+			result: "TableReader(Table(t))->Projection->Sort->Window(avg(2_proj_window_3))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
-			result: "TableReader(Table(t))->Sort->WindowFunc(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, b as a, avg(a) over(partition by a) from t",
-			result: "TableReader(Table(t))->WindowFunc(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, b as z, sum(z) over() from t",
@@ -1937,27 +1937,27 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, b as z from t order by (sum(z) over())",
-			result: "TableReader(Table(t))->WindowFunc(sum(test.t.z))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(test.t.z))->Sort->Projection",
 		},
 		{
 			sql:    "select sum(avg(a)) over() from t",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->WindowFunc(sum(sel_agg_2))->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over())",
-			result: "TableReader(Table(t))->WindowFunc(sum(test.t.a))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over(partition by a))",
-			result: "TableReader(Table(t))->WindowFunc(sum(test.t.a))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(avg(a)) over())",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->WindowFunc(sum(sel_agg_2))->Sort->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Sort->Projection",
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
-			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->WindowFunc(sum(tt.a))->MaxOneRow->Sel([w])}->Projection",
+			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(tt.a))->MaxOneRow->Sel([w])}->Projection",
 		},
 		{
 			sql:    "select avg(a) over() as w from t having w > 1",

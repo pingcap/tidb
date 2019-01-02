@@ -2550,6 +2550,8 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	return del, nil
 }
 
+// buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
+// so after the projection, window functions only needs to deal with columns.
 func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []expression.Expression, error) {
 	b.optFlag |= flagEliminateProjection
 
