@@ -457,8 +457,9 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-// GetInformationSchema gets the infoschema binding to d. It's expoted for testing.
-func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema {
+// GetInfoSchemaWithInterceptor gets the infoschema binding to d. It's expoted for testing.
+// Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to interceptor the GetInfoSchema, use d.infoHandle.Get() instead.
+func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
 	is := d.infoHandle.Get()
 
 	d.mu.RLock()

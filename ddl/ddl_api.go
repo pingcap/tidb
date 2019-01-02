@@ -44,7 +44,7 @@ import (
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(schema)
 	if ok {
 		return infoschema.ErrDatabaseExists.GenWithStackByArgs(schema)
@@ -86,7 +86,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 }
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	old, ok := is.SchemaByName(schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -852,7 +852,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 }
 
 func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
@@ -973,7 +973,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
 		return d.CreateTableWithLike(ctx, ident, referIdent, s.IfNotExists)
 	}
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
@@ -1026,7 +1026,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
 	ident := ast.Ident{Name: s.ViewName.Name, Schema: s.ViewName.Schema}
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
@@ -1269,7 +1269,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		return errRunMultiSchemaChanges
 	}
 
-	is := d.GetInformationSchema(ctx)
+	is := d.infoHandle.Get()
 	t, _ := is.TableByName(ident.Schema, ident.Name)
 	if t != nil && t.Meta().IsView() {
 		return ErrTableIsNotBaseTable.GenWithStackByArgs(ident.Schema, ident.Name)
@@ -1366,7 +1366,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 }
 
 func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64) error {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
@@ -1414,7 +1414,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 }
 
 func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Ident) (dbInfo *model.DBInfo, t table.Table, err error) {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(tableIdent.Schema)
 	if !ok {
 		return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tableIdent.Schema)
@@ -1455,7 +1455,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -1686,7 +1686,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 
 // DropColumn will drop a column from the table, now we don't support drop the column with index covered.
 func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIStr) error {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -2217,7 +2217,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
@@ -2241,7 +2241,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 }
 
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
@@ -2267,7 +2267,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
 		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
