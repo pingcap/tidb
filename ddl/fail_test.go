@@ -35,7 +35,7 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	// insert t_fail values (1, 2);
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
-	_, err = originTable.AddRecord(ctx, row, false)
+	_, err = originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
