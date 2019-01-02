@@ -39,6 +39,15 @@ const (
 	MemoryTable
 )
 
+const (
+	// DirtyTableAddRow is the constant for dirty table operation type.
+	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constant for dirty table operation type.
+	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
+)
+
 var (
 	errColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, "column can not be null")
 	errUnknownColumn   = terror.ClassTable.New(codeUnknownColumn, "unknown column")
@@ -113,7 +122,7 @@ type Table interface {
 
 	// AddRecord inserts a row which should contain only public columns
 	// skipHandleCheck indicates that recordID in r has been checked as not duplicate already.
-	AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error)
+	AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool, isUpdate ...bool) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
 	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error

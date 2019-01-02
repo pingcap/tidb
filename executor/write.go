@@ -154,28 +154,30 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if err != nil {
 			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
-		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
+		// the `affectedRows` is increased when adding new record.
+		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck, true)
+		if err != nil {
+			return false, handleChanged, newHandle, 0, errors.Trace(err)
+		}
+		if onDup {
+			sc.AddAffectedRows(1)
+		}
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
-	}
-	if err != nil {
-		return false, handleChanged, newHandle, 0, errors.Trace(err)
+		if err != nil {
+			return false, false, h, 0, errors.Trace(err)
+		}
+		if onDup {
+			sc.AddAffectedRows(2)
+		} else {
+			// if handleChanged == true, the `affectedRows` is calculated when add new record.
+			if !handleChanged {
+				sc.AddAffectedRows(1)
+			}
+		}
 	}
 
-	tid := t.Meta().ID
-	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, tid, h, nil)
-	if handleChanged {
-		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, newHandle, newData)
-	} else {
-		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
-	}
-
-	if onDup {
-		sc.AddAffectedRows(2)
-	} else {
-		sc.AddAffectedRows(1)
-	}
 	colSize := make(map[int64]int64)
 	for id, col := range t.Cols() {
 		val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
@@ -395,21 +397,11 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	return nil
 }
 
-const (
-	// DirtyTableAddRow is the constant for dirty table operation type.
-	DirtyTableAddRow = iota
-	// DirtyTableDeleteRow is the constant for dirty table operation type.
-	DirtyTableDeleteRow
-	// DirtyTableTruncate is the constant for dirty table operation type.
-	DirtyTableTruncate
-)
-
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	colSize := make(map[int64]int64)
 	for id, col := range t.Cols() {
@@ -851,9 +843,6 @@ func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !e.ctx.GetSessionVars().ImportingData {
-		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
-	}
 	e.rowCount++
 	return h, nil
 }
@@ -907,9 +896,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 			h, err := e.Table.AddRecord(e.ctx, row, false)
 			txn.DelOption(kv.PresumeKeyNotExists)
 			if err == nil {
-				if !sessVars.ImportingData {
-					e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
-				}
 				e.rowCount++
 				continue
 			}
@@ -1863,7 +1849,6 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
-			e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			idx++
 			continue
 		}
@@ -1891,7 +1876,6 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 
