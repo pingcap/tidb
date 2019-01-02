@@ -154,6 +154,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if err != nil {
 			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
+		// the `affectedRows` is increased when adding new record.
 		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck, true)
 		if err != nil {
 			return false, handleChanged, newHandle, 0, errors.Trace(err)
@@ -164,19 +165,19 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
-	}
-	if err != nil {
-		return false, handleChanged, newHandle, 0, errors.Trace(err)
-	}
-
-	if onDup {
-		sc.AddAffectedRows(2)
-	} else {
-		// if handleChanged == true, the `affectedRows` is calculated when add new record.
-		if !handleChanged {
-			sc.AddAffectedRows(1)
+		if err != nil {
+			return false, false, h, 0, errors.Trace(err)
+		}
+		if onDup {
+			sc.AddAffectedRows(2)
+		} else {
+			// if handleChanged == true, the `affectedRows` is calculated when add new record.
+			if !handleChanged {
+				sc.AddAffectedRows(1)
+			}
 		}
 	}
+
 	colSize := make(map[int64]int64)
 	for id, col := range t.Cols() {
 		val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
