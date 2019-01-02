@@ -755,9 +755,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
-			return nil, errors.Trace(err)
-		}
+		loadDataInfo.Ctx.StmtCommit()
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
 			return nil, errors.Trace(err)
@@ -815,10 +813,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 	}
 
-	if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
-		return errors.Trace(err)
-	}
-	txn, err := loadDataInfo.Ctx.Txn(true)
+	txn := loadDataInfo.Ctx.Txn(true)
+	loadDataInfo.Ctx.StmtCommit()
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {

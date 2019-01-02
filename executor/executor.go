@@ -316,13 +316,12 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	txn, err := e.ctx.Txn(true)
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(txn)
 	// TODO: need to return the job that the user needs.
-	historyJobs, err := admin.GetHistoryDDLJobs(txn)
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -359,16 +358,12 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	jobs, err := admin.GetDDLJobs(txn)
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	historyJobs, err := admin.GetHistoryDDLJobs(txn)
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -429,10 +424,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if idx.Meta().State != model.StatePublic {
 				continue
 			}
-			txn, err := e.ctx.Txn(true)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			txn := e.ctx.Txn(true)
 			if !txn.Valid() {
 				if failer, ok := txn.(sqlexec.Failer); ok && failer.Fail() != nil {
 					return failer.Fail()
@@ -541,10 +533,7 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	txn := e.ctx.Txn(true)
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {

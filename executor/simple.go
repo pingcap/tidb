@@ -114,8 +114,8 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	_, err := e.ctx.Txn(true)
-	return errors.Trace(err)
+	e.ctx.Txn(true)
+	return nil
 }
 
 func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
@@ -126,13 +126,9 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	log.Debugf("con:%d execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if txn.Valid() {
+	if e.ctx.Txn(true).Valid() {
 		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
-		return txn.Rollback()
+		return e.ctx.Txn(true).Rollback()
 	}
 	return nil
 }
@@ -212,11 +208,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		txn, err := e.ctx.Txn(true)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = txn.Commit(sessionctx.SetConnID2Ctx(context.Background(), e.ctx))
+		err := e.ctx.Txn(true).Commit(sessionctx.SetConnID2Ctx(context.Background(), e.ctx))
 		if err != nil {
 			return errors.Trace(err)
 		}

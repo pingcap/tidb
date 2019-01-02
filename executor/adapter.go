@@ -206,7 +206,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if err = e.Open(ctx); err != nil {
+	if err := e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
@@ -235,12 +235,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}
 
 	var txnStartTS uint64
-	txn, err1 := sctx.Txn(false)
-	if err1 != nil {
-		return nil, errors.Trace(err1)
-	}
-	if txn.Valid() {
-		txnStartTS = txn.StartTS()
+	if sctx.Txn(false).Valid() {
+		txnStartTS = sctx.Txn(true).StartTS()
 	}
 	return &recordSet{
 		executor:    e,
@@ -259,10 +255,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
-		txn, err := sctx.Txn(true)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		txn := sctx.Txn(true)
 		if !txn.Valid() {
 			if failer, ok := txn.(sqlexec.Failer); ok && failer.Fail() != nil {
 				return nil, failer.Fail()
@@ -279,12 +272,8 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
 		// Don't active pending txn here.
-		if txn, err1 := sctx.Txn(false); err1 != nil {
-			log.Error(err1)
-		} else {
-			if txn.Valid() {
-				txnTS = txn.StartTS()
-			}
+		if sctx.Txn(false).Valid() {
+			txnTS = sctx.Txn(true).StartTS()
 		}
 		a.LogSlowQuery(txnTS, err == nil)
 	}()
@@ -303,10 +292,8 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if _, ok := a.Plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		isPointGet, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		var err error
+		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if isPointGet {
 			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
@@ -397,25 +384,21 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 //  1. ctx is auto commit tagged
 //  2. txn is not valid
 //  2. plan is point get by pk or unique key
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan) (bool, error) {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan) bool {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
-		return false, nil
+		return false
 	}
 
 	// check txn
-	txn, err := ctx.Txn(false)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if txn.Valid() {
-		return false, nil
+	if ctx.Txn(false).Valid() {
+		return false
 	}
 
 	// check plan
 	if proj, ok := p.(*plan.PhysicalProjection); ok {
 		if len(proj.Children()) != 1 {
-			return false, nil
+			return false
 		}
 		p = proj.Children()[0]
 	}
@@ -423,14 +406,14 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan
 	switch v := p.(type) {
 	case *plan.PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
 	case *plan.PhysicalIndexLookUpReader:
 		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
 	case *plan.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
 	default:
-		return false, nil
+		return false
 	}
 }

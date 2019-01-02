@@ -374,18 +374,14 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 		}
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
-		err := hookCtx.NewTxn()
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		txn, err := hookCtx.Txn(true)
+		var err error
+		err = hookCtx.NewTxn()
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
 		}
 		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(txn, jobIDs)
+		errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -395,7 +391,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 			checkErr = errors.Trace(errs[0])
 			return
 		}
-		err = txn.Commit(context.Background())
+		err = hookCtx.Txn(true).Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -471,12 +467,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
+			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -485,7 +476,7 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 				checkErr = errors.Trace(errs[0])
 				return
 			}
-			checkErr = txn.Commit(context.Background())
+			checkErr = hookCtx.Txn(true).Commit(context.Background())
 		}
 	}
 	s.dom.DDL().SetHook(hook)
@@ -717,14 +708,12 @@ LOOP:
 	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
-	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
-	txn.Rollback()
+	ctx.Txn(true).Rollback()
 
 	c.Assert(ctx.NewTxn(), IsNil)
-	defer txn.Rollback()
+	defer ctx.Txn(true).Rollback()
 
-	it, err := nidx.SeekFirst(txn)
+	it, err := nidx.SeekFirst(ctx.Txn(true))
 	c.Assert(err, IsNil)
 	defer it.Close()
 
@@ -820,13 +809,9 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 		handles := make(map[int64]struct{})
 
 		c.Assert(ctx.NewTxn(), IsNil)
-		txn, err := ctx.Txn(true)
-		c.Assert(err, IsNil)
-		defer txn.Rollback()
+		defer ctx.Txn(true).Rollback()
 
-		txn, err = ctx.Txn(true)
-		c.Assert(err, IsNil)
-		it, err := idx.SeekFirst(txn)
+		it, err := idx.SeekFirst(ctx.Txn(true))
 		c.Assert(err, IsNil)
 		defer it.Close()
 
@@ -1052,11 +1037,7 @@ LOOP:
 	i := 0
 	j := 0
 	ctx.NewTxn()
-	defer func() {
-		if txn, err1 := ctx.Txn(true); err1 == nil {
-			txn.Rollback()
-		}
-	}()
+	defer ctx.Txn(true).Rollback()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
