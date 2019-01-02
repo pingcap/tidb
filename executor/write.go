@@ -154,7 +154,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if err != nil {
 			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
-		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck, []bool{true}...)
+		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck, true)
 		if err != nil {
 			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
