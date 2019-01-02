@@ -3656,7 +3656,7 @@ func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.Partiti
 func (s *testDBSuite) TestTransactionOnAddDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
-	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "drop table if exists t1, t2")
 	s.mustExec(c, "create table t1 (a int, b int);")
 	s.mustExec(c, "create table t2 (a int, b int);")
 	s.mustExec(c, "insert into t2 values (2,0)")
