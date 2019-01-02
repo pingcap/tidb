@@ -204,16 +204,18 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 		conditions []Expression
 		result     string
 	}{
+		// Don't propagate this any more, because it makes the code more complex but not
+		// useful for partition pruning.
+		// {
+		// 	solver: newConstraintSolver(ruleColumnGTConst),
+		// 	conditions: []Expression{
+		// 		newFunction(ast.GT, newColumn(0), newLonglong(5)),
+		// 		newFunction(ast.GT, newColumn(0), newLonglong(7)),
+		// 	},
+		// 	result: "gt(test.t.0, 7)",
+		// },
 		{
-			solver: newConstraintSolver(ruleColumnGTConst),
-			conditions: []Expression{
-				newFunction(ast.GT, newColumn(0), newLonglong(5)),
-				newFunction(ast.GT, newColumn(0), newLonglong(7)),
-			},
-			result: "gt(test.t.0, 7)",
-		},
-		{
-			solver: newConstraintSolver(ruleColumnGTConst),
+			solver: newConstraintSolver(ruleColumnOPConst),
 			conditions: []Expression{
 				newFunction(ast.GT, newColumn(0), newLonglong(5)),
 				newFunction(ast.LT, newColumn(0), newLonglong(5)),
@@ -221,7 +223,7 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 			result: "0",
 		},
 		{
-			solver: newConstraintSolver(ruleColumnGTConst),
+			solver: newConstraintSolver(ruleColumnOPConst),
 			conditions: []Expression{
 				newFunction(ast.GT, newColumn(0), newLonglong(7)),
 				newFunction(ast.LT, newColumn(0), newLonglong(5)),
@@ -229,7 +231,7 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 			result: "0",
 		},
 		{
-			solver: newConstraintSolver(ruleColumnGTConst),
+			solver: newConstraintSolver(ruleColumnOPConst),
 			// col1 > '2018-12-11' and to_days(col1) < 5 => false
 			conditions: []Expression{
 				newFunction(ast.GT, col1, newDate(2018, 12, 11)),
@@ -238,15 +240,7 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 			result: "0",
 		},
 		{
-			solver: newConstraintSolver(ruleColumnLTConst),
-			conditions: []Expression{
-				newFunction(ast.LT, newColumn(0), newLonglong(5)),
-				newFunction(ast.LT, newColumn(0), newLonglong(7)),
-			},
-			result: "lt(test.t.0, 5)",
-		},
-		{
-			solver: newConstraintSolver(ruleColumnLTConst),
+			solver: newConstraintSolver(ruleColumnOPConst),
 			conditions: []Expression{
 				newFunction(ast.LT, newColumn(0), newLonglong(5)),
 				newFunction(ast.GT, newColumn(0), newLonglong(5)),
@@ -254,7 +248,7 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 			result: "0",
 		},
 		{
-			solver: newConstraintSolver(ruleColumnLTConst),
+			solver: newConstraintSolver(ruleColumnOPConst),
 			conditions: []Expression{
 				newFunction(ast.LT, newColumn(0), newLonglong(5)),
 				newFunction(ast.GT, newColumn(0), newLonglong(7)),
@@ -262,7 +256,7 @@ func (*testExpressionSuite) TestConstraintPropagation(c *C) {
 			result: "0",
 		},
 		{
-			solver: newConstraintSolver(ruleColumnLTConst),
+			solver: newConstraintSolver(ruleColumnOPConst),
 			// col1 < '2018-12-11' and to_days(col1) > 737999 => false
 			conditions: []Expression{
 				newFunction(ast.LT, col1, newDate(2018, 12, 11)),
