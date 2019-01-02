@@ -87,4 +87,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/check => github.com/winkyao/check v0.0.0-20190102072653-bee65b84d505
+replace github.com/pingcap/check => github.com/winkyao/check v0.0.0-20190102082350-9d9550589a63
