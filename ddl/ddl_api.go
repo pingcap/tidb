@@ -1272,11 +1272,11 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	is := d.infoHandle.Get()
 	_, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
 	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 	if t.Meta().IsView() {
 		return ErrTableIsNotBaseTable.GenWithStackByArgs(ident.Schema, ident.Name)
