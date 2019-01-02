@@ -81,7 +81,6 @@ func (s *testUpdateSuite) TearDownTest(c *C) {
 func (s *testUpdateSuite) TestUpdateGenColInTxn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint, b bigint as (a+1));`)
 	tk.MustExec(`begin;`)
 	tk.MustExec(`insert into t(a) values(1);`)
