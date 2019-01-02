@@ -533,9 +533,8 @@ func (e *InsertValues) handleWarning(err error, logInfo string) {
 
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
-func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(row []types.Datum) (int64, error)) error {
-	// all the rows will be checked, so it is safe to set BatchCheck = true
-	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
+func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(row []types.Datum,
+	opts ...*table.AddRecordOpt) (int64, error)) error {
 	err := e.batchGetInsertKeys(e.ctx, e.Table, rows)
 	if err != nil {
 		return errors.Trace(err)
@@ -562,7 +561,13 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 		// There may be duplicate keys inside the insert statement.
 		if rows[i] != nil {
 			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-			_, err = addRecord(rows[i])
+			// All the rows are checked, so it is safe to skip the constraint check when adding record.
+			_, err = addRecord(rows[i], &table.AddRecordOpt{
+				CreateIdxOpt: table.CreateIdxOpt{
+					SkipHandleCheck: true,
+					SkipCheck:       true,
+				},
+			})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -577,7 +582,7 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 	return nil
 }
 
-func (e *InsertValues) addRecord(row []types.Datum) (int64, error) {
+func (e *InsertValues) addRecord(row []types.Datum, opts ...*table.AddRecordOpt) (int64, error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -585,7 +590,7 @@ func (e *InsertValues) addRecord(row []types.Datum) (int64, error) {
 	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
 		txn.SetOption(kv.PresumeKeyNotExists, nil)
 	}
-	h, err := e.Table.AddRecord(e.ctx, row)
+	h, err := e.Table.AddRecord(e.ctx, row, opts...)
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, errors.Trace(err)

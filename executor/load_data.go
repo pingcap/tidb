@@ -298,11 +298,11 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 	return row
 }
 
-func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
+func (e *LoadDataInfo) addRecordLD(row []types.Datum, opts ...*table.AddRecordOpt) (int64, error) {
 	if row == nil {
 		return 0, nil
 	}
-	h, err := e.addRecord(row)
+	h, err := e.addRecord(row, opts...)
 	if err != nil {
 		e.handleWarning(err,
 			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))

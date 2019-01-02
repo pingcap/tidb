@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -124,7 +125,12 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
-			newHandle, err := e.addRecord(newRows[i])
+			newHandle, err := e.addRecord(newRows[i], &table.AddRecordOpt{
+				CreateIdxOpt: table.CreateIdxOpt{
+					SkipHandleCheck: true,
+					SkipCheck:       true,
+				},
+			})
 			if err != nil {
 				return errors.Trace(err)
 			}
