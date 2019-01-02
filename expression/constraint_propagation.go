@@ -249,7 +249,7 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 			return
 		}
 	}
-	if !col1.Equal(ctx, col2) {
+	if col1.ColName.L != col2.ColName.L {
 		return
 	}
 	v, isNull, err := compareConstant(ctx, negOP(OP2), fc1, con2)
