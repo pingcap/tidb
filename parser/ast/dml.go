@@ -14,6 +14,8 @@
 package ast
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -1526,7 +1528,36 @@ type FrameBound struct {
 
 // Restore implements Node interface.
 func (n *FrameBound) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if n.UnBounded {
+		ctx.WriteKeyWord("UNBOUNDED")
+	}
+	switch n.Type {
+	case CurrentRow:
+		ctx.WriteKeyWord("CURRENT ROW")
+	case Preceding, Following:
+		if n.Unit != nil {
+			ctx.WriteKeyWord("INTERVAL ")
+		}
+		if n.Expr != nil {
+			if err := n.Expr.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore FrameBound.Expr")
+			}
+		}
+		if n.Unit != nil {
+			// Here the Unit string should not be quoted.
+			// TODO: This is a temporary workaround that should be changed once something like "Keyword Expression" is implemented.
+			var sb strings.Builder
+			n.Unit.Restore(NewRestoreCtx(0, &sb))
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(sb.String())
+		}
+		if n.Type == Preceding {
+			ctx.WriteKeyWord(" PRECEDING")
+		} else {
+			ctx.WriteKeyWord(" FOLLOWING")
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
