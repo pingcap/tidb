@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -847,7 +848,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	intercept := &ddl.TestInterceptor{}
 	firstConnID := uint64(1)
 	finishedCnt := int32(0)
-	interval := 5 * time.Millisecond
+	interval := 2 * time.Millisecond
 	var sessionCnt int32 // sessionCnt is the number of sessions that goes into the function of OnGetInfoSchema.
 	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 		// The following code is for testing.
@@ -861,6 +862,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 				info = is
 				break
 			}
+			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
 			time.Sleep(interval)
 		}
 
@@ -872,6 +874,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 			if currID == firstConnID || seCnt == finishedCnt {
 				break
 			}
+			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
 			time.Sleep(interval)
 		}
 
