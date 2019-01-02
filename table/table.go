@@ -89,6 +89,7 @@ type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool,
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
 	CreateIdxOpt
+	IsUpdate bool
 }
 
 // Table is used to retrieve and modify rows in table.
