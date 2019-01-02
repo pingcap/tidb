@@ -1707,3 +1707,46 @@ func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
 	ctx = tk.Se.(sessionctx.Context)
 	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
 }
+
+func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(a1 bigint primary key, b1 bigint);`)
+	tk.MustExec(`create table t2(a2 bigint primary key, b2 bigint);`)
+	tk.MustExec(`insert into t1 values(1, 100);`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustExec(`insert into t2 values(1, 200);`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update b1 = 1;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update b1 = 200;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 200"))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update a1 = 1;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 200"))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update b1 = 300;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 300"))
+
+	tk.MustExec(`insert into t1 values(1, 1) on duplicate key update b1 = 400;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 400"))
+
+	tk.MustExec(`insert into t1 select 1, 500 from t2 on duplicate key update b1 = 400;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 400"))
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(a bigint primary key, b bigint);`)
+	tk.MustExec(`create table t2(a bigint primary key, b bigint);`)
+	_, err := tk.Exec(`insert into t1 select * from t2 on duplicate key update c = t2.b;`)
+	c.Assert(err.Error(), Equals, `column c not found`)
+}
