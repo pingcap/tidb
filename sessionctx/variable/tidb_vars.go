@@ -225,6 +225,10 @@ const (
 
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
+
+	// TIDBOptJoinOrderAlgoThreshold defines the threshold less than which
+	// we'll choose a rather time consuming algorithm to calculate the join order.
+	TiDBOptJoinOrderAlgoThreshold = "tidb_opt_join_order_algo_threshold"
 )
 
 // Default TiDB system variable values.
@@ -274,6 +278,7 @@ const (
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
+	DefTiDBOptJoinOrderAlgoThreshold = 10
 )
 
 // Process global variables.

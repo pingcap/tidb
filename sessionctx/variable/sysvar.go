@@ -676,6 +676,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, boolToIntStr(DefTiDBUseRadixJoin)},
+	{ScopeGlobal | ScopeSession, TiDBOptJoinOrderAlgoThreshold, strconv.Itoa(DefTiDBOptJoinOrderAlgoThreshold)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

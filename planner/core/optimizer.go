@@ -43,7 +43,7 @@ const (
 	flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
-	flagJoinReOrderGreedy
+	flagJoinReOrder
 )
 
 var optRuleList = []logicalOptRule{
