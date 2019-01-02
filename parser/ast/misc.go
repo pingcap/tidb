@@ -253,7 +253,8 @@ type BeginStmt struct {
 
 // Restore implements Node interface.
 func (n *BeginStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("START TRANSACTION")
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -297,7 +298,8 @@ type CommitStmt struct {
 
 // Restore implements Node interface.
 func (n *CommitStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("COMMIT")
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -318,7 +320,8 @@ type RollbackStmt struct {
 
 // Restore implements Node interface.
 func (n *RollbackStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("ROLLBACK")
+	return nil
 }
 
 // Accept implements Node Accept interface.

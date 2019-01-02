@@ -367,10 +367,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 			WHERE stuff.value >= ALL (SELECT stuff.value
 			FROM stuff)`, true, ""},
 		{"BEGIN", true, ""},
-		{"START TRANSACTION", true, ""},
+		{"START TRANSACTION", true, "START TRANSACTION"},
 		// 45
-		{"COMMIT", true, ""},
-		{"ROLLBACK", true, ""},
+		{"COMMIT", true, "COMMIT"},
+		{"ROLLBACK", true, "ROLLBACK"},
 		{`BEGIN;
 			INSERT INTO foo VALUES (42, 3.14);
 			INSERT INTO foo VALUES (-1, 2.78);
@@ -604,7 +604,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"show stats_healthy where table_name = 't'", true, ""},
 
 		// for load stats
-		{"load stats '/tmp/stats.json'", true, ""},
+		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
 		// set
 		// user defined
 		{"SET @ = 1", true, ""},
@@ -2443,17 +2443,17 @@ func (s *testParserSuite) TestDDLStatements(c *C) {
 
 func (s *testParserSuite) TestAnalyze(c *C) {
 	table := []testCase{
-		{"analyze table t1", true, ""},
-		{"analyze table t,t1", true, ""},
-		{"analyze table t1 index", true, ""},
-		{"analyze table t1 index a", true, ""},
-		{"analyze table t1 index a,b", true, ""},
-		{"analyze table t with 4 buckets", true, ""},
-		{"analyze table t index a with 4 buckets", true, ""},
-		{"analyze table t partition a", true, ""},
-		{"analyze table t partition a with 4 buckets", true, ""},
-		{"analyze table t partition a index b", true, ""},
-		{"analyze table t partition a index b with 4 buckets", true, ""},
+		{"analyze table t1", true, "ANALYZE TABLE `t1`"},
+		{"analyze table t,t1", true, "ANALYZE TABLE `t`,`t1`"},
+		{"analyze table t1 index", true, "ANALYZE TABLE `t1` INDEX"},
+		{"analyze table t1 index a", true, "ANALYZE TABLE `t1` INDEX `a`"},
+		{"analyze table t1 index a,b", true, "ANALYZE TABLE `t1` INDEX `a`,`b`"},
+		{"analyze table t with 4 buckets", true, "ANALYZE TABLE `t` WITH 4 BUCKETS"},
+		{"analyze table t index a with 4 buckets", true, "ANALYZE TABLE `t` INDEX `a` WITH 4 BUCKETS"},
+		{"analyze table t partition a", true, "ANALYZE TABLE `t` PARTITION `a`"},
+		{"analyze table t partition a with 4 buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH 4 BUCKETS"},
+		{"analyze table t partition a index b", true, "ANALYZE TABLE `t` PARTITION `a` INDEX `b`"},
+		{"analyze table t partition a index b with 4 buckets", true, "ANALYZE TABLE `t` PARTITION `a` INDEX `b` WITH 4 BUCKETS"},
 	}
 	s.RunTest(c, table)
 }
