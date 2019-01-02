@@ -119,7 +119,7 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 func (s *testStateChangeSuite) TestDropNotNullColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, a int not null)")
+	tk.MustExec("create table t (id int, a int not null default 11)")
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("create table t1 (id int, b varchar(255) not null)")
 	tk.MustExec("insert into t1 values(2, '')")

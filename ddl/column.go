@@ -248,15 +248,11 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
 		// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
 		// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
+		// And we need consider the column without not-null flag.
 		if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
-			zeroVal := table.GetZeroValue(colInfo)
-			colInfo.OriginDefaultValue, err = zeroVal.ToString()
+			colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
-			}
-			if colInfo.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
-				(colInfo.Tp == mysql.TypeTimestamp || colInfo.Tp == mysql.TypeDatetime) {
-				colInfo.OriginDefaultValue = time.Now().Format(types.TimeFormat)
 			}
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
@@ -543,4 +539,22 @@ func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 	tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	return ver, errors.Trace(err)
+}
+
+func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
+	var err error
+	odValue := col.GetDefaultValue()
+	if odValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		zeroVal := table.GetZeroValue(col)
+		odValue, err = zeroVal.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
+		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
+		odValue = time.Now().Format(types.TimeFormat)
+	}
+	return odValue, nil
 }
