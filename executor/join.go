@@ -331,11 +331,15 @@ func (e *HashJoinExec) partitionInnerRows() error {
 	for i := 0; i < int(e.concurrency); i++ {
 		workerID := i
 		go util.WithRecovery(func() {
+			defer wg.Done()
 			e.doInnerPartition(workerID, wg)
-			wg.Done()
 		}, nil)
 	}
 	return nil
+}
+
+func finishPartitionInnerRows() {
+
 }
 
 // doInnerPartition runs concurrently, partitions and copies the inner relation
@@ -347,6 +351,9 @@ func (e *HashJoinExec) doInnerPartition(workerID int, wg *sync.WaitGroup) {
 		chk := e.innerResult.GetChunk(chkIdx)
 		for srcRowIdx, partPtr := range e.innerRowPrts[chkIdx] {
 			partIdx, destRowIdx := partPtr.partitionIdx, partPtr.rowIdx
+			if partIdx == math.MaxUint32 && destRowIdx == math.MaxUint32 {
+				continue
+			}
 			part := e.innerParts[partIdx]
 			part.Insert(int(destRowIdx), chk.GetRow(srcRowIdx))
 		}
@@ -369,6 +376,8 @@ func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 				return err
 			}
 			if hasNull {
+				// We set the two indexes to MaxUint32 to specify a row with Nil-JoinKey.
+				partPtrs[rowIdx].partitionIdx, partPtrs[rowIdx].rowIdx = math.MaxUint32, math.MaxUint32
 				continue
 			}
 			joinHash := murmur3.Sum32(keyBuf)
