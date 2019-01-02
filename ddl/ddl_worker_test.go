@@ -548,7 +548,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
 	job := testCreateTable(c, ctx, d, dbInfo, tblInfo)
-	// insert t values (1, 2);
+	// insert t values (1, 2, 3, 4);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2, 3, 4)
 	_, err = originTable.AddRecord(ctx, row, false)
