@@ -289,6 +289,17 @@ func (tc *testDMLSuite) TestOrderByClauseRestore(c *C) {
 	RunNodeRestoreTest(c, testCases, "SELECT 1 FROM t1 UNION SELECT 2 FROM t2 %s", extractNodeFromUnionStmtFunc)
 }
 
+func (tc *testDMLSuite) TestAssignmentRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"a=1", "`a`=1"},
+		{"b=1+2", "`b`=1+2"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node.(*UpdateStmt).List[0]
+	}
+	RunNodeRestoreTest(c, testCases, "UPDATE t1 SET %s", extractNodeFunc)
+}
+
 func (ts *testDMLSuite) TestHavingClauseRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"HAVING a", "HAVING `a`"},
