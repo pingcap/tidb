@@ -91,7 +91,8 @@ type HashJoinExec struct {
 	innerParts []partition
 	// innerRowPrts indicates the position in corresponding partition of every
 	// row in innerResult.
-	innerRowPrts [][]partRowPtr
+	innerRowPrts        [][]partRowPtr
+	partWorkerWaitGroup sync.WaitGroup
 }
 
 // partition stores the sub-relations of inner relation and outer relation after
@@ -104,6 +105,9 @@ type partRowPtr struct {
 	partitionIdx uint32
 	rowIdx       uint32
 }
+
+// PartPtr4NullKey indicates a partition pointer which points to a row with null-join-key.
+var PartPtr4NullKey = partRowPtr{math.MaxUint32, math.MaxUint32}
 
 // outerChkResource stores the result of the join outer fetch worker,
 // `dest` is for Chunk reuse: after join workers process the outer chunk which is read from `dest`,
@@ -325,35 +329,37 @@ func (e *HashJoinExec) partitionInnerRows() error {
 		return err
 	}
 
-	wg := &sync.WaitGroup{}
-	defer wg.Wait()
-	wg.Add(int(e.concurrency))
+	e.partWorkerWaitGroup = sync.WaitGroup{}
+	defer e.partWorkerWaitGroup.Wait()
+	e.partWorkerWaitGroup.Add(int(e.concurrency))
 	for i := 0; i < int(e.concurrency); i++ {
 		workerID := i
 		go util.WithRecovery(func() {
-			defer wg.Done()
-			e.doInnerPartition(workerID, wg)
-		}, nil)
+			e.doInnerPartition(workerID)
+		}, e.finishPartitionInnerRows)
 	}
 	return nil
 }
 
-func finishPartitionInnerRows() {
-
+func (e *HashJoinExec) finishPartitionInnerRows(r interface{}) {
+	if r != nil {
+		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
+	}
+	e.partWorkerWaitGroup.Done()
 }
 
 // doInnerPartition runs concurrently, partitions and copies the inner relation
 // to several pre-allocated data partitions. The input inner Chunk idx for each
 // partitioner is workerId + x*numPartitioners.
-func (e *HashJoinExec) doInnerPartition(workerID int, wg *sync.WaitGroup) {
+func (e *HashJoinExec) doInnerPartition(workerID int) {
 	chkIdx, chkNum := workerID, e.innerResult.NumChunks()
 	for ; chkIdx < chkNum; chkIdx += int(e.concurrency) {
 		chk := e.innerResult.GetChunk(chkIdx)
 		for srcRowIdx, partPtr := range e.innerRowPrts[chkIdx] {
-			partIdx, destRowIdx := partPtr.partitionIdx, partPtr.rowIdx
-			if partIdx == math.MaxUint32 && destRowIdx == math.MaxUint32 {
+			if partPtr == PartPtr4NullKey {
 				continue
 			}
+			partIdx, destRowIdx := partPtr.partitionIdx, partPtr.rowIdx
 			part := e.innerParts[partIdx]
 			part.Insert(int(destRowIdx), chk.GetRow(srcRowIdx))
 		}
@@ -376,8 +382,7 @@ func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 				return err
 			}
 			if hasNull {
-				// We set the two indexes to MaxUint32 to specify a row with Nil-JoinKey.
-				partPtrs[rowIdx].partitionIdx, partPtrs[rowIdx].rowIdx = math.MaxUint32, math.MaxUint32
+				partPtrs[rowIdx] = PartPtr4NullKey
 				continue
 			}
 			joinHash := murmur3.Sum32(keyBuf)
