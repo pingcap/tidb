@@ -106,8 +106,8 @@ type partRowPtr struct {
 	rowIdx       uint32
 }
 
-// PartPtr4NullKey indicates a partition pointer which points to a row with null-join-key.
-var PartPtr4NullKey = partRowPtr{math.MaxUint32, math.MaxUint32}
+// partPtr4NullKey indicates a partition pointer which points to a row with null-join-key.
+var partPtr4NullKey = partRowPtr{math.MaxUint32, math.MaxUint32}
 
 // outerChkResource stores the result of the join outer fetch worker,
 // `dest` is for Chunk reuse: after join workers process the outer chunk which is read from `dest`,
@@ -336,12 +336,12 @@ func (e *HashJoinExec) partitionInnerRows() error {
 		workerID := i
 		go util.WithRecovery(func() {
 			e.doInnerPartition(workerID)
-		}, e.finishPartitionInnerRows)
+		}, e.handlePartitionPanic)
 	}
 	return nil
 }
 
-func (e *HashJoinExec) finishPartitionInnerRows(r interface{}) {
+func (e *HashJoinExec) handlePartitionPanic(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
@@ -356,7 +356,7 @@ func (e *HashJoinExec) doInnerPartition(workerID int) {
 	for ; chkIdx < chkNum; chkIdx += int(e.concurrency) {
 		chk := e.innerResult.GetChunk(chkIdx)
 		for srcRowIdx, partPtr := range e.innerRowPrts[chkIdx] {
-			if partPtr == PartPtr4NullKey {
+			if partPtr == partPtr4NullKey {
 				continue
 			}
 			partIdx, destRowIdx := partPtr.partitionIdx, partPtr.rowIdx
@@ -382,7 +382,7 @@ func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 				return err
 			}
 			if hasNull {
-				partPtrs[rowIdx] = PartPtr4NullKey
+				partPtrs[rowIdx] = partPtr4NullKey
 				continue
 			}
 			joinHash := murmur3.Sum32(keyBuf)
@@ -461,19 +461,19 @@ func (e *HashJoinExec) initializeForProbe() {
 func (e *HashJoinExec) fetchOuterAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.joinWorkerWaitGroup.Add(1)
-	go util.WithRecovery(func() { e.fetchOuterChunks(ctx) }, e.finishOuterFetcher)
+	go util.WithRecovery(func() { e.fetchOuterChunks(ctx) }, e.handleOuterFetcherPanic)
 
 	// Start e.concurrency join workers to probe hash table and join inner and
 	// outer rows.
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joinWorkerWaitGroup.Add(1)
 		workID := i
-		go util.WithRecovery(func() { e.runJoinWorker(workID) }, e.finishJoinWorker)
+		go util.WithRecovery(func() { e.runJoinWorker(workID) }, e.handleJoinWorkerPanic)
 	}
 	go util.WithRecovery(e.waitJoinWorkersAndCloseResultChan, nil)
 }
 
-func (e *HashJoinExec) finishOuterFetcher(r interface{}) {
+func (e *HashJoinExec) handleOuterFetcherPanic(r interface{}) {
 	for i := range e.outerResultChs {
 		close(e.outerResultChs[i])
 	}
@@ -483,7 +483,7 @@ func (e *HashJoinExec) finishOuterFetcher(r interface{}) {
 	e.joinWorkerWaitGroup.Done()
 }
 
-func (e *HashJoinExec) finishJoinWorker(r interface{}) {
+func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
@@ -637,7 +637,7 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	}
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
-		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.finishFetchInnerAndBuildHashTable)
+		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.handleFetchInnerAndBuildHashTablePanic)
 		e.fetchOuterAndProbeHashTable(ctx)
 		e.prepared = true
 	}
@@ -658,7 +658,7 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *HashJoinExec) finishFetchInnerAndBuildHashTable(r interface{}) {
+func (e *HashJoinExec) handleFetchInnerAndBuildHashTablePanic(r interface{}) {
 	if r != nil {
 		e.innerFinished <- errors.Errorf("%v", r)
 	}
