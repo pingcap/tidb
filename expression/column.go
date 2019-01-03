@@ -323,6 +323,7 @@ func (col *Column) resolveIndices(schema *Schema) {
 	col.Index = schema.ColumnIndex(col)
 	if col.Index == -1 {
 		log.Errorf("Can't find column %s in schema %s", col, schema)
+		panic("????")
 	}
 }
 
