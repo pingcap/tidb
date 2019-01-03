@@ -98,16 +98,16 @@ func (p *mockBinlogPump) WriteBinlog(ctx context.Context, in *binlog.WriteBinlog
 	return &binlog.WriteBinlogResp{}, nil
 }
 
-type mockPump_PullBinlogsClient struct {
+type mockPumpPullBinlogsClient struct {
 	grpc.ClientStream
 }
 
-func (m mockPump_PullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
+func (m mockPumpPullBinlogsClient) Recv() (*binlog.PullBinlogResp, error) {
 	return nil, nil
 }
 
 func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
-	return mockPump_PullBinlogsClient{mocktikv.MockGRPCClientStream()}, nil
+	return mockPumpPullBinlogsClient{mocktikv.MockGRPCClientStream()}, nil
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
