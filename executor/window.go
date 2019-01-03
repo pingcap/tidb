@@ -56,7 +56,10 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	chk.Reset()
 	if e.windowFunc.HasRemainingResults() {
-		e.appendResult2Chunk(chk)
+		err := e.appendResult2Chunk(chk)
+		if err != nil {
+			return err
+		}
 	}
 	for !e.executed && (chk.NumRows() == 0 || chk.RemainedRows(chk.NumCols()-1) > 0) {
 		err := e.consumeOneGroup(ctx, chk)
