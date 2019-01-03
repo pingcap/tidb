@@ -17,6 +17,7 @@ import (
 	"bytes"
 
 	"github.com/pingcap/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
@@ -163,6 +164,18 @@ func (lmb *lazyMemBuffer) Reset() {
 
 func (lmb *lazyMemBuffer) SetCap(cap int) {
 	lmb.cap = cap
+}
+
+type mergeCheckable interface {
+	CheckMerge(o MemBuffer) error
+}
+
+func (lmb *lazyMemBuffer) CheckMerge(o MemBuffer) error {
+	if checker, ok := lmb.mb.(mergeCheckable); ok {
+		return checker.CheckMerge(o)
+	}
+	logrus.Fatalf("unsupport check merge for %v", o)
+	return nil
 }
 
 // Get implements the Retriever interface.

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -307,11 +307,20 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	return ret
 }
 
+type mergeCheckable interface {
+	CheckMerge(o kv.MemBuffer) error
+}
+
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit() error {
 	defer s.txn.cleanup()
 	st := &s.txn
-	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+	mergeChecker := st.buf.(mergeCheckable)
+	err := mergeChecker.CheckMerge(st.buf)
+	if err != nil {
+		return err
+	}
+	err = kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
 		// gofail: var mockStmtCommitError bool
 		// if mockStmtCommitError {
 		// 	return errors.New("mock stmt commit error")

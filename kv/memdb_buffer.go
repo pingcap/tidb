@@ -110,6 +110,30 @@ func (m *memDbBuffer) Delete(k Key) error {
 	return errors.Trace(err)
 }
 
+type memDBAware interface {
+	MemDB() *memdb.DB
+}
+
+func (m *memDbBuffer) MemDB() *memdb.DB {
+	return m.db
+}
+
+func (m *memDbBuffer) CheckMerge(o MemBuffer) error {
+	memDBAware := o.(memDBAware) // force panic if use wrong type.
+	memDB := memDBAware.MemDB()
+	mergedSize, mergedCount, maxEntrySize := m.db.PreMerge(memDB.NewIterator(&util.Range{}))
+	if maxEntrySize > m.entrySizeLimit {
+		return ErrEntryTooLarge.GenWithStack("entry too large, size: %d", maxEntrySize)
+	}
+	if mergedSize > m.bufferSizeLimit {
+		return ErrTxnTooLarge.GenWithStack("transaction too large, size:%d", mergedSize)
+	}
+	if mergedCount > int(m.bufferLenLimit) {
+		return ErrTxnTooLarge.GenWithStack("transaction too large, len:%d", mergedCount)
+	}
+	return nil
+}
+
 // Size returns sum of keys and values length.
 func (m *memDbBuffer) Size() int {
 	return m.db.Size()
