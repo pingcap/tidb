@@ -58,7 +58,7 @@ var (
 
 	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
 	// and it doesn't have a default value.
-	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, "field doesn't have a default value")
+	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, mysql.MySQLErrName[mysql.ErrNoDefaultForField])
 	// ErrIndexOutBound returns for index column offset out of bound.
 	ErrIndexOutBound = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
 	// ErrUnsupportedOp returns for unsupported operation.
@@ -85,6 +85,12 @@ var (
 
 // RecordIterFunc is used for low-level record iteration.
 type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool, err error)
+
+// AddRecordOpt contains the options will be used when adding a record.
+type AddRecordOpt struct {
+	CreateIdxOpt
+	IsUpdate bool
+}
 
 // Table is used to retrieve and modify rows in table.
 type Table interface {
@@ -126,8 +132,7 @@ type Table interface {
 	RecordKey(h int64) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	// skipHandleCheck indicates that recordID in r has been checked as not duplicate already.
-	AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error)
+	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*AddRecordOpt) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
 	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
