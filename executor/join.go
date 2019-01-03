@@ -91,8 +91,7 @@ type HashJoinExec struct {
 	innerParts []partition
 	// innerRowPrts indicates the position in corresponding partition of every
 	// row in innerResult.
-	innerRowPrts        [][]partRowPtr
-	partWorkerWaitGroup sync.WaitGroup
+	innerRowPrts [][]partRowPtr
 }
 
 // partition stores the sub-relations of inner relation and outer relation after
@@ -329,12 +328,13 @@ func (e *HashJoinExec) partitionInnerRows() error {
 		return err
 	}
 
-	e.partWorkerWaitGroup = sync.WaitGroup{}
-	defer e.partWorkerWaitGroup.Wait()
-	e.partWorkerWaitGroup.Add(int(e.concurrency))
+	wg := sync.WaitGroup{}
+	defer wg.Wait()
+	wg.Add(int(e.concurrency))
 	for i := 0; i < int(e.concurrency); i++ {
 		workerID := i
 		go util.WithRecovery(func() {
+			defer wg.Done()
 			e.doInnerPartition(workerID)
 		}, e.handlePartitionPanic)
 	}
@@ -345,7 +345,6 @@ func (e *HashJoinExec) handlePartitionPanic(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
-	e.partWorkerWaitGroup.Done()
 }
 
 // doInnerPartition runs concurrently, partitions and copies the inner relation
