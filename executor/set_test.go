@@ -49,24 +49,24 @@ func (s *testSuite) TestSetVar(c *C) {
 	_, err := tk.Exec(testSQL)
 	c.Assert(err, NotNil)
 
-	errTestSql := "SET @@date_format = 1;"
-	_, err = tk.Exec(errTestSql)
+	errTestSQL := "SET @@date_format = 1;"
+	_, err = tk.Exec(errTestSQL)
 	c.Assert(err, NotNil)
 
-	errTestSql = "SET @@rewriter_enabled = 1;"
-	_, err = tk.Exec(errTestSql)
+	errTestSQL = "SET @@rewriter_enabled = 1;"
+	_, err = tk.Exec(errTestSQL)
 	c.Assert(err, NotNil)
 
-	errTestSql = "SET xxx = abcd;"
-	_, err = tk.Exec(errTestSql)
+	errTestSQL = "SET xxx = abcd;"
+	_, err = tk.Exec(errTestSQL)
 	c.Assert(err, NotNil)
 
-	errTestSql = "SET @@global.a = 1;"
-	_, err = tk.Exec(errTestSql)
+	errTestSQL = "SET @@global.a = 1;"
+	_, err = tk.Exec(errTestSQL)
 	c.Assert(err, NotNil)
 
-	errTestSql = "SET @@global.timestamp = 1;"
-	_, err = tk.Exec(errTestSql)
+	errTestSQL = "SET @@global.timestamp = 1;"
+	_, err = tk.Exec(errTestSQL)
 	c.Assert(err, NotNil)
 
 	// For issue 998

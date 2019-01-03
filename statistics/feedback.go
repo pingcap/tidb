@@ -1122,7 +1122,9 @@ func setNextValue(d *types.Datum) {
 	case types.KindMysqlTime:
 		t := d.GetMysqlTime()
 		sc := &stmtctx.StatementContext{TimeZone: types.BoundTimezone}
-		t.Add(sc, types.Duration{Duration: 1, Fsp: 0})
+		if _, err := t.Add(sc, types.Duration{Duration: 1, Fsp: 0}); err != nil {
+			log.Error(errors.ErrorStack(err))
+		}
 		d.SetMysqlTime(t)
 	}
 }
