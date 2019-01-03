@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -42,6 +43,7 @@ var (
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
 	_ LogicalPlan = &LogicalLimit{}
+	_ LogicalPlan = &LogicalWindow{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -616,4 +618,18 @@ type LogicalLock struct {
 	baseLogicalPlan
 
 	Lock ast.SelectLockType
+}
+
+// LogicalWindow represents a logical window function plan.
+type LogicalWindow struct {
+	logicalSchemaProducer
+
+	WindowFuncDesc *aggregation.WindowFuncDesc
+	ByItems        []property.Item // ByItems is composed of `PARTITION BY` and `ORDER BY` items.
+	// TODO: add frame clause
+}
+
+// GetWindowResultColumn returns the column storing the result of the window function.
+func (p *LogicalWindow) GetWindowResultColumn() *expression.Column {
+	return p.schema.Columns[p.schema.Len()-1]
 }
