@@ -2662,9 +2662,15 @@ func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExp
 	}
 
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
+	desc.WrapCastForAggArgs(b.ctx)
+	lenPartition := 0
+	if expr.Spec.PartitionBy != nil {
+		lenPartition = len(expr.Spec.PartitionBy.Items)
+	}
 	window := LogicalWindow{
 		WindowFuncDesc: desc,
-		ByItems:        byItems,
+		PartitionBy:    byItems[0:lenPartition],
+		OrderBy:        byItems[lenPartition:],
 	}.Init(b.ctx)
 	schema := p.Schema().Clone()
 	schema.Append(&expression.Column{

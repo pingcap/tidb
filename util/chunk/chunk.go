@@ -187,6 +187,11 @@ func (c *Chunk) SwapColumns(other *Chunk) {
 	c.numVirtualRows, other.numVirtualRows = other.numVirtualRows, c.numVirtualRows
 }
 
+// CopyColumns copies columns `other.columns[from]` to `c.columns[dst]`.
+func (c *Chunk) CopyColumns(other *Chunk, dst, from int) {
+	c.columns[dst] = other.columns[from]
+}
+
 // SetNumVirtualRows sets the virtual row number for a Chunk.
 // It should only be used when there exists no column in the Chunk.
 func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
@@ -536,4 +541,9 @@ func readTime(buf []byte) types.Time {
 		Type: tp,
 		Fsp:  fsp,
 	}
+}
+
+// RemainedRows returns the number of rows needs to be appended in specific column.
+func (c *Chunk) RemainedRows(colIdx int) int {
+	return c.columns[0].length - c.columns[colIdx].length
 }

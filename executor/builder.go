@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/executor/windowfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -167,6 +168,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
 		return b.buildIndexLookUpReader(v)
+	case *plannercore.PhysicalWindow:
+		return b.buildWindow(v)
 	default:
 		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
@@ -918,54 +921,6 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	return e
 }
 
-// wrapCastForAggArgs wraps the args of an aggregate function with a cast function.
-func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
-	for _, f := range funcs {
-		// We do not need to wrap cast upon these functions,
-		// since the EvalXXX method called by the arg is determined by the corresponding arg type.
-		if f.Name == ast.AggFuncCount || f.Name == ast.AggFuncMin || f.Name == ast.AggFuncMax || f.Name == ast.AggFuncFirstRow {
-			continue
-		}
-		var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression
-		switch retTp := f.RetTp; retTp.EvalType() {
-		case types.ETInt:
-			castFunc = expression.WrapWithCastAsInt
-		case types.ETReal:
-			castFunc = expression.WrapWithCastAsReal
-		case types.ETString:
-			castFunc = expression.WrapWithCastAsString
-		case types.ETDecimal:
-			castFunc = expression.WrapWithCastAsDecimal
-		default:
-			panic("should never happen in executorBuilder.wrapCastForAggArgs")
-		}
-		for i := range f.Args {
-			f.Args[i] = castFunc(b.ctx, f.Args[i])
-			if f.Name != ast.AggFuncAvg && f.Name != ast.AggFuncSum {
-				continue
-			}
-			// After wrapping cast on the argument, flen etc. may not the same
-			// as the type of the aggregation function. The following part set
-			// the type of the argument exactly as the type of the aggregation
-			// function.
-			// Note: If the `Tp` of argument is the same as the `Tp` of the
-			// aggregation function, it will not wrap cast function on it
-			// internally. The reason of the special handling for `Column` is
-			// that the `RetType` of `Column` refers to the `infoschema`, so we
-			// need to set a new variable for it to avoid modifying the
-			// definition in `infoschema`.
-			if col, ok := f.Args[i].(*expression.Column); ok {
-				col.RetType = types.NewFieldType(col.RetType.Tp)
-			}
-			// originTp is used when the the `Tp` of column is TypeFloat32 while
-			// the type of the aggregation function is TypeFloat64.
-			originTp := f.Args[i].GetType().Tp
-			*(f.Args[i].GetType()) = *(f.RetTp)
-			f.Args[i].GetType().Tp = originTp
-		}
-	}
-}
-
 func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
@@ -1055,9 +1010,8 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 	}
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
-		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
+		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, v.GroupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
-		GroupByItems: v.GroupByItems,
 	}
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
@@ -1921,4 +1875,27 @@ func buildKvRangesForIndexJoin(sc *stmtctx.StatementContext, tableID, indexID in
 		return bytes.Compare(kvRanges[i].StartKey, kvRanges[j].StartKey) < 0
 	})
 	return kvRanges, nil
+}
+
+func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec {
+	childExec := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
+	var groupByItems []expression.Expression
+	for _, item := range v.PartitionBy {
+		groupByItems = append(groupByItems, item.Col)
+	}
+	windowFunc, err := windowfuncs.BuildWindowFunc(b.ctx, v.WindowFuncDesc, len(v.Schema().Columns)-1)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	e := &WindowExec{baseExecutor: base,
+		windowFunc:   windowFunc,
+		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+		childCols:    v.ChildCols,
+	}
+	return e
 }

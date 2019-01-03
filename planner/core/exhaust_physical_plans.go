@@ -790,12 +790,17 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: p.ByItems, Enforced: true}
+	var byItems []property.Item
+	byItems = append(byItems, p.PartitionBy...)
+	byItems = append(byItems, p.OrderBy...)
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: true}
 	if !prop.IsPrefix(childProperty) {
 		return nil
 	}
 	window := PhysicalWindow{
 		WindowFuncDesc: p.WindowFuncDesc,
+		PartitionBy:    p.PartitionBy,
+		OrderBy:        p.OrderBy,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
 	window.SetSchema(p.Schema())
 	return []PhysicalPlan{window}
