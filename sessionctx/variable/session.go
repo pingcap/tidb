@@ -654,9 +654,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.MaxChunkSize = maxChunkSize
 		}
 	case TiDBInitChunkSize:
-		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
-		if s.InitChunkSize > s.MaxChunkSize {
+		initChunkSize := tidbOptPositiveInt32(val, DefInitChunkSize)
+		if initChunkSize > s.MaxChunkSize {
 			s.InitChunkSize = s.MaxChunkSize
+			s.StmtCtx.AppendWarning(errors.Errorf("Try to set TiDB InitChunkSize to %d big than MaxChunkSize %d so force use %d",
+				initChunkSize, s.MaxChunkSize, s.InitChunkSize))
+		} else {
+			s.InitChunkSize = initChunkSize
 		}
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
