@@ -2662,6 +2662,7 @@ func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExp
 	}
 
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
+	// TODO: Check if the function is aggregation function after we support more functions.
 	desc.WrapCastForAggArgs(b.ctx)
 	lenPartition := 0
 	if expr.Spec.PartitionBy != nil {

@@ -140,8 +140,7 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk
 	return nil
 }
 
-// appendResult2Chunk appends result of all the aggregation functions to the
-// result chunk, and reset the evaluation context for each aggregation.
+// appendResult2Chunk appends result of the window function to the result chunk.
 func (e *WindowExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	e.copyChk(chk)
 	var err error

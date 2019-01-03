@@ -230,7 +230,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 	case types.ETDecimal:
 		castFunc = expression.WrapWithCastAsDecimal
 	default:
-		panic("should never happen in executorBuilder.wrapCastForAggArgs")
+		panic("should never happen in baseFuncDesc.WrapCastForAggArgs")
 	}
 	for i := range a.Args {
 		a.Args[i] = castFunc(ctx, a.Args[i])
