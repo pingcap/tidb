@@ -76,7 +76,8 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 }
 
 func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, columnInfo, _, _, _, err := checkAddColumn(t, job)
+	job.State = model.JobStateRollingback
+	tblInfo, columnInfo, col, _, _, err := checkAddColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -86,26 +87,11 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 
 	originalState := columnInfo.State
-	switch columnInfo.State {
-	case model.StateDeleteOnly:
-		// delete only -> reorganization
-		job.SchemaState = model.StateDeleteReorganization
-		columnInfo.State = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
-	case model.StateDeleteReorganization:
-		// reorganization -> absent
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
-		columnInfo.State = model.StateNone
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-	default:
-		columnInfo.State = model.StateDeleteOnly
-		job.SchemaState = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
-	}
+	columnInfo.State = model.StateDeleteOnly
+	job.SchemaState = model.StateDeleteOnly
+
+	job.Args = []interface{}{col.Name}
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
