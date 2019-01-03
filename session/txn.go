@@ -47,6 +47,8 @@ type TxnState struct {
 	buf          kv.MemBuffer
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
+
+	doNotCommit error
 }
 
 func (st *TxnState) init() {
@@ -144,6 +146,7 @@ type dirtyTableOperation struct {
 
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
+	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
 		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
 			st,
@@ -151,10 +154,27 @@ func (st *TxnState) Commit(ctx context.Context) error {
 			st.dirtyTableOP,
 			st.buf,
 			debug.Stack())
-		st.cleanup()
 		return errors.New("invalid transaction")
 	}
+	if st.doNotCommit != nil {
+		if err1 := st.Transaction.Rollback(); err1 != nil {
+			log.Error(err1)
+		}
+		return errors.Trace(st.doNotCommit)
+	}
 	return errors.Trace(st.Transaction.Commit(ctx))
+}
+
+// Rollback overrides the Transaction interface.
+func (st *TxnState) Rollback() error {
+	defer st.reset()
+	return errors.Trace(st.Transaction.Rollback())
+}
+
+func (st *TxnState) reset() {
+	st.doNotCommit = nil
+	st.cleanup()
+	st.changeToInvalid()
 }
 
 // Get overrides the Transaction interface.
@@ -322,6 +342,7 @@ func (s *session) StmtCommit() error {
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
 	if err != nil {
+		st.doNotCommit = err
 		return errors.Trace(err)
 	}
 
