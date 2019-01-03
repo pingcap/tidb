@@ -339,6 +339,7 @@ func (s *Server) Close() {
 	if s.socket != nil {
 		err := s.socket.Close()
 		terror.Log(errors.Trace(err))
+		s.socket = nil
 	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
