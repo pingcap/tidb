@@ -117,6 +117,8 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		childFlag = false
 	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
 		childFlag = true
+	} else if _, isWindow := p.(*LogicalWindow); isWindow {
+		childFlag = true
 	}
 	for i, child := range p.Children() {
 		p.Children()[i] = pe.eliminate(child, replace, childFlag)
@@ -202,5 +204,14 @@ func (ls *LogicalSort) replaceExprColumns(replace map[string]*expression.Column)
 func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range lt.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
+	}
+}
+
+func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, arg := range p.WindowFuncDesc.Args {
+		resolveExprAndReplace(arg, replace)
+	}
+	for _, item := range p.ByItems {
+		resolveColumnAndReplace(item.Col, replace)
 	}
 }
