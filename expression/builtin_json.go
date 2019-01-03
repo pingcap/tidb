@@ -403,6 +403,9 @@ func (b *builtinJSONMergeSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNu
 		values = append(values, value)
 	}
 	res = json.MergeBinary(values)
+	// function "JSON_MERGE" is deprecated since MySQL 5.7.22. Synonym for function "JSON_MERGE_PRESERVE".
+	// See https://dev.mysql.com/doc/refman/5.7/en/json-modification-functions.html#function_json-merge
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("JSON_MERGE"))
 	return res, false, nil
 }
 
@@ -719,8 +722,42 @@ type jsonMergePreserveFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONMergePreserveSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONMergePreserveSig) Clone() builtinFunc {
+	newSig := &builtinJSONMergePreserveSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonMergePreserveFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_MERGE_PRESERVE")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	for range args {
+		argTps = append(argTps, types.ETJson)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
+	sig := &builtinJSONMergePreserveSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonMergePreserveSig)
+	return sig, nil
+}
+
+func (b *builtinJSONMergePreserveSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+	values := make([]json.BinaryJSON, 0, len(b.args))
+	for _, arg := range b.args {
+		var value json.BinaryJSON
+		value, isNull, err = arg.EvalJSON(b.ctx, row)
+		if isNull || err != nil {
+			return res, isNull, err
+		}
+		values = append(values, value)
+	}
+	res = json.MergeBinary(values)
+	return res, false, nil
 }
 
 type jsonPrettyFunctionClass struct {
