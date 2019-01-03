@@ -91,8 +91,9 @@ type HashJoinExec struct {
 	// innerRowPrts indicates the position in corresponding partition of every
 	// row in innerResult.
 	innerRowPrts [][]partRowPtr
-	// hashTables stores the hash tables built from inner relations, if there is
-	// no partition phase, a global hash table will be stored in hashTables[0].
+	// hashTables stores the hash tables built from the inner relation, if there
+	// is no partition phase, a global hash table will be stored in
+	// hashTables[0].
 	hashTables []*mvmap.MVMap
 }
 
@@ -741,7 +742,7 @@ func (e *HashJoinExec) doBuild(workerID int, finishedCh chan error) {
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (e *HashJoinExec) buildGlobalHashTable() error {
-	e.hashTables[0] = mvmap.NewMVMap()
+	e.hashTables = append(e.hashTables, mvmap.NewMVMap())
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
 		e.innerKeyColIdx[i] = e.innerKeys[i].Index

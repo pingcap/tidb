@@ -279,8 +279,8 @@ func (s *pkgTestSuite) TestParallelBuildHashTable4RadixJoin(c *C) {
 	c.Assert(err, IsNil)
 
 	hashJoinExec.fetchInnerAndBuildHashTable(ctx)
-	c.Assert(hashJoinExec.globalHashTable, IsNil)
 	innerParts := hashJoinExec.innerParts
+	c.Assert(len(hashJoinExec.hashTables), Equals, len(innerParts))
 	for i := 0; i < len(innerParts); i++ {
 		if innerParts[i] == nil {
 			c.Assert(hashJoinExec.hashTables[i], IsNil)
