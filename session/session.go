@@ -29,7 +29,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -832,25 +831,21 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return s.persistVarInConstraint(name, sVal, variable.TiDBInitChunkSize, func(s *session, val string) (string, error) {
 			newMaxChunkSize, _ := strconv.Atoi(sVal)
 			initChunkSize, _ := strconv.Atoi(val)
-			var reviseMaxChunkSize = newMaxChunkSize
-			if initChunkSize > reviseMaxChunkSize {
-				reviseMaxChunkSize = mathutil.Max(initChunkSize, variable.DefMaxChunkSize)
-				s.sessionVars.StmtCtx.AppendWarning(errors.Errorf("Try to set TiDB MaxChunkSize to %d small than InitChunkSize %d so force use %d",
-					newMaxChunkSize, initChunkSize, reviseMaxChunkSize))
+			if initChunkSize > newMaxChunkSize {
+				return "", errors.Errorf("Try to set TiDB MaxChunkSize to %d small than InitChunkSize %d, please change InitChunkSize ahead",
+					newMaxChunkSize, initChunkSize)
 			}
-			return strconv.Itoa(reviseMaxChunkSize), nil
+			return strconv.Itoa(newMaxChunkSize), nil
 		})
 	case variable.TiDBInitChunkSize:
 		return s.persistVarInConstraint(name, sVal, variable.TiDBMaxChunkSize, func(s *session, val string) (string, error) {
 			newInitChunkSize, _ := strconv.Atoi(sVal)
 			maxChunkSize, _ := strconv.Atoi(val)
-			var reviseInitChunkSize = newInitChunkSize
-			if reviseInitChunkSize > maxChunkSize {
-				reviseInitChunkSize = maxChunkSize
-				s.sessionVars.StmtCtx.AppendWarning(errors.Errorf("Try to set TiDB InitChunkSize to %d big than MaxChunkSize %d so force use %d",
-					newInitChunkSize, maxChunkSize, reviseInitChunkSize))
+			if newInitChunkSize > maxChunkSize {
+				return "", errors.Errorf("Try to set TiDB InitChunkSize to %d big than MaxChunkSize %d, please change MaxChunkSize ahead",
+					newInitChunkSize, maxChunkSize)
 			}
-			return strconv.Itoa(reviseInitChunkSize), nil
+			return strconv.Itoa(newInitChunkSize), nil
 		})
 	default:
 		return s.persistVar(name, sVal)
@@ -1560,7 +1555,24 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		gvc.Update(rows, fields)
 	}
 
+	delayRows := make([]chunk.Row, 0)
 	for _, row := range rows {
+		varName := row.GetString(0)
+		switch varName {
+		case variable.TiDBInitChunkSize:
+			delayRows = append(delayRows, row)
+			continue
+		}
+		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
+		if _, ok := vars.GetSystemVar(varName); !ok {
+			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	for _, row := range delayRows {
 		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
 		if _, ok := vars.GetSystemVar(varName); !ok {
