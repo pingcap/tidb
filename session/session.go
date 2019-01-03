@@ -883,6 +883,9 @@ func (s *session) persistVarInConstraint(setName, setVal, checkName string, cond
 			return nil
 		}
 		val := rows[0].GetString(0)
+		if len(val) == 0 {
+			return nil
+		}
 		var newVal string
 		newVal, err = condition(s, val)
 		if err != nil {
