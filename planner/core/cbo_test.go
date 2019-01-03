@@ -77,7 +77,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55)")
 	tk.MustExec("analyze table t1, t2")
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
-	c.Assert(len(rs.Rows()), Equals, 10)
+	c.Assert(len(rs.Rows()), Equals, 11)
 	for _, row := range rs.Rows() {
 		c.Assert(len(row), Equals, 5)
 		taskType := row[2].(string)
@@ -367,7 +367,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select sum(a) from t1 use index(idx) where a = 3 and b = 100000 group by a limit 1",
-			best: "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->StreamAgg->Limit",
+			best: "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->Projection->StreamAgg->Limit",
 		},
 	}
 	for _, tt := range tests {
