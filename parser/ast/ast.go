@@ -53,6 +53,7 @@ const (
 	FlagHasVariable
 	FlagHasDefault
 	FlagPreEvaluated
+	FlagHasWindowFunc
 )
 
 // ExprNode is a node that can be evaluated.

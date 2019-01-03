@@ -18,6 +18,10 @@ func HasAggFlag(expr ExprNode) bool {
 	return expr.GetFlag()&FlagHasAggregateFunc > 0
 }
 
+func HasWindowFlag(expr ExprNode) bool {
+	return expr.GetFlag()&FlagHasWindowFunc > 0
+}
+
 // SetFlag sets flag for expression.
 func SetFlag(n Node) {
 	var setter flagSetter
@@ -38,6 +42,8 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 	switch x := in.(type) {
 	case *AggregateFuncExpr:
 		f.aggregateFunc(x)
+	case *WindowFuncExpr:
+		f.windowFunc(x)
 	case *BetweenExpr:
 		x.SetFlag(x.Expr.GetFlag() | x.Left.GetFlag() | x.Right.GetFlag())
 	case *BinaryOperationExpr:
@@ -149,6 +155,14 @@ func (f *flagSetter) funcCall(x *FuncCallExpr) {
 
 func (f *flagSetter) aggregateFunc(x *AggregateFuncExpr) {
 	flag := FlagHasAggregateFunc
+	for _, val := range x.Args {
+		flag |= val.GetFlag()
+	}
+	x.SetFlag(flag)
+}
+
+func (f *flagSetter) windowFunc(x *WindowFuncExpr) {
+	flag := FlagHasWindowFunc
 	for _, val := range x.Args {
 		flag |= val.GetFlag()
 	}
