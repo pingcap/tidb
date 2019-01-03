@@ -590,6 +590,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show create table
 		{"show create table test.t", true, ""},
 		{"show create table t", true, ""},
+		// for show create database
+		{"show create database d1", true, ""},
+		{"show create database if not exists d1", true, ""},
 		// for show stats_meta.
 		{"show stats_meta", true, ""},
 		{"show stats_meta where table_name = 't'", true, ""},
