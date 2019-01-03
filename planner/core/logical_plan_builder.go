@@ -1863,7 +1863,8 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	}
 
 	var oldLen int
-	// `considerWindow` is false now because we can only process window functions after having clause.
+	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
+	// we can only process window functions after having clause., so `considerWindow` is false now.
 	p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, totalMap, false)
 	if err != nil {
 		return nil, errors.Trace(err)

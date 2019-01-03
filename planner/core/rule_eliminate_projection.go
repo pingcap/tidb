@@ -204,3 +204,12 @@ func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column)
 		resolveExprAndReplace(byItem.Expr, replace)
 	}
 }
+
+func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, arg := range p.WindowFuncDesc.Args {
+		resolveExprAndReplace(arg, replace)
+	}
+	for _, item := range p.ByItems {
+		resolveColumnAndReplace(item.Col, replace)
+	}
+}
