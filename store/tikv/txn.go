@@ -70,8 +70,8 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	}, nil
 }
 
-// Aborted indicate whether the txn is aborted.
-func (txn *tikvTxn) Aborted() bool {
+// aborted indicate whether the txn is aborted. when the txn is aborted, comming statements ignored until transaction rollback/commit.
+func (txn *tikvTxn) aborted() bool {
 	return txn.fail != nil
 }
 
@@ -91,7 +91,7 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
-	if txn.Aborted() {
+	if txn.aborted() {
 		return nil, kv.ErrTxnAborted
 	}
 
@@ -109,7 +109,7 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
-	if txn.Aborted() {
+	if txn.aborted() {
 		return kv.ErrTxnAborted
 	}
 	txn.setCnt++
@@ -148,7 +148,7 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("delete").Inc()
-	if txn.Aborted() {
+	if txn.aborted() {
 		return kv.ErrTxnAborted
 	}
 
@@ -182,7 +182,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		return kv.ErrInvalidTxn
 	}
 
-	if txn.Aborted() {
+	if txn.aborted() {
 		return kv.ErrTxnAborted
 	}
 
@@ -230,7 +230,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 
-	if txn.Aborted() {
+	if txn.aborted() {
 		return kv.ErrTxnAborted
 	}
 
