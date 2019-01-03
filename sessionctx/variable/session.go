@@ -646,7 +646,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		maxChunkSize := tidbOptPositiveInt32(val, DefMaxChunkSize)
-		if s.InitChunkSize > maxChunkSize {
+		if s.InitChunkSize > 0 && s.InitChunkSize > maxChunkSize {
 			s.MaxChunkSize = mathutil.Max(s.InitChunkSize, DefMaxChunkSize)
 			s.StmtCtx.AppendWarning(errors.Errorf("Try to set TiDB MaxChunkSize to %d small than InitChunkSize %d so force use %d",
 				maxChunkSize, s.InitChunkSize, s.MaxChunkSize))
@@ -655,7 +655,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case TiDBInitChunkSize:
 		initChunkSize := tidbOptPositiveInt32(val, DefInitChunkSize)
-		if initChunkSize > s.MaxChunkSize {
+		if s.MaxChunkSize > 0 && initChunkSize > s.MaxChunkSize {
 			s.InitChunkSize = s.MaxChunkSize
 			s.StmtCtx.AppendWarning(errors.Errorf("Try to set TiDB InitChunkSize to %d big than MaxChunkSize %d so force use %d",
 				initChunkSize, s.MaxChunkSize, s.InitChunkSize))
