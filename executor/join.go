@@ -51,10 +51,7 @@ type HashJoinExec struct {
 
 	prepared bool
 	// concurrency is the number of partition, build and join workers.
-	concurrency uint
-	// globalHashTable indicates a global hash table built from inner relation
-	// when there is no partition phase.
-	globalHashTable *mvmap.MVMap
+	concurrency     uint
 	innerFinished   chan error
 	hashJoinBuffers []*hashJoinBuffer
 	// joinWorkerWaitGroup is for sync multiple join workers.
@@ -94,7 +91,8 @@ type HashJoinExec struct {
 	// innerRowPrts indicates the position in corresponding partition of every
 	// row in innerResult.
 	innerRowPrts [][]partRowPtr
-	// hashTables stores the hash tables built from inner sub-relations.
+	// hashTables stores the hash tables built from inner relations, if there is
+	// no partition phase, a global hash table will be stored in hashTables[0].
 	hashTables []*mvmap.MVMap
 }
 
@@ -282,7 +280,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 			return false, errors.Trace(err)
 		}
 	}
-	if e.globalHashTable.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
+	if e.hashTables[0].Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
 		return true, nil
 	}
 	return false, nil
@@ -533,7 +531,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		e.joiners[workerID].onMissMatch(outerRow, joinResult.chk)
 		return true, joinResult
 	}
-	e.hashTableValBufs[workerID] = e.globalHashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
+	e.hashTableValBufs[workerID] = e.hashTables[0].Get(joinKey, e.hashTableValBufs[workerID][:0])
 	innerPtrs := e.hashTableValBufs[workerID]
 	if len(innerPtrs) == 0 {
 		e.joiners[workerID].onMissMatch(outerRow, joinResult.chk)
@@ -743,7 +741,7 @@ func (e *HashJoinExec) doBuild(workerID int, finishedCh chan error) {
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (e *HashJoinExec) buildGlobalHashTable() error {
-	e.globalHashTable = mvmap.NewMVMap()
+	e.hashTables[0] = mvmap.NewMVMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
 		e.innerKeyColIdx[i] = e.innerKeys[i].Index
@@ -770,7 +768,7 @@ func (e *HashJoinExec) buildGlobalHashTable() error {
 			}
 			rowPtr := chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(j)}
 			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
-			e.globalHashTable.Put(keyBuf, valBuf)
+			e.hashTables[0].Put(keyBuf, valBuf)
 		}
 	}
 	return nil
