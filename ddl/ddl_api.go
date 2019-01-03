@@ -658,6 +658,41 @@ func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+// checkColumnFieldLength check the maximum length limit for different character set varchar type columns.
+func checkColumnFieldLength(schema *model.DBInfo, colDefs []*ast.ColumnDef, tbInfo *model.TableInfo) error {
+	for _, colDef := range colDefs {
+		if colDef.Tp.Tp == mysql.TypeVarchar {
+			var setCharset string
+			setCharset = mysql.DefaultCharset
+			if len(schema.Charset) != 0 {
+				setCharset = schema.Charset
+			}
+			if len(tbInfo.Charset) != 0 {
+				setCharset = tbInfo.Charset
+			}
+
+			err := IsTooBigFieldLength(colDef, setCharset)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+func IsTooBigFieldLength(colDef *ast.ColumnDef, setCharset string) error {
+	desc, err := charset.GetCharsetDesc(setCharset)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	maxFlen := mysql.MaxFieldVarCharLength
+	maxFlen /= desc.Maxlen
+	if colDef.Tp.Flen != types.UnspecifiedLength && colDef.Tp.Flen > maxFlen {
+		return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
+	}
+	return errors.Trace(err)
+}
+
 // checkColumnAttributes check attributes for single column.
 func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	switch tp.Tp {
@@ -1007,6 +1042,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err = checkColumnFieldLength(schema, s.Cols, tbInfo); err != nil {
+		return errors.Trace(err)
+	}
+
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
@@ -1982,6 +2021,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		// `modifyColumnTp` indicates that there is a type modification.
 		modifyColumnTp = mysql.TypeNull
 	}
+
+	if err = checkColumnFieldLength(schema, spec.NewColumns, t.Meta()); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
 		return nil, errors.Trace(err)

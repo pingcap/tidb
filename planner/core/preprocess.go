@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
@@ -489,21 +488,15 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
 		}
 	case mysql.TypeVarchar:
-		maxFlen := mysql.MaxFieldVarCharLength
-		cs := tp.Charset
-		// TODO: TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
-		// TODO: Change TableOption parser to parse collate.
-		// Reference https://github.com/pingcap/tidb/blob/b091e828cfa1d506b014345fb8337e424a4ab905/ddl/ddl_api.go#L185-L204
+		// Here logical move backend processing, need to get all levels of character set to set the character set of column.
+		// It's not easy to get the schema charset and table charset here.
+		// ColumnDefaultCharset --> TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
 		if len(tp.Charset) == 0 {
-			cs = mysql.DefaultCharset
+			return nil
 		}
-		desc, err := charset.GetCharsetDesc(cs)
+		err := ddl.IsTooBigFieldLength(colDef, tp.Charset)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		maxFlen /= desc.Maxlen
-		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
-			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		if tp.Decimal > mysql.MaxFloatingTypeScale {
