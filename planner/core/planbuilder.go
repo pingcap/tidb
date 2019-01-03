@@ -119,7 +119,7 @@ type PlanBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
-	// Collect the visit information for privilege check.
+	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
@@ -196,7 +196,7 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt:
-		return b.buildSimple(node.(ast.StmtNode)), nil
+		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
 	}
@@ -275,7 +275,7 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	return p, nil
 }
 
-// Detect aggregate function or groupby clause.
+// detectSelectAgg detects an aggregate function or GROUP BY clause.
 func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
@@ -752,6 +752,10 @@ const (
 )
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	for _, tbl := range as.TableNames {
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "")
+	}
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
 	} else {
@@ -953,7 +957,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildSimple(node ast.StmtNode) Plan {
+func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
@@ -976,8 +980,12 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) Plan {
 				}
 			}
 		}
+	case *ast.UseStmt:
+		if raw.DBName == "" {
+			return nil, ErrNoDB
+		}
 	}
-	return p
+	return p, nil
 }
 
 func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
