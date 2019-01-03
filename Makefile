@@ -59,12 +59,10 @@ dev: checklist test check
 build:
 	$(GOBUILD)
 
-# The retool tools.json is setup from hack/retool-install.sh
-check-setup:
-	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
-	@GO111MODULE=off retool sync
+# Install the check tools.
+check-setup:tools/bin/megacheck tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: check-setup fmt lint vet
+check: fmt errcheck lint
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -73,26 +71,33 @@ fmt:
 	@echo "gofmt (simplify)"
 	@gofmt -s -l -w $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-goword:
-	retool do goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
+goword:tools/bin/goword
+	tools/bin/goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-check-static:
+gosec:tools/bin/gosec
+	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
+
+check-static:tools/bin/gometalinter
 	@ # vet and fmt have problems with vendor when ran through metalinter
-	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all --deadline 120s \
+	tools/bin/gometalinter --disable-all --deadline 120s \
 	  --enable misspell \
 	  --enable megacheck \
 	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
 
-check-slow:
-	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all \
+check-slow:tools/bin/gometalinter tools/bin/gosec
+	tools/bin/gometalinter --disable-all \
 	  --enable errcheck \
 	  $$($(PACKAGE_DIRECTORIES))
-	CGO_ENABLED=0 retool do gosec $$($(PACKAGE_DIRECTORIES))
 
-lint:
+errcheck:tools/bin/errcheck
+	@echo "errcheck"
+	@$(GO) mod vendor
+	@tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+
+lint:tools/bin/revive
 	@echo "linting"
-	@CGO_ENABLED=0 retool do revive -formatter friendly -config revive.toml $(PACKAGES)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES)
 
 vet:
 	@echo "vet"
@@ -194,3 +199,27 @@ gofail-enable:
 gofail-disable:
 # Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)
+
+tools/bin/megacheck:
+	cd tools/check; \
+	$go build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
+
+tools/bin/revive:
+	cd tools/check; \
+	$(GO) build -o ../bin/revive github.com/mgechev/revive
+
+tools/bin/goword:
+	cd tools/check; \
+	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
+
+tools/bin/gometalinter:
+	cd tools/check; \
+	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v2
+
+tools/bin/gosec:
+	cd tools/check; \
+	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
+
+tools/bin/errcheck:
+	cd tools/check; \
+	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck

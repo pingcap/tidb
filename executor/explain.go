@@ -81,9 +81,13 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) ([][]string, erro
 				break
 			}
 		}
-		e.analyzeExec.Close()
+		if err := e.analyzeExec.Close(); err != nil {
+			return nil, err
+		}
 	}
-	e.explain.RenderResult()
+	if err := e.explain.RenderResult(); err != nil {
+		return nil, err
+	}
 	if e.analyzeExec != nil {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	}

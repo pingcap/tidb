@@ -18,3 +18,4 @@ cmd/explaintest/explain-test.out
 cmd/explaintest/explaintest_tidb-server
 _tools/
 *.fail.go
+tools/bin/

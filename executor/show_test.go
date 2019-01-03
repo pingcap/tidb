@@ -585,10 +585,10 @@ func (s *testSuite) TestShow2(c *C) {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	create_time := model.TSConvert2Time(tblInfo.Meta().UpdateTS).String()
+	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).String()
 	r := tk.MustQuery("show table status from test like 't'")
 	timeStr := time.Now().Format("2006-01-02 15:04:05")
-	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", create_time, timeStr, timeStr)))
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", createTime, timeStr, timeStr)))
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 
