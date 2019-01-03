@@ -739,7 +739,7 @@ func (e *HashJoinExec) doBuild(workerID int, finishedCh chan error) {
 	}
 }
 
-// buildGlobalHashTable builds a global hash table for inner relation.
+// buildGlobalHashTable builds a global hash table for the inner relation.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (e *HashJoinExec) buildGlobalHashTable() error {
@@ -772,7 +772,6 @@ func (e *HashJoinExec) buildGlobalHashTable() error {
 			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
 			e.globalHashTable.Put(keyBuf, valBuf)
 		}
-		chkIdx++
 	}
 	return nil
 }
