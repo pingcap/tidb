@@ -932,7 +932,14 @@ type Assignment struct {
 
 // Restore implements Node interface.
 func (n *Assignment) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.Column.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore Assignment.Column")
+	}
+	ctx.WritePlain("=")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore Assignment.Expr")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
