@@ -183,3 +183,38 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 		list.GetMemTracker().BytesConsumed()
 	}
 }
+
+func BenchmarkPreAllocList(b *testing.B) {
+	fieldTypes := make([]*types.FieldType, 0, 1)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	chk := NewChunkWithCapacity(fieldTypes, 1)
+	chk.AppendInt64(0, 1)
+	row := chk.GetRow(0)
+
+	b.ResetTimer()
+	list := NewList(fieldTypes, 1024, 1024)
+	for i := 0; i < b.N; i++ {
+		list.Reset()
+		// 32768 indicates the number of int64 rows to fill 256KB L2 cache.
+		for j := 0; j < 32768; j++ {
+			list.PreAlloc4Row(row)
+		}
+	}
+}
+
+func BenchmarkPreAllocChunk(b *testing.B) {
+	fieldTypes := make([]*types.FieldType, 0, 1)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	chk := NewChunkWithCapacity(fieldTypes, 1)
+	chk.AppendInt64(0, 1)
+	row := chk.GetRow(0)
+
+	b.ResetTimer()
+	finalChk := New(fieldTypes, 33000, 1024)
+	for i := 0; i < b.N; i++ {
+		finalChk.Reset()
+		for j := 0; j < 32768; j++ {
+			finalChk.PreAlloc(row)
+		}
+	}
+}
