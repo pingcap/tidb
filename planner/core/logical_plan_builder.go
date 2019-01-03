@@ -1917,6 +1917,13 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 
 	var columns []*table.Column
 	if b.inUpdateStmt {
+		// create table t(a int, b int).
+		// Imagine that, There are 2 TiDB instances in the cluster, name A, B. We add a column `c` to table t in the TiDB cluster.
+		// One of the TiDB, A, the column type in its infoschema is changed to public. And in the other TiDB, the column type is
+		// still StateWriteReorganization.
+		// TiDB A: insert into t values(1, 2, 3);
+		// TiDB B: update t set a = 2 where b = 2;
+		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()
@@ -2348,15 +2355,27 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
 		}
 	case *LogicalProjection:
-		if x.calculateGenCols {
-			ds := x.Children()[0].(*DataSource)
-			alias := extractTableAlias(x)
-			if alias != nil {
-				if _, ok := asNames[ds.tableInfo]; !ok {
-					asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
-				}
-				asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
+		if !x.calculateGenCols {
+			return
+		}
+
+		ds, isDS := x.Children()[0].(*DataSource)
+		if !isDS {
+			// try to extract the DataSource below a LogicalUnionScan.
+			if us, isUS := x.Children()[0].(*LogicalUnionScan); isUS {
+				ds, isDS = us.Children()[0].(*DataSource)
 			}
+		}
+		if !isDS {
+			return
+		}
+
+		alias := extractTableAlias(x)
+		if alias != nil {
+			if _, ok := asNames[ds.tableInfo]; !ok {
+				asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
+			}
+			asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
 		}
 	default:
 		for _, child := range p.Children() {
@@ -2382,6 +2401,8 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	oldSchema := p.Schema()
+	oldLen := oldSchema.Len()
 
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
@@ -2402,6 +2423,15 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+
+	// Add a projection for the following case, otherwise the final schema will be the schema of the join.
+	// delete from t where a in (select ...) or b in (select ...)
+	if !delete.IsMultiTable && oldLen != p.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx)
+		proj.SetChildren(p)
+		proj.SetSchema(oldSchema.Clone())
+		p = proj
 	}
 
 	var tables []*ast.TableName
