@@ -1346,130 +1346,130 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.InsertPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", ErrPrivilegeCheckFail},
-				{mysql.SelectPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", ErrPrivilegeCheckFail},
-				{mysql.SelectPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", ErrPrivilegeCheckFail},
-				{mysql.SelectPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", ErrPrivilegeCheckFail},
-				{mysql.SelectPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.DeletePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.CreatePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t1 like t",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t1", "", ErrPrivilegeCheckFail},
-				{mysql.SelectPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.CreatePriv, "test", "t1", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "", "", ErrPrivilegeCheckFail},
+				{mysql.CreatePriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "", "", ErrPrivilegeCheckFail},
+				{mysql.DropPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", ErrPrivilegeCheckFail},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: `create user 'test'@'%' identified by '123456'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrPrivilegeCheckFail},
+				{mysql.CreateUserPriv, "", "", "", nil},
 			},
 		},
 		{
 			sql: `drop user 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrPrivilegeCheckFail},
+				{mysql.CreateUserPriv, "", "", "", nil},
 			},
 		},
 		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", "", ErrPrivilegeCheckFail},
-				{mysql.InsertPriv, "test", "", "", ErrPrivilegeCheckFail},
-				{mysql.UpdatePriv, "test", "", "", ErrPrivilegeCheckFail},
-				{mysql.DeletePriv, "test", "", "", ErrPrivilegeCheckFail},
-				{mysql.CreatePriv, "test", "", "", ErrPrivilegeCheckFail},
-				{mysql.DropPriv, "test", "", "", ErrPrivilegeCheckFail},
-				{mysql.GrantPriv, "test", "", "", ErrPrivilegeCheckFail},
-				{mysql.AlterPriv, "test", "", "", ErrPrivilegeCheckFail},
-				{mysql.ExecutePriv, "test", "", "", ErrPrivilegeCheckFail},
-				{mysql.IndexPriv, "test", "", "", ErrPrivilegeCheckFail},
+				{mysql.SelectPriv, "test", "", "", nil},
+				{mysql.InsertPriv, "test", "", "", nil},
+				{mysql.UpdatePriv, "test", "", "", nil},
+				{mysql.DeletePriv, "test", "", "", nil},
+				{mysql.CreatePriv, "test", "", "", nil},
+				{mysql.DropPriv, "test", "", "", nil},
+				{mysql.GrantPriv, "test", "", "", nil},
+				{mysql.AlterPriv, "test", "", "", nil},
+				{mysql.ExecutePriv, "test", "", "", nil},
+				{mysql.IndexPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", "", ErrPrivilegeCheckFail},
-				{mysql.GrantPriv, "test", "ttt", "", ErrPrivilegeCheckFail},
+				{mysql.SelectPriv, "test", "ttt", "", nil},
+				{mysql.GrantPriv, "test", "ttt", "", nil},
 			},
 		},
 		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SuperPriv, "", "", "", ErrPrivilegeCheckFail},
+				{mysql.SuperPriv, "", "", "", nil},
 			},
 		},
 		{
@@ -1479,7 +1479,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", "", ErrPrivilegeCheckFail},
+				{mysql.AllPrivMask, "test", "ttt", "", nil},
 			},
 		},
 	}
