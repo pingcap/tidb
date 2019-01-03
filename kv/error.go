@@ -35,7 +35,8 @@ const (
 	codeTxnTooLarge                               = 11
 	codeEntryTooLarge                             = 12
 
-	codeKeyExists = 1062
+	codeKeyExists  = 1062
+	codeTxnAborted = terror.ErrCode(mysql.ErrTransactionAborted)
 )
 
 var (
@@ -60,6 +61,8 @@ var (
 	ErrTxnTooLarge = terror.ClassKV.New(codeTxnTooLarge, "transaction is too large")
 	// ErrEntryTooLarge is the error when a key value entry is too large.
 	ErrEntryTooLarge = terror.ClassKV.New(codeEntryTooLarge, "entry is too large")
+	// ErrTxnAborted returns when the transaction is aborted.
+	ErrTxnAborted = terror.ClassKV.New(codeTxnAborted, "current transaction is aborted, commands ignored until end of transaction block")
 
 	// ErrNotCommitted is the error returned by CommitVersion when this
 	// transaction is not committed.

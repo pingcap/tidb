@@ -44,6 +44,7 @@ type tikvTxn struct {
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	dirty     bool
 	setCnt    int64
+	fail      error // if fail != nil, the txn is aborted, comming statements ignored until transaction rollback/commit.
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -69,6 +70,11 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	}, nil
 }
 
+// Aborted indicate whether the txn is aborted.
+func (txn *tikvTxn) Aborted() bool {
+	return txn.fail != nil
+}
+
 // SetMemBufCap sets the transaction's MemBuffer capability, to reduce memory allocations.
 func (txn *tikvTxn) SetCap(cap int) {
 	txn.us.SetCap(cap)
@@ -85,6 +91,10 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
+	if txn.Aborted() {
+		return nil, kv.ErrTxnAborted
+	}
+
 	ret, err := txn.us.Get(k)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -99,10 +109,18 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 }
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
+	if txn.Aborted() {
+		return kv.ErrTxnAborted
+	}
 	txn.setCnt++
 
 	txn.dirty = true
-	return txn.us.Set(k, v)
+	err := txn.us.Set(k, v)
+	if err != nil {
+		txn.fail = err
+	}
+
+	return errors.Trace(err)
 }
 
 func (txn *tikvTxn) String() string {
@@ -130,9 +148,16 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("delete").Inc()
+	if txn.Aborted() {
+		return kv.ErrTxnAborted
+	}
 
 	txn.dirty = true
-	return txn.us.Delete(k)
+	err := txn.us.Delete(k)
+	if err != nil {
+		txn.fail = err
+	}
+	return errors.Trace(err)
 }
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
@@ -152,10 +177,14 @@ func (txn *tikvTxn) DelOption(opt kv.Option) {
 }
 
 func (txn *tikvTxn) Commit(ctx context.Context) error {
+	defer txn.close()
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
-	defer txn.close()
+
+	if txn.Aborted() {
+		return kv.ErrTxnAborted
+	}
 
 	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
@@ -191,13 +220,20 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 func (txn *tikvTxn) close() {
 	txn.valid = false
+	txn.fail = nil
+	txn.us.Reset()
 }
 
 func (txn *tikvTxn) Rollback() error {
+	defer txn.close()
 	if !txn.valid {
 		return kv.ErrInvalidTxn
 	}
-	txn.close()
+
+	if txn.Aborted() {
+		return kv.ErrTxnAborted
+	}
+
 	log.Debugf("[kv] Rollback txn %d", txn.StartTS())
 	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
 
