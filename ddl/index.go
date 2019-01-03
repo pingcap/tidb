@@ -738,6 +738,11 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
+	// gofail: var errorMockPanic bool
+	// if errorMockPanic {
+	// 		panic("panic test")
+	// }
+
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		taskCtx.addedCount = 0
@@ -800,13 +805,17 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	startTime := lastLogTime
 
 	for {
-		taskCtx, err := w.backfillIndexInTxn(handleRange)
-		if err == nil {
-			// Because reorgIndexTask may run a long time,
-			// we should check whether this ddl job is still runnable.
-			err = w.ddlWorker.isReorgRunnable(d)
+		// Give job chance to be canceled, if we not check it here,
+		// if there is panic in w.backfillIndexInTxn we will never cancel the job.
+		// Because reorgIndexTask may run a long time,
+		// we should check whether this ddl job is still runnable.
+		err := w.ddlWorker.isReorgRunnable(d)
+		if err != nil {
+			result.err = err
+			return result
 		}
 
+		taskCtx, err := w.backfillIndexInTxn(handleRange)
 		if err != nil {
 			result.err = err
 			return result
