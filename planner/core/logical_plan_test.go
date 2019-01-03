@@ -1897,3 +1897,96 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
 }
+
+func (s *testPlanSuite) TestWindowFunction(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{
+			sql:    "select a, avg(a) over(partition by a) from t",
+			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(partition by b) from t",
+			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
+			result: "TableReader(Table(t))->Projection->Sort->Window(avg(2_proj_window_3))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
+			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, b as a, avg(a) over(partition by a) from t",
+			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, b as z, sum(z) over() from t",
+			result: "[planner:1054]Unknown column 'z' in 'field list'",
+		},
+		{
+			sql:    "select a, b as z from t order by (sum(z) over())",
+			result: "TableReader(Table(t))->Window(sum(test.t.z))->Sort->Projection",
+		},
+		{
+			sql:    "select sum(avg(a)) over() from t",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over())",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over(partition by a))",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(avg(a)) over())",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Sort->Projection",
+		},
+		{
+			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
+			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(tt.a))->MaxOneRow->Sel([w])}->Projection",
+		},
+		{
+			sql:    "select avg(a) over() as w from t having w > 1",
+			result: "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
+		},
+		{
+			sql:    "select sum(a) over() as sum_a from t group by sum_a",
+			result: "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
+		},
+	}
+
+	s.Parser.EnableWindowFunc(true)
+	defer func() {
+		s.Parser.EnableWindowFunc(false)
+	}()
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		lp, ok := p.(LogicalPlan)
+		c.Assert(ok, IsTrue)
+		p, err = physicalOptimize(lp)
+		c.Assert(ToString(p), Equals, tt.result, comment)
+	}
+}
