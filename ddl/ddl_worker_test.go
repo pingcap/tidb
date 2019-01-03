@@ -560,26 +560,23 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// for drop column.
 	test = &tests[10]
 	dropColName := "c3"
-	dropColumnArgs := []interface{}{model.NewCIStr(dropColName)}
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
-	testCancelDropColumn(c, ctx, d, dbInfo, tblInfo, dropColumnArgs)
+	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
 	test = &tests[11]
 
 	dropColName = "c4"
-	dropColumnArgs = []interface{}{model.NewCIStr(dropColName)}
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
-	testCancelDropColumn(c, ctx, d, dbInfo, tblInfo, dropColumnArgs)
+	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
 	test = &tests[12]
 	dropColName = "c5"
-	dropColumnArgs = []interface{}{model.NewCIStr(dropColName)}
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
-	testCancelDropColumn(c, ctx, d, dbInfo, tblInfo, dropColumnArgs)
+	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 }
