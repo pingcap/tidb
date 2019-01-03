@@ -59,14 +59,37 @@ func (s *testCascadesSuite) TestImplGroupZeroCost(c *C) {
 	logic, ok := p.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
 	rootGroup := convert2Group(logic)
-	// TODO remove these hard code about logical property after we support deriving stats in exploration phase.
-	rootGroup.LogicalProperty = &property.LogicalProperty{}
-	rootGroup.LogicalProperty.Stats = property.NewSimpleStats(10.0)
-
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
 	impl, err := implGroup(rootGroup, prop, 0.0)
 	c.Assert(impl, IsNil)
 	c.Assert(err, IsNil)
+}
+
+func (s *testCascadesSuite) TestInitGroupSchema(c *C) {
+	stmt, err := s.ParseOneStmt("select a from t", "", "")
+	c.Assert(err, IsNil)
+	p, err := plannercore.BuildLogicalPlan(s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	g := convert2Group(logic)
+	c.Assert(g, NotNil)
+	c.Assert(g.Prop, NotNil)
+	c.Assert(g.Prop.Schema.Len(), Equals, 1)
+	c.Assert(g.Prop.Stats, IsNil)
+}
+
+func (s *testCascadesSuite) TestFillGroupStats(c *C) {
+	stmt, err := s.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
+	c.Assert(err, IsNil)
+	p, err := plannercore.BuildLogicalPlan(s.sctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	logic, ok := p.(plannercore.LogicalPlan)
+	c.Assert(ok, IsTrue)
+	rootGroup := convert2Group(logic)
+	err = fillGroupStats(rootGroup)
+	c.Assert(err, IsNil)
+	c.Assert(rootGroup.Prop.Stats, NotNil)
 }
