@@ -189,7 +189,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.MaxChunkSize, Equals, 1024)
 	err = SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
 	c.Assert(err, NotNil)
-	c.Assert(v.MaxChunkSize, Equals, 1032)
+	c.Assert(v.MaxChunkSize, Equals, 1024)
 
 	// Test case for TiDBConfig session variable.
 	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
