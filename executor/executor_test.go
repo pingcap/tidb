@@ -77,6 +77,7 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 var _ = Suite(&testContextOptionSuite{})
 var _ = Suite(&testBypassSuite{})
+var _ = Suite(&testUpdateSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
