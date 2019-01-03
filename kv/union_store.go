@@ -17,7 +17,7 @@ import (
 	"bytes"
 
 	"github.com/pingcap/errors"
-	"github.com/sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
@@ -170,11 +170,12 @@ type mergeCheckable interface {
 	CheckMerge(o MemBuffer) error
 }
 
-func (lmb *lazyMemBuffer) CheckMerge(o MemBuffer) error {
+// CheckMerge checks whether other buffer can merged to current buff.
+func (lmb *lazyMemBuffer) CheckMerge(other MemBuffer) error {
 	if checker, ok := lmb.mb.(mergeCheckable); ok {
-		return checker.CheckMerge(o)
+		return checker.CheckMerge(other)
 	}
-	logrus.Fatalf("unsupport check merge for %v", o)
+	log.Fatalf("unsupport check merge for %v", other)
 	return nil
 }
 

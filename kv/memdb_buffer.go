@@ -114,12 +114,14 @@ type memDBAware interface {
 	MemDB() *memdb.DB
 }
 
+// MemDB returns the `memdb.DB` under it
 func (m *memDbBuffer) MemDB() *memdb.DB {
 	return m.db
 }
 
-func (m *memDbBuffer) CheckMerge(o MemBuffer) error {
-	memDBAware := o.(memDBAware) // force panic if use wrong type.
+// CheckMerge checks whether other buffer can merged to current buff.
+func (m *memDbBuffer) CheckMerge(other MemBuffer) error {
+	memDBAware := other.(memDBAware) // force panic if use wrong type.
 	memDB := memDBAware.MemDB()
 	mergedSize, mergedCount, maxEntrySize := m.db.PreMerge(memDB.NewIterator(&util.Range{}))
 	if maxEntrySize > m.entrySizeLimit {
