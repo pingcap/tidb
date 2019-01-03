@@ -5891,11 +5891,12 @@ ShowStmt:
 			Table:	$4.(*ast.TableName),
 		}
 	}
-|	"SHOW" "CREATE" "DATABASE" DBName
+|	"SHOW" "CREATE" "DATABASE" IfNotExists DBName
 	{
 		$$ = &ast.ShowStmt{
 			Tp:	ast.ShowCreateDatabase,
-			DBName:	$4.(string),
+			IfNotExists: $4.(bool),
+			DBName:	$5.(string),
 		}
 	}
 |	"SHOW" "GRANTS"
