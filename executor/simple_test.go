@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/planner/core"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -301,4 +302,13 @@ func (s *testSuite3) TestFlushTables(c *C) {
 	_, err = tk.Exec("FLUSH TABLES WITH READ LOCK")
 	c.Check(err, NotNil)
 
+}
+
+func (s *testSuite3) TestUseDB(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	_, err := tk.Exec("USE test")
+	c.Check(err, IsNil)
+
+	_, err = tk.Exec("USE ``")
+	c.Assert(terror.ErrorEqual(core.ErrNoDB, err), IsTrue, Commentf("err %v", err))
 }

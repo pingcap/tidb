@@ -564,7 +564,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			continue
 		}
 
-		// If a job is a history job, the state must be JobSynced or JobCancel.
+		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
 			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
 			return nil
@@ -573,7 +573,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		if historyJob.Error != nil {
 			return errors.Trace(historyJob.Error)
 		}
-		panic("When the state is JobCancel, historyJob.Error should never be nil")
+		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
 }
 
