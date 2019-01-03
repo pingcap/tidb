@@ -360,22 +360,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 }
 
 func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, indexInfo, err := checkDropIndex(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-
-	var indexName model.CIStr
-	if err = job.DecodeArgs(&indexName); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
-	if indexInfo == nil {
-		job.State = model.JobStateCancelled
-		return ver, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
 	originalState := indexInfo.State
@@ -399,7 +386,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// reorganization -> absent
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
-			if idx.Name.L != indexName.L {
+			if idx.Name.L != indexInfo.Name.L {
 				newIndices = append(newIndices, idx)
 			}
 		}
@@ -426,6 +413,27 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = ErrInvalidIndexState.GenWithStack("invalid index state %v", indexInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	var indexName model.CIStr
+	if err = job.DecodeArgs(&indexName); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, errors.Trace(err)
+	}
+
+	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
+	if indexInfo == nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+	}
+	return tblInfo, indexInfo, nil
 }
 
 const (
