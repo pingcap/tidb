@@ -1569,6 +1569,11 @@ func (s *testSuite) TestDelete(c *C) {
 
 	tk.MustExec(`delete from delete_test ;`)
 	tk.CheckExecResult(1, 0)
+
+	tk.MustExec("create view v as select * from delete_test")
+	_, err = tk.Exec("delete from v where name = 'aaa'")
+	c.Assert(err.Error(), Equals, "delete view v is not supported now.")
+
 }
 
 func (s *testSuite2) TestPartitionedTableDelete(c *C) {

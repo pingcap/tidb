@@ -2426,6 +2426,12 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	var tableList []*ast.TableName
 	tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
 
+	for _, tn := range tableList {
+		if tn.TableInfo.IsView() {
+			return nil, errors.New(fmt.Sprintf("delete view %s is not supported now.", tn.Name.O))
+		}
+	}
+
 	// Collect visitInfo.
 	if delete.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
