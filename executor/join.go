@@ -167,7 +167,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyBuf []byte) (hasNull bool, _ []byte, err error) {
+func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyBuf []byte) (hasNull, cantCmp bool, _ []byte, err error) {
 	var keyColIdx []int
 	var allTypes []*types.FieldType
 	if isOuterKey {
@@ -180,7 +180,7 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 
 	for _, i := range keyColIdx {
 		if row.IsNull(i) {
-			return true, keyBuf, nil
+			return true, false, keyBuf, nil
 		}
 	}
 
@@ -193,7 +193,15 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 			// convert inner key to the type of outer key
 			converted, err := d.ConvertTo(sc, outerType)
 			if err != nil {
-				return false, keyBuf, errors.Trace(err)
+				return false, false, keyBuf, errors.Trace(err)
+			}
+			cmp, err := converted.CompareDatum(sc, &d)
+			if err != nil {
+				return false, false, keyBuf, errors.Trace(err)
+			}
+			if cmp != 0 {
+				// If the converted outerValue is not equal to the origin outerValue, we don't need to lookup it.
+				return false, true, keyBuf, nil
 			}
 			d = converted
 		}
@@ -201,11 +209,11 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 		var err error
 		keyBuf, err = codec.EncodeKey(sc, keyBuf, d)
 		if err != nil {
-			return false, keyBuf, errors.Trace(err)
+			return false, false, keyBuf, errors.Trace(err)
 		}
 	}
 
-	return false, keyBuf, err
+	return false, false, keyBuf, err
 }
 
 // fetchOuterChunks get chunks from fetches chunks from the big table in a background goroutine
@@ -443,7 +451,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint) {
 func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.Row,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	buffer := e.hashJoinBuffers[workerID]
-	hasNull, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
+	hasNull, _, joinKey, err := e.getJoinKeyFromChkRow(true, outerRow, buffer.bytes)
 	if err != nil {
 		joinResult.err = errors.Trace(err)
 		return false, joinResult
@@ -597,6 +605,7 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) er
 	}
 	var (
 		hasNull bool
+		cantCmp bool
 		err     error
 		keyBuf  = make([]byte, 0, 64)
 		valBuf  = make([]byte, 8)
@@ -609,11 +618,11 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) er
 		}
 		numRows := chk.NumRows()
 		for j := 0; j < numRows; j++ {
-			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
+			hasNull, cantCmp, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if hasNull {
+			if hasNull || cantCmp {
 				continue
 			}
 			rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(j)}

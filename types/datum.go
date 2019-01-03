@@ -1067,9 +1067,19 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 }
 
 func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(target.Tp)
+	flen, decimal := target.Flen, target.Decimal
+	if decimal == UnspecifiedLength {
+		decimal = defaultDecimal
+	}
+	if flen == UnspecifiedLength {
+		flen = defaultFlen
+	}
+
 	var ret Datum
-	ret.SetLength(target.Flen)
-	ret.SetFrac(target.Decimal)
+	ret.SetLength(flen)
+	ret.SetFrac(decimal)
+
 	var dec = &MyDecimal{}
 	var err error
 	switch d.k {
