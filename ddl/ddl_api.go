@@ -680,6 +680,7 @@ func checkColumnFieldLength(schema *model.DBInfo, colDefs []*ast.ColumnDef, tbIn
 	return nil
 }
 
+// IsTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
 func IsTooBigFieldLength(colDef *ast.ColumnDef, setCharset string) error {
 	desc, err := charset.GetCharsetDesc(setCharset)
 	if err != nil {
