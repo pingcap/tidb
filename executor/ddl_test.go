@@ -152,30 +152,22 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("create table t1 (a int ,b int)")
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
 	//view with colList and SelectFieldExpr
-	_, err = tk.Exec("create view v1 (c) as select b+1 from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v1 (c) as select b+1 from t1")
 	//view with SelectFieldExpr
-	_, err = tk.Exec("create view v2 as select b+1 from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v2 as select b+1 from t1")
 	//view with SelectFieldExpr and AsName
-	_, err = tk.Exec("create view v3 as select b+1 as c from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v3 as select b+1 as c from t1")
 	//view with colList , SelectField and AsName
-	_, err = tk.Exec("create view v4 (c) as select b+1 as d from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v4 (c) as select b+1 as d from t1")
 	//view with select wild card
-	_, err = tk.Exec("create view v5 as select * from t1")
-	c.Assert(err, IsNil)
-	_, err = tk.Exec("create view v6 (c,d) as select * from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v5 as select * from t1")
+	tk.MustExec("create view v6 (c,d) as select * from t1")
 	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
-	_, err = tk.Exec("drop view v1,v2,v3,v4,v5,v6")
 	//drop multiple views in a statement
-	c.Assert(err, IsNil)
+	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
 	//view with variable
-	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
 	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
 	tk.MustExec("drop view v1")
