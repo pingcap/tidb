@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	. "github.com/pingcap/parser/ast"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 )
 
 var _ = Suite(&testCacheableSuite{})
@@ -64,6 +65,16 @@ type nodeTextCleaner struct {
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 	in.SetText("")
+	switch node := in.(type) {
+	case *FuncCallExpr:
+		node.FnName.O = strings.ToLower(node.FnName.O)
+		switch node.FnName.L {
+		case "convert":
+			node.Args[1].(*driver.ValueExpr).Datum.SetBytes(nil)
+		}
+	case *AggregateFuncExpr:
+		node.F = strings.ToLower(node.F)
+	}
 	return in, false
 }
 
