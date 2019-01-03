@@ -48,6 +48,8 @@ type TxnState struct {
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
 
+	// If doNotCommit is not nil, Commit() will not commit the transaction.
+	// doNotCommit flag may be set when StmtCommit fail.
 	doNotCommit error
 }
 
@@ -331,11 +333,17 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 func (s *session) StmtCommit() error {
 	defer s.txn.cleanup()
 	st := &s.txn
+	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+
 		// gofail: var mockStmtCommitError bool
 		// if mockStmtCommitError {
-		// 	return errors.New("mock stmt commit error")
+		// 	count++
 		// }
+		if count > 3 {
+			return errors.New("mock stmt commit error")
+		}
+
 		if len(v) == 0 {
 			return errors.Trace(st.Transaction.Delete(k))
 		}

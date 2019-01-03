@@ -29,11 +29,12 @@ func (s *testSessionSuite) TestFailStatementCommit(c *C) {
 	tk.MustExec("insert into t values (1)")
 
 	gofail.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`)
-	_, err := tk.Exec("insert into t values (2)")
+	_, err := tk.Exec("insert into t values (2),(3),(4),(5)")
 	c.Assert(err, NotNil)
 
 	gofail.Disable("github.com/pingcap/tidb/session/mockStmtCommitError")
 
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	tk.MustExec("insert into t values (3)")
 	tk.MustExec("insert into t values (4)")
 	_, err = tk.Exec("commit")
