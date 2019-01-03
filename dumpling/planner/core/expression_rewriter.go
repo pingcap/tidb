@@ -305,10 +305,23 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.ctx, col.Index, col.RetType))
 		return inNode, true
+	case *ast.WindowFuncExpr:
+		return er.handleWindowFunction(v)
 	default:
 		er.asScalar = true
 	}
 	return inNode, false
+}
+
+func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.Node, bool) {
+	windowPlan, err := er.b.buildWindowFunction(er.p, v, er.aggrMap)
+	if err != nil {
+		er.err = err
+		return v, false
+	}
+	er.ctxStack = append(er.ctxStack, windowPlan.GetWindowResultColumn())
+	er.p = windowPlan
+	return v, true
 }
 
 func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) (ast.Node, bool) {
@@ -753,7 +766,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	}
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
-		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
+		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr:
 	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
