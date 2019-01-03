@@ -83,6 +83,10 @@ func (c *CopClient) supportExpr(exprType tipb.ExprType) bool {
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
+	err := c.validateRanges(req.KeyRanges)
+	if err != nil {
+		return copErrorResponse{err}
+	}
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.Desc, req.Streaming)
 	if err != nil {
 		return copErrorResponse{err}
@@ -107,6 +111,15 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	it.open(ctx)
 	return it
+}
+
+func (c *CopClient) validateRanges(ranges []kv.KeyRange) error {
+	for i := 1; i < len(ranges); i++ {
+		if bytes.Compare(ranges[i].StartKey, ranges[i-1].EndKey) < 0 {
+			return errors.Trace(errors.New("There's intersection between ranges sending to TiKV"))
+		}
+	}
+	return nil
 }
 
 // copTask contains a related Region and KeyRange for a kv.Request.
