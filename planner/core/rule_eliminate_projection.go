@@ -117,7 +117,7 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 		childFlag = false
 	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
 		childFlag = true
-	} else if _, isWindow := p.(*LogicalWindow); isWindow || isProj {
+	} else if _, isWindow := p.(*LogicalWindow); isWindow {
 		childFlag = true
 	}
 	for i, child := range p.Children() {
