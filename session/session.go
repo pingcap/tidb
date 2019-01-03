@@ -829,8 +829,14 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	switch name {
 	case variable.TiDBMaxChunkSize:
 		return s.persistVarInConstraint(name, sVal, variable.TiDBInitChunkSize, func(s *session, val string) (string, error) {
-			newMaxChunkSize, _ := strconv.Atoi(sVal)
-			initChunkSize, _ := strconv.Atoi(val)
+			newMaxChunkSize, err := strconv.Atoi(sVal)
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+			initChunkSize, err := strconv.Atoi(val)
+			if err != nil {
+				return "", errors.Trace(err)
+			}
 			if initChunkSize > newMaxChunkSize {
 				return "", errors.Errorf("Try to set TiDB MaxChunkSize to %d small than InitChunkSize %d, please change InitChunkSize ahead",
 					newMaxChunkSize, initChunkSize)
@@ -839,8 +845,14 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		})
 	case variable.TiDBInitChunkSize:
 		return s.persistVarInConstraint(name, sVal, variable.TiDBMaxChunkSize, func(s *session, val string) (string, error) {
-			newInitChunkSize, _ := strconv.Atoi(sVal)
-			maxChunkSize, _ := strconv.Atoi(val)
+			newInitChunkSize, err := strconv.Atoi(sVal)
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+			maxChunkSize, err := strconv.Atoi(val)
+			if err != nil {
+				return "", errors.Trace(err)
+			}
 			if newInitChunkSize > maxChunkSize {
 				return "", errors.Errorf("Try to set TiDB InitChunkSize to %d big than MaxChunkSize %d, please change MaxChunkSize ahead",
 					newInitChunkSize, maxChunkSize)
