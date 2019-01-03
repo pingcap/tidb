@@ -29,6 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -825,10 +826,79 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	switch name {
+	case variable.TiDBMaxChunkSize:
+		return s.persistVarInConstraint(name, sVal, variable.TiDBInitChunkSize, func(s *session, val string) (string, error) {
+			newMaxChunkSize, _ := strconv.Atoi(sVal)
+			initChunkSize, _ := strconv.Atoi(val)
+			var reviseMaxChunkSize = newMaxChunkSize
+			if initChunkSize > reviseMaxChunkSize {
+				reviseMaxChunkSize = mathutil.Max(initChunkSize, variable.DefMaxChunkSize)
+				s.sessionVars.StmtCtx.AppendWarning(errors.Errorf("Try to set TiDB MaxChunkSize to %d small than InitChunkSize %d so force use %d",
+					newMaxChunkSize, initChunkSize, reviseMaxChunkSize))
+			}
+			return strconv.Itoa(reviseMaxChunkSize), nil
+		})
+	case variable.TiDBInitChunkSize:
+		return s.persistVarInConstraint(name, sVal, variable.TiDBMaxChunkSize, func(s *session, val string) (string, error) {
+			newInitChunkSize, _ := strconv.Atoi(sVal)
+			maxChunkSize, _ := strconv.Atoi(val)
+			var reviseInitChunkSize = newInitChunkSize
+			if reviseInitChunkSize > maxChunkSize {
+				reviseInitChunkSize = maxChunkSize
+				s.sessionVars.StmtCtx.AppendWarning(errors.Errorf("Try to set TiDB InitChunkSize to %d big than MaxChunkSize %d so force use %d",
+					newInitChunkSize, maxChunkSize, reviseInitChunkSize))
+			}
+			return strconv.Itoa(reviseInitChunkSize), nil
+		})
+	default:
+		return s.persistVar(name, sVal)
+	}
+}
+
+func (s *session) persistVar(name, sVal string) error {
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)
-	_, _, err = s.ExecRestrictedSQL(s, sql)
+	_, _, err := s.ExecRestrictedSQL(s, sql)
 	return errors.Trace(err)
+}
+
+func (s *session) persistVarInConstraint(setName, setVal, checkName string, condition func(s *session, val string) (string, error)) error {
+	retryCount := 11
+	var err error
+	for i := 0; i < retryCount; i++ {
+		ctx := context.Background()
+		_, err = s.Execute(ctx, "begin")
+		if err != nil {
+			return err
+		}
+		var rows []chunk.Row
+		rows, _, err = s.ExecRestrictedSQL(s, fmt.Sprintf("select VARIABLE_VALUE from %s.%s where VARIABLE_NAME = '%s' for update",
+			mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(checkName)))
+		if err != nil {
+			return err
+		}
+		if len(rows) != 1 {
+			return nil
+		}
+		val := rows[0].GetString(0)
+		var newVal string
+		newVal, err = condition(s, val)
+		if err != nil {
+			return err
+		}
+		err = s.persistVar(setName, newVal)
+		_, err = s.Execute(ctx, "commit")
+		if err == nil {
+			return nil
+		}
+		if strings.Contains(err.Error(), "not retry select for update") {
+			continue
+		}
+		return err
+	}
+	return err
 }
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
