@@ -203,6 +203,8 @@ var (
 	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
 	// ErrViewWrongList returns create view must include all columns in the select clause
 	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
+	// ErrTableIsNotView returns for table is not base table.
+	ErrTableIsNotView = terror.ClassDDL.New(codeErrWrongObject, "'%s.%s' is not VIEW")
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -214,6 +216,7 @@ type DDL interface {
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, enableGCAfterRecover bool) (err error)
+	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
@@ -252,7 +255,9 @@ type ddl struct {
 	quitCh     chan struct{}
 
 	*ddlCtx
-	workers map[workerType]*worker
+	workers     map[workerType]*worker
+	sessPool    *sessionPool
+	delRangeMgr delRangeManager
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -370,6 +375,19 @@ func (d *ddl) Stop() error {
 	return nil
 }
 
+func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
+	var delRangeMgr delRangeManager
+	if !mock {
+		delRangeMgr = newDelRangeManager(d.store, d.sessPool)
+		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !d.store.SupportDeleteRange())
+	} else {
+		delRangeMgr = newMockDelRangeManager()
+	}
+
+	delRangeMgr.start()
+	return delRangeMgr
+}
+
 // start campaigns the owner and starts workers.
 // ctxPool is used for the worker's delRangeManager and creates sessions.
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
@@ -383,8 +401,10 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		terror.Log(errors.Trace(err))
 
 		d.workers = make(map[workerType]*worker, 2)
-		d.workers[generalWorker] = newWorker(generalWorker, d.store, ctxPool)
-		d.workers[addIdxWorker] = newWorker(addIdxWorker, d.store, ctxPool)
+		d.sessPool = newSessionPool(ctxPool)
+		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+		d.workers[generalWorker] = newWorker(generalWorker, d.store, d.sessPool, d.delRangeMgr)
+		d.workers[addIdxWorker] = newWorker(addIdxWorker, d.store, d.sessPool, d.delRangeMgr)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
@@ -421,6 +441,13 @@ func (d *ddl) close() {
 	for _, worker := range d.workers {
 		worker.close()
 	}
+	if d.sessPool != nil {
+		d.sessPool.close()
+	}
+	if d.delRangeMgr != nil {
+		d.delRangeMgr.clear()
+	}
+
 	log.Infof("[ddl] closing DDL:%s takes time %v", d.uuid, time.Since(startTime))
 }
 
@@ -538,7 +565,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			continue
 		}
 
-		// If a job is a history job, the state must be JobSynced or JobCancel.
+		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
 			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
 			return nil
@@ -547,7 +574,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		if historyJob.Error != nil {
 			return errors.Trace(historyJob.Error)
 		}
-		panic("When the state is JobCancel, historyJob.Error should never be nil")
+		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
 }
 
@@ -625,6 +652,7 @@ const (
 	codeWrongKeyColumn                         = 1167
 	codeBlobKeyWithoutLength                   = 1170
 	codeInvalidOnUpdate                        = 1294
+	codeErrWrongObject                         = terror.ErrCode(mysql.ErrWrongObject)
 	codeViewWrongList                          = 1353
 	codeUnsupportedOnGeneratedColumn           = 3106
 	codeGeneratedColumnNonPrior                = 3107
@@ -704,6 +732,7 @@ func init() {
 		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
 		codeCoalesceOnlyOnHashPartition:            mysql.ErrCoalesceOnlyOnHashPartition,
 		codeUnknownPartition:                       mysql.ErrUnknownPartition,
+		codeErrWrongObject:                         mysql.ErrWrongObject,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

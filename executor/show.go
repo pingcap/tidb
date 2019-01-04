@@ -251,6 +251,7 @@ func (e *ShowExec) fetchShowTables() error {
 	}
 	// sort for tables
 	var tableNames []string
+	var tableTypes = make(map[string]string)
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
@@ -258,13 +259,16 @@ func (e *ShowExec) fetchShowTables() error {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
+		if v.Meta().IsView() {
+			tableTypes[v.Meta().Name.O] = "VIEW"
+		} else {
+			tableTypes[v.Meta().Name.O] = "BASE TABLE"
+		}
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
-			// TODO: support "VIEW" later if we have supported view feature.
-			// now, just use "BASE TABLE".
-			e.appendRow([]interface{}{v, "BASE TABLE"})
+			e.appendRow([]interface{}{v, tableTypes[v]})
 		} else {
 			e.appendRow([]interface{}{v})
 		}
@@ -662,10 +666,24 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	// Currently TiDB treat all the data as utf8mb4 actually.
-	// Make the TiDB's query result consistent with its actual behavior.
-	charsetName, collate := charset.GetDefaultCharsetAndCollate()
-	fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
+	charsetName := tb.Meta().Charset
+	if len(charsetName) == 0 {
+		charsetName = mysql.DefaultCharset
+	}
+	collate := tb.Meta().Collate
+	// Set default collate if collate is not specified.
+	if len(collate) == 0 {
+		collate = getDefaultCollate(charsetName)
+	}
+	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
+	// to make it work on MySQL server which has default collate utf8_general_ci.
+	if len(collate) == 0 {
+		// If we can not find default collate for the given charset,
+		// do not show the collate part.
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", charsetName)
+	} else {
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
+	}
 
 	// Displayed if the compression typed is set.
 	if len(tb.Meta().Compression) != 0 {

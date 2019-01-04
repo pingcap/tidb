@@ -119,10 +119,9 @@ func (dr *delRange) start() {
 
 // clear implements delRangeManager interface.
 func (dr *delRange) clear() {
-	log.Infof("[ddl] closing delRange session pool")
+	log.Infof("[ddl] closing delRange")
 	close(dr.quitCh)
 	dr.wait.Wait()
-	dr.sessPool.close()
 }
 
 // startEmulator is only used for those storage engines which don't support

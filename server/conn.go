@@ -226,12 +226,15 @@ func (cc *clientConn) writePacket(data []byte) error {
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
 func (cc *clientConn) getSessionVarsWaitTimeout() uint64 {
-	valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	valStr, exists := cc.ctx.GetSessionVars().GetSystemVar(variable.WaitTimeout)
+	if !exists {
+		return variable.DefWaitTimeout
+	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		log.Errorf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
+		log.Warnf("con:%d get sysval wait_timeout error, use default value.", cc.connectionID)
 		// if get waitTimeout error, use default value
-		waitTimeout = variable.DefWaitTimeout
+		return variable.DefWaitTimeout
 	}
 	return waitTimeout
 }
@@ -243,6 +246,63 @@ type handshakeResponse41 struct {
 	DBName     string
 	Auth       []byte
 	Attrs      map[string]string
+}
+
+// parseOldHandshakeResponseHeader parses the old version handshake header HandshakeResponse320
+func parseOldHandshakeResponseHeader(packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
+	// Ensure there are enough data to read:
+	// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse320
+	log.Debugf("Try to parse hanshake response as Protocol::HandshakeResponse320 , packet data: %v", data)
+	if len(data) < 2+3 {
+		log.Errorf("Got malformed handshake response, packet data: %v", data)
+		return 0, mysql.ErrMalformPacket
+	}
+	offset := 0
+	// capability
+	capability := binary.LittleEndian.Uint16(data[:2])
+	packet.Capability = uint32(capability)
+
+	// be compatible with Protocol::HandshakeResponse41
+	packet.Capability = packet.Capability | mysql.ClientProtocol41
+
+	offset += 2
+	// skip max packet size
+	offset += 3
+	// usa default CharsetID
+	packet.Collation = mysql.CollationNames["utf8mb4_general_ci"]
+
+	return offset, nil
+}
+
+// parseOldHandshakeResponseBody parse the HandshakeResponse for Protocol::HandshakeResponse320 (except the common header part).
+func parseOldHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset int) (err error) {
+	defer func() {
+		// Check malformat packet cause out of range is disgusting, but don't panic!
+		if r := recover(); r != nil {
+			log.Errorf("handshake panic, packet data: %v", data)
+			err = mysql.ErrMalformPacket
+		}
+	}()
+	// user name
+	packet.User = string(data[offset : offset+bytes.IndexByte(data[offset:], 0)])
+	offset += len(packet.User) + 1
+
+	if packet.Capability&mysql.ClientConnectWithDB > 0 {
+		if len(data[offset:]) > 0 {
+			idx := bytes.IndexByte(data[offset:], 0)
+			packet.DBName = string(data[offset : offset+idx])
+			offset = offset + idx + 1
+		}
+		if len(data[offset:]) > 0 {
+			packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
+			offset += len(packet.Auth) + 1
+		}
+	} else {
+		packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
+		offset += len(packet.Auth) + 1
+	}
+
+	return nil
 }
 
 // parseHandshakeResponseHeader parses the common header of SSLRequest and HandshakeResponse41.
@@ -365,9 +425,24 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		return errors.Trace(err)
 	}
 
-	var resp handshakeResponse41
+	isOldVersion := false
 
-	pos, err := parseHandshakeResponseHeader(&resp, data)
+	var resp handshakeResponse41
+	var pos int
+
+	if len(data) < 2 {
+		log.Errorf("Got malformed handshake response, packet data: %v", data)
+		return mysql.ErrMalformPacket
+	}
+
+	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
+	if capability&mysql.ClientProtocol41 > 0 {
+		pos, err = parseHandshakeResponseHeader(&resp, data)
+	} else {
+		pos, err = parseOldHandshakeResponseHeader(&resp, data)
+		isOldVersion = true
+	}
+
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -382,14 +457,23 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		pos, err = parseHandshakeResponseHeader(&resp, data)
+		if isOldVersion {
+			pos, err = parseOldHandshakeResponseHeader(&resp, data)
+		} else {
+			pos, err = parseHandshakeResponseHeader(&resp, data)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
 	// Read the remaining part of the packet.
-	if err = parseHandshakeResponseBody(&resp, data, pos); err != nil {
+	if isOldVersion {
+		err = parseOldHandshakeResponseBody(&resp, data, pos)
+	} else {
+		err = parseHandshakeResponseBody(&resp, data, pos)
+	}
+	if err != nil {
 		return errors.Trace(err)
 	}
 
@@ -398,6 +482,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
+
 	err = cc.openSessionAndDoAuth(resp.Auth)
 	return errors.Trace(err)
 }
@@ -601,7 +686,12 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	} else {
 		metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 	}
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral).Observe(time.Since(startTime).Seconds())
+	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
+	sqlType := metrics.LblGeneral
+	if stmtType != "" {
+		sqlType = stmtType
+	}
+	metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.

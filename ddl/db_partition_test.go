@@ -1021,6 +1021,8 @@ func (s *testIntegrationSuite) TestPartitionCancelAddIndex(c *C) {
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.ctx, hook)
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "create index c3_index on t1 (c3)", done)
@@ -1064,8 +1066,6 @@ LOOP:
 	checkDelRangeDone(c, s.ctx, idx)
 
 	tk.MustExec("drop table t1")
-	callback := &ddl.TestDDLCallback{}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
 }
 
 func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.Context, hook *ddl.TestDDLCallback) (func(*model.Job), *model.IndexInfo, error) {
