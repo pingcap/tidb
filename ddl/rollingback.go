@@ -160,7 +160,7 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	return
 }
 
-func rollingbackDropTable(t *meta.Meta, job *model.Job) error {
+func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 	tblInfo, err := checkTableExist(t, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -200,8 +200,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropIndex:
 		ver, err = rollingbackDropIndex(t, job)
-	case model.ActionDropTable:
-		err = rollingbackDropTable(t, job)
+	case model.ActionDropTable, model.ActionDropView:
+		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropSchema:
 		err = rollingbackDropSchema(t, job)
 	default:
