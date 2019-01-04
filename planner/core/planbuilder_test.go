@@ -24,7 +24,7 @@ import (
 // CanBePrune is provided for testing.
 func CanBePrune(ctx sessionctx.Context, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
 	var s partitionProcessor
-	return s.canBePrune(ctx, nil, partitionCond, copConds)
+	return s.canBePrune(ctx, nil, partitionCond, nil, copConds)
 }
 
 var _ = Suite(&testPlanBuilderSuite{})

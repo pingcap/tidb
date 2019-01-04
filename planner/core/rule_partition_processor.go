@@ -38,21 +38,20 @@ import (
 type partitionProcessor struct{}
 
 func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
-	// NOTE: partitionProcessor will assume all filter conditions are pushed down to
-	// DataSource, there will not be a Selection->DataSource case, so the rewrite just
-	// handle the DataSource node.
-	return s.rewriteDataSource(lp)
+	return s.rewriteDataSource(nil, lp)
 }
 
-func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
+func (s *partitionProcessor) rewriteDataSource(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
 	switch lp.(type) {
 	case *DataSource:
-		return s.prune(lp.(*DataSource))
+		return s.prune(sel, lp.(*DataSource))
+	case *LogicalSelection:
+		return s.rewriteDataSource(lp.(*LogicalSelection), lp.Children()[0])
 	default:
 		children := lp.Children()
 		for i, child := range children {
-			newChild, err := s.rewriteDataSource(child)
+			newChild, err := s.rewriteDataSource(nil, child)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -60,6 +59,14 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 		}
 	}
 
+	return s.selectOnSomething(sel, lp)
+}
+
+func (s *partitionProcessor) selectOnSomething(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
+	if sel != nil {
+		sel.SetChildren(lp)
+		return sel, nil
+	}
 	return lp, nil
 }
 
@@ -68,10 +75,10 @@ type partitionTable interface {
 	PartitionExpr() *tables.PartitionExpr
 }
 
-func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
+func (s *partitionProcessor) prune(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
-		return ds, nil
+		return s.selectOnSomething(sel, ds)
 	}
 
 	var partitionExprs []expression.Expression
@@ -87,9 +94,13 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
+	var selConds []expression.Expression
+	if sel != nil {
+		selConds = sel.Conditions
+	}
 	for i, expr := range partitionExprs {
 		// If the selection condition would never be satisified, prune that partition.
-		prune, err := s.canBePrune(ds.context(), col, expr, ds.pushedDownConds)
+		prune, err := s.canBePrune(ds.context(), col, expr, selConds, ds.pushedDownConds)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -113,25 +124,26 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// No result after table pruning.
 		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())
 		tableDual.schema = ds.Schema()
-		return tableDual, nil
+		return s.selectOnSomething(sel, tableDual)
 	}
 	if len(children) == 1 {
 		// No need for the union all.
-		return children[0], nil
+		return s.selectOnSomething(sel, children[0])
 	}
 	unionAll := LogicalUnionAll{}.Init(ds.context())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema)
-	return unionAll, nil
+	return s.selectOnSomething(sel, unionAll)
 }
 
 var solver = expression.NewPartitionPruneSolver()
 
 // canBePrune checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
-func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
-	conds := make([]expression.Expression, 0, 1+len(copConds))
+func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
+	conds := make([]expression.Expression, 0, 1+len(rootConds)+len(copConds))
 	conds = append(conds, partitionCond)
+	conds = append(conds, rootConds...)
 	conds = append(conds, copConds...)
 	conds = expression.PropagateConstant(ctx, conds)
 	conds = solver.Solve(ctx, conds)
