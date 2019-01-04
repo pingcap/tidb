@@ -1159,6 +1159,8 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 
 func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	checker := privilege.GetPrivilegeManager(ctx)
+	sqlMode := ctx.GetSessionVars().SQLMode
+
 	var rows [][]types.Datum
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
@@ -1177,16 +1179,16 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 				continue
 			}
 			record := types.MakeDatums(
-				catalogVal,                      // TABLE_CATALOG
-				schema.Name.O,                   // TABLE_SCHEMA
-				table.Name.O,                    // TABLE_NAME
-				table.View.SelectStmt,           // VIEW_DEFINITION
-				table.View.CheckOption.String(), // CHECK_OPTION
-				"NO",                            // IS_UPDATABLE
-				table.View.Definer.String(),     // DEFINER
-				table.View.Security.String(),    // SECURITY_TYPE
-				charset,                         // CHARACTER_SET_CLIENT
-				collation,                       // COLLATION_CONNECTION
+				catalogVal,                              // TABLE_CATALOG
+				schema.Name.O,                           // TABLE_SCHEMA
+				table.Name.O,                            // TABLE_NAME
+				table.View.SelectStmtBySQLMode(sqlMode), // VIEW_DEFINITION
+				table.View.CheckOption.String(),         // CHECK_OPTION
+				"NO",                                    // IS_UPDATABLE
+				table.View.Definer.String(),             // DEFINER
+				table.View.Security.String(),            // SECURITY_TYPE
+				charset,                                 // CHARACTER_SET_CLIENT
+				collation,                               // COLLATION_CONNECTION
 			)
 			rows = append(rows, record)
 		}

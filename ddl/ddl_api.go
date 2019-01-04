@@ -1454,11 +1454,22 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return err
 	}
-	viewInfo, cols := buildViewInfoWithTableColumns(ctx, s)
+	viewInfo, err := buildViewInfo(ctx, s)
+	if err != nil {
+		return err
+	}
 
-	colObjects := make([]interface{}, 0, len(viewInfo.Cols))
-	for _, col := range viewInfo.Cols {
-		colObjects = append(colObjects, col)
+	var cols = make([]*table.Column, len(s.Cols))
+	var colObjects []interface{}
+
+	for i, v := range s.Cols {
+		cols[i] = table.ToColumn(&model.ColumnInfo{
+			Name:   v,
+			ID:     int64(i),
+			Offset: i,
+			State:  model.StatePublic,
+		})
+		colObjects = append(colObjects, v)
 	}
 
 	if err = checkTooLongColumn(colObjects); err != nil {
@@ -1496,33 +1507,29 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	return d.callHookOnChanged(err)
 }
 
-func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
+func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, error) {
+	singleQuoteFlag := format.RestoreStringSingleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameBackQuotes
+	doubleQuoteFlag := format.RestoreStringDoubleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameDoubleQuotes
+
 	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
-		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption, Cols: s.SchemaCols}
-	var tableColumns = make([]*table.Column, len(s.SchemaCols))
-	if s.Cols == nil {
-		for i, v := range s.SchemaCols {
-			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:    v,
-				ID:      int64(i),
-				Offset:  i,
-				State:   model.StatePublic,
-				Version: model.CurrLatestColumnInfoVersion,
-			})
+		Security: s.Security, CheckOption: s.CheckOption}
+
+	var sb strings.Builder
+	for _, flag := range []format.RestoreFlags{singleQuoteFlag, doubleQuoteFlag} {
+		sb.Reset()
+		err := s.Select.Restore(format.NewRestoreCtx(flag, &sb))
+		if err != nil {
+			return nil, err
 		}
-	} else {
-		for i, v := range s.Cols {
-			tableColumns[i] = table.ToColumn(&model.ColumnInfo{
-				Name:    v,
-				ID:      int64(i),
-				Offset:  i,
-				State:   model.StatePublic,
-				Version: model.CurrLatestColumnInfoVersion,
-			})
+		switch flag {
+		case singleQuoteFlag:
+			viewInfo.SelectStmt = sb.String()
+		case doubleQuoteFlag:
+			viewInfo.SelectStmtQuote = sb.String()
 		}
 	}
 
-	return viewInfo, tableColumns
+	return viewInfo, nil
 }
 
 func checkPartitionByHash(ctx sessionctx.Context, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, tbInfo *model.TableInfo) error {

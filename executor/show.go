@@ -856,7 +856,7 @@ func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buf
 			fmt.Fprintf(buf, ", ")
 		}
 	}
-	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
+	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmtBySQLMode(sqlMode))
 }
 
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {

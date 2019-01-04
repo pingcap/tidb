@@ -98,7 +98,6 @@ func testViewInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo.ID = genIDs[0]
 
 	cols := make([]*model.ColumnInfo, num)
-	viewCols := make([]model.CIStr, num)
 
 	var stmtBuffer bytes.Buffer
 	stmtBuffer.WriteString("SELECT ")
@@ -111,13 +110,12 @@ func testViewInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 
 		col.ID = allocateColumnID(tblInfo)
 		cols[i] = col
-		viewCols[i] = col.Name
 		stmtBuffer.WriteString(cols[i].Name.L + ",")
 	}
 	stmtBuffer.WriteString("1 FROM t")
 
-	view := model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge,
-		SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
+	view := model.ViewInfo{Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge,
+		SelectStmt: []string{stmtBuffer.String(), stmtBuffer.String()}, CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
 
 	tblInfo.View = &view
 	tblInfo.Columns = cols
