@@ -692,6 +692,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	return nil
 }
 
+// SetLocalSystemVar sets values of the local variables which in "server" scope.
 func SetLocalSystemVar(name string, val string) {
 	switch name {
 	case TiDBDDLReorgWorkerCount:
