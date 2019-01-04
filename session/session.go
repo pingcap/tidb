@@ -826,89 +826,11 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		return errors.Trace(err)
 	}
 
-	switch name {
-	case variable.TiDBMaxChunkSize:
-		return s.persistVarInConstraint(name, sVal, variable.TiDBInitChunkSize, func(s *session, val string) (string, error) {
-			newMaxChunkSize, err := strconv.Atoi(sVal)
-			if err != nil {
-				return "", errors.Trace(err)
-			}
-			initChunkSize, err := strconv.Atoi(val)
-			if err != nil {
-				return "", errors.Trace(err)
-			}
-			if initChunkSize > newMaxChunkSize {
-				return "", errors.Errorf("Try to set TiDB MaxChunkSize to %d small than InitChunkSize %d, please change InitChunkSize ahead",
-					newMaxChunkSize, initChunkSize)
-			}
-			return strconv.Itoa(newMaxChunkSize), nil
-		})
-	case variable.TiDBInitChunkSize:
-		return s.persistVarInConstraint(name, sVal, variable.TiDBMaxChunkSize, func(s *session, val string) (string, error) {
-			newInitChunkSize, err := strconv.Atoi(sVal)
-			if err != nil {
-				return "", errors.Trace(err)
-			}
-			maxChunkSize, err := strconv.Atoi(val)
-			if err != nil {
-				return "", errors.Trace(err)
-			}
-			if newInitChunkSize > maxChunkSize {
-				return "", errors.Errorf("Try to set TiDB InitChunkSize to %d big than MaxChunkSize %d, please change MaxChunkSize ahead",
-					newInitChunkSize, maxChunkSize)
-			}
-			return strconv.Itoa(newInitChunkSize), nil
-		})
-	default:
-		return s.persistVar(name, sVal)
-	}
-}
-
-func (s *session) persistVar(name, sVal string) error {
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)
-	_, _, err := s.ExecRestrictedSQL(s, sql)
-	return errors.Trace(err)
-}
+	_, _, err = s.ExecRestrictedSQL(s, sql)
 
-func (s *session) persistVarInConstraint(setName, setVal, checkName string, condition func(s *session, val string) (string, error)) error {
-	retryCount := 11
-	var err error
-	for i := 0; i < retryCount; i++ {
-		ctx := context.Background()
-		_, err = s.Execute(ctx, "begin")
-		if err != nil {
-			return err
-		}
-		var rows []chunk.Row
-		rows, _, err = s.ExecRestrictedSQL(s, fmt.Sprintf("select VARIABLE_VALUE from %s.%s where VARIABLE_NAME = '%s' for update",
-			mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(checkName)))
-		if err != nil {
-			return err
-		}
-		if len(rows) != 1 {
-			return nil
-		}
-		val := rows[0].GetString(0)
-		if len(val) == 0 {
-			return nil
-		}
-		var newVal string
-		newVal, err = condition(s, val)
-		if err != nil {
-			return err
-		}
-		err = s.persistVar(setName, newVal)
-		_, err = s.Execute(ctx, "commit")
-		if err == nil {
-			return nil
-		}
-		if strings.Contains(err.Error(), "not retry select for update") {
-			continue
-		}
-		return err
-	}
-	return err
+	return errors.Trace(err)
 }
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
@@ -1283,7 +1205,7 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 	if err == nil {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
-		s.GetSessionVars().MaxChunkSize = 2
+		s.GetSessionVars().MaxChunkSize = 32
 	}
 	return s, errors.Trace(err)
 }
@@ -1567,24 +1489,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		gvc.Update(rows, fields)
 	}
 
-	delayRows := make([]chunk.Row, 0)
 	for _, row := range rows {
-		varName := row.GetString(0)
-		switch varName {
-		case variable.TiDBInitChunkSize:
-			delayRows = append(delayRows, row)
-			continue
-		}
-		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
-		if _, ok := vars.GetSystemVar(varName); !ok {
-			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-
-	for _, row := range delayRows {
 		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
 		if _, ok := vars.GetSystemVar(varName); !ok {

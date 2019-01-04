@@ -272,9 +272,7 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 
 	tk.MustExec("set @@tidb_init_chunk_size=1;")
-	tk.MustExec("set @@tidb_max_chunk_size=1;")
 	tk.MustQuery("select group_concat(b) from idx_agg group by b;").Check(testkit.Rows("1", "2,2"))
-	tk.MustExec("set @@tidb_max_chunk_size=2;")
 	tk.MustExec("set @@tidb_init_chunk_size=2;")
 
 	tk.MustExec("drop table if exists t")
@@ -388,7 +386,7 @@ func (s *testSuite1) TestGroupConcatAggr(c *C) {
 	tk.MustExec("use test")
 	// https://github.com/pingcap/tidb/issues/6838 isn't implemented, so use this trick.
 	tk.Se.GetSessionVars().InitChunkSize = 3
-	tk.Se.GetSessionVars().MaxChunkSize = 3
+	tk.Se.GetSessionVars().MaxChunkSize = 3 // fix me please after agg follow initChunkSize
 	tk.MustExec("create table test(id int, name int)")
 	tk.MustExec("insert into test values(1, 10);")
 	tk.MustExec("insert into test values(1, 20);")

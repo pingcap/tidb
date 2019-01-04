@@ -97,7 +97,6 @@ func (s *testSuite1) TestBatchIndexJoinUnionScan(c *C) {
 	tk.MustExec("create table t1(id int primary key, a int)")
 	tk.MustExec("create table t2(id int primary key, a int, key idx_a(a))")
 	tk.MustExec("set @@session.tidb_init_chunk_size=1")
-	tk.MustExec("set @@session.tidb_max_chunk_size=1")
 	tk.MustExec("set @@session.tidb_index_join_batch_size=1")
 	tk.MustExec("set @@session.tidb_index_lookup_join_concurrency=4")
 	tk.MustExec("begin")

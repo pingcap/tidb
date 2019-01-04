@@ -158,7 +158,7 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
 	sv.L2CacheSize = 100
 	sv.EnableRadixJoin = true
-	sv.MaxChunkSize = 100
+	sv.MaxChunkSize = 100 // fix me please after join impl follow initChunkSize
 	defer func() {
 		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
 	}()

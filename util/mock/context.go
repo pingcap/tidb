@@ -225,7 +225,7 @@ func NewContext() *Context {
 		cancel:      cancel,
 	}
 	sctx.sessionVars.InitChunkSize = 2
-	sctx.sessionVars.MaxChunkSize = 2
+	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	return sctx

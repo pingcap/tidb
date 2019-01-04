@@ -611,7 +611,6 @@ commit;`
 	insert tmp (code) values (1);
 	insert tmp (code) values (1);
 	set tidb_init_chunk_size=1;
-	set tidb_max_chunk_size=1;
 	insert m (code) select code from tmp on duplicate key update code = values(code);`
 	tk.MustExec(testSQL)
 	testSQL = `select * from m;`
