@@ -40,11 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
-<<<<<<< HEAD
-	"github.com/sirupsen/logrus"
-=======
 	log "github.com/sirupsen/logrus"
->>>>>>> upstream/master
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -1283,7 +1279,6 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	for _, spec := range validSpecs {
 		algorithm, err := ResolveAlterAlgorithm(spec, algorithm)
 		if err != nil {
-			logrus.Infof("err:%v", err)
 			// For the compatibility, we return warning instead of error.
 			ctx.GetSessionVars().StmtCtx.AppendError(err)
 			err = nil
