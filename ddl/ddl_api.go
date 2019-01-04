@@ -2220,15 +2220,9 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 
 // DropView will proceed even if some view in the list does not exists.
 func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	is := d.GetInformationSchema(ctx)
-	schema, ok := is.SchemaByName(ti.Schema)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
-	}
-
-	tb, err := is.TableByName(ti.Schema, ti.Name)
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ti)
 	if err != nil {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
+		return errors.Trace(err)
 	}
 
 	if !tb.Meta().IsView() {
