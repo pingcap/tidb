@@ -197,7 +197,7 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		defer func() {
 			// if err == nil, should be enable gc in ddl owner.
 			if err != nil {
-				admin.EnableGCAfterRecover(e.ctx)
+				log.Error(admin.EnableGCAfterRecover(e.ctx))
 			}
 		}()
 	}
