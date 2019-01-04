@@ -915,6 +915,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		Flag:        show.Flag,
 		Full:        show.Full,
 		User:        show.User,
+		IfNotExists: show.IfNotExists,
 		GlobalScope: show.GlobalScope,
 	}.Init(b.ctx)
 	switch showTp := show.Tp; showTp {
