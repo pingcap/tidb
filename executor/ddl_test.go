@@ -142,6 +142,7 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
 	//test create a exist view
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
+	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
 	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
 	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
 	//create view on nonexistent table
@@ -151,31 +152,25 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("create table t1 (a int ,b int)")
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
 	//view with colList and SelectFieldExpr
-	_, err = tk.Exec("create view v1 (c) as select b+1 from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v1 (c) as select b+1 from t1")
 	//view with SelectFieldExpr
-	_, err = tk.Exec("create view v2 as select b+1 from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v2 as select b+1 from t1")
 	//view with SelectFieldExpr and AsName
-	_, err = tk.Exec("create view v3 as select b+1 as c from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v3 as select b+1 as c from t1")
 	//view with colList , SelectField and AsName
-	_, err = tk.Exec("create view v4 (c) as select b+1 as d from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v4 (c) as select b+1 as d from t1")
 	//view with select wild card
-	_, err = tk.Exec("create view v5 as select * from t1")
-	c.Assert(err, IsNil)
-	_, err = tk.Exec("create view v6 (c,d) as select * from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v5 as select * from t1")
+	tk.MustExec("create view v6 (c,d) as select * from t1")
 	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
-	tk.MustExec("drop table v1,v2,v3,v4,v5,v6")
+	//drop multiple views in a statement
+	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
 	//view with variable
-	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
 	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
-	tk.MustExec("drop table v1")
+	tk.MustExec("drop view v1")
 	//view with different col counts
 	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
@@ -209,6 +204,24 @@ func (s *testSuite3) TestCreateDropTable(c *C) {
 
 	_, err := tk.Exec("drop table mysql.gc_delete_range")
 	c.Assert(err, NotNil)
+}
+
+func (s *testSuite3) TestCreateDropView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create or replace view drop_test as select 1,2")
+	_, err := tk.Exec("drop view if exists drop_test")
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec("drop view mysql.gc_delete_range")
+	c.Assert(err.Error(), Equals, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
+
+	_, err = tk.Exec("drop view drop_test")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+
+	tk.MustExec("create table t_v(a int)")
+	_, err = tk.Exec("drop view t_v")
+	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
 }
 
 func (s *testSuite3) TestCreateDropIndex(c *C) {
