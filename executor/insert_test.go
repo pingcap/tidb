@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
+func (s *testSuite3) TestInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -184,7 +184,7 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.CheckLastMessage("Records: 5  Duplicates: 2  Warnings: 0")
 }
 
-func (s *testSuite) TestUpdateDuplicateKey(c *C) {
+func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -196,7 +196,7 @@ func (s *testSuite) TestUpdateDuplicateKey(c *C) {
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
 }
 
-func (s *testSuite) TestInsertWrongValueForField(c *C) {
+func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
@@ -205,7 +205,7 @@ func (s *testSuite) TestInsertWrongValueForField(c *C) {
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
 }
 
-func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
+func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`use test;`)
@@ -220,7 +220,7 @@ func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
 	))
 }
 
-func (s *testSuite) TestInsertZeroYear(c *C) {
+func (s *testSuite3) TestInsertZeroYear(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
