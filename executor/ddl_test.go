@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -456,6 +457,24 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 	_, err = tk.Exec("alter table auto shard_row_id_bits = 4")
 	c.Assert(err, NotNil)
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
+
+	// Test overflow
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int) shard_row_id_bits = 15")
+	defer tk.MustExec("drop table if exists t1")
+
+	tbl, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	maxID := 1<<(64-15) - 1
+	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t1 values(1)")
+
+	// continue inserting will fail.
+	_, err = tk.Exec("insert into t1 values(2)")
+	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
+	_, err = tk.Exec("insert into t1 values(3)")
+	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 }
 
 func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
