@@ -205,7 +205,10 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(col.Name.O, rowIdx+1)
 	}
 	if types.ErrTruncated.Equal(err) {
-		valStr, _ := val.ToString()
+		valStr, err1 := val.ToString()
+		if err1 != nil {
+			log.Warn(err1)
+		}
 		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
 	return e.filterErr(err)
@@ -310,7 +313,9 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows 
 				if err := exec(rows); err != nil {
 					return errors.Trace(err)
 				}
-				e.ctx.StmtCommit()
+				if err := e.ctx.StmtCommit(); err != nil {
+					return errors.Trace(err)
+				}
 				rows = rows[:0]
 				if err := e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
