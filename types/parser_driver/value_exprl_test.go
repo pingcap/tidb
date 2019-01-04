@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/util/restore"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -52,7 +52,7 @@ func (s *testValueExprRestoreSuite) TestValueExprRestore(c *C) {
 	for _, testCase := range testCases {
 		sb.Reset()
 		expr := &ValueExpr{Datum: testCase.datum}
-		err := expr.Restore(ast.NewRestoreCtx(ast.DefaultRestoreFlags, &sb))
+		err := expr.Restore(restore.NewRestoreCtx(restore.DefaultRestoreFlags, &sb))
 		c.Assert(err, IsNil)
 		c.Assert(sb.String(), Equals, testCase.expect, Commentf("Datum: %#v", testCase.datum))
 	}
