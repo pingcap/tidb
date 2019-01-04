@@ -1960,6 +1960,42 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select sum(a) over() as sum_a from t group by sum_a",
 			result: "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
 		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (w2)",
+			result: "[planner:3579]Window name 'w2' is not defined.",
+		},
+		{
+			sql:    "select sum(a) over(w) from t",
+			result: "[planner:3579]Window name 'w' is not defined.",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (w2), w2 as (w1)",
+			result: "[planner:3580]There is a circularity in the window dependency graph.",
+		},
+		{
+			sql:    "select sum(a) over(w partition by a) from t window w as ()",
+			result: "[planner:3581]A window which depends on another cannot define partitioning.",
+		},
+		{
+			sql:    "select sum(a) over(w) from t window w as (rows between 1 preceding AND 1 following)",
+			result: "[planner:3582]Window 'w' has a frame definition, so cannot be referenced by another window.",
+		},
+		{
+			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
+			result: "[planner:3583]Window '<unnamed window>' cannot inherit 'w' since both contain an ORDER BY clause.",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (), w1 as ()",
+			result: "[planner:3591]Window 'w1' is defined twice.",
+		},
+		{
+			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
