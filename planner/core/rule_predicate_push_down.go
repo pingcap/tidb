@@ -465,3 +465,10 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	p.attachOnConds(joinConds)
 	return predicates
 }
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	// Window function forbids any condition to push down.
+	p.baseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p
+}

@@ -93,6 +93,7 @@ const (
 	onClause
 	orderByClause
 	whereClause
+	windowClause
 	groupByClause
 	showStatement
 	globalOrderByClause
@@ -108,6 +109,7 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
+	windowClause:        "field list", // For window functions that in field list.
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -295,6 +297,15 @@ func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 			if ast.HasAggFlag(item.Expr) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
+	for _, f := range sel.Fields.Fields {
+		if ast.HasWindowFlag(f.Expr) {
+			return true
 		}
 	}
 	return false
