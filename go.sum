@@ -86,6 +86,8 @@ github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5 h1:2U0HzY8BJ8hVwDK
 github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5/go.mod h1:Pj4uuM528wm8OyEC2QMXAi2YiTZ96dNQPGgoMS4s3ek=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1 h1:mweAR1A6xJ3oS2pRaGiHgQ4OO8tzTaLawm8vnODuwDk=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=
+github.com/lnhote/parser v0.0.0-20190103162657-e55d710ca751 h1:itA+aUo/zd4c5SJ1IhFoxlRdG4GOHPE4c5FdjKbUsv4=
+github.com/lnhote/parser v0.0.0-20190103162657-e55d710ca751/go.mod h1:MLMwrc6N+89E/qlszMXEEdfl7hisvjCEcsi1PWO5LqM=
 github.com/mattn/go-colorable v0.0.9 h1:UVL0vNpWh04HeJXV0KLcaT7r06gOH2l4OW6ddYRUIY4=
 github.com/mattn/go-colorable v0.0.9/go.mod h1:9vuHe8Xs5qXnSaW/c/ABM9alt+Vo+STaOChaDxuIBZU=
 github.com/mattn/go-isatty v0.0.4 h1:bnP0vzxcAdeI1zdubAl5PjU6zsERjGZb7raWodagDYs=
@@ -129,6 +131,8 @@ github.com/pingcap/kvproto v0.0.0-20181203065228-c14302da291c h1:Qf5St5XGwKgKQLa
 github.com/pingcap/kvproto v0.0.0-20181203065228-c14302da291c/go.mod h1:Ja9XPjot9q4/3JyCZodnWDGNXt4pKemhIYCvVJM7P24=
 github.com/pingcap/parser v0.0.0-20181221050948-947d4ab3052f h1:X2ZRYBERoJ5VDp7CdtXWfwbKqbeYn2kkdGA0b5/VwJ8=
 github.com/pingcap/parser v0.0.0-20181221050948-947d4ab3052f/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20190104042418-24cab7ea7628 h1:lOAOKv3lUTV2wRYOhbH4Cu2AW9juFUbIIAksFN7SUgk=
+github.com/pingcap/parser v0.0.0-20190104042418-24cab7ea7628/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/tidb-tools v2.1.1-0.20181218072513-b2235d442b06+incompatible h1:Bsd+NHosPVowEGB3BCx+2d8wUQGDTXSSC5ljeNS6cXo=
