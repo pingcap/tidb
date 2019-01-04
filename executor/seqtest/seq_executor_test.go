@@ -333,7 +333,11 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(testSQL)
 	testSQL = "show create database show_test_DB;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_test_DB|CREATE DATABASE `show_test_DB` /* !40100 DEFAULT CHARACTER SET utf8mb4 */",
+		"show_test_DB|CREATE DATABASE `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	testSQL = "show create database if not exists show_test_DB;"
+	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+		"show_test_DB|CREATE DATABASE /*!32312 IF NOT EXISTS*/ `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
 	tk.MustExec("use show_test_DB")
