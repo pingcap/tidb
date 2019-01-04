@@ -14,9 +14,11 @@
 package core
 
 import (
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -249,6 +251,36 @@ func MockTable() *model.TableInfo {
 	return table
 }
 
+// MockView is only used for plan related tests.
+func MockView() *model.TableInfo {
+	selectStmt := "select b,c,d from t"
+	col0 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 0,
+		Name:   model.NewCIStr("b"),
+		ID:     1,
+	}
+	col1 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 1,
+		Name:   model.NewCIStr("c"),
+		ID:     2,
+	}
+	col2 := &model.ColumnInfo{
+		State:  model.StatePublic,
+		Offset: 2,
+		Name:   model.NewCIStr("d"),
+		ID:     3,
+	}
+	view := &model.ViewInfo{SelectStmt: selectStmt, Security: model.SecurityDefiner, Definer: &auth.UserIdentity{Username: "root", Hostname: ""}, Cols: []model.CIStr{col0.Name, col1.Name, col2.Name}}
+	table := &model.TableInfo{
+		Name:    model.NewCIStr("v"),
+		Columns: []*model.ColumnInfo{col0, col1, col2},
+		View:    view,
+	}
+	return table
+}
+
 // MockContext is only used for plan related tests.
 func MockContext() sessionctx.Context {
 	ctx := mock.NewContext()
@@ -260,4 +292,28 @@ func MockContext() sessionctx.Context {
 	do.CreateStatsHandle(ctx)
 	domain.BindDomain(ctx, do)
 	return ctx
+}
+
+// MockPartitionInfoSchema mocks an info schema for partition table.
+func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
+	tableInfo := *MockTable()
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    10,
+		Name:      model.NewCIStr("h"),
+		FieldType: newLongType(),
+		ID:        11,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeRange,
+		Expr:        "h",
+		Enable:      true,
+		Definitions: definitions,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
+	return is
 }

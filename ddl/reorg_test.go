@@ -49,14 +49,18 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
-	ctx.Txn(true).Set([]byte("a"), []byte("b"))
-	err = ctx.Txn(true).Rollback()
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	txn.Set([]byte("a"), []byte("b"))
+	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
-	ctx.Txn(true).Set([]byte("a"), []byte("b"))
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	txn.Set([]byte("a"), []byte("b"))
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	rowCount := int64(10)
@@ -73,7 +77,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	}
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
-	m := meta.NewMeta(ctx.Txn(true))
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
 	rInfo := &reorgInfo{
 		Job: job,
 	}
@@ -89,12 +95,12 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(d.generalWorker().reorgCtx.rowCount, Equals, int64(0))
 
 			// Test whether reorgInfo's Handle is update.
-			err = ctx.Txn(true).Commit(context.Background())
+			err = txn.Commit(context.Background())
 			c.Assert(err, IsNil)
 			err = ctx.NewTxn(context.Background())
 			c.Assert(err, IsNil)
 
-			m = meta.NewMeta(ctx.Txn(true))
+			m = meta.NewMeta(txn)
 			info, err1 := getReorgInfo(d.ddlCtx, m, job, nil)
 			c.Assert(err1, IsNil)
 			c.Assert(info.StartHandle, Equals, handle)
@@ -110,7 +116,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		return nil
 	})
 	c.Assert(err, NotNil)
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.start(context.Background(), nil)
@@ -168,11 +176,13 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, i, i), false)
+		_, err := t.AddRecord(ctx, types.MakeDatums(i, i, i))
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.Txn(true).Commit(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}

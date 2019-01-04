@@ -18,17 +18,21 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/logutil"
@@ -310,4 +314,62 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	}
 	tk.MustExec("admin check table t1")
 	tk.MustExec("admin check table t2")
+}
+
+func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_db")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_add_index")
+	tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+
+	done := make(chan error, 1)
+	start := -10
+	num := 4096
+	// first add some rows
+	for i := start; i < num; i++ {
+		sql := fmt.Sprintf("insert into test_add_index values (%d, %d, %d)", i, i, i)
+		tk.MustExec(sql)
+	}
+
+	is := s.dom.InfoSchema()
+	schemaName := model.NewCIStr("test_db")
+	tableName := model.NewCIStr("test_add_index")
+	tbl, err := is.TableByName(schemaName, tableName)
+	c.Assert(err, IsNil)
+
+	splitCount := 100
+	// Split table to multi region.
+	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, splitCount)
+
+	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
+	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
+	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
+	defer variable.SetDDLReorgWorkerCounter(originDDLAddIndexWorkerCnt)
+
+	gofail.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum")
+
+	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
+	checkNum := 0
+
+LOOP:
+	for {
+		select {
+		case err = <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		case <-ddl.TestCheckWorkerNumCh:
+			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
+			tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
+			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+			checkNum++
+		}
+	}
+	c.Assert(checkNum, Greater, 5)
+	tk.MustExec("admin check table test_add_index")
+	tk.MustExec("drop table test_add_index")
 }

@@ -116,7 +116,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				e.ctx.StmtCommit()
+				if err = e.ctx.StmtCommit(); err != nil {
+					return errors.Trace(err)
+				}
 				if err = e.ctx.NewTxn(ctx); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)

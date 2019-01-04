@@ -225,6 +225,11 @@ func (tc *TiDBContext) AffectedRows() uint64 {
 	return tc.session.AffectedRows()
 }
 
+// LastMessage implements QueryCtx LastMessage method.
+func (tc *TiDBContext) LastMessage() string {
+	return tc.session.LastMessage()
+}
+
 // CurrentDB implements QueryCtx CurrentDB method.
 func (tc *TiDBContext) CurrentDB() string {
 	return tc.currentDB
