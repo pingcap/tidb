@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/sirupsen/logrus"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
@@ -1233,7 +1234,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 
 // resolveAlterTableSpec resolve alter table algorithm and remove ignore table spec in specs.
 // returns valied specs, and the occured error.
-func resolveAlterTableSpec(specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
+func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlterAlgorithmDefault
 	for _, spec := range specs {
@@ -1257,7 +1258,10 @@ func resolveAlterTableSpec(specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, 
 	for _, spec := range validSpecs {
 		algorithm, err := ResolveAlterAlgorithm(spec, algorithm)
 		if err != nil {
-			return nil, errors.Trace(err)
+			logrus.Infof("err:%v", err)
+			// For the compatibility, we return warning instead of error.
+			ctx.GetSessionVars().StmtCtx.AppendError(err)
+			err = nil
 		}
 
 		spec.Algorithm = algorithm
@@ -1268,7 +1272,7 @@ func resolveAlterTableSpec(specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, 
 }
 
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	validSpecs, err := resolveAlterTableSpec(specs)
+	validSpecs, err := resolveAlterTableSpec(ctx, specs)
 	if err != nil {
 		return errors.Trace(err)
 	}

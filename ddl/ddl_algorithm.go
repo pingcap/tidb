@@ -55,12 +55,12 @@ func getProperAlgorithm(specify ast.AlterAlgorithm, algorithm *AlterAlgorithm) (
 		}
 	}
 
-	return defaultAlgorithm, ErrAlterOperationNotSupported.GenWithStackByArgs(fmt.Sprintf("ALGORITHM=%s", specify), fmt.Sprintf("Cannot alter table by %s", specify), fmt.Sprintf("ALGORITHM=%s", algorithm.defAlgorithm))
+	return algorithm.defAlgorithm, ErrAlterOperationNotSupported.GenWithStackByArgs(fmt.Sprintf("ALGORITHM=%s", specify), fmt.Sprintf("Cannot alter table by %s", specify), fmt.Sprintf("ALGORITHM=%s", algorithm.defAlgorithm))
 }
 
 // ResolveAlterAlgorithm resolves the algorithm of the alterSpec.
-// If specify algorithm is not supported by the alter action, errAlterOperationNotSupported will be return.
-// If specify is the ast.AlterAlgorithmDefault, then the default algorithm of the alter action will be return.
+// If specify algorithm is not supported by the alter action, errAlterOperationNotSupported will be returned.
+// If specify is the ast.AlterAlgorithmDefault, then the default algorithm of the alter action will be returned.
 func ResolveAlterAlgorithm(alterSpec *ast.AlterTableSpec, specify ast.AlterAlgorithm) (ast.AlterAlgorithm, error) {
 	switch alterSpec.Tp {
 	// For now, TiDB only support inplace algorithm and instant algorithm.
