@@ -678,10 +678,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
 		s.EnableTablePartition = val
-	case TiDBDDLReorgWorkerCount:
-		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
-	case TiDBDDLReorgBatchSize:
-		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
@@ -691,8 +687,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
 	}
+	SetLocalSystemVar(name, val)
 	s.systems[name] = val
 	return nil
+}
+
+func SetLocalSystemVar(name string, val string) {
+	switch name {
+	case TiDBDDLReorgWorkerCount:
+		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+	case TiDBDDLReorgBatchSize:
+		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
+	}
 }
 
 // special session variables.

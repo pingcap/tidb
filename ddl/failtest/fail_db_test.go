@@ -364,7 +364,7 @@ LOOP:
 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ddl.TestCheckWorkerNumCh:
 			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
-			tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
 			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
 			checkNum++
 		}
