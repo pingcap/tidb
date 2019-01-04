@@ -11,25 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package memo
 
 import (
-	. "github.com/pingcap/check"
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
-func (s *testCascadesSuite) TestNewGroupExpr(c *C) {
-	p := &plannercore.LogicalLimit{}
-	expr := NewGroupExpr(p)
-	c.Assert(expr.exprNode, Equals, p)
-	c.Assert(expr.children, IsNil)
-	c.Assert(expr.explored, IsFalse)
-}
-
-func (s *testCascadesSuite) TestGroupExprFingerprint(c *C) {
-	p := &plannercore.LogicalLimit{}
-	expr := NewGroupExpr(p)
-
-	// we haven't set the id of the created LogicalLimit, so the result is 0.
-	c.Assert(expr.FingerPrint(), Equals, "0")
+// Implementation defines the interface for cost of physical plan.
+type Implementation interface {
+	CalcCost(outCount float64, childCosts []float64, children ...*Group) float64
+	SetCost(cost float64)
+	GetCost() float64
+	GetPlan() plannercore.PhysicalPlan
 }

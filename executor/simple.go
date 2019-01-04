@@ -59,7 +59,7 @@ func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	case *ast.FlushStmt:
 		err = e.executeFlush(x)
 	case *ast.BeginStmt:
-		err = e.executeBegin(x)
+		err = e.executeBegin(ctx, x)
 	case *ast.CommitStmt:
 		e.executeCommit(x)
 	case *ast.RollbackStmt:
@@ -117,12 +117,12 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
+func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txnCtx.Histroy != nil {
-		err := e.ctx.NewTxn()
+	if txnCtx.History != nil {
+		err := e.ctx.NewTxn(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -132,7 +132,9 @@ func (e *SimpleExec) executeBegin(s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	e.ctx.Txn(true)
+	if _, err := e.ctx.Txn(true); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -144,9 +146,13 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	log.Debugf("con:%d execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	if e.ctx.Txn(true).Valid() {
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if txn.Valid() {
 		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
-		return e.ctx.Txn(true).Rollback()
+		return txn.Rollback()
 	}
 	return nil
 }
@@ -226,7 +232,11 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		err := e.ctx.Txn(true).Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
+		txn, err := e.ctx.Txn(true)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = txn.Commit(sessionctx.SetCommitCtx(context.Background(), e.ctx))
 		if err != nil {
 			return errors.Trace(err)
 		}

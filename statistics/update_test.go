@@ -35,15 +35,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var _ = Suite(&testStatsUpdateSuite{})
+var _ = Suite(&testStatsSuite{})
 
-type testStatsUpdateSuite struct {
+type testStatsSuite struct {
 	store kv.Storage
 	do    *domain.Domain
 	hook  logHook
 }
 
-func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
+func (s *testStatsSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// Add the hook here to avoid data race.
 	log.AddHook(&s.hook)
@@ -52,13 +52,13 @@ func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testStatsUpdateSuite) TearDownSuite(c *C) {
+func (s *testStatsSuite) TearDownSuite(c *C) {
 	s.do.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
-func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
+func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -179,7 +179,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
 
-func (s *testStatsUpdateSuite) TestRollback(c *C) {
+func (s *testStatsSuite) TestRollback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -202,7 +202,7 @@ func (s *testStatsUpdateSuite) TestRollback(c *C) {
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 }
 
-func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
+func (s *testStatsSuite) TestMultiSession(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -259,7 +259,7 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 	rs.Check(testkit.Rows("60"))
 }
 
-func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
+func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -305,7 +305,7 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
 
-func (s *testStatsUpdateSuite) TestUpdatePartition(c *C) {
+func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -355,7 +355,7 @@ func (s *testStatsUpdateSuite) TestUpdatePartition(c *C) {
 	}
 }
 
-func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
+func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -456,7 +456,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 3)
 }
 
-func (s *testStatsUpdateSuite) TestAutoUpdatePartition(c *C) {
+func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -493,7 +493,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdatePartition(c *C) {
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 }
 
-func (s *testStatsUpdateSuite) TestTableAnalyzed(c *C) {
+func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -527,7 +527,7 @@ func (s *testStatsUpdateSuite) TestTableAnalyzed(c *C) {
 	c.Assert(statistics.TableAnalyzed(statsTbl), IsTrue)
 }
 
-func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
+func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
@@ -597,7 +597,7 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(0))
 }
 
-func (s *testStatsUpdateSuite) TestUpdatePartitionErrorRate(c *C) {
+func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
@@ -656,7 +656,7 @@ func appendBucket(h *statistics.Histogram, l, r int64) {
 	h.AppendBucket(&lower, &upper, 0, 0)
 }
 
-func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
+func (s *testStatsSuite) TestSplitRange(c *C) {
 	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
 	appendBucket(h, 1, 1)
 	appendBucket(h, 2, 5)
@@ -710,7 +710,7 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 	}
 }
 
-func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
+func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -822,7 +822,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 }
 
-func (s *testStatsUpdateSuite) TestQueryFeedbackForPartition(c *C) {
+func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -900,7 +900,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedbackForPartition(c *C) {
 	testKit.MustExec("drop table t")
 }
 
-func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
+func (s *testStatsSuite) TestUpdateSystemTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -915,7 +915,7 @@ func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
 	c.Assert(len(feedback), Equals, 0)
 }
 
-func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
+func (s *testStatsSuite) TestOutOfOrderUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -946,7 +946,7 @@ func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
 	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("0"))
 }
 
-func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
+func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -1000,7 +1000,7 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 }
 
-func (s *testStatsUpdateSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
+func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -1051,7 +1051,7 @@ func (hook *logHook) Fire(entry *log.Entry) error {
 	return nil
 }
 
-func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
+func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 
 	oriProbability := statistics.FeedbackProbability
@@ -1113,7 +1113,7 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	}
 }
 
-func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
+func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 	columns := map[int64]*statistics.Column{}
 	columns[1] = &statistics.Column{Count: 1}
 	tests := []struct {
@@ -1217,7 +1217,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 	}
 }
 
-func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
+func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
@@ -1294,7 +1294,7 @@ func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
 	}
 }
 
-func (s *testStatsUpdateSuite) TestFeedbackRanges(c *C) {
+func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()

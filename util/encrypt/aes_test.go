@@ -411,6 +411,75 @@ func (s *testEncryptSuite) TestAESDecryptWithCBC(c *C) {
 	}
 }
 
+func (s *testEncryptSuite) TestAESEncryptWithOFB(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		str     string
+		key     string
+		iv      string
+		expect  string
+		isError bool
+	}{
+		// 128 bits key
+		{"pingcap", "1234567890123456", "1234567890123456", "0515A36BBF3DE0", false},
+		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
+		// 192 bits key
+		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
+		// negtive cases: invalid key length
+		{"pingcap", "12345678901234567", "1234567890123456", "", true},
+		{"pingcap", "123456789012345", "1234567890123456", "", true},
+	}
+
+	for _, t := range tests {
+		str := []byte(t.str)
+		key := []byte(t.key)
+		iv := []byte(t.iv)
+
+		crypted, err := AESEncryptWithCFB(str, key, iv)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
+			continue
+		}
+		c.Assert(err, IsNil, Commentf("%v", t))
+		result := toHex(crypted)
+		c.Assert(result, Equals, t.expect, Commentf("%v", t))
+	}
+}
+
+func (s *testEncryptSuite) TestAESDecryptWithCFB(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		str     string
+		key     string
+		iv      string
+		expect  string
+		isError bool
+	}{
+		// 128 bits key
+		{"0515A36BBF3DE0", "1234567890123456", "1234567890123456", "pingcap", false},
+		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
+		// 192 bits key
+		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
+		// negtive cases: invalid key length
+		{"pingcap", "12345678901234567", "1234567890123456", "", true},
+		{"pingcap", "123456789012345", "1234567890123456", "", true},
+	}
+
+	for _, t := range tests {
+		str, _ := hex.DecodeString(t.str)
+		key := []byte(t.key)
+		iv := []byte(t.iv)
+
+		plainText, err := AESDecryptWithCFB(str, key, iv)
+		if t.isError {
+			c.Assert(err, NotNil, Commentf("%v", t))
+			continue
+		}
+		c.Assert(err, IsNil, Commentf("%v", t))
+		c.Assert(string(plainText), Equals, t.expect, Commentf("%v", t))
+	}
+}
+
 func (s *testEncryptSuite) TestDeriveKeyMySQL(c *C) {
 	defer testleak.AfterTest(c)()
 

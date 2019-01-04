@@ -88,8 +88,8 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(bool) kv.Transaction {
-	return &c.txn
+func (c *Context) Txn(bool) (kv.Transaction, error) {
+	return &c.txn, nil
 }
 
 // GetClient implements sessionctx.Context GetClient interface.
@@ -125,7 +125,7 @@ func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
 }
 
 // NewTxn implements the sessionctx.Context interface.
-func (c *Context) NewTxn() error {
+func (c *Context) NewTxn(context.Context) error {
 	if c.Store == nil {
 		return errors.New("store is not set")
 	}
@@ -146,7 +146,7 @@ func (c *Context) NewTxn() error {
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
-	return errors.Trace(c.NewTxn())
+	return errors.Trace(c.NewTxn(ctx))
 }
 
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
@@ -198,7 +198,8 @@ func (c *Context) GoCtx() context.Context {
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StmtCommit implements the sessionctx.Context interface.
-func (c *Context) StmtCommit() {
+func (c *Context) StmtCommit() error {
+	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.

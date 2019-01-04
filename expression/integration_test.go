@@ -1560,7 +1560,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1969-12-31 23:59:59');")
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('1970-13-01 00:00:00');")
-	result.Check(testkit.Rows("0"))
+	// FIXME: MySQL returns 0 here.
+	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:07.999999');")
 	result.Check(testkit.Rows("2147483647.999999"))
 	result = tk.MustQuery("SELECT UNIX_TIMESTAMP('2038-01-19 03:14:08');")
@@ -3645,11 +3646,11 @@ func (s *testIntegrationSuite) testTiDBIsOwnerFunc(c *C) {
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, err
 	}
 	session.SetSchemaLease(0)
 	dom, err := session.BootstrapSession(store)
-	return store, dom, errors.Trace(err)
+	return store, dom, err
 }
 
 func (s *testIntegrationSuite) TestTwoDecimalTruncate(c *C) {
@@ -3704,6 +3705,16 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	tk.MustExec("insert into t select 0.5999991229316*0.918755041726043;")
 	res := tk.MustQuery("select * from t;")
 	res.Check(testkit.Rows("0.55125221922461136"))
+}
+
+func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test")
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery("select /*+ unkown_hint(c1)*/ 1").Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 line 1 column 28 near \" 1\" (total length 30)"))
+	_, err := tk.Exec("select 1 from /*+ test1() */ t")
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {

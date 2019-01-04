@@ -15,22 +15,23 @@ package cascades
 
 import (
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 )
 
 // Transformation defines the interface for the transformation rules.
 type Transformation interface {
-	GetPattern() *Pattern
-	Match(expr *ExprIter) (matched bool)
-	OnTransform(old *ExprIter) (new *GroupExpr, eraseOld bool, err error)
+	GetPattern() *memo.Pattern
+	Match(expr *memo.ExprIter) (matched bool)
+	OnTransform(old *memo.ExprIter) (new *memo.GroupExpr, eraseOld bool, err error)
 }
 
 // GetTransformationRules gets the all the candidate transformation rules based
 // on the logical plan node.
 func GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
-	return transformationMap[GetOperand(node)]
+	return transformationMap[memo.GetOperand(node)]
 }
 
-var transformationMap = map[Operand][]Transformation{
+var transformationMap = map[memo.Operand][]Transformation{
 	/**
 	operandSelect: []Transformation{
 		nil,

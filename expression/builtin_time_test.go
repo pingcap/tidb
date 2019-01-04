@@ -1048,7 +1048,7 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 	d, err = arg.ConvertTo(sc, f)
 	if err != nil {
 		d.SetNull()
-		return d, errors.Trace(err)
+		return d, err
 	}
 
 	if d.IsNull() {
@@ -1069,7 +1069,7 @@ func convertToTime(sc *stmtctx.StatementContext, arg types.Datum, tp byte) (d ty
 func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datum, err error) {
 	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
 	if err != nil {
-		return d, errors.Trace(err)
+		return d, err
 	}
 
 	if date.IsNull() {
@@ -1078,7 +1078,7 @@ func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datu
 	t := date.GetMysqlTime()
 	str, err := t.DateFormat(args[1].GetString())
 	if err != nil {
-		return d, errors.Trace(err)
+		return d, err
 	}
 	d.SetString(str)
 	return

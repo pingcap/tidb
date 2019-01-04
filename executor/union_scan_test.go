@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestDirtyTransaction(c *C) {
+func (s *testSuite2) TestDirtyTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -79,7 +79,7 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *testSuite) TestUnionScanWithCastCondition(c *C) {
+func (s *testSuite2) TestUnionScanWithCastCondition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table ta (a varchar(20))")

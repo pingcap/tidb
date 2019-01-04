@@ -15,6 +15,8 @@ package cascades
 
 import (
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/implementation"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
 )
 
@@ -24,7 +26,7 @@ type Enforcer interface {
 	NewProperty(prop *property.PhysicalProperty) (newProp *property.PhysicalProperty)
 	// OnEnforce adds physical operators on top of child implementation to satisfy
 	// required physical property.
-	OnEnforce(reqProp *property.PhysicalProperty, child Implementation) (impl Implementation)
+	OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation)
 	// GetEnforceCost calculates cost of enforcing required physical property.
 	GetEnforceCost(inputCount float64) float64
 }
@@ -52,19 +54,19 @@ func (e *OrderEnforcer) NewProperty(prop *property.PhysicalProperty) (newProp *p
 }
 
 // OnEnforce adds sort operator to satisfy required order property.
-func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child Implementation) (impl Implementation) {
+func (e *OrderEnforcer) OnEnforce(reqProp *property.PhysicalProperty, child memo.Implementation) (impl memo.Implementation) {
 	sort := &plannercore.PhysicalSort{
-		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Cols)),
+		ByItems: make([]*plannercore.ByItems, 0, len(reqProp.Items)),
 	}
-	for _, col := range reqProp.Cols {
+	for _, item := range reqProp.Items {
 		item := &plannercore.ByItems{
-			Expr: col,
-			Desc: reqProp.Desc,
+			Expr: item.Col,
+			Desc: item.Desc,
 		}
 		sort.ByItems = append(sort.ByItems, item)
 	}
-	sort.SetChildren(child.getPlan())
-	impl = &SortImpl{baseImplementation{plan: sort}}
+	sort.SetChildren(child.GetPlan())
+	impl = implementation.NewSortImpl(sort)
 	return
 }
 

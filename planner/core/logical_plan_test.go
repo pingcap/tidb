@@ -45,7 +45,7 @@ type testPlanSuite struct {
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable()})
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockTable(), MockView()})
 	s.ctx = MockContext()
 	s.Parser = parser.New()
 }
@@ -82,7 +82,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t2)->Sel([like(cast(t2.d), abc, 92)])->DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])}(t2.b,t1.a)(t2.d,t1.d)->Projection",
+			best: "Join{DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])->DataScan(t2)->Sel([like(cast(t2.d), abc, 92)])}(t1.a,t2.b)(t1.d,t2.d)->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -421,27 +421,32 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 	}
 }
 
-func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
-	tableInfo := *MockTable()
-	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
-	cols = append(cols, tableInfo.Columns...)
-	cols = append(cols, &model.ColumnInfo{
-		State:     model.StatePublic,
-		Offset:    10,
-		Name:      model.NewCIStr("h"),
-		FieldType: newLongType(),
-		ID:        11,
-	})
-	partition := &model.PartitionInfo{
-		Type:        model.PartitionTypeRange,
-		Expr:        "h",
-		Enable:      true,
-		Definitions: definitions,
+func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql      string
+		best     string
+		joinType string
+	}{
+		{
+			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
+			best:     "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			joinType: "anti semi join",
+		},
 	}
-	tableInfo.Columns = cols
-	tableInfo.Partition = partition
-	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
-	return is
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, err = logicalOptimize(flagDecorrelate|flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(p), Equals, ca.best, comment)
+		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		joinType := fmt.Sprintf("%s", join.JoinType.String())
+		c.Assert(joinType, Equals, ca.joinType, comment)
+	}
 }
 
 func (s *testPlanSuite) TestTablePartition(c *C) {
@@ -473,11 +478,11 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			LessThan: []string{"maxvalue"},
 		},
 	}
-	is := newPartitionInfoSchema(definitions)
+	is := MockPartitionInfoSchema(definitions)
 	// is1 equals to is without maxvalue partition.
 	definitions1 := make([]model.PartitionDefinition, len(definitions)-1)
 	copy(definitions1, definitions)
-	is1 := newPartitionInfoSchema(definitions1)
+	is1 := MockPartitionInfoSchema(definitions1)
 
 	tests := []struct {
 		sql   string
@@ -713,6 +718,14 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 			sql:  "select * from t t1 natural join t t2",
 			plan: "Join{DataScan(t1)->DataScan(t2)}->Projection",
 		},
+		{
+			sql: "delete from t where a in (select b from t where c = 666) or b in (select a from t where c = 42)",
+			// Note the Projection before Delete: the final schema should be the schema of
+			// table t rather than Join.
+			// If this schema is not set correctly, table.RemoveRecord would fail when adding
+			// binlog columns, because the schema and data are not consistent.
+			plan: "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(6_aux_0, 10_aux_0)])->Projection->Delete",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -751,15 +764,15 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
-			best: "Join{Join{Join{Join{DataScan(t3)->DataScan(t4)}->DataScan(t5)}->DataScan(t1)}->DataScan(t2)}->Projection",
+			best: "Join{Join{Join{DataScan(t3)->DataScan(t1)}->Join{DataScan(t2)->DataScan(t4)}}->DataScan(t5)}->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t2)->DataScan(t3)}(t2.a,t3.a)->DataScan(t1)}(t3.a,t1.a)->Projection}->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(t1.a,t3.a)->DataScan(t2)}(t3.a,t2.a)->Projection}->Projection",
 		},
 		{
 			sql:  "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
-			best: "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}->DataScan(t2)}->Projection}->Projection",
+			best: "Apply{DataScan(o)->Join{Join{DataScan(t3)->DataScan(t1)}->DataScan(t2)}->Projection}->Projection",
 		},
 	}
 	for _, tt := range tests {
@@ -769,7 +782,7 @@ func (s *testPlanSuite) TestJoinReOrder(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan))
+		p, err = logicalOptimize(flagPredicatePushDown|flagJoinReOrderGreedy, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -989,13 +1002,6 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			ans: map[int][]string{
 				1: {"a"},
 				3: {"a"},
-			},
-		},
-		//issue 7833
-		{
-			sql: "drop view if exists v",
-			ans: map[int][]string{
-				1: {},
 			},
 		},
 	}
@@ -1316,6 +1322,14 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			sql:  "select count(1) from (select count(1), a as b from t group by a) tt group by b",
 			best: "DataScan(t)->Projection->Projection",
 		},
+		{
+			sql:  "select a, count(b) from t group by a",
+			best: "DataScan(t)->Projection->Projection",
+		},
+		{
+			sql:  "select a, count(distinct a, b) from t group by a",
+			best: "DataScan(t)->Projection->Projection",
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
@@ -1340,130 +1354,130 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", ""},
+				{mysql.InsertPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", ""},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t", ""},
+				{mysql.CreatePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t1 like t",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t1", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.CreatePriv, "test", "t1", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "", ""},
+				{mysql.CreatePriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "", ""},
+				{mysql.DropPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: `create user 'test'@'%' identified by '123456'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.CreateUserPriv, "", "", "", nil},
 			},
 		},
 		{
 			sql: `drop user 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.CreateUserPriv, "", "", "", nil},
 			},
 		},
 		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", ""},
-				{mysql.InsertPriv, "test", "", ""},
-				{mysql.UpdatePriv, "test", "", ""},
-				{mysql.DeletePriv, "test", "", ""},
-				{mysql.CreatePriv, "test", "", ""},
-				{mysql.DropPriv, "test", "", ""},
-				{mysql.GrantPriv, "test", "", ""},
-				{mysql.AlterPriv, "test", "", ""},
-				{mysql.ExecutePriv, "test", "", ""},
-				{mysql.IndexPriv, "test", "", ""},
+				{mysql.SelectPriv, "test", "", "", nil},
+				{mysql.InsertPriv, "test", "", "", nil},
+				{mysql.UpdatePriv, "test", "", "", nil},
+				{mysql.DeletePriv, "test", "", "", nil},
+				{mysql.CreatePriv, "test", "", "", nil},
+				{mysql.DropPriv, "test", "", "", nil},
+				{mysql.GrantPriv, "test", "", "", nil},
+				{mysql.AlterPriv, "test", "", "", nil},
+				{mysql.ExecutePriv, "test", "", "", nil},
+				{mysql.IndexPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", ""},
-				{mysql.GrantPriv, "test", "ttt", ""},
+				{mysql.SelectPriv, "test", "ttt", "", nil},
+				{mysql.GrantPriv, "test", "ttt", "", nil},
 			},
 		},
 		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SuperPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", "", nil},
 			},
 		},
 		{
@@ -1473,7 +1487,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", ""},
+				{mysql.AllPrivMask, "test", "ttt", "", nil},
 			},
 		},
 	}
@@ -1850,5 +1864,129 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestSelectView(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from v",
+			best: "DataScan(t)->Projection",
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestWindowFunction(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{
+			sql:    "select a, avg(a) over(partition by a) from t",
+			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(partition by b) from t",
+			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
+			result: "TableReader(Table(t))->Projection->Sort->Window(avg(2_proj_window_3))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
+			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, b as a, avg(a) over(partition by a) from t",
+			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, b as z, sum(z) over() from t",
+			result: "[planner:1054]Unknown column 'z' in 'field list'",
+		},
+		{
+			sql:    "select a, b as z from t order by (sum(z) over())",
+			result: "TableReader(Table(t))->Window(sum(test.t.z))->Sort->Projection",
+		},
+		{
+			sql:    "select sum(avg(a)) over() from t",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over())",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over(partition by a))",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(avg(a)) over())",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Sort->Projection",
+		},
+		{
+			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
+			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(tt.a))->MaxOneRow->Sel([w])}->Projection",
+		},
+		{
+			sql:    "select avg(a) over() as w from t having w > 1",
+			result: "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
+		},
+		{
+			sql:    "select sum(a) over() as sum_a from t group by sum_a",
+			result: "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
+		},
+	}
+
+	s.Parser.EnableWindowFunc(true)
+	defer func() {
+		s.Parser.EnableWindowFunc(false)
+	}()
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		lp, ok := p.(LogicalPlan)
+		c.Assert(ok, IsTrue)
+		p, err = physicalOptimize(lp)
+		c.Assert(ToString(p), Equals, tt.result, comment)
 	}
 }

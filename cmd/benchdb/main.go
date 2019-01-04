@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
@@ -58,7 +59,7 @@ func main() {
 		Level: *logLevel,
 	})
 	terror.MustNil(err)
-	err = session.RegisterStore("tikv", tikv.Driver{})
+	err = store.Register("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
@@ -94,7 +95,7 @@ type benchDB struct {
 
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
-	store, err := session.NewStore("tikv://" + *addr + "?disableGC=true")
+	store, err := store.New("tikv://" + *addr + "?disableGC=true")
 	terror.MustNil(err)
 	_, err = session.BootstrapSession(store)
 	terror.MustNil(err)

@@ -22,20 +22,20 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	tmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -84,7 +85,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	session.SetStatsLease(0)
 	s.schemaName = "test_db"
 	s.autoIDStep = autoid.GetStep()
-	autoid.SetStep(5000)
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 
 	s.cluster = mocktikv.NewCluster()
@@ -112,8 +112,7 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
-	autoid.SetStep(s.autoIDStep)
+	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -123,136 +122,6 @@ func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
 	tErr, ok := originErr.(*terror.Error)
 	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
 	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
-}
-
-func (s *testDBSuite) TestMySQLErrorCode(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	// create database
-	sql := "create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
-	sql = "create database test"
-	s.testErrorCode(c, sql, tmysql.ErrDBCreateExists)
-	sql = "create database test1 character set uft8;"
-	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
-	sql = "create database test2 character set gkb;"
-	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
-	sql = "create database test3 character set laitn1;"
-	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
-	// drop database
-	sql = "drop database db_not_exist"
-	s.testErrorCode(c, sql, tmysql.ErrDBDropExists)
-	// create table
-	s.tk.MustExec("create table test_error_code_succ (c1 int, c2 int, c3 int, primary key(c3))")
-	sql = "create table test_error_code_succ (c1 int, c2 int, c3 int)"
-	s.testErrorCode(c, sql, tmysql.ErrTableExists)
-	sql = "create table test_error_code1 (c1 int, c2 int, c2 int)"
-	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
-	sql = "create table test_error_code1 (c1 int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
-	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
-	sql = "create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int)"
-	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
-	sql = "create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1))"
-	s.testErrorCode(c, sql, tmysql.ErrDupKeyName)
-	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, key(c_not_exist))"
-	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
-	sql = "create table test_error_code1 (c1 int, c2 int, c3 int, primary key(c_not_exist))"
-	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
-	sql = "create table test_error_code1 (c1 int not null default '')"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
-	sql = "CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT 2.0 DEFAULT now());"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
-	sql = "CREATE TABLE `t` (`a` double DEFAULT now());"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
-	sql = "create table t1(a int) character set uft8;"
-	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
-	sql = "create table t1(a int) character set gkb;"
-	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
-	sql = "create table t1(a int) character set laitn1;"
-	s.testErrorCode(c, sql, tmysql.ErrUnknownCharacterSet)
-	sql = "create table test_error_code (a int not null ,b int not null,c int not null, d int not null, foreign key (b, c) references product(id));"
-	s.testErrorCode(c, sql, tmysql.ErrWrongFkDef)
-	sql = "create table test_error_code_2;"
-	s.testErrorCode(c, sql, tmysql.ErrTableMustHaveColumns)
-	sql = "create table test_error_code_2 (unique(c1));"
-	s.testErrorCode(c, sql, tmysql.ErrTableMustHaveColumns)
-	sql = "create table test_error_code_2(c1 int, c2 int, c3 int, primary key(c1), primary key(c2));"
-	s.testErrorCode(c, sql, tmysql.ErrMultiplePriKey)
-	sql = "create table test_error_code_3(pt blob ,primary key (pt));"
-	s.testErrorCode(c, sql, tmysql.ErrBlobKeyWithoutLength)
-	sql = "create table test_error_code_3(a text, unique (a(3073)));"
-	s.testErrorCode(c, sql, tmysql.ErrTooLongKey)
-	sql = "create table test_error_code_3(`id` int, key `primary`(`id`));"
-	s.testErrorCode(c, sql, tmysql.ErrWrongNameForIndex)
-	sql = "create table t2(c1.c2 blob default null);"
-	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
-	sql = "create table t2 (id int default null primary key , age int);"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
-	sql = "create table t2 (id int null primary key , age int);"
-	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
-	sql = "create table t2 (id int default null, age int, primary key(id));"
-	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
-	sql = "create table t2 (id int null, age int, primary key(id));"
-	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
-
-	sql = "create table t2 (id int primary key , age int);"
-	s.tk.MustExec(sql)
-
-	// add column
-	sql = "alter table test_error_code_succ add column c1 int"
-	s.testErrorCode(c, sql, tmysql.ErrDupFieldName)
-	sql = "alter table test_error_code_succ add column aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int"
-	s.testErrorCode(c, sql, tmysql.ErrTooLongIdent)
-	sql = "alter table test_comment comment 'test comment'"
-	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
-	sql = "alter table test_error_code_succ add column `a ` int ;"
-	s.testErrorCode(c, sql, tmysql.ErrWrongColumnName)
-	s.tk.MustExec("create table test_on_update (c1 int, c2 int);")
-	sql = "alter table test_on_update add column c3 int on update current_timestamp;"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidOnUpdate)
-	sql = "create table test_on_update_2(c int on update current_timestamp);"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidOnUpdate)
-
-	// drop column
-	sql = "alter table test_error_code_succ drop c_not_exist"
-	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
-	s.tk.MustExec("create table test_drop_column (c1 int );")
-	sql = "alter table test_drop_column drop column c1;"
-	s.testErrorCode(c, sql, tmysql.ErrCantRemoveAllFields)
-	// add index
-	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
-	s.testErrorCode(c, sql, tmysql.ErrKeyColumnDoesNotExits)
-	s.tk.Exec("alter table test_error_code_succ add index idx (c1)")
-	sql = "alter table test_error_code_succ add index idx (c1)"
-	s.testErrorCode(c, sql, tmysql.ErrDupKeyName)
-	// drop index
-	sql = "alter table test_error_code_succ drop index idx_not_exist"
-	s.testErrorCode(c, sql, tmysql.ErrCantDropFieldOrKey)
-	sql = "alter table test_error_code_succ drop column c3"
-	s.testErrorCode(c, sql, int(tmysql.ErrUnknown))
-	// modify column
-	sql = "alter table test_error_code_succ modify testx.test_error_code_succ.c1 bigint"
-	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
-	sql = "alter table test_error_code_succ modify t.c1 bigint"
-	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
-	// insert value
-	s.tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
-	sql = "insert into test_error_code_null (c1) values(null);"
-	s.testErrorCode(c, sql, tmysql.ErrBadNull)
-}
-
-func (s *testDBSuite) TestAddIndexAfterAddColumn(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.tk.MustExec("create table test_add_index_after_add_col(a int, b int not null default '0')")
-	s.tk.MustExec("insert into test_add_index_after_add_col values(1, 2),(2,2)")
-	s.tk.MustExec("alter table test_add_index_after_add_col add column c int not null default '0'")
-	sql := "alter table test_add_index_after_add_col add unique index cc(c) "
-	s.testErrorCode(c, sql, tmysql.ErrDupEntry)
-	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
-	s.testErrorCode(c, sql, tmysql.ErrTooManyKeyParts)
 }
 
 func (s *testDBSuite) TestAddIndexWithPK(c *C) {
@@ -301,8 +170,7 @@ func (s *testDBSuite) TestRenameIndex(c *C) {
 	s.testErrorCode(c, "alter table t rename key k3 to K2", mysql.ErrDupKeyName)
 }
 
-func (s *testDBSuite) testGetTableByName(c *C, db, table string) table.Table {
-	ctx := s.s.(sessionctx.Context)
+func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
@@ -313,7 +181,8 @@ func (s *testDBSuite) testGetTableByName(c *C, db, table string) table.Table {
 }
 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
-	return s.testGetTableByName(c, s.schemaName, name)
+	ctx := s.s.(sessionctx.Context)
+	return testGetTableByName(c, ctx, s.schemaName, name)
 }
 
 func backgroundExec(s kv.Storage, sql string, done chan error) {
@@ -406,13 +275,12 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	// let hook.OnJobUpdatedExported has chance to cancel the job.
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	var checkErr error
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s, hook)
+	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s.store, s.s.(sessionctx.Context), hook)
+	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "create unique index c3_index on t1 (c3)", done)
@@ -454,9 +322,7 @@ LOOP:
 	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
-	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
-	callback := &ddl.TestDDLCallback{}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
@@ -472,21 +338,23 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 	}
 
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
 			jobIDs := []int64{job.ID}
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
-			err := hookCtx.NewTxn()
+			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -497,9 +365,10 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 				return
 			}
 
-			checkErr = hookCtx.Txn(true).Commit(context.Background())
+			checkErr = txn.Commit(context.Background())
 		}
 	}
+	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	rs, err := s.tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
@@ -509,13 +378,190 @@ func (s *testDBSuite) TestCancelAddIndex1(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 
-	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
 		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
 	}
 	s.mustExec(c, "alter table t add index idx_c2(c2)")
 	s.mustExec(c, "alter table t drop index idx_c2")
+}
+
+// TestCancelDropIndex tests cancel ddl job which type is drop index.
+func (s *testDBSuite) TestCancelDropIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+	for i := 0; i < 5; i++ {
+		s.mustExec(c, "insert into t values (?, ?)", i, i)
+	}
+	testCases := []struct {
+		needAddIndex   bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		// model.JobStateNone means the jobs is canceled before the first run.
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, true},
+		{false, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropIndex && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobID = job.ID
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.needAddIndex {
+			s.mustExec(c, "alter table t add index idx_c2(c2)")
+		}
+		rs, err := s.tk.Exec("alter table t drop index idx_c2")
+		if rs != nil {
+			rs.Close()
+		}
+		t := s.testGetTable(c, "t")
+		indexInfo := schemautil.FindIndexByName("idx_c2", t.Meta().Indices)
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			c.Assert(indexInfo, NotNil)
+			c.Assert(indexInfo.State, Equals, model.StatePublic)
+		} else {
+			err1 := admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID)
+			c.Assert(err, IsNil)
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, err1.Error())
+			c.Assert(indexInfo, IsNil)
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.mustExec(c, "alter table t add index idx_c2(c2)")
+	s.mustExec(c, "alter table t drop index idx_c2")
+}
+
+// TestCancelDropTable tests cancel ddl job which type is drop table.
+func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	testCases := []struct {
+		needAddTableOrDB bool
+		action           model.ActionType
+		jobState         model.JobState
+		JobSchemaState   model.SchemaState
+		cancelSucc       bool
+	}{
+		// Check drop table.
+		// model.JobStateNone means the jobs is canceled before the first run.
+		{true, model.ActionDropTable, model.JobStateNone, model.StateNone, true},
+		{false, model.ActionDropTable, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.ActionDropTable, model.JobStateRunning, model.StateDeleteOnly, false},
+
+		// Check drop database.
+		{true, model.ActionDropSchema, model.JobStateNone, model.StateNone, true},
+		{false, model.ActionDropSchema, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
+	}
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
+	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			jobID = job.ID
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	var err error
+	sql := ""
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.needAddTableOrDB {
+			s.mustExec(c, "create database if not exists test_drop_db")
+			s.mustExec(c, "use test_drop_db")
+			s.mustExec(c, "create table if not exists t(c1 int, c2 int)")
+		}
+
+		if testCase.action == model.ActionDropTable {
+			sql = "drop table t;"
+		} else if testCase.action == model.ActionDropSchema {
+			sql = "drop database test_drop_db;"
+		}
+
+		_, err = s.tk.Exec(sql)
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			s.mustExec(c, "insert into t values (?, ?)", i, i)
+		} else {
+			c.Assert(err, IsNil)
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			_, err = s.tk.Exec("insert into t values (?, ?)", i, i)
+			c.Assert(err, NotNil)
+		}
+	}
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
@@ -566,15 +612,6 @@ func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
 	t = s.testGetTable(c, "t_primary_3")
 	c.Assert(t.Indices()[0].Meta().Name.String(), Equals, "primary_2")
 	c.Assert(t.Indices()[1].Meta().Name.String(), Equals, "primary_3")
-}
-
-// TestModifyColumnAfterAddIndex Issue 5134
-func (s *testDBSuite) TestModifyColumnAfterAddIndex(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-	s.mustExec(c, "create table city (city VARCHAR(2) KEY);")
-	s.mustExec(c, "alter table city change column city city varchar(50);")
-	s.mustExec(c, `insert into city values ("abc"), ("abd");`)
 }
 
 func (s *testDBSuite) testAlterLock(c *C) {
@@ -656,7 +693,7 @@ func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL stri
 	s.mustExec(c, sql)
 	otherKeys = append(otherKeys, v)
 
-	sessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
+	testddlutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 
 	deletedKeys := make(map[int]struct{})
 
@@ -729,7 +766,7 @@ LOOP:
 
 	// get all row handles
 	ctx := s.s.(sessionctx.Context)
-	c.Assert(ctx.NewTxn(), IsNil)
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := s.testGetTable(c, "test_add_index")
 	handles := make(map[int64]struct{})
 	startKey := t.RecordKey(math.MinInt64)
@@ -751,12 +788,14 @@ LOOP:
 	// Make sure there is index with name c3_index.
 	c.Assert(nidx, NotNil)
 	c.Assert(nidx.Meta().ID, Greater, int64(0))
-	ctx.Txn(true).Rollback()
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	txn.Rollback()
 
-	c.Assert(ctx.NewTxn(), IsNil)
-	defer ctx.Txn(true).Rollback()
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+	defer txn.Rollback()
 
-	it, err := nidx.SeekFirst(ctx.Txn(true))
+	it, err := nidx.SeekFirst(txn)
 	c.Assert(err, IsNil)
 	defer it.Close()
 
@@ -772,7 +811,6 @@ LOOP:
 		delete(handles, h)
 	}
 	c.Assert(handles, HasLen, 0)
-
 	s.tk.MustExec("drop table test_add_index")
 }
 
@@ -800,7 +838,7 @@ func (s *testDBSuite) TestDropIndex(c *C) {
 	}
 	c.Assert(c3idx, NotNil)
 
-	sessionExecInGoroutine(c, s.store, "drop index c3_index on test_drop_index", done)
+	testddlutil.SessionExecInGoroutine(c, s.store, "drop index c3_index on test_drop_index", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -846,15 +884,107 @@ LOOP:
 	s.tk.MustExec("drop table test_drop_index")
 }
 
+// TestCancelDropColumn tests cancel ddl job which type is drop column.
+func (s *testDBSuite) TestCancelDropColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "drop table if exists test_drop_column")
+	s.mustExec(c, "create table test_drop_column(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table test_drop_column;")
+	testCases := []struct {
+		needAddColumn  bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
+	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropColumn && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			jobID = job.ID
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	var err1 error
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.needAddColumn {
+			s.mustExec(c, "alter table test_drop_column add column c3 int")
+		}
+		_, err1 = s.tk.Exec("alter table test_drop_column drop column c3")
+		var col1 *table.Column
+		t := s.testGetTable(c, "test_drop_column")
+		for _, col := range t.Cols() {
+			if strings.EqualFold(col.Name.L, "c3") {
+				col1 = col
+				break
+			}
+		}
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(col1, NotNil)
+			c.Assert(col1.Name.L, Equals, "c3")
+			c.Assert(err1.Error(), Equals, "[ddl:12]cancelled DDL job")
+		} else {
+			c.Assert(col1, IsNil)
+			c.Assert(err1, IsNil)
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.mustExec(c, "alter table test_drop_column add column c3 int")
+	s.mustExec(c, "alter table test_drop_column drop column c3")
+}
+
 func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	startTime := time.Now()
 	f := func() map[int64]struct{} {
 		handles := make(map[int64]struct{})
 
-		c.Assert(ctx.NewTxn(), IsNil)
-		defer ctx.Txn(true).Rollback()
+		c.Assert(ctx.NewTxn(context.Background()), IsNil)
+		txn, err := ctx.Txn(true)
+		c.Assert(err, IsNil)
+		defer txn.Rollback()
 
-		it, err := idx.SeekFirst(ctx.Txn(true))
+		txn, err = ctx.Txn(true)
+		c.Assert(err, IsNil)
+		it, err := idx.SeekFirst(txn)
 		c.Assert(err, IsNil)
 		defer it.Close()
 
@@ -908,32 +1038,6 @@ func (s *testDBSuite) showColumns(c *C, tableName string) [][]interface{} {
 	return s.mustQuery(c, fmt.Sprintf("show columns from %s", tableName))
 }
 
-func (s *testDBSuite) TestIssue2293(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table t_issue_2293 (a int)")
-	sql := "alter table t_issue_2293 add b int not null default 'a'"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
-	s.tk.MustExec("insert into t_issue_2293 value(1)")
-	s.tk.MustQuery("select * from t_issue_2293").Check(testkit.Rows("1"))
-}
-
-func (s *testDBSuite) TestIssue6101(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
-	_, err := s.tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
-	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWarnDataOutOfRange))
-	s.tk.MustExec("drop table t1")
-
-	s.tk.MustExec("set sql_mode=''")
-	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
-	s.tk.MustExec("insert into t1 values (500), (-500), (~0), (-1);")
-	s.tk.MustQuery("select * from t1").Check(testkit.Rows("99", "0", "99", "0"))
-	s.tk.MustExec("drop table t1")
-}
-
 func (s *testDBSuite) TestCreateIndexType(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -949,15 +1053,6 @@ func (s *testDBSuite) TestCreateIndexType(c *C) {
 	s.tk.MustExec(sql)
 }
 
-func (s *testDBSuite) TestIssue3833(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table issue3833 (b char(0))")
-	s.testErrorCode(c, "create index idx on issue3833 (b)", tmysql.ErrWrongKeyColumn)
-	s.testErrorCode(c, "alter table issue3833 add index idx (b)", tmysql.ErrWrongKeyColumn)
-	s.testErrorCode(c, "create table issue3833_2 (b char(0), index (b))", tmysql.ErrWrongKeyColumn)
-}
-
 func (s *testDBSuite) TestColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -970,7 +1065,7 @@ func (s *testDBSuite) TestColumn(c *C) {
 func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	count := ddl.TableColumnCountLimit - 1
+	count := int(atomic.LoadUint32(&ddl.TableColumnCountLimit) - 1)
 	var cols []string
 	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
@@ -993,38 +1088,6 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	se.Close()
 }
 
-func sessionExecInGoroutine(c *C, s kv.Storage, sql string, done chan error) {
-	execMultiSQLInGoroutine(c, s, "test_db", []string{sql}, done)
-}
-
-func execMultiSQLInGoroutine(c *C, s kv.Storage, dbName string, multiSQL []string, done chan error) {
-	go func() {
-		se, err := session.CreateSession4Test(s)
-		if err != nil {
-			done <- errors.Trace(err)
-			return
-		}
-		defer se.Close()
-		_, err = se.Execute(context.Background(), "use "+dbName)
-		if err != nil {
-			done <- errors.Trace(err)
-			return
-		}
-		for _, sql := range multiSQL {
-			rs, err := se.Execute(context.Background(), sql)
-			if err != nil {
-				done <- errors.Trace(err)
-				return
-			}
-			if rs != nil {
-				done <- errors.Errorf("RecordSet should be empty.")
-				return
-			}
-			done <- nil
-		}
-	}()
-}
-
 func (s *testDBSuite) testAddColumn(c *C) {
 	done := make(chan error, 1)
 
@@ -1034,7 +1097,7 @@ func (s *testDBSuite) testAddColumn(c *C) {
 		s.mustExec(c, "insert into t2 values (?, ?, ?)", i, i, i)
 	}
 
-	sessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
+	testddlutil.SessionExecInGoroutine(c, s.store, "alter table t2 add column c4 int default -1", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -1093,8 +1156,12 @@ LOOP:
 	t := s.testGetTable(c, "t2")
 	i := 0
 	j := 0
-	ctx.NewTxn()
-	defer ctx.Txn(true).Rollback()
+	ctx.NewTxn(context.Background())
+	defer func() {
+		if txn, err1 := ctx.Txn(true); err1 == nil {
+			txn.Rollback()
+		}
+	}()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
 		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
@@ -1165,7 +1232,7 @@ func (s *testDBSuite) testDropColumn(c *C) {
 	}
 
 	// get c4 column id
-	sessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
+	testddlutil.SessionExecInGoroutine(c, s.store, "alter table t2 drop column c4", done)
 
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
@@ -1224,9 +1291,9 @@ func (s *testDBSuite) TestDropColumn(c *C) {
 	for i := 0; i < num/2; i++ {
 		multiDDL = append(multiDDL, "alter table t2 add column c4 int", "alter table t2 drop column c4")
 	}
-	execMultiSQLInGoroutine(c, s.store, "drop_col_db", multiDDL, ddlDone)
+	testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", multiDDL, ddlDone)
 	for i := 0; i < num; i++ {
-		execMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
+		testddlutil.ExecMultiSQLInGoroutine(c, s.store, "drop_col_db", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
 	for i := 0; i < num; i++ {
 		select {
@@ -1318,107 +1385,6 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.tk.MustExec("drop table t3")
 }
 
-func (s *testDBSuite) TestAlterColumn(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.mustExec(c, "create table test_alter_column (a int default 111, b varchar(8), c varchar(8) not null, d timestamp on update current_timestamp)")
-	s.mustExec(c, "insert into test_alter_column set b = 'a', c = 'aa'")
-	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111"))
-	ctx := s.tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
-	c.Assert(err, IsNil)
-	tblInfo := tbl.Meta()
-	colA := tblInfo.Columns[0]
-	hasNoDefault := tmysql.HasNoDefaultValueFlag(colA.Flag)
-	c.Assert(hasNoDefault, IsFalse)
-	s.mustExec(c, "alter table test_alter_column alter column a set default 222")
-	s.mustExec(c, "insert into test_alter_column set b = 'b', c = 'bb'")
-	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222"))
-	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
-	c.Assert(err, IsNil)
-	tblInfo = tbl.Meta()
-	colA = tblInfo.Columns[0]
-	hasNoDefault = tmysql.HasNoDefaultValueFlag(colA.Flag)
-	c.Assert(hasNoDefault, IsFalse)
-	s.mustExec(c, "alter table test_alter_column alter column b set default null")
-	s.mustExec(c, "insert into test_alter_column set c = 'cc'")
-	s.tk.MustQuery("select b from test_alter_column").Check(testkit.Rows("a", "b", "<nil>"))
-	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
-	c.Assert(err, IsNil)
-	tblInfo = tbl.Meta()
-	colC := tblInfo.Columns[2]
-	hasNoDefault = tmysql.HasNoDefaultValueFlag(colC.Flag)
-	c.Assert(hasNoDefault, IsTrue)
-	s.mustExec(c, "alter table test_alter_column alter column c set default 'xx'")
-	s.mustExec(c, "insert into test_alter_column set a = 123")
-	s.tk.MustQuery("select c from test_alter_column").Check(testkit.Rows("aa", "bb", "cc", "xx"))
-	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_alter_column"))
-	c.Assert(err, IsNil)
-	tblInfo = tbl.Meta()
-	colC = tblInfo.Columns[2]
-	hasNoDefault = tmysql.HasNoDefaultValueFlag(colC.Flag)
-	c.Assert(hasNoDefault, IsFalse)
-	// TODO: After fix issue 2606.
-	// s.mustExec(c, "alter table test_alter_column alter column d set default null")
-	s.mustExec(c, "alter table test_alter_column alter column a drop default")
-	s.mustExec(c, "insert into test_alter_column set b = 'd', c = 'dd'")
-	s.tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123", "<nil>"))
-
-	// for failing tests
-	sql := "alter table db_not_exist.test_alter_column alter column b set default 'c'"
-	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
-	sql = "alter table test_not_exist alter column b set default 'c'"
-	s.testErrorCode(c, sql, tmysql.ErrNoSuchTable)
-	sql = "alter table test_alter_column alter column col_not_exist set default 'c'"
-	s.testErrorCode(c, sql, tmysql.ErrBadField)
-	sql = "alter table test_alter_column alter column c set default null"
-	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
-
-	// The followings tests whether adding constraints via change / modify column
-	// is forbidden as expected.
-	s.mustExec(c, "drop table if exists mc")
-	s.mustExec(c, "create table mc(a int key, b int, c int)")
-	_, err = s.tk.Exec("alter table mc modify column a int key") // Adds a new primary key
-	c.Assert(err, NotNil)
-	_, err = s.tk.Exec("alter table mc modify column c int unique") // Adds a new unique key
-	c.Assert(err, NotNil)
-	result := s.tk.MustQuery("show create table mc")
-	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `a` int(11) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	c.Assert(createSQL, Equals, expected)
-
-	// Change / modify column should preserve index options.
-	s.mustExec(c, "drop table if exists mc")
-	s.mustExec(c, "create table mc(a int key, b int, c int unique)")
-	s.mustExec(c, "alter table mc modify column a bigint") // NOT NULL & PRIMARY KEY should be preserved
-	s.mustExec(c, "alter table mc modify column b bigint")
-	s.mustExec(c, "alter table mc modify column c bigint") // Unique should be preserved
-	result = s.tk.MustQuery("show create table mc")
-	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` bigint(20) DEFAULT NULL,\n  `c` bigint(20) DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `c` (`c`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	c.Assert(createSQL, Equals, expected)
-
-	// Dropping or keeping auto_increment is allowed, however adding is not allowed.
-	s.mustExec(c, "drop table if exists mc")
-	s.mustExec(c, "create table mc(a int key auto_increment, b int)")
-	s.mustExec(c, "alter table mc modify column a bigint auto_increment") // Keeps auto_increment
-	result = s.tk.MustQuery("show create table mc")
-	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	s.mustExec(c, "alter table mc modify column a bigint") // Drops auto_increment
-	result = s.tk.MustQuery("show create table mc")
-	createSQL = result.Rows()[0][1]
-	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	c.Assert(createSQL, Equals, expected)
-	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
-	c.Assert(err, NotNil)
-}
-
 func (s *testDBSuite) mustExec(c *C, query string, args ...interface{}) {
 	s.tk.MustExec(query, args...)
 }
@@ -1442,87 +1408,6 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 		need := fmt.Sprintf("%v", expected[i])
 		c.Assert(got, Equals, need)
 	}
-}
-
-func (s *testDBSuite) TestUpdateMultipleTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("create database umt_db")
-	tk.MustExec("use umt_db")
-	tk.MustExec("create table t1 (c1 int, c2 int)")
-	tk.MustExec("insert t1 values (1, 1), (2, 2)")
-	tk.MustExec("create table t2 (c1 int, c2 int)")
-	tk.MustExec("insert t2 values (1, 3), (2, 5)")
-	ctx := tk.Se.(sessionctx.Context)
-	dom := domain.GetDomain(ctx)
-	is := dom.InfoSchema()
-	db, ok := is.SchemaByName(model.NewCIStr("umt_db"))
-	c.Assert(ok, IsTrue)
-	t1Tbl, err := is.TableByName(model.NewCIStr("umt_db"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	t1Info := t1Tbl.Meta()
-
-	// Add a new column in write only state.
-	newColumn := &model.ColumnInfo{
-		ID:                 100,
-		Name:               model.NewCIStr("c3"),
-		Offset:             2,
-		DefaultValue:       9,
-		OriginDefaultValue: 9,
-		FieldType:          *types.NewFieldType(tmysql.TypeLonglong),
-		State:              model.StateWriteOnly,
-	}
-	t1Info.Columns = append(t1Info.Columns, newColumn)
-
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		_, err = m.GenSchemaVersion()
-		c.Assert(err, IsNil)
-		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
-		return nil
-	})
-	err = dom.Reload()
-	c.Assert(err, IsNil)
-
-	tk.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("1 10", "2 10"))
-
-	newColumn.State = model.StatePublic
-
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		_, err = m.GenSchemaVersion()
-		c.Assert(err, IsNil)
-		c.Assert(m.UpdateTable(db.ID, t1Info), IsNil)
-		return nil
-	})
-	err = dom.Reload()
-	c.Assert(err, IsNil)
-
-	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
-	tk.MustExec("drop database umt_db")
-}
-
-func (s *testDBSuite) TestCreateTableTooLarge(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-
-	sql := "create table t_too_large ("
-	cnt := 3000
-	for i := 1; i <= cnt; i++ {
-		sql += fmt.Sprintf("a%d double, b%d double, c%d double, d%d double", i, i, i, i)
-		if i != cnt {
-			sql += ","
-		}
-	}
-	sql += ");"
-	s.testErrorCode(c, sql, tmysql.ErrTooManyFields)
-
-	originLimit := ddl.TableColumnCountLimit
-	ddl.TableColumnCountLimit = cnt * 4
-	_, err := s.tk.Exec(sql)
-	c.Assert(kv.ErrEntryTooLarge.Equal(err), IsTrue, Commentf("err:%v", err))
-	ddl.TableColumnCountLimit = originLimit
 }
 
 func (s *testDBSuite) TestCreateTableWithLike(c *C) {
@@ -1638,319 +1523,6 @@ func (s *testDBSuite) TestTableForeignKey(c *C) {
 	s.tk.MustExec("drop table if exists t1,t2,t3;")
 }
 
-func (s *testDBSuite) TestBitDefaultValue(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_bit (c1 bit(10) default 250, c2 int);")
-	tk.MustExec("insert into t_bit set c2=1;")
-	tk.MustQuery("select bin(c1),c2 from t_bit").Check(testkit.Rows("11111010 1"))
-	tk.MustExec("drop table t_bit")
-	tk.MustExec(`create table testalltypes1 (
-    field_1 bit default 1,
-    field_2 tinyint null default null
-	);`)
-	tk.MustExec(`create table testalltypes2 (
-    field_1 bit null default null,
-    field_2 tinyint null default null,
-    field_3 tinyint unsigned null default null,
-    field_4 bigint null default null,
-    field_5 bigint unsigned null default null,
-    field_6 mediumblob null default null,
-    field_7 longblob null default null,
-    field_8 blob null default null,
-    field_9 tinyblob null default null,
-    field_10 varbinary(255) null default null,
-    field_11 binary(255) null default null,
-    field_12 mediumtext null default null,
-    field_13 longtext null default null,
-    field_14 text null default null,
-    field_15 tinytext null default null,
-    field_16 char(255) null default null,
-    field_17 numeric null default null,
-    field_18 decimal null default null,
-    field_19 integer null default null,
-    field_20 integer unsigned null default null,
-    field_21 int null default null,
-    field_22 int unsigned null default null,
-    field_23 mediumint null default null,
-    field_24 mediumint unsigned null default null,
-    field_25 smallint null default null,
-    field_26 smallint unsigned null default null,
-    field_27 float null default null,
-    field_28 double null default null,
-    field_29 double precision null default null,
-    field_30 real null default null,
-    field_31 varchar(255) null default null,
-    field_32 date null default null,
-    field_33 time null default null,
-    field_34 datetime null default null,
-    field_35 timestamp null default null
-	);`)
-}
-
-func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test;")
-	s.tk.MustExec("drop table if exists tp;")
-	s.tk.MustExec(`CREATE TABLE tp (a int) PARTITION BY RANGE(a) (
-	PARTITION p0 VALUES LESS THAN (10),
-	PARTITION p1 VALUES LESS THAN (20),
-	PARTITION p2 VALUES LESS THAN (MAXVALUE)
-	);`)
-	ctx := s.tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().Partition, NotNil)
-	part := tbl.Meta().Partition
-	c.Assert(part.Type, Equals, model.PartitionTypeRange)
-	c.Assert(part.Expr, Equals, "`a`")
-	for _, pdef := range part.Definitions {
-		c.Assert(pdef.ID, Greater, int64(0))
-	}
-	c.Assert(part.Definitions, HasLen, 3)
-	c.Assert(part.Definitions[0].LessThan[0], Equals, "10")
-	c.Assert(part.Definitions[0].Name.L, Equals, "p0")
-	c.Assert(part.Definitions[1].LessThan[0], Equals, "20")
-	c.Assert(part.Definitions[1].Name.L, Equals, "p1")
-	c.Assert(part.Definitions[2].LessThan[0], Equals, "MAXVALUE")
-	c.Assert(part.Definitions[2].Name.L, Equals, "p2")
-
-	s.tk.MustExec("drop table if exists employees;")
-	sql1 := `create table employees (
-	id int not null,
-	hired int not null
-	)
-	partition by range( hired ) (
-		partition p1 values less than (1991),
-		partition p2 values less than (1996),
-		partition p2 values less than (2001)
-	);`
-	s.testErrorCode(c, sql1, tmysql.ErrSameNamePartition)
-
-	sql2 := `create table employees (
-	id int not null,
-	hired int not null
-	)
-	partition by range( hired ) (
-		partition p1 values less than (1998),
-		partition p2 values less than (1996),
-		partition p3 values less than (2001)
-	);`
-	s.testErrorCode(c, sql2, tmysql.ErrRangeNotIncreasing)
-
-	sql3 := `create table employees (
-	id int not null,
-	hired int not null
-	)
-	partition by range( hired ) (
-		partition p1 values less than (1998),
-		partition p2 values less than maxvalue,
-		partition p3 values less than (2001)
-	);`
-	s.testErrorCode(c, sql3, tmysql.ErrPartitionMaxvalue)
-
-	sql4 := `create table t4 (
-	a int not null,
-  	b int not null
-	)
-	partition by range( id ) (
-		partition p1 values less than maxvalue,
-  		partition p2 values less than (1991),
-  		partition p3 values less than (1995)
-	);`
-	s.testErrorCode(c, sql4, tmysql.ErrPartitionMaxvalue)
-
-	_, err = s.tk.Exec(`CREATE TABLE rc (
-    		a INT NOT NULL,
-    		b INT NOT NULL,
-			c INT NOT NULL
-	)
-	partition by range columns(a,b,c) (
-    	partition p0 values less than (10,5,1),
-    	partition p2 values less than (50,maxvalue,10),
-    	partition p3 values less than (65,30,13),
-    	partition p4 values less than (maxvalue,30,40)
-	);`)
-	c.Assert(err, IsNil)
-
-	sql6 := `create table employees (
-	id int not null,
-	hired int not null
-	)
-	partition by range( hired ) (
-		 partition p0 values less than (6 , 10)
-	);`
-	s.testErrorCode(c, sql6, tmysql.ErrTooManyValues)
-
-	sql7 := `create table t7 (
-	a int not null,
-  	b int not null
-	)
-	partition by range( id ) (
-		partition p1 values less than (1991),
-		partition p2 values less than maxvalue,
-  		partition p3 values less than maxvalue,
-  		partition p4 values less than (1995),
-		partition p5 values less than maxvalue
-	);`
-	s.testErrorCode(c, sql7, tmysql.ErrPartitionMaxvalue)
-
-	_, err = s.tk.Exec(`create table t8 (
-	a int not null,
-	b int not null
-	)
-	partition by range( id ) (
-		partition p1 values less than (19xx91),
-		partition p2 values less than maxvalue
-	);`)
-	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
-
-	sql9 := `create TABLE t9 (
-	col1 int
-	)
-	partition by range( case when col1 > 0 then 10 else 20 end ) (
-		partition p0 values less than (2),
-		partition p1 values less than (6)
-	);`
-	s.testErrorCode(c, sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
-
-	s.testErrorCode(c, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
-
-	s.tk.MustExec(`create TABLE t11 (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2));`)
-	s.tk.MustExec(`create TABLE t12 (c1 int,c2 int) partition by range(c1 + c2 ) (partition p0 values less than (2));`)
-	s.tk.MustExec(`create TABLE t13 (c1 int,c2 int) partition by range(c1 - c2 ) (partition p0 values less than (2));`)
-	s.tk.MustExec(`create TABLE t14 (c1 int,c2 int) partition by range(c1 * c2 ) (partition p0 values less than (2));`)
-	s.tk.MustExec(`create TABLE t15 (c1 int,c2 int) partition by range( abs(c1) ) (partition p0 values less than (2));`)
-	s.tk.MustExec(`create TABLE t16 (c1 int) partition by range( c1) (partition p0 values less than (10));`)
-
-	s.testErrorCode(c, `create TABLE t17 (c1 int,c2 float) partition by range(c1 + c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFuncNotAllowed)
-	s.testErrorCode(c, `create TABLE t18 (c1 int,c2 float) partition by range( floor(c2) ) (partition p0 values less than (2));`, tmysql.ErrPartitionFuncNotAllowed)
-	s.tk.MustExec(`create TABLE t19 (c1 int,c2 float) partition by range( floor(c1) ) (partition p0 values less than (2));`)
-
-	s.tk.MustExec(`create TABLE t20 (c1 int,c2 bit(10)) partition by range(c2) (partition p0 values less than (10));`)
-	s.tk.MustExec(`create TABLE t21 (c1 int,c2 year) partition by range( c2 ) (partition p0 values less than (2000));`)
-
-	s.testErrorCode(c, `create TABLE t24 (c1 float) partition by range( c1 ) (partition p0 values less than (2000));`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
-
-	// test check order. The sql below have 2 problem: 1. ErrFieldTypeNotAllowedAsPartitionField  2. ErrPartitionMaxvalue , mysql will return ErrPartitionMaxvalue.
-	s.testErrorCode(c, `create TABLE t25 (c1 float) partition by range( c1 ) (partition p1 values less than maxvalue,partition p0 values less than (2000));`, tmysql.ErrPartitionMaxvalue)
-
-	// Fix issue 7362.
-	s.tk.MustExec("create table test_partition(id bigint, name varchar(255), primary key(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 PARTITION BY RANGE  COLUMNS(id) (PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB);")
-
-	// 'Less than' in partition expression could be a constant expression, notice that
-	// the SHOW result changed.
-	s.tk.MustExec(`create table t26 (a date)
-			  partition by range(to_seconds(a))(
-			  partition p0 values less than (to_seconds('2004-01-01')),
-			  partition p1 values less than (to_seconds('2005-01-01')));`)
-	s.tk.MustQuery("show create table t26").Check(
-		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( to_seconds(`a`) ) (\n  PARTITION p0 VALUES LESS THAN (63240134400),\n  PARTITION p1 VALUES LESS THAN (63271756800)\n)"))
-	s.tk.MustExec(`create table t27 (a bigint unsigned not null) 	
-		  partition by range(a) (
-		  partition p0 values less than (10),
-		  partition p1 values less than (100),
-		  partition p2 values less than (1000),
-		  partition p3 values less than (18446744073709551000),
-		  partition p4 values less than (18446744073709551614)
-		);`)
-	s.tk.MustExec(`create table t28 (a bigint unsigned not null) 	
-		  partition by range(a) (
-		  partition p0 values less than (10),
-		  partition p1 values less than (100),
-		  partition p2 values less than (1000),
-		  partition p3 values less than (18446744073709551000 + 1),
-		  partition p4 values less than (18446744073709551000 + 10)
-		);`)
-
-	// Only range type partition is now supported, range columns partition only implements the parser, so it will not be checked.
-	// So the following SQL statements can be executed successfully.
-	s.tk.MustExec(`create table t29 (
-		a decimal
-	)
-	partition by range columns (a)
-	(partition p0 values less than (0));`)
-}
-
-func (s *testDBSuite) TestCreateTableWithHashPartition(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test;")
-	s.tk.MustExec("drop table if exists employees;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	s.tk.MustExec(`
-	create table employees (
-		id int not null,
-		fname varchar(30),
-		lname varchar(30),
-		hired date not null default '1970-01-01',
-		separated date not null default '9999-12-31',
-		job_code int,
-		store_id int
-	)
-	partition by hash(store_id) partitions 4;`)
-
-	s.tk.MustExec("drop table if exists employees;")
-	s.tk.MustExec(`
-	create table employees (
-		id int not null,
-		fname varchar(30),
-		lname varchar(30),
-		hired date not null default '1970-01-01',
-		separated date not null default '9999-12-31',
-		job_code int,
-		store_id int
-	)
-	partition by hash( year(hired) ) partitions 4;`)
-}
-
-func (s *testDBSuite) TestCreateTableWithKeyPartition(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test;")
-	s.tk.MustExec("drop table if exists tm1;")
-	s.tk.MustExec(`create table tm1
-	(
-		s1 char(32) primary key
-	)
-	partition by key(s1) partitions 10;`)
-}
-
-func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
-	s.tk.MustExec("use test")
-	s.tk.MustExec("drop table if exists t")
-	s.testErrorCode(c, "create table t (a decimal(1, 2))", tmysql.ErrMBiggerThanD)
-	s.testErrorCode(c, "create table t (a float(1, 2))", tmysql.ErrMBiggerThanD)
-	s.testErrorCode(c, "create table t (a double(1, 2))", tmysql.ErrMBiggerThanD)
-	s.mustExec(c, "create table t (a double(1, 1))")
-	s.testErrorCode(c, "alter table t add column b decimal(1, 2)", tmysql.ErrMBiggerThanD)
-	// add multi columns now not support, so no case.
-	s.testErrorCode(c, "alter table t modify column a float(1, 4)", tmysql.ErrMBiggerThanD)
-	s.testErrorCode(c, "alter table t change column a aa float(1, 4)", tmysql.ErrMBiggerThanD)
-	s.mustExec(c, "drop table t")
-}
-
-func (s *testDBSuite) TestTableDDLWithTimeType(c *C) {
-	s.tk.MustExec("use test")
-	s.tk.MustExec("drop table if exists t")
-	s.testErrorCode(c, "create table t (a time(7))", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "create table t (a datetime(7))", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "create table t (a timestamp(7))", tmysql.ErrTooBigPrecision)
-	_, err := s.tk.Exec("create table t (a time(-1))")
-	c.Assert(err, NotNil)
-	s.mustExec(c, "create table t (a datetime)")
-	s.testErrorCode(c, "alter table t add column b time(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "alter table t add column b datetime(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "alter table t add column b timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "alter table t modify column a time(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "alter table t modify column a datetime(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "alter table t modify column a timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "alter table t change column a aa time(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "alter table t change column a aa datetime(7)", tmysql.ErrTooBigPrecision)
-	s.testErrorCode(c, "alter table t change column a aa timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.mustExec(c, "alter table t change column a aa datetime(0)")
-	s.mustExec(c, "drop table t")
-}
-
 func (s *testDBSuite) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1999,14 +1571,16 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 }
 
 func (s *testDBSuite) TestRenameTable(c *C) {
-	s.testRenameTable(c, "rename table %s to %s")
+	isAlterTable := false
+	s.testRenameTable(c, "rename table %s to %s", isAlterTable)
 }
 
 func (s *testDBSuite) TestAlterTableRenameTable(c *C) {
-	s.testRenameTable(c, "alter table %s rename to %s")
+	isAlterTable := true
+	s.testRenameTable(c, "alter table %s rename to %s", isAlterTable)
 }
 
-func (s *testDBSuite) testRenameTable(c *C, sql string) {
+func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	// for different databases
@@ -2057,8 +1631,13 @@ func (s *testDBSuite) testRenameTable(c *C, sql string) {
 	s.tk.MustExec("use test1")
 	s.tk.MustExec("create table if not exists t (c1 int, c2 int)")
 	s.tk.MustExec("create table if not exists t1 (c1 int, c2 int)")
-	s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
-	s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.t1"))
+	if isAlterTable {
+		s.tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
+		s.tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.T1"))
+	} else {
+		s.testErrorCode(c, fmt.Sprintf(sql, "test1.t", "t"), tmysql.ErrTableExists)
+		s.testErrorCode(c, fmt.Sprintf(sql, "test1.t1", "test1.T1"), tmysql.ErrTableExists)
+	}
 
 	s.tk.MustExec("drop database test1")
 }
@@ -2085,7 +1664,7 @@ func (s *testDBSuite) TestAddNotNullColumn(c *C) {
 	s.tk.MustExec("create table tnn (c1 int primary key auto_increment, c2 int)")
 	s.tk.MustExec("insert tnn (c2) values (0)" + strings.Repeat(",(0)", 99))
 	done := make(chan error, 1)
-	sessionExecInGoroutine(c, s.store, "alter table tnn add column c3 int not null default 3", done)
+	testddlutil.SessionExecInGoroutine(c, s.store, "alter table tnn add column c3 int not null default 3", done)
 	updateCnt := 0
 out:
 	for {
@@ -2102,104 +1681,6 @@ out:
 	s.tk.MustQuery("select c2, c3 from tnn where c1 = 99").Check(testkit.Rows(expected))
 
 	s.tk.MustExec("drop table tnn")
-}
-
-func (s *testDBSuite) TestIssue2858And2717(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.tk.MustExec("create table t_issue_2858_bit (a bit(64) default b'0')")
-	s.tk.MustExec("insert into t_issue_2858_bit value ()")
-	s.tk.MustExec(`insert into t_issue_2858_bit values (100), ('10'), ('\0')`)
-	s.tk.MustQuery("select a+0 from t_issue_2858_bit").Check(testkit.Rows("0", "100", "12592", "0"))
-	s.tk.MustExec(`alter table t_issue_2858_bit alter column a set default '\0'`)
-
-	s.tk.MustExec("create table t_issue_2858_hex (a int default 0x123)")
-	s.tk.MustExec("insert into t_issue_2858_hex value ()")
-	s.tk.MustExec("insert into t_issue_2858_hex values (123), (0x321)")
-	s.tk.MustQuery("select a from t_issue_2858_hex").Check(testkit.Rows("291", "123", "801"))
-	s.tk.MustExec(`alter table t_issue_2858_hex alter column a set default 0x321`)
-}
-
-func (s *testDBSuite) TestIssue4432(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.tk.MustExec("create table tx (col bit(10) default 'a')")
-	s.tk.MustExec("insert into tx value ()")
-	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
-	s.tk.MustExec("drop table tx")
-
-	s.tk.MustExec("create table tx (col bit(10) default 0x61)")
-	s.tk.MustExec("insert into tx value ()")
-	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
-	s.tk.MustExec("drop table tx")
-
-	s.tk.MustExec("create table tx (col bit(10) default 97)")
-	s.tk.MustExec("insert into tx value ()")
-	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
-	s.tk.MustExec("drop table tx")
-
-	s.tk.MustExec("create table tx (col bit(10) default 0b1100001)")
-	s.tk.MustExec("insert into tx value ()")
-	s.tk.MustQuery("select * from tx").Check(testkit.Rows("\x00a"))
-	s.tk.MustExec("drop table tx")
-}
-
-func (s *testDBSuite) TestChangeColumnPosition(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use " + s.schemaName)
-
-	s.tk.MustExec("create table position (a int default 1, b int default 2)")
-	s.tk.MustExec("insert into position value ()")
-	s.tk.MustExec("insert into position values (3,4)")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("1 2", "3 4"))
-	s.tk.MustExec("alter table position modify column b int first")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3"))
-	s.tk.MustExec("insert into position value ()")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("2 1", "4 3", "<nil> 1"))
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int, b int, c double, d varchar(5))")
-	s.tk.MustExec(`insert into position value (1, 2, 3.14, 'TiDB')`)
-	s.tk.MustExec("alter table position modify column d varchar(5) after a")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("1 TiDB 2 3.14"))
-	s.tk.MustExec("alter table position modify column a int after c")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("TiDB 2 3.14 1"))
-	s.tk.MustExec("alter table position modify column c double first")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("3.14 TiDB 2 1"))
-	s.testErrorCode(c, "alter table position modify column b int after b", tmysql.ErrBadField)
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int, b int)")
-	s.tk.MustExec("alter table position add index t(a, b)")
-	s.tk.MustExec("alter table position modify column b int first")
-	s.tk.MustExec("insert into position value (3, 5)")
-	s.tk.MustQuery("select a from position where a = 3").Check(testkit.Rows())
-
-	s.tk.MustExec("alter table position change column b c int first")
-	s.tk.MustQuery("select * from position where c = 3").Check(testkit.Rows("3 5"))
-	s.testErrorCode(c, "alter table position change column c b int after c", tmysql.ErrBadField)
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int default 2)")
-	s.tk.MustExec("alter table position modify column a int default 5 first")
-	s.tk.MustExec("insert into position value ()")
-	s.tk.MustQuery("select * from position").Check(testkit.Rows("5"))
-
-	s.tk.MustExec("drop table position")
-	s.tk.MustExec("create table position (a int, b int)")
-	s.tk.MustExec("alter table position add index t(b)")
-	s.tk.MustExec("alter table position change column b c int first")
-	createSQL := s.tk.MustQuery("show create table position").Rows()[0][1]
-	exceptedSQL := []string{
-		"CREATE TABLE `position` (",
-		"  `c` int(11) DEFAULT NULL,",
-		"  `a` int(11) DEFAULT NULL,",
-		"  KEY `t` (`c`)",
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	}
-	c.Assert(createSQL, Equals, strings.Join(exceptedSQL, "\n"))
 }
 
 func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
@@ -2335,31 +1816,6 @@ func (s *testDBSuite) TestRebaseAutoID(c *C) {
 	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }
 
-func (s *testDBSuite) TestZeroFillCreateTable(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-	s.tk.MustExec("drop table if exists abc;")
-	s.tk.MustExec("create table abc(y year, z tinyint(10) zerofill, primary key(y));")
-	is := s.dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("abc"))
-	c.Assert(err, IsNil)
-	var yearCol, zCol *model.ColumnInfo
-	for _, col := range tbl.Meta().Columns {
-		if col.Name.String() == "y" {
-			yearCol = col
-		}
-		if col.Name.String() == "z" {
-			zCol = col
-		}
-	}
-	c.Assert(yearCol, NotNil)
-	c.Assert(yearCol.Tp, Equals, mysql.TypeYear)
-	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsTrue)
-
-	c.Assert(zCol, NotNil)
-	c.Assert(mysql.HasUnsignedFlag(zCol.Flag), IsTrue)
-}
-
 func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
@@ -2376,7 +1832,6 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	s.testErrorCode(c, "create table text_default_blob(c1 blob not null default 'scds54');", tmysql.ErrBlobCantHaveDefault)
 
 	s.tk.MustExec("set sql_mode='';")
-	s.tk.MustExec("drop table if exists text_default_text;")
 	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
 	s.tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
 		"text_default_text CREATE TABLE `text_default_text` (\n"+
@@ -2389,7 +1844,6 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
-	s.tk.MustExec("drop table if exists text_default_blob;")
 	s.tk.MustExec("create table text_default_blob(c1 blob not null default '');")
 	s.tk.MustQuery(`show create table text_default_blob`).Check(testutil.RowsWithSep("|",
 		"text_default_blob CREATE TABLE `text_default_blob` (\n"+
@@ -2401,7 +1855,6 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
-	s.tk.MustExec("drop table if exists text_default_json;")
 	s.tk.MustExec("create table text_default_json(c1 json not null default '');")
 	s.tk.MustQuery(`show create table text_default_json`).Check(testutil.RowsWithSep("|",
 		"text_default_json CREATE TABLE `text_default_json` (\n"+
@@ -2416,35 +1869,24 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 
 func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("drop database if exists varchar_test;")
 	s.tk.MustExec("create database varchar_test;")
+	defer s.tk.MustExec("drop database varchar_test;")
 	s.tk.MustExec("use varchar_test")
-	s.tk.MustExec("drop table if exists t")
 	s.tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8mb4'").Check(testkit.Rows("0"))
 	s.tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8mb4'").Check(testkit.Rows("2"))
 
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=UTF8;")
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=BINARY;")
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=LATIN1;")
-	s.tk.MustExec("drop table if exists t5")
-	s.tk.MustExec("create table t5(id int) charset=ASCII;")
-	s.tk.MustExec("drop table if exists t5")
+	s.tk.MustExec("create table t1(id int) charset=UTF8;")
+	s.tk.MustExec("create table t2(id int) charset=BINARY;")
+	s.tk.MustExec("create table t3(id int) charset=LATIN1;")
+	s.tk.MustExec("create table t4(id int) charset=ASCII;")
 	s.tk.MustExec("create table t5(id int) charset=UTF8MB4;")
 
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=utf8;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=binary;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=latin1;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=ascii;")
-	s.tk.MustExec("drop table if exists t6")
-	s.tk.MustExec("create table t6(id int) charset=utf8mb4;")
+	s.tk.MustExec("create table t11(id int) charset=utf8;")
+	s.tk.MustExec("create table t12(id int) charset=binary;")
+	s.tk.MustExec("create table t13(id int) charset=latin1;")
+	s.tk.MustExec("create table t14(id int) charset=ascii;")
+	s.tk.MustExec("create table t15(id int) charset=utf8mb4;")
 }
 
 func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
@@ -2476,1108 +1918,6 @@ func (s *testDBSuite) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	close(closeCh)
 	wg.Wait()
 	c.Assert(tk2Err, IsNil)
-}
-
-type testMaxTableRowIDContext struct {
-	c   *C
-	d   ddl.DDL
-	tbl table.Table
-}
-
-func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContext {
-	return &testMaxTableRowIDContext{
-		c:   c,
-		d:   d,
-		tbl: tbl,
-	}
-}
-
-func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bool) {
-	c := ctx.c
-	d := ctx.d
-	tbl := ctx.tbl
-	curVer, err := s.store.CurrentVersion()
-	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.(table.PhysicalTable))
-	c.Assert(err, IsNil)
-	return maxID, emptyTable
-}
-
-func (s *testDBSuite) checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, expectEmpty bool, expectMaxID int64) {
-	c := ctx.c
-	maxID, emptyTable := s.getMaxTableRowID(ctx)
-	c.Assert(emptyTable, Equals, expectEmpty)
-	c.Assert(maxID, Equals, expectMaxID)
-}
-
-func (s *testDBSuite) TestGetTableEndHandle(c *C) {
-	// TestGetTableEndHandle test ddl.GetTableMaxRowID method, which will return the max row id of the table.
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_get_endhandle")
-	tk.MustExec("create database test_get_endhandle")
-	tk.MustExec("use test_get_endhandle")
-	// Test PK is handle.
-	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-
-	is := s.dom.InfoSchema()
-	d := s.dom.DDL()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-
-	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
-	// test empty table
-	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
-
-	tk.MustExec("insert into t values(-1, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(-1))
-
-	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775806))
-
-	tk.MustExec("insert into t values(9223372036854775807, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
-
-	tk.MustExec("insert into t values(10, 1)")
-	tk.MustExec("insert into t values(102149142, 1)")
-	s.checkGetMaxTableRowID(testCtx, false, int64(9223372036854775807))
-
-	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
-
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values(%v, %v)", i, i))
-	}
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	s.checkGetMaxTableRowID(testCtx, false, int64(999))
-
-	// Test PK is not handle
-	tk.MustExec("create table t2(a varchar(255))")
-
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	s.checkGetMaxTableRowID(testCtx, true, int64(math.MaxInt64))
-
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", i))
-	}
-
-	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable := s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec("insert into t2 values(100000)")
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-
-	tk.MustExec("insert into t2 values(100)")
-	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
-	c.Assert(emptyTable, IsFalse)
-}
-
-func (s *testDBSuite) TestMultiRegionGetTableEndHandle(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_get_endhandle")
-	tk.MustExec("create database test_get_endhandle")
-	tk.MustExec("use test_get_endhandle")
-
-	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
-	}
-
-	// Get table ID for split.
-	dom := domain.GetDomain(tk.Se)
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tblID := tbl.Meta().ID
-
-	d := s.dom.DDL()
-	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
-
-	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
-
-	maxID, emptyTable := s.getMaxTableRowID(testCtx)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(999))
-
-	tk.MustExec("insert into t values(10000, 1000)")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(10000))
-
-	tk.MustExec("insert into t values(-1, 1000)")
-	maxID, emptyTable = s.getMaxTableRowID(testCtx)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(10000))
-}
-
-func (s *testDBSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
-	var job *model.Job
-
-	err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
-	})
-
-	return job, errors.Trace(err)
-}
-
-func (s *testDBSuite) TestBackwardCompatibility(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_backward_compatibility")
-	defer tk.MustExec("drop database test_backward_compatibility")
-	tk.MustExec("use test_backward_compatibility")
-	tk.MustExec("create table t(a int primary key, b int)")
-	for i := 0; i < 200; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
-	}
-
-	// alter table t add index idx_b(b);
-	is := s.dom.InfoSchema()
-	schemaName := model.NewCIStr("test_backward_compatibility")
-	tableName := model.NewCIStr("t")
-	schema, ok := is.SchemaByName(schemaName)
-	c.Assert(ok, IsTrue)
-	tbl, err := is.TableByName(schemaName, tableName)
-	c.Assert(err, IsNil)
-
-	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 100)
-
-	unique := false
-	indexName := model.NewCIStr("idx_b")
-	idxColName := &ast.IndexColName{
-		Column: &ast.ColumnName{
-			Schema: schemaName,
-			Table:  tableName,
-			Name:   model.NewCIStr("b"),
-		},
-		Length: types.UnspecifiedLength,
-	}
-	idxColNames := []*ast.IndexColName{idxColName}
-	var indexOption *ast.IndexOption
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbl.Meta().ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
-	}
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-	job.ID, err = t.GenGlobalID()
-	c.Assert(err, IsNil)
-	job.Version = 1
-	job.StartTS = txn.StartTS()
-
-	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,
-	// if we set job.SnapshotVer here, can simulate the behavior.
-	job.SnapshotVer = txn.StartTS()
-	err = t.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	ticker := time.NewTicker(s.lease)
-	for range ticker.C {
-		historyJob, err := s.getHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
-		if historyJob == nil {
-
-			continue
-		}
-		c.Assert(historyJob.Error, IsNil)
-
-		if historyJob.IsSynced() {
-			break
-		}
-	}
-
-	// finished add index
-	tk.MustExec("admin check index t idx_b")
-}
-
-func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test;")
-	s.tk.MustExec("drop table if exists employees;")
-	s.tk.MustExec(`create table employees (
-	id int not null,
-	hired date not null
-	)
-	partition by range( year(hired) ) (
-		partition p1 values less than (1991),
-		partition p2 values less than (1996),
-		partition p3 values less than (2001)
-	);`)
-	s.tk.MustExec(`alter table employees add partition (
-    partition p4 values less than (2010),
-    partition p5 values less than MAXVALUE
-	);`)
-
-	ctx := s.tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().Partition, NotNil)
-	part := tbl.Meta().Partition
-	c.Assert(part.Type, Equals, model.PartitionTypeRange)
-
-	c.Assert(part.Expr, Equals, "year(`hired`)")
-	c.Assert(part.Definitions, HasLen, 5)
-	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[1].LessThan[0], Equals, "1996")
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p2"))
-	c.Assert(part.Definitions[2].LessThan[0], Equals, "2001")
-	c.Assert(part.Definitions[2].Name, Equals, model.NewCIStr("p3"))
-	c.Assert(part.Definitions[3].LessThan[0], Equals, "2010")
-	c.Assert(part.Definitions[3].Name, Equals, model.NewCIStr("p4"))
-	c.Assert(part.Definitions[4].LessThan[0], Equals, "MAXVALUE")
-	c.Assert(part.Definitions[4].Name, Equals, model.NewCIStr("p5"))
-
-	s.tk.MustExec("drop table if exists table1;")
-	s.tk.MustExec("create table table1(a int)")
-	sql1 := `alter table table1 add partition (
-		partition p1 values less than (2010),
-		partition p2 values less than maxvalue
-	);`
-	s.testErrorCode(c, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
-	s.tk.MustExec(`create table table_MustBeDefined (
-	id int not null,
-	hired date not null
-	)
-	partition by range( year(hired) ) (
-		partition p1 values less than (1991),
-		partition p2 values less than (1996),
-		partition p3 values less than (2001)
-	);`)
-	sql2 := "alter table table_MustBeDefined add partition"
-	s.testErrorCode(c, sql2, tmysql.ErrPartitionsMustBeDefined)
-	s.tk.MustExec("drop table if exists table2;")
-	s.tk.MustExec(`create table table2 (
-
-	id int not null,
-	hired date not null
-	)
-	partition by range( year(hired) ) (
-	partition p1 values less than (1991),
-	partition p2 values less than maxvalue
-	);`)
-
-	sql3 := `alter table table2 add partition (
-		partition p3 values less than (2010)
-	);`
-	s.testErrorCode(c, sql3, tmysql.ErrPartitionMaxvalue)
-
-	s.tk.MustExec("drop table if exists table3;")
-	s.tk.MustExec(`create table table3 (
-	id int not null,
-	hired date not null
-	)
-	partition by range( year(hired) ) (
-	partition p1 values less than (1991),
-	partition p2 values less than (2001)
-	);`)
-
-	sql4 := `alter table table3 add partition (
-		partition p3 values less than (1993)
-	);`
-	s.testErrorCode(c, sql4, tmysql.ErrRangeNotIncreasing)
-
-	sql5 := `alter table table3 add partition (
-		partition p1 values less than (1993)
-	);`
-	s.testErrorCode(c, sql5, tmysql.ErrSameNamePartition)
-
-	sql6 := `alter table table3 add partition (
-		partition p1 values less than (1993),
-		partition p1 values less than (1995)
-	);`
-	s.testErrorCode(c, sql6, tmysql.ErrSameNamePartition)
-
-	sql7 := `alter table table3 add partition (
-		partition p4 values less than (1993),
-		partition p1 values less than (1995),
-		partition p5 values less than maxvalue
-	);`
-	s.testErrorCode(c, sql7, tmysql.ErrSameNamePartition)
-}
-
-func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-	s.tk.MustExec("drop table if exists employees")
-	s.tk.MustExec(`create table employees (
-	id int not null,
-	hired int not null
-	)
-	partition by range( hired ) (
-		partition p1 values less than (1991),
-		partition p2 values less than (1996),
-		partition p3 values less than (2001)
-	);`)
-
-	s.tk.MustExec("alter table employees drop partition p3;")
-	ctx := s.tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().GetPartitionInfo(), NotNil)
-	part := tbl.Meta().Partition
-	c.Assert(part.Type, Equals, model.PartitionTypeRange)
-	c.Assert(part.Expr, Equals, "`hired`")
-	c.Assert(part.Definitions, HasLen, 2)
-	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[1].LessThan[0], Equals, "1996")
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p2"))
-
-	s.tk.MustExec("drop table if exists table1;")
-	s.tk.MustExec("create table table1 (a int);")
-	sql1 := "alter table table1 drop partition p10;"
-	s.testErrorCode(c, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
-
-	s.tk.MustExec("drop table if exists table2;")
-	s.tk.MustExec(`create table table2 (
-	id int not null,
-	hired date not null
-	)
-	partition by range( year(hired) ) (
-		partition p1 values less than (1991),
-		partition p2 values less than (1996),
-		partition p3 values less than (2001)
-	);`)
-	sql2 := "alter table table2 drop partition p10;"
-	s.testErrorCode(c, sql2, tmysql.ErrDropPartitionNonExistent)
-
-	s.tk.MustExec("drop table if exists table3;")
-	s.tk.MustExec(`create table table3 (
-	id int not null
-	)
-	partition by range( id ) (
-		partition p1 values less than (1991)
-	);`)
-	sql3 := "alter table table3 drop partition p1;"
-	s.testErrorCode(c, sql3, tmysql.ErrDropLastPartition)
-
-	s.tk.MustExec("drop table if exists table4;")
-	s.tk.MustExec(`create table table4 (
-	id int not null
-	)
-	partition by range( id ) (
-		partition p1 values less than (10),
-		partition p2 values less than (20),
-		partition p3 values less than MAXVALUE
-	);`)
-
-	s.tk.MustExec("alter table table4 drop partition p2;")
-	is = domain.GetDomain(ctx).InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("table4"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().GetPartitionInfo(), NotNil)
-	part = tbl.Meta().Partition
-	c.Assert(part.Type, Equals, model.PartitionTypeRange)
-	c.Assert(part.Expr, Equals, "`id`")
-	c.Assert(part.Definitions, HasLen, 2)
-	c.Assert(part.Definitions[0].LessThan[0], Equals, "10")
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[1].LessThan[0], Equals, "MAXVALUE")
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
-
-	s.tk.MustExec("drop table if exists tr;")
-	s.tk.MustExec(` create table tr(
-		id int, name varchar(50),
-		purchased date
-	)
-	partition by range( year(purchased) ) (
-    	partition p0 values less than (1990),
-    	partition p1 values less than (1995),
-    	partition p2 values less than (2000),
-    	partition p3 values less than (2005),
-    	partition p4 values less than (2010),
-    	partition p5 values less than (2015)
-   	);`)
-	s.tk.MustExec(`INSERT INTO tr VALUES
-	(1, 'desk organiser', '2003-10-15'),
-	(2, 'alarm clock', '1997-11-05'),
-	(3, 'chair', '2009-03-10'),
-	(4, 'bookcase', '1989-01-10'),
-	(5, 'exercise bike', '2014-05-09'),
-	(6, 'sofa', '1987-06-05'),
-	(7, 'espresso maker', '2011-11-22'),
-	(8, 'aquarium', '1992-08-04'),
-	(9, 'study desk', '2006-09-16'),
-	(10, 'lava lamp', '1998-12-25');`)
-	result := s.tk.MustQuery("select * from tr where purchased between '1995-01-01' and '1999-12-31';")
-	result.Check(testkit.Rows(`2 alarm clock 1997-11-05`, `10 lava lamp 1998-12-25`))
-	s.tk.MustExec("alter table tr drop partition p2;")
-	result = s.tk.MustQuery("select * from tr where purchased between '1995-01-01' and '1999-12-31';")
-	result.Check(testkit.Rows())
-
-	result = s.tk.MustQuery("select * from tr where purchased between '2010-01-01' and '2014-12-31';")
-	result.Check(testkit.Rows(`5 exercise bike 2014-05-09`, `7 espresso maker 2011-11-22`))
-	s.tk.MustExec("alter table tr drop partition p5;")
-	result = s.tk.MustQuery("select * from tr where purchased between '2010-01-01' and '2014-12-31';")
-	result.Check(testkit.Rows())
-
-	s.tk.MustExec("alter table tr drop partition p4;")
-	result = s.tk.MustQuery("select * from tr where purchased between '2005-01-01' and '2009-12-31';")
-	result.Check(testkit.Rows())
-
-	s.tk.MustExec("drop table if exists table4;")
-	s.tk.MustExec(`create table table4 (
-		id int not null
-	)
-	partition by range( id ) (
-		partition Par1 values less than (1991),
-		partition pAR2 values less than (1992),
-		partition Par3 values less than (1995),
-		partition PaR5 values less than (1996)
-	);`)
-	s.tk.MustExec("alter table table4 drop partition Par2;")
-	s.tk.MustExec("alter table table4 drop partition PAR5;")
-	sql4 := "alter table table4 drop partition PAR0;"
-	s.testErrorCode(c, sql4, tmysql.ErrDropPartitionNonExistent)
-}
-
-func (s *testDBSuite) TestAddPartitionTooManyPartitions(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test")
-	count := ddl.PartitionCountLimit
-	s.tk.MustExec("drop table if exists p1;")
-	sql1 := `create table p1 (
-		id int not null
-	)
-	partition by range( id ) (`
-	for i := 1; i <= count; i++ {
-		sql1 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
-	}
-	sql1 += "partition p1025 values less than (1025) );"
-	s.testErrorCode(c, sql1, tmysql.ErrTooManyPartitions)
-
-	s.tk.MustExec("drop table if exists p2;")
-	sql2 := `create table p2 (
-		id int not null
-	)
-	partition by range( id ) (`
-	for i := 1; i < count; i++ {
-		sql2 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
-	}
-	sql2 += "partition p1024 values less than (1024) );"
-
-	s.tk.MustExec(sql2)
-	sql3 := `alter table p2 add partition (
-   	partition p1025 values less than (1025)
-	);`
-	s.testErrorCode(c, sql3, tmysql.ErrTooManyPartitions)
-}
-
-func checkPartitionDelRangeDone(c *C, s *testDBSuite, partitionPrefix kv.Key) bool {
-	hasOldPartitionData := true
-	for i := 0; i < waitForCleanDataRound; i++ {
-		err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-			it, err := txn.Iter(partitionPrefix, nil)
-			if err != nil {
-				return err
-			}
-			if !it.Valid() {
-				hasOldPartitionData = false
-			} else {
-				hasOldPartitionData = it.Key().HasPrefix(partitionPrefix)
-			}
-			it.Close()
-			return nil
-		})
-		c.Assert(err, IsNil)
-		if !hasOldPartitionData {
-			break
-		}
-		time.Sleep(waitForCleanDataInterval)
-	}
-	return hasOldPartitionData
-}
-
-func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test;")
-	// Test truncate common table.
-	s.tk.MustExec("drop table if exists t1;")
-	s.tk.MustExec("create table t1 (id int(11));")
-	for i := 0; i < 100; i++ {
-		s.mustExec(c, "insert into t1 values (?)", i)
-	}
-	result := s.tk.MustQuery("select count(*) from t1;")
-	result.Check(testkit.Rows("100"))
-	s.tk.MustExec("truncate table t1;")
-	result = s.tk.MustQuery("select count(*) from t1")
-	result.Check(testkit.Rows("0"))
-
-	// Test drop common table.
-	s.tk.MustExec("drop table if exists t2;")
-	s.tk.MustExec("create table t2 (id int(11));")
-	for i := 0; i < 100; i++ {
-		s.mustExec(c, "insert into t2 values (?)", i)
-	}
-	result = s.tk.MustQuery("select count(*) from t2;")
-	result.Check(testkit.Rows("100"))
-	s.tk.MustExec("drop table t2;")
-	s.testErrorCode(c, "select * from t2;", tmysql.ErrNoSuchTable)
-
-	// Test truncate table partition.
-	s.tk.MustExec("drop table if exists t3;")
-	s.tk.MustExec(`create table t3(
-		id int, name varchar(50),
-		purchased date
-	)
-	partition by range( year(purchased) ) (
-    	partition p0 values less than (1990),
-    	partition p1 values less than (1995),
-    	partition p2 values less than (2000),
-    	partition p3 values less than (2005),
-    	partition p4 values less than (2010),
-    	partition p5 values less than (2015)
-   	);`)
-	s.tk.MustExec(`insert into t3 values
-	(1, 'desk organiser', '2003-10-15'),
-	(2, 'alarm clock', '1997-11-05'),
-	(3, 'chair', '2009-03-10'),
-	(4, 'bookcase', '1989-01-10'),
-	(5, 'exercise bike', '2014-05-09'),
-	(6, 'sofa', '1987-06-05'),
-	(7, 'espresso maker', '2011-11-22'),
-	(8, 'aquarium', '1992-08-04'),
-	(9, 'study desk', '2006-09-16'),
-	(10, 'lava lamp', '1998-12-25');`)
-	result = s.tk.MustQuery("select count(*) from t3;")
-	result.Check(testkit.Rows("10"))
-	ctx := s.tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
-	c.Assert(err, IsNil)
-	// Only one partition id test is taken here.
-	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
-	s.tk.MustExec("truncate table t3;")
-	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
-	hasOldPartitionData := checkPartitionDelRangeDone(c, s, partitionPrefix)
-	c.Assert(hasOldPartitionData, IsFalse)
-
-	// Test drop table partition.
-	s.tk.MustExec("drop table if exists t4;")
-	s.tk.MustExec(`create table t4(
-		id int, name varchar(50),
-		purchased date
-	)
-	partition by range( year(purchased) ) (
-    	partition p0 values less than (1990),
-    	partition p1 values less than (1995),
-    	partition p2 values less than (2000),
-    	partition p3 values less than (2005),
-    	partition p4 values less than (2010),
-    	partition p5 values less than (2015)
-   	);`)
-	s.tk.MustExec(`insert into t4 values
-	(1, 'desk organiser', '2003-10-15'),
-	(2, 'alarm clock', '1997-11-05'),
-	(3, 'chair', '2009-03-10'),
-	(4, 'bookcase', '1989-01-10'),
-	(5, 'exercise bike', '2014-05-09'),
-	(6, 'sofa', '1987-06-05'),
-	(7, 'espresso maker', '2011-11-22'),
-	(8, 'aquarium', '1992-08-04'),
-	(9, 'study desk', '2006-09-16'),
-	(10, 'lava lamp', '1998-12-25');`)
-	result = s.tk.MustQuery("select count(*) from t4; ")
-	result.Check(testkit.Rows("10"))
-	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
-	c.Assert(err, IsNil)
-	// Only one partition id test is taken here.
-	oldPID = oldTblInfo.Meta().Partition.Definitions[1].ID
-	s.tk.MustExec("drop table t4;")
-	partitionPrefix = tablecodec.EncodeTablePrefix(oldPID)
-	hasOldPartitionData = checkPartitionDelRangeDone(c, s, partitionPrefix)
-	c.Assert(hasOldPartitionData, IsFalse)
-	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
-
-	// Test truncate table partition reassigns new partitionIDs.
-	s.tk.MustExec("drop table if exists t5;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
-	s.tk.MustExec(`create table t5(
-		id int, name varchar(50), 
-		purchased date
-	)
-	partition by range( year(purchased) ) (
-    	partition p0 values less than (1990),
-    	partition p1 values less than (1995),
-    	partition p2 values less than (2000),
-    	partition p3 values less than (2005),
-    	partition p4 values less than (2010),
-    	partition p5 values less than (2015)
-   	);`)
-	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
-	c.Assert(err, IsNil)
-	oldPID = oldTblInfo.Meta().Partition.Definitions[0].ID
-
-	s.tk.MustExec("truncate table t5;")
-	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
-	c.Assert(err, IsNil)
-	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
-	c.Assert(oldPID != newPID, IsTrue)
-
-	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1;")
-	s.tk.MustExec("drop table if exists clients;")
-	s.tk.MustExec(`create table clients (
-		id int,
-		fname varchar(30),
-		lname varchar(30),
-		signed date
-	)
-	partition by hash( month(signed) )
-	partitions 12;`)
-	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
-	c.Assert(err, IsNil)
-	oldDefs := oldTblInfo.Meta().Partition.Definitions
-
-	// Test truncate `hash partitioned table` reassigns new partitionIDs.
-	s.tk.MustExec("truncate table clients;")
-	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
-	c.Assert(err, IsNil)
-	newDefs := newTblInfo.Meta().Partition.Definitions
-	for i := 0; i < len(oldDefs); i++ {
-		c.Assert(oldDefs[i].ID != newDefs[i].ID, IsTrue)
-	}
-}
-
-func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("use test;")
-	s.tk.MustExec("drop table if exists part1;")
-	s.tk.MustExec(`create table part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		unique key (col1, col2)
-	)
-	partition by range( col1 + col2 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`)
-
-	s.tk.MustExec("drop table if exists part2;")
-	s.tk.MustExec(`create table part2 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		unique key (col1, col2, col3),
-  		unique key (col3)
-	)
-	partition by range( col3 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`)
-
-	s.tk.MustExec("drop table if exists part3;")
-	s.tk.MustExec(`create table part3 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		primary key(col1, col2)
-	)
-	partition by range( col1 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`)
-
-	s.tk.MustExec("drop table if exists part4;")
-	s.tk.MustExec(`create table part4 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		primary key(col1, col2),
-		unique key(col2)
-	)
-	partition by range( year(col2)  ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`)
-
-	s.tk.MustExec("drop table if exists part5;")
-	s.tk.MustExec(`create table part5 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		primary key(col1, col2, col4),
-    	unique key(col2, col1)
-	)
-	partition by range( col1 + col2 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`)
-
-	s.tk.MustExec("drop table if exists Part1;")
-	sql1 := `create table Part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		unique key (col1, col2)
-	)
-	partition by range( col3 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`
-	s.testErrorCode(c, sql1, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
-
-	s.tk.MustExec("drop table if exists Part1;")
-	sql2 := `create table Part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		unique key (col1),
-		unique key (col3)
-	)
-	partition by range( col1 + col3 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`
-	s.testErrorCode(c, sql2, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
-
-	s.tk.MustExec("drop table if exists Part1;")
-	sql3 := `create table Part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		unique key (col1),
-		unique key (col3)
-	)
-	partition by range( col3 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`
-	s.testErrorCode(c, sql3, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
-
-	s.tk.MustExec("drop table if exists Part1;")
-	sql4 := `create table Part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		unique key (col1, col2, col3),
-  		unique key (col3)
-	)
-	partition by range( col1 + col3 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`
-	s.testErrorCode(c, sql4, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
-
-	s.tk.MustExec("drop table if exists Part1;")
-	sql5 := `create table Part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		primary key(col1, col2)
-	)
-	partition by range( col3 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`
-	s.testErrorCode(c, sql5, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
-
-	s.tk.MustExec("drop table if exists Part1;")
-	sql6 := `create table Part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		primary key(col1, col3),
-		unique key(col2)
-	)
-	partition by range( year(col2)  ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`
-	s.testErrorCode(c, sql6, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
-
-	s.tk.MustExec("drop table if exists Part1;")
-	sql7 := `create table Part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		primary key(col1, col3, col4),
-    	unique key(col2, col1)
-	)
-	partition by range( col1 + col2 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`
-	s.testErrorCode(c, sql7, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
-
-	s.tk.MustExec("drop table if exists part6;")
-	sql8 := `create table part6 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		col5 int not null,
-		unique key(col1, col2),
-		unique key(col1, col3)
-	)
-	partition by range( col1 + col2 ) (
-	partition p1 values less than (11),
-  	partition p2 values less than (15)
-	);`
-	s.testErrorCode(c, sql8, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
-}
-
-func (s *testDBSuite) TestPartitionDropIndex(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	done := make(chan error, 1)
-	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("drop table if exists partition_drop_idx;")
-	s.tk.MustExec(`create table partition_drop_idx (
-		c1 int, c2 int, c3 int
-	)
-	partition by range( c1 ) (
-    	partition p0 values less than (3),
-    	partition p1 values less than (5),
-    	partition p2 values less than (7),
-    	partition p3 values less than (11),
-    	partition p4 values less than (15),
-    	partition p5 values less than (20),
-		partition p6 values less than (maxvalue)
-   	);`)
-
-	num := 20
-	for i := 0; i < num; i++ {
-		s.mustExec(c, "insert into partition_drop_idx values (?, ?, ?)", i, i, i)
-	}
-	s.tk.MustExec("alter table partition_drop_idx add index idx1 (c1)")
-
-	ctx := s.tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("partition_drop_idx"))
-	c.Assert(err, IsNil)
-
-	var idx1 table.Index
-	for _, pidx := range t.Indices() {
-		if pidx.Meta().Name.L == "idx1" {
-			idx1 = pidx
-			break
-		}
-	}
-	c.Assert(idx1, NotNil)
-
-	sessionExecInGoroutine(c, s.store, "drop index idx1 on partition_drop_idx;", done)
-	ticker := time.NewTicker(s.lease / 2)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case err = <-done:
-			if err == nil {
-				break LOOP
-			}
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
-		case <-ticker.C:
-			step := 10
-			rand.Seed(time.Now().Unix())
-			for i := num; i < num+step; i++ {
-				n := rand.Intn(num)
-				s.mustExec(c, "update partition_drop_idx set c2 = 1 where c1 = ?", n)
-				s.mustExec(c, "insert into partition_drop_idx values (?, ?, ?)", i, i, i)
-			}
-			num += step
-		}
-	}
-
-	is = domain.GetDomain(ctx).InfoSchema()
-	t, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("partition_drop_idx"))
-	c.Assert(err, IsNil)
-	// Only one partition id test is taken here.
-	pid := t.Meta().Partition.Definitions[0].ID
-	var idxn table.Index
-	t.Indices()
-	for _, idx := range t.Indices() {
-		if idx.Meta().Name.L == "idx1" {
-			idxn = idx
-			break
-		}
-	}
-	c.Assert(idxn, IsNil)
-	idx := tables.NewIndex(pid, t.Meta(), idx1.Meta())
-	checkDelRangeDone(c, ctx, idx)
-	s.tk.MustExec("drop table partition_drop_idx;")
-}
-
-func (s *testDBSuite) TestPartitionCancelAddIndex(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	s.mustExec(c, "use test_db")
-	s.mustExec(c, "drop table if exists t1;")
-	s.mustExec(c, `create table t1 (
-		c1 int, c2 int, c3 int
-	)
-	partition by range( c1 ) (
-    	partition p0 values less than (1024),
-    	partition p1 values less than (2048),
-    	partition p2 values less than (3072),
-    	partition p3 values less than (4096),
-		partition p4 values less than (maxvalue)
-   	);`)
-	base := defaultBatchSize * 2
-	count := base
-	// add some rows
-	for i := 0; i < count; i++ {
-		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
-	}
-
-	var checkErr error
-	var c3IdxInfo *model.IndexInfo
-	hook := &ddl.TestDDLCallback{}
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, s, hook)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	done := make(chan error, 1)
-	go backgroundExec(s.store, "create index c3_index on t1 (c3)", done)
-
-	times := 0
-	ticker := time.NewTicker(s.lease / 2)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case err := <-done:
-			c.Assert(checkErr, IsNil)
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
-			break LOOP
-		case <-ticker.C:
-			if times >= 10 {
-				break
-			}
-			step := 10
-			rand.Seed(time.Now().Unix())
-			// delete some rows, and add some data
-			for i := count; i < count+step; i++ {
-				n := rand.Intn(count)
-				s.mustExec(c, "delete from t1 where c1 = ?", n)
-				s.mustExec(c, "insert into t1 values (?, ?, ?)", i+10, i, i)
-			}
-			count += step
-			times++
-		}
-	}
-
-	t := s.testGetTable(c, "t1")
-	// Only one partition id test is taken here.
-	pid := t.Meta().Partition.Definitions[0].ID
-	for _, tidx := range t.Indices() {
-		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
-	}
-
-	ctx := s.s.(sessionctx.Context)
-	idx := tables.NewIndex(pid, t.Meta(), c3IdxInfo)
-	checkDelRangeDone(c, ctx, idx)
-
-	s.mustExec(c, "drop table t1")
-	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
-	callback := &ddl.TestDDLCallback{}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
-}
-
-func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLCallback) (func(*model.Job), *model.IndexInfo, error) {
-	var checkErr error
-	first := true
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
-	c3IdxInfo := &model.IndexInfo{}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
-		addIndexNotFirstReorg := job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
-		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
-		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
-		if !addIndexNotFirstReorg {
-			// Get the index's meta.
-			if c3IdxInfo != nil {
-				return
-			}
-			t := s.testGetTable(c, "t1")
-			for _, index := range t.WritableIndices() {
-				if index.Meta().Name.L == "c3_index" {
-					c3IdxInfo = index.Meta()
-				}
-			}
-			return
-		}
-		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
-		if first {
-			first = false
-			return
-		}
-		if checkErr != nil {
-			return
-		}
-		hookCtx := mock.NewContext()
-		hookCtx.Store = s.store
-		var err error
-		err = hookCtx.NewTxn()
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		// It only tests cancel one DDL job.
-		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
-			return
-		}
-		err = hookCtx.Txn(true).Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-	}
-	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
 func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
@@ -3613,8 +1953,6 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 
 	var c2 *table.Column
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
@@ -3634,14 +1972,19 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		var err error
-		err = hookCtx.NewTxn()
+		err = hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
 		}
 
 		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(hookCtx.Txn(true), jobIDs)
+		txn, err := hookCtx.Txn(true)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		errs, err := admin.CancelJobs(txn, jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -3652,12 +1995,18 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 			return
 		}
 
-		err = hookCtx.Txn(true).Commit(context.Background())
+		txn, err = hookCtx.Txn(true)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		err = txn.Commit(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
 	}
 
+	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
@@ -3682,165 +2031,177 @@ LOOP:
 		}
 	}
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(c, "drop table t1")
-	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }
 
-func (s *testDBSuite) TestPartitionAddIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table partition_add_idx (
-	id int not null,
-	hired date not null
-	)
-	partition by range( year(hired) ) (
-	partition p1 values less than (1991),
-	partition p3 values less than (2001),
-	partition p4 values less than (2004),
-	partition p5 values less than (2008),
-	partition p6 values less than (2012),
-	partition p7 values less than (2018)
-	);`)
-	testPartitionAddIndex(tk, c)
+func (s *testDBSuite) TestTransactionOnAddDropColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (a int, b int);")
+	s.mustExec(c, "create table t2 (a int, b int);")
+	s.mustExec(c, "insert into t2 values (2,0)")
 
-	// test hash partition table.
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
-	tk.MustExec("drop table if exists partition_add_idx")
-	tk.MustExec(`create table partition_add_idx (
-	id int not null,
-	hired date not null
-	) partition by hash( year(hired) ) partitions 4;`)
-	testPartitionAddIndex(tk, c)
-}
-
-func testPartitionAddIndex(tk *testkit.TestKit, c *C) {
-	for i := 0; i < 500; i++ {
-		tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
+	transactions := [][]string{
+		{
+			"begin",
+			"insert into t1 set a=1",
+			"update t1 set b=1 where a=1",
+			"commit",
+		},
+		{
+			"begin",
+			"insert into t1 select a,b from t2",
+			"update t1 set b=2 where a=2",
+			"commit",
+		},
 	}
 
-	tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
-	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
-	c.Assert(err, IsNil)
-	var idx1 table.Index
-	for _, idx := range t.Indices() {
-		if idx.Meta().Name.L == "idx1" {
-			idx1 = idx
-			break
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateWriteOnly, model.StateWriteReorganization, model.StateDeleteOnly, model.StateDeleteReorganization:
+		default:
+			return
+		}
+		// do transaction.
+		for _, transaction := range transactions {
+			for _, sql := range transaction {
+				s.mustExec(c, sql)
+			}
 		}
 	}
-	c.Assert(idx1, NotNil)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	// test transaction on add column.
+	go backgroundExec(s.store, "alter table t1 add column c int not null after a", done)
+	err := <-done
+	c.Assert(err, IsNil)
+	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
+	s.mustExec(c, "delete from t1")
 
-	tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
-	tk.MustQuery("select count(id) from partition_add_idx use index(idx2)").Check(testkit.Rows("500"))
-
-	tk.MustExec("admin check table partition_add_idx")
-	tk.MustExec("drop table partition_add_idx")
+	// test transaction on drop column.
+	go backgroundExec(s.store, "alter table t1 drop column c", done)
+	err = <-done
+	c.Assert(err, IsNil)
+	s.tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
 }
 
-func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
+func (s *testDBSuite) TestTransactionWithWriteOnlyColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	s.tk.MustExec("drop database if exists test_db_with_partition")
-	s.tk.MustExec("create database test_db_with_partition")
-	s.tk.MustExec("use test_db_with_partition")
-	s.tk.MustExec(`create table t_part (a int key)
-		partition by range(a) (
-		partition p0 values less than (10),
-		partition p1 values less than (20)
-		);`)
-	s.tk.MustExec("insert into t_part values (1),(2),(11),(12);")
-	ctx := s.s.(sessionctx.Context)
-	tbl := s.testGetTableByName(c, "test_db_with_partition", "t_part")
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (a int key);")
 
-	// check records num before drop database.
-	recordsNum := getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
-	c.Assert(recordsNum, Equals, 4)
-
-	s.tk.MustExec("drop database if exists test_db_with_partition")
-
-	// check job args.
-	rs, err := s.tk.Exec("admin show ddl jobs")
-	c.Assert(err, IsNil)
-	rows, err := session.GetRows4Test(context.Background(), s.tk.Se, rs)
-	c.Assert(err, IsNil)
-	row := rows[0]
-	c.Assert(row.GetString(3), Equals, "drop schema")
-	jobID := row.GetInt64(0)
-	kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyJob, err := t.GetHistoryDDLJob(jobID)
-		c.Assert(err, IsNil)
-		var tableIDs []int64
-		err = historyJob.DecodeArgs(&tableIDs)
-		c.Assert(err, IsNil)
-		// There is 2 partitions.
-		c.Assert(len(tableIDs), Equals, 3)
-		return nil
-	})
-
-	// check records num after drop database.
-	recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
-	c.Assert(recordsNum, Equals, 0)
-}
-
-func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.PartitionedTable) int {
-	num := 0
-	info := tbl.Meta().GetPartitionInfo()
-	for _, def := range info.Definitions {
-		pid := def.ID
-		partition := tbl.(table.PartitionedTable).GetPartition(pid)
-		startKey := partition.RecordKey(math.MinInt64)
-		c.Assert(ctx.NewTxn(), IsNil)
-		err := partition.IterRecords(ctx, startKey, partition.Cols(),
-			func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-				num++
-				return true, nil
-			})
-		c.Assert(err, IsNil)
+	transactions := [][]string{
+		{
+			"begin",
+			"insert into t1 set a=1",
+			"update t1 set a=2 where a=1",
+			"commit",
+		},
 	}
-	return num
+
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+		default:
+			return
+		}
+		// do transaction.
+		for _, transaction := range transactions {
+			for _, sql := range transaction {
+				s.mustExec(c, sql)
+			}
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	// test transaction on add column.
+	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
+	err := <-done
+	c.Assert(err, IsNil)
+	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
+	s.mustExec(c, "delete from t1")
+
+	// test transaction on drop column.
+	go backgroundExec(s.store, "alter table t1 drop column c", done)
+	err = <-done
+	c.Assert(err, IsNil)
+	s.tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 }
 
-func (s *testDBSuite) TestPartitionErrorCode(c *C) {
+func (s *testDBSuite) TestAddColumn2(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
-	// add partition
-	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	s.tk.MustExec("drop database if exists test_db_with_partition")
-	s.tk.MustExec("create database test_db_with_partition")
-	s.tk.MustExec("use test_db_with_partition")
-	s.tk.MustExec(`create table employees (
-		id int not null,
-		fname varchar(30),
-		lname varchar(30),
-		hired date not null default '1970-01-01',
-		separated date not null default '9999-12-31',
-		job_code int,
-		store_id int
-	)
-	partition by hash(store_id)
-	partitions 4;`)
-	_, err := s.tk.Exec("alter table employees add partition partitions 8;")
-	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (a int key, b int);")
+	defer s.mustExec(c, "drop table if exists t1, t2")
 
-	// coalesce partition
-	s.tk.MustExec(`create table clients (
-		id int,
-		fname varchar(30),
-		lname varchar(30),
-		signed date
-	)
-	partition by hash( month(signed) )
-	partitions 12;`)
-	_, err = s.tk.Exec("alter table clients coalesce partition 4;")
-	c.Assert(ddl.ErrUnsupportedCoalescePartition.Equal(err), IsTrue)
+	originHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	var writeOnlyTable table.Table
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			writeOnlyTable, _ = s.dom.InfoSchema().TableByID(job.TableID)
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	// test transaction on add column.
+	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
+	err := <-done
+	c.Assert(err, IsNil)
 
-	s.tk.MustExec(`create table t_part (a int key)
-		partition by range(a) (
-		partition p0 values less than (10),
-		partition p1 values less than (20)
-		);`)
-	_, err = s.tk.Exec("alter table t_part coalesce partition 4;")
-	c.Assert(ddl.ErrCoalesceOnlyOnHashPartition.Equal(err), IsTrue)
+	s.mustExec(c, "insert into t1 values (1,1,1)")
+	s.tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 1 1"))
+
+	// mock for outdated tidb update record.
+	c.Assert(writeOnlyTable, NotNil)
+	ctx := context.Background()
+	err = s.tk.Se.NewTxn(ctx)
+	c.Assert(err, IsNil)
+	oldRow, err := writeOnlyTable.RowWithCols(s.tk.Se, 1, writeOnlyTable.WritableCols())
+	c.Assert(err, IsNil)
+	c.Assert(len(oldRow), Equals, 3)
+	err = writeOnlyTable.RemoveRecord(s.tk.Se, 1, oldRow)
+	c.Assert(err, IsNil)
+	_, err = writeOnlyTable.AddRecord(s.tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()),
+		&table.AddRecordOpt{IsUpdate: true})
+	c.Assert(err, IsNil)
+	err = s.tk.Se.StmtCommit()
+	c.Assert(err, IsNil)
+	err = s.tk.Se.CommitTxn(ctx)
+
+	s.tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 2 1"))
+
+	// Test for _tidb_rowid
+	var re *testkit.Result
+	s.mustExec(c, "create table t2 (a int);")
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		// allow write _tidb_rowid first
+		s.mustExec(c, "set @@tidb_opt_write_row_id=1")
+		s.mustExec(c, "begin")
+		s.mustExec(c, "insert into t2 (a,_tidb_rowid) values (1,2);")
+		re = s.tk.MustQuery(" select a,_tidb_rowid from t2;")
+		s.mustExec(c, "commit")
+
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	go backgroundExec(s.store, "alter table t2 add column b int not null default 3", done)
+	err = <-done
+	c.Assert(err, IsNil)
+	re.Check(testkit.Rows("1 2"))
+	s.tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
 }
