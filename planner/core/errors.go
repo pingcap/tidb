@@ -52,6 +52,8 @@ const (
 	codeWrongValueCountOnRow         = mysql.ErrWrongValueCountOnRow
 	codeTablenameNotAllowedHere      = mysql.ErrTablenameNotAllowedHere
 	codePrivilegeCheckFail           = mysql.ErrUnknown
+	codeWindowInvalidWindowFuncUse      = mysql.ErrWindowInvalidWindowFuncUse
+	codeWindowInvalidWindowFuncAliasUse = mysql.ErrWindowInvalidWindowFuncAliasUse
 )
 
 // error definitions.
@@ -90,6 +92,8 @@ var (
 	ErrWrongValueCountOnRow         = terror.ClassOptimizer.New(mysql.ErrWrongValueCountOnRow, mysql.MySQLErrName[mysql.ErrWrongValueCountOnRow])
 	ErrViewInvalid                  = terror.ClassOptimizer.New(mysql.ErrViewInvalid, mysql.MySQLErrName[mysql.ErrViewInvalid])
 	ErrPrivilegeCheckFail           = terror.ClassOptimizer.New(codePrivilegeCheckFail, "privilege check fail")
+	ErrWindowInvalidWindowFuncUse      = terror.ClassOptimizer.New(codeWindowInvalidWindowFuncUse, mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncUse])
+	ErrWindowInvalidWindowFuncAliasUse = terror.ClassOptimizer.New(codeWindowInvalidWindowFuncAliasUse, mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncAliasUse])
 )
 
 func init() {
@@ -117,6 +121,9 @@ func init() {
 		codeNonUniqTable:                 mysql.ErrNonuniqTable,
 		codeWrongNumberOfColumnsInSelect: mysql.ErrWrongNumberOfColumnsInSelect,
 		codeWrongValueCountOnRow:         mysql.ErrWrongValueCountOnRow,
+
+		codeWindowInvalidWindowFuncUse:      mysql.ErrWindowInvalidWindowFuncUse,
+		codeWindowInvalidWindowFuncAliasUse: mysql.ErrWindowInvalidWindowFuncAliasUse,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }
