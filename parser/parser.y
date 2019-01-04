@@ -482,6 +482,7 @@ import (
 	tidbHJ		"TIDB_HJ"
 	tidbSMJ		"TIDB_SMJ"
 	tidbINLJ	"TIDB_INLJ"
+	restore		"RESTORE"
 
 	builtinAddDate
 	builtinBitAnd
@@ -2995,7 +2996,7 @@ UnReservedKeyword:
 
 
 TiDBKeyword:
-"ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ" | "RESTORE"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
@@ -5761,6 +5762,13 @@ AdminStmt:
 			Tp: ast.AdminRecoverIndex,
 			Tables: []*ast.TableName{$4.(*ast.TableName)},
 			Index: string($5),
+		}
+	}
+|	"ADMIN" "RESTORE" "TABLE" "BY" "JOB" NumList
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminRestoreTable,
+			JobIDs: $6.([]int64),
 		}
 	}
 |	"ADMIN" "CLEANUP" "INDEX" TableName Identifier
