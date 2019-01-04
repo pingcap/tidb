@@ -185,20 +185,17 @@ func (e *RestoreTableExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Open interface.
 func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	enableGCAfterRecover, err := admin.CheckGCEnableStatus(e.ctx)
+	gcEnable, err := admin.CheckGCEnableStatus(e.ctx)
 	if err != nil {
 		return err
 	}
-	if enableGCAfterRecover {
+	if gcEnable {
 		err = admin.DisableGCForRecover(e.ctx)
 		if err != nil {
 			return err
 		}
 		defer func() {
-			// if err == nil, should be enable gc in ddl owner.
-			if err != nil {
-				log.Error(admin.EnableGCAfterRecover(e.ctx))
-			}
+			log.Error(admin.EnableGCAfterRecover(e.ctx))
 		}()
 	}
 	txn, err := e.ctx.Txn(true)
@@ -247,7 +244,7 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
 	}
 	// Call DDL RestoreTable
-	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID, enableGCAfterRecover)
+	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID)
 	return errors.Trace(err)
 
 }

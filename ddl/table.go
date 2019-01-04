@@ -163,8 +163,7 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	var autoID, dropJobID int64
-	var enableGCAfterRecover bool
-	if err = job.DecodeArgs(tbInfo, &autoID, &dropJobID, &enableGCAfterRecover); err != nil {
+	if err = job.DecodeArgs(tbInfo, &autoID, &dropJobID); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -191,12 +190,6 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	err = t.CreateTableAndSetAutoID(schemaID, tbInfo, autoID)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-	if enableGCAfterRecover {
-		err = enableGC(w)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 	}
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
