@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -303,6 +304,9 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
+// mockCommitErrorOnce use to make sure gofail mockCommitError only mock commit error once.
+var mockCommitErrorOnce = true
+
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
@@ -314,6 +318,14 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.txn.IsReadOnly() {
 		return nil
 	}
+
+	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
+	// gofail: var mockCommitError bool
+	// if mockCommitError && mockCommitErrorOnce {
+	//	mockCommitErrorOnce = false
+	//	return kv.ErrRetryable
+	// }
+
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
@@ -413,11 +425,16 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	}
 
 	stmt := executor.ExecStmt{
-		Text:      "commit",
+		Text:      "commitTxn",
 		Ctx:       s,
 		StartTime: time.Now(),
 	}
+	var commitDetail *execdetails.CommitDetails
+	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
+	if commitDetail != nil {
+		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
+	}
 	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
 	label := metrics.LblOK
 	if err != nil {
@@ -646,9 +663,13 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 	}
 	// Set snapshot.
 	if snapshot != 0 {
-		se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10))
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
+			return nil, nil, errors.Trace(err)
+		}
 		defer func() {
-			se.sessionVars.SetSystemVar(variable.TiDBSnapshot, "")
+			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+				log.Error(errors.ErrorStack(err))
+			}
 		}()
 	}
 	return execRestrictedSQL(ctx, se, sql)
@@ -745,7 +766,7 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
 	value, err := d.ToString()
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	return value, nil
 }
@@ -878,7 +899,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	connID := s.sessionVars.ConnectionID
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
@@ -1220,9 +1241,15 @@ func loadSystemTZ(se *session) (string, error) {
 		return "", errLoad
 	}
 	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
-	defer rss[0].Close()
+	defer func() {
+		if err := rss[0].Close(); err != nil {
+			log.Error(errors.ErrorStack(err))
+		}
+	}()
 	chk := rss[0].NewChunk()
-	rss[0].Next(context.Background(), chk)
+	if err := rss[0].Next(context.Background(), chk); err != nil {
+		return "", errors.Trace(err)
+	}
 	return chk.GetRow(0).GetString(0), nil
 }
 
@@ -1472,7 +1499,9 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if vars.ClientCapability&mysql.ClientInteractive > 0 {
 		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
-			vars.SetSystemVar(variable.WaitTimeout, varVal)
+			if err := vars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
+				return err
+			}
 		}
 	}
 

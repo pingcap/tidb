@@ -15,12 +15,10 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestShowStatsMeta(c *C) {
+func (s *testSuite1) TestShowStatsMeta(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t1")
@@ -36,7 +34,7 @@ func (s *testSuite) TestShowStatsMeta(c *C) {
 	c.Assert(result.Rows()[0][1], Equals, "t")
 }
 
-func (s *testSuite) TestShowStatsHistograms(c *C) {
+func (s *testSuite1) TestShowStatsHistograms(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -51,7 +49,7 @@ func (s *testSuite) TestShowStatsHistograms(c *C) {
 	c.Assert(result.Rows()[0][3], Equals, "a")
 }
 
-func (s *testSuite) TestShowStatsBuckets(c *C) {
+func (s *testSuite1) TestShowStatsBuckets(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -65,32 +63,7 @@ func (s *testSuite) TestShowStatsBuckets(c *C) {
 	result.Check(testkit.Rows("test t  idx 1 0 1 1 (1, 1) (1, 1)"))
 }
 
-func (s *testSuite) TestShowStatsHealthy(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-	tk.MustExec("create index idx on t(a)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
-	tk.MustExec("insert into t values (1), (2)")
-	do, _ := session.GetDomain(s.store)
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
-	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
-	do.StatsHandle().Update(do.InfoSchema())
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  19"))
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
-	tk.MustExec("delete from t")
-	do.StatsHandle().DumpStatsDeltaToKV(statistics.DumpAll)
-	do.StatsHandle().Update(do.InfoSchema())
-	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
-}
-
-func (s *testSuite) TestShowStatsHasNullValue(c *C) {
+func (s *testSuite1) TestShowStatsHasNullValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, index idx(a))")
@@ -99,7 +72,7 @@ func (s *testSuite) TestShowStatsHasNullValue(c *C) {
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  idx 1 0 1 1 NULL NULL"))
 }
 
-func (s *testSuite) TestShowPartitionStats(c *C) {
+func (s *testSuite1) TestShowPartitionStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")

@@ -46,13 +46,14 @@ import (
 type ShowExec struct {
 	baseExecutor
 
-	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName model.CIStr
-	Table  *ast.TableName  // Used for showing columns.
-	Column *ast.ColumnName // Used for `desc table column`.
-	Flag   int             // Some flag parsed from sql, such as FULL.
-	Full   bool
-	User   *auth.UserIdentity // Used for show grants.
+	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName      model.CIStr
+	Table       *ast.TableName  // Used for showing columns.
+	Column      *ast.ColumnName // Used for `desc table column`.
+	Flag        int             // Some flag parsed from sql, such as FULL.
+	Full        bool
+	User        *auth.UserIdentity // Used for show grants.
+	IfNotExists bool               // Used for `show create database if not exists`
 
 	// GlobalScope is used by show variables
 	GlobalScope bool
@@ -251,6 +252,7 @@ func (e *ShowExec) fetchShowTables() error {
 	}
 	// sort for tables
 	var tableNames []string
+	var tableTypes = make(map[string]string)
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
@@ -258,13 +260,16 @@ func (e *ShowExec) fetchShowTables() error {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
+		if v.Meta().IsView() {
+			tableTypes[v.Meta().Name.O] = "VIEW"
+		} else {
+			tableTypes[v.Meta().Name.O] = "BASE TABLE"
+		}
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
-			// TODO: support "VIEW" later if we have supported view feature.
-			// now, just use "BASE TABLE".
-			e.appendRow([]interface{}{v, "BASE TABLE"})
+			e.appendRow([]interface{}{v, tableTypes[v]})
 		} else {
 			e.appendRow([]interface{}{v})
 		}
@@ -285,7 +290,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                table_name, engine, version, row_format, table_rows,
                avg_row_length, data_length, max_data_length, index_length,
                data_free, auto_increment, create_time, update_time, check_time, 
-               table_collation, IFNULL(check_sum,''), create_options, table_comment
+               table_collation, IFNULL(checksum,''), create_options, table_comment
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
@@ -662,10 +667,24 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	// Currently TiDB treat all the data as utf8mb4 actually.
-	// Make the TiDB's query result consistent with its actual behavior.
-	charsetName, collate := charset.GetDefaultCharsetAndCollate()
-	fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
+	charsetName := tb.Meta().Charset
+	if len(charsetName) == 0 {
+		charsetName = mysql.DefaultCharset
+	}
+	collate := tb.Meta().Collate
+	// Set default collate if collate is not specified.
+	if len(collate) == 0 {
+		collate = getDefaultCollate(charsetName)
+	}
+	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
+	// to make it work on MySQL server which has default collate utf8_general_ci.
+	if len(collate) == 0 {
+		// If we can not find default collate for the given charset,
+		// do not show the collate part.
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", charsetName)
+	} else {
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
+	}
 
 	// Displayed if the compression typed is set.
 	if len(tb.Meta().Compression) != 0 {
@@ -746,9 +765,13 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 	sqlMode := e.ctx.GetSessionVars().SQLMode
 
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "CREATE DATABASE %s", escape(db.Name, sqlMode))
+	var ifNotExists string
+	if e.IfNotExists {
+		ifNotExists = "/*!32312 IF NOT EXISTS*/ "
+	}
+	fmt.Fprintf(&buf, "CREATE DATABASE %s%s", ifNotExists, escape(db.Name, sqlMode))
 	if s := db.Charset; len(s) > 0 {
-		fmt.Fprintf(&buf, " /* !40100 DEFAULT CHARACTER SET %s */", s)
+		fmt.Fprintf(&buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
 	}
 
 	e.appendRow([]interface{}{db.Name.O, buf.String()})
