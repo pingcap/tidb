@@ -109,7 +109,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 }
 
-func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, err := checkTableExist(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
