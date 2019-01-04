@@ -290,7 +290,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                table_name, engine, version, row_format, table_rows,
                avg_row_length, data_length, max_data_length, index_length,
                data_free, auto_increment, create_time, update_time, check_time, 
-               table_collation, IFNULL(check_sum,''), create_options, table_comment
+               table_collation, IFNULL(checksum,''), create_options, table_comment
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
