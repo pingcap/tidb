@@ -179,23 +179,27 @@ CREATE TABLE `tbl_008` (`a` int, `b` int);
 CREATE TABLE `tbl_009` (`a` int, `b` int);
 explain select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
 id	count	task	operator info
-HashAgg_34	72000.00	root	group by:x.b, funcs:sum(x.a)
-└─Union_35	90000.00	root	
-  ├─TableReader_38	10000.00	root	data:TableScan_37
-  │ └─TableScan_37	10000.00	cop	table:tbl_001, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_41	10000.00	root	data:TableScan_40
-  │ └─TableScan_40	10000.00	cop	table:tbl_002, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_44	10000.00	root	data:TableScan_43
-  │ └─TableScan_43	10000.00	cop	table:tbl_003, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_47	10000.00	root	data:TableScan_46
-  │ └─TableScan_46	10000.00	cop	table:tbl_004, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_50	10000.00	root	data:TableScan_49
-  │ └─TableScan_49	10000.00	cop	table:tbl_005, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_53	10000.00	root	data:TableScan_52
-  │ └─TableScan_52	10000.00	cop	table:tbl_006, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_56	10000.00	root	data:TableScan_55
-  │ └─TableScan_55	10000.00	cop	table:tbl_007, range:[-inf,+inf], keep order:false, stats:pseudo
-  ├─TableReader_59	10000.00	root	data:TableScan_58
-  │ └─TableScan_58	10000.00	cop	table:tbl_008, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─TableReader_62	10000.00	root	data:TableScan_61
-    └─TableScan_61	10000.00	cop	table:tbl_009, range:[-inf,+inf], keep order:false, stats:pseudo
+HashAgg_34	72000.00	root	group by:col_1, funcs:sum(col_0)
+└─Projection_63	90000.00	root	cast(x.a), x.b
+  └─Union_35	90000.00	root	
+    ├─TableReader_38	10000.00	root	data:TableScan_37
+    │ └─TableScan_37	10000.00	cop	table:tbl_001, range:[-inf,+inf], keep order:false, stats:pseudo
+    ├─TableReader_41	10000.00	root	data:TableScan_40
+    │ └─TableScan_40	10000.00	cop	table:tbl_002, range:[-inf,+inf], keep order:false, stats:pseudo
+    ├─TableReader_44	10000.00	root	data:TableScan_43
+    │ └─TableScan_43	10000.00	cop	table:tbl_003, range:[-inf,+inf], keep order:false, stats:pseudo
+    ├─TableReader_47	10000.00	root	data:TableScan_46
+    │ └─TableScan_46	10000.00	cop	table:tbl_004, range:[-inf,+inf], keep order:false, stats:pseudo
+    ├─TableReader_50	10000.00	root	data:TableScan_49
+    │ └─TableScan_49	10000.00	cop	table:tbl_005, range:[-inf,+inf], keep order:false, stats:pseudo
+    ├─TableReader_53	10000.00	root	data:TableScan_52
+    │ └─TableScan_52	10000.00	cop	table:tbl_006, range:[-inf,+inf], keep order:false, stats:pseudo
+    ├─TableReader_56	10000.00	root	data:TableScan_55
+    │ └─TableScan_55	10000.00	cop	table:tbl_007, range:[-inf,+inf], keep order:false, stats:pseudo
+    ├─TableReader_59	10000.00	root	data:TableScan_58
+    │ └─TableScan_58	10000.00	cop	table:tbl_008, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableReader_62	10000.00	root	data:TableScan_61
+      └─TableScan_61	10000.00	cop	table:tbl_009, range:[-inf,+inf], keep order:false, stats:pseudo
+
+
+
