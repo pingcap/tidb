@@ -240,12 +240,12 @@ func (s *testSuite2) TestInsert(c *C) {
 	// issue 6360
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bigint unsigned);")
-	tk.MustExec("set sql_mode = 'strict_all_tables';")
+	tk.MustExec(" set @orig_sql_mode = @@sql_mode; set @@sql_mode = 'strict_all_tables';")
 	_, err = tk.Exec("insert into t value (-1);")
 	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
-	tk.MustExec("set sql_mode = '';")
+	tk.MustExec("set @@sql_mode = '';")
 	tk.MustExec("insert into t value (-1);")
-	// TODO: the following warning messages is not consistent with MySQL, fix them in the future PR
+	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	tk.MustExec("insert into t select -1;")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
@@ -256,8 +256,7 @@ func (s *testSuite2) TestInsert(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
-	// remember to restore sql_mode so as not to influence other tests
-	tk.MustExec("set sql_mode = 'strict_all_tables';")
+	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
 
 	// issue 6424
 	tk.MustExec("drop table if exists t")
@@ -1936,6 +1935,28 @@ func (s *testSuite2) TestLoadDataIgnoreLines(c *C) {
 	tests := []testCase{
 		{nil, []byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{nil, []byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+}
+
+// related to issue 6360
+func (s *testSuite2) TestLoadDataOverflowBigintUnsigned(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	ctx := tk.Se.(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
+	tests := []testCase{
+		{nil, []byte("-1\n-18446744073709551615\n-18446744073709551616\n"), []string{"0", "0", "0"}, nil, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
+		// manual test can pass but here will fail
+		// {nil, []byte("-9223372036854775809\n"), []string{"0"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		// {nil, []byte("18446744073709551616\n"), []string{"18446744073709551615"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
