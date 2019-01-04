@@ -15,6 +15,7 @@ package expression
 
 import (
 	"bytes"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"

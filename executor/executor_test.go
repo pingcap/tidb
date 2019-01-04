@@ -85,6 +85,7 @@ var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testBypassSuite{})
+var _ = Suite(&testUpdateSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -2813,9 +2814,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
-	_, err = tb.AddRecord(s.ctx, recordVal1, false)
+	_, err = tb.AddRecord(s.ctx, recordVal1)
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(s.ctx, recordVal2, false)
+	_, err = tb.AddRecord(s.ctx, recordVal2)
 	c.Assert(err, IsNil)
 	txn, err := s.ctx.Txn(true)
 	c.Assert(err, IsNil)
@@ -3433,10 +3434,14 @@ func (s *testSuite2) TearDownSuite(c *C) {
 func (s *testSuite2) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
+	r := tk.MustQuery("show full tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
 	}
 }
 
