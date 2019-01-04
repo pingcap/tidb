@@ -166,7 +166,7 @@ type DDL interface {
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
-	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
+	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
 	SetLease(ctx context.Context, lease time.Duration)

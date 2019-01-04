@@ -154,28 +154,30 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if err != nil {
 			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
-		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
+		// the `affectedRows` is increased when adding new record.
+		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck, true)
+		if err != nil {
+			return false, handleChanged, newHandle, 0, errors.Trace(err)
+		}
+		if onDup {
+			sc.AddAffectedRows(1)
+		}
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
-	}
-	if err != nil {
-		return false, handleChanged, newHandle, 0, errors.Trace(err)
+		if err != nil {
+			return false, false, h, 0, errors.Trace(err)
+		}
+		if onDup {
+			sc.AddAffectedRows(2)
+		} else {
+			// if handleChanged == true, the `affectedRows` is calculated when add new record.
+			if !handleChanged {
+				sc.AddAffectedRows(1)
+			}
+		}
 	}
 
-	tid := t.Meta().ID
-	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, tid, h, nil)
-	if handleChanged {
-		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, newHandle, newData)
-	} else {
-		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
-	}
-
-	if onDup {
-		sc.AddAffectedRows(2)
-	} else {
-		sc.AddAffectedRows(1)
-	}
 	colSize := make(map[int64]int64)
 	for id, col := range t.Cols() {
 		val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
@@ -293,7 +295,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				e.ctx.StmtCommit()
+				if err = e.ctx.StmtCommit(); err != nil {
+					return errors.Trace(err)
+				}
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
@@ -393,21 +397,11 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	return nil
 }
 
-const (
-	// DirtyTableAddRow is the constant for dirty table operation type.
-	DirtyTableAddRow = iota
-	// DirtyTableDeleteRow is the constant for dirty table operation type.
-	DirtyTableDeleteRow
-	// DirtyTableTruncate is the constant for dirty table operation type.
-	DirtyTableTruncate
-)
-
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	colSize := make(map[int64]int64)
 	for id, col := range t.Cols() {
@@ -839,14 +833,15 @@ func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
 	if err := e.checkBatchLimit(); err != nil {
 		return 0, errors.Trace(err)
 	}
-	e.ctx.Txn(true).SetOption(kv.PresumeKeyNotExists, nil)
-	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn(true).DelOption(kv.PresumeKeyNotExists)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !e.ctx.GetSessionVars().ImportingData {
-		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+	txn.SetOption(kv.PresumeKeyNotExists, nil)
+	h, err := e.Table.AddRecord(e.ctx, row, false)
+	txn.DelOption(kv.PresumeKeyNotExists)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 	e.rowCount++
 	return h, nil
@@ -857,9 +852,13 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
 
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	e.rowCount = 0
 	if !sessVars.ImportingData {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	}
 
 	// If `ON DUPLICATE KEY UPDATE` is specified, and no `IGNORE` keyword,
@@ -892,14 +891,11 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 				return nil, errors.Trace(err)
 			}
 			if len(e.OnDuplicate) == 0 && !e.IgnoreErr {
-				e.ctx.Txn(true).SetOption(kv.PresumeKeyNotExists, nil)
+				txn.SetOption(kv.PresumeKeyNotExists, nil)
 			}
 			h, err := e.Table.AddRecord(e.ctx, row, false)
-			e.ctx.Txn(true).DelOption(kv.PresumeKeyNotExists)
+			txn.DelOption(kv.PresumeKeyNotExists)
 			if err == nil {
-				if !sessVars.ImportingData {
-					e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
-				}
 				e.rowCount++
 				continue
 			}
@@ -946,7 +942,11 @@ func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (
 	for _, handle := range handles {
 		batchKeys = append(batchKeys, t.RecordKey(handle))
 	}
-	values, err := kv.BatchGetValues(ctx.Txn(true), batchKeys)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	values, err := kv.BatchGetValues(txn, batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1066,7 +1066,11 @@ func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types
 			batchKeys = append(batchKeys, k.key)
 		}
 	}
-	values, err := kv.BatchGetValues(ctx.Txn(true), batchKeys)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	values, err := kv.BatchGetValues(txn, batchKeys)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1079,14 +1083,20 @@ func (e *InsertExec) checkBatchLimit() error {
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
 	if batchInsert && e.rowCount >= batchSize {
-		e.ctx.StmtCommit()
+		if err := e.ctx.StmtCommit(); err != nil {
+			return errors.Trace(err)
+		}
 		if err := e.ctx.NewTxn(); err != nil {
 			// We should return a special error for batch insert.
 			return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 		}
 		e.rowCount = 0
 		if !sessVars.ImportingData {
-			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
+			txn, err := e.ctx.Txn(true)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 		}
 	}
 	return nil
@@ -1839,7 +1849,6 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
-			e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 			idx++
 			continue
 		}
@@ -1867,7 +1876,6 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 

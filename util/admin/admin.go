@@ -66,6 +66,16 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
+func isJobRollbackable(job *model.Job, id int64) error {
+	switch job.Type {
+	case model.ActionDropColumn:
+		if job.SchemaState != model.StateNone {
+			return ErrCannotCancelDDLJob.GenByArgs(id)
+		}
+	}
+	return nil
+}
+
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
@@ -96,6 +106,11 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
 				continue
 			}
+			errs[i] = isJobRollbackable(job, id)
+			if errs[i] != nil {
+				continue
+			}
+
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
 			err := job.DecodeArgs(job.RawArgs)
@@ -603,6 +618,7 @@ const (
 	codeInvalidColumnState                = 3
 	codeDDLJobNotFound                    = 4
 	codeCancelFinishedJob                 = 5
+	codeCannotCancelDDLJob                = 6
 )
 
 var (
@@ -613,4 +629,6 @@ var (
 	ErrDDLJobNotFound = terror.ClassAdmin.New(codeDDLJobNotFound, "DDL Job:%v not found")
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
 	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(codeCancelFinishedJob, "This job:%v is finished, so can't be cancelled")
+	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
+	ErrCannotCancelDDLJob = terror.ClassAdmin.New(codeCannotCancelDDLJob, "This job:%v is almost finished, can't be cancelled now")
 )

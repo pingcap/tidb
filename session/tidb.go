@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -151,6 +152,36 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, errors.Trace(err)
 }
 
+func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
+	if meetsErr != nil {
+		if !sessVars.InTxn() {
+			log.Info("RollbackTxn for ddl/autocommit error.")
+			terror.Log(se.RollbackTxn(ctx))
+		}
+		return meetsErr
+	}
+
+	if !sessVars.InTxn() {
+		return se.CommitTxn(ctx)
+	}
+
+	return checkStmtLimit(ctx, sctx, se, sessVars)
+}
+
+func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars) error {
+	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
+	// So we limit the statement count in a transaction here.
+	var err error
+	history := GetHistory(sctx)
+	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
+		err1 := se.RollbackTxn(ctx)
+		terror.Log(errors.Trace(err1))
+		return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+			history.Count(), sctx.GetSessionVars().IsAutocommit())
+	}
+	return err
+}
+
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast.RecordSet, error) {
 	span, ctx1 := opentracing.StartSpanFromContext(ctx, "runStmt")
@@ -163,50 +194,26 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast
 	rs, err = s.Exec(ctx)
 	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
-	se.GetSessionVars().TxnCtx.StatementCount++
+	sessVars := se.GetSessionVars()
+	sessVars.TxnCtx.StatementCount++
 	if !s.IsReadOnly() {
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
-		if sctx.Txn(false).Valid() {
-			if err != nil {
-				sctx.StmtRollback()
-			} else {
-				sctx.StmtCommit()
+		if txn, err1 := sctx.Txn(false); err1 == nil {
+			if txn.Valid() {
+				if err != nil {
+					sctx.StmtRollback()
+				} else {
+					err = sctx.StmtCommit()
+				}
 			}
-		}
-	}
-
-	// There are two known cases that the s.txn.fail is not nil:
-	// 1. active transaction fail, can't get start ts for example
-	// 2. transaction too large and StmtCommit fail
-	// On both cases, we can return error in advance.
-	if se.txn.fail != nil {
-		err = se.txn.fail
-		se.txn.cleanup()
-		se.txn.fail = nil
-		return nil, errors.Trace(err)
-	}
-
-	if !se.sessionVars.InTxn() {
-		if err != nil {
-			log.Info("RollbackTxn for ddl/autocommit error.")
-			err1 := se.RollbackTxn(ctx1)
-			terror.Log(errors.Trace(err1))
 		} else {
-			err = se.CommitTxn(ctx1)
-		}
-	} else {
-		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
-		// So we limit the statement count in a transaction here.
-		history := GetHistory(sctx)
-		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
-			err1 := se.RollbackTxn(ctx1)
-			terror.Log(errors.Trace(err1))
-			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-				history.Count(), sctx.GetSessionVars().IsAutocommit())
+			log.Error(err1)
 		}
 	}
+
+	err = finishStmt(ctx1, sctx, se, sessVars, err)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
