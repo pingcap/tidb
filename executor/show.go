@@ -47,13 +47,14 @@ import (
 type ShowExec struct {
 	baseExecutor
 
-	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName model.CIStr
-	Table  *ast.TableName  // Used for showing columns.
-	Column *ast.ColumnName // Used for `desc table column`.
-	Flag   int             // Some flag parsed from sql, such as FULL.
-	Full   bool
-	User   *auth.UserIdentity // Used for show grants.
+	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName      model.CIStr
+	Table       *ast.TableName  // Used for showing columns.
+	Column      *ast.ColumnName // Used for `desc table column`.
+	Flag        int             // Some flag parsed from sql, such as FULL.
+	Full        bool
+	User        *auth.UserIdentity // Used for show grants.
+	IfNotExists bool               // Used for `show create database if not exists`
 
 	// GlobalScope is used by show variables
 	GlobalScope bool
@@ -290,7 +291,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
                table_name, engine, version, row_format, table_rows,
                avg_row_length, data_length, max_data_length, index_length,
                data_free, auto_increment, create_time, update_time, check_time, 
-               table_collation, IFNULL(check_sum,''), create_options, table_comment
+               table_collation, IFNULL(checksum,''), create_options, table_comment
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
 
@@ -779,9 +780,13 @@ func (e *ShowExec) fetchShowCreateDatabase() error {
 	sqlMode := e.ctx.GetSessionVars().SQLMode
 
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "CREATE DATABASE %s", escape(db.Name, sqlMode))
+	var ifNotExists string
+	if e.IfNotExists {
+		ifNotExists = "/*!32312 IF NOT EXISTS*/ "
+	}
+	fmt.Fprintf(&buf, "CREATE DATABASE %s%s", ifNotExists, escape(db.Name, sqlMode))
 	if s := db.Charset; len(s) > 0 {
-		fmt.Fprintf(&buf, " /* !40100 DEFAULT CHARACTER SET %s */", s)
+		fmt.Fprintf(&buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
 	}
 
 	e.appendRow([]interface{}{db.Name.O, buf.String()})

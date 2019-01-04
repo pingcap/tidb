@@ -328,3 +328,16 @@ func (p *LogicalMaxOneRow) DeriveStats(childStats []*property.StatsInfo) (*prope
 	p.stats = getSingletonStats(p.Schema().Len())
 	return p.stats, nil
 }
+
+// DeriveStats implement LogicalPlan DeriveStats interface.
+func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error) {
+	childProfile := childStats[0]
+	childLen := len(childProfile.Cardinality)
+	p.stats = &property.StatsInfo{
+		RowCount:    childProfile.RowCount,
+		Cardinality: make([]float64, childLen+1),
+	}
+	copy(p.stats.Cardinality, childProfile.Cardinality)
+	p.stats.Cardinality[childLen] = childProfile.RowCount
+	return p.stats, nil
+}
