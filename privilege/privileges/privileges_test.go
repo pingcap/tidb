@@ -326,6 +326,21 @@ func (s *testPrivilegeSuite) TestUseDb(c *C) {
 
 }
 
+func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER setglobal_a@localhost`)
+	mustExec(c, se, `CREATE USER setglobal_b@localhost`)
+	mustExec(c, se, `GRANT SUPER ON *.* to setglobal_a@localhost`)
+	mustExec(c, se, `FLUSH PRIVILEGES`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "setglobal_a", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `set global innodb_commit_concurrency=16`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "setglobal_b", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `set global innodb_commit_concurrency=16`)
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
