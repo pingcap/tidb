@@ -1034,7 +1034,9 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		}
 	}
 
-	setDefaultTableCharsetAndCollation(tbInfo)
+	if err := setDefaultTableCharsetAndCollation(tbInfo); err != nil {
+		log.Error(errors.ErrorStack(err))
+	}
 	return nil
 }
 
