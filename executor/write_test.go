@@ -2336,7 +2336,7 @@ func (s *testSuite2) TestRebaseIfNeeded(c *C) {
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
-	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
+	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2))
 	c.Assert(err, IsNil)
 	txn, err := s.ctx.Txn(true)
 	c.Assert(err, IsNil)

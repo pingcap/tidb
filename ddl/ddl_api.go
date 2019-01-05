@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -1495,18 +1494,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col.OriginDefaultValue = col.GetDefaultValue()
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		zeroVal := table.GetZeroValue(col.ToInfo())
-		col.OriginDefaultValue, err = zeroVal.ToString()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
-		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
-		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -2218,14 +2208,43 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
-	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	if err != nil || tb.Meta().IsView() {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
 		Type:       model.ActionDropTable,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// DropView will proceed even if some view in the list does not exists.
+func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
+	is := d.GetInformationSchema(ctx)
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
+	}
+
+	tb, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
+	}
+
+	if !tb.Meta().IsView() {
+		return ErrTableIsNotView.GenWithStackByArgs(ti.Schema, ti.Name)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionDropView,
 		BinlogInfo: &model.HistoryInfo{},
 	}
 

@@ -1354,130 +1354,130 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", ""},
+				{mysql.InsertPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", ""},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t", ""},
+				{mysql.CreatePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t1 like t",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t1", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.CreatePriv, "test", "t1", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "", ""},
+				{mysql.CreatePriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "", ""},
+				{mysql.DropPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: `create user 'test'@'%' identified by '123456'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.CreateUserPriv, "", "", "", nil},
 			},
 		},
 		{
 			sql: `drop user 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.CreateUserPriv, "", "", "", nil},
 			},
 		},
 		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", ""},
-				{mysql.InsertPriv, "test", "", ""},
-				{mysql.UpdatePriv, "test", "", ""},
-				{mysql.DeletePriv, "test", "", ""},
-				{mysql.CreatePriv, "test", "", ""},
-				{mysql.DropPriv, "test", "", ""},
-				{mysql.GrantPriv, "test", "", ""},
-				{mysql.AlterPriv, "test", "", ""},
-				{mysql.ExecutePriv, "test", "", ""},
-				{mysql.IndexPriv, "test", "", ""},
+				{mysql.SelectPriv, "test", "", "", nil},
+				{mysql.InsertPriv, "test", "", "", nil},
+				{mysql.UpdatePriv, "test", "", "", nil},
+				{mysql.DeletePriv, "test", "", "", nil},
+				{mysql.CreatePriv, "test", "", "", nil},
+				{mysql.DropPriv, "test", "", "", nil},
+				{mysql.GrantPriv, "test", "", "", nil},
+				{mysql.AlterPriv, "test", "", "", nil},
+				{mysql.ExecutePriv, "test", "", "", nil},
+				{mysql.IndexPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", ""},
-				{mysql.GrantPriv, "test", "ttt", ""},
+				{mysql.SelectPriv, "test", "ttt", "", nil},
+				{mysql.GrantPriv, "test", "ttt", "", nil},
 			},
 		},
 		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SuperPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", "", nil},
 			},
 		},
 		{
@@ -1487,7 +1487,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", ""},
+				{mysql.AllPrivMask, "test", "ttt", "", nil},
 			},
 		},
 	}
@@ -1895,5 +1895,98 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestWindowFunction(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{
+			sql:    "select a, avg(a) over(partition by a) from t",
+			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(partition by b) from t",
+			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
+			result: "TableReader(Table(t))->Projection->Sort->Window(avg(2_proj_window_3))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
+			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, b as a, avg(a) over(partition by a) from t",
+			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a, b as z, sum(z) over() from t",
+			result: "[planner:1054]Unknown column 'z' in 'field list'",
+		},
+		{
+			sql:    "select a, b as z from t order by (sum(z) over())",
+			result: "TableReader(Table(t))->Window(sum(test.t.z))->Sort->Projection",
+		},
+		{
+			sql:    "select sum(avg(a)) over() from t",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over())",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over(partition by a))",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(avg(a)) over())",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Sort->Projection",
+		},
+		{
+			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
+			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(tt.a))->MaxOneRow->Sel([w])}->Projection",
+		},
+		{
+			sql:    "select avg(a) over() as w from t having w > 1",
+			result: "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
+		},
+		{
+			sql:    "select sum(a) over() as sum_a from t group by sum_a",
+			result: "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
+		},
+	}
+
+	s.Parser.EnableWindowFunc(true)
+	defer func() {
+		s.Parser.EnableWindowFunc(false)
+	}()
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		lp, ok := p.(LogicalPlan)
+		c.Assert(ok, IsTrue)
+		p, err = physicalOptimize(lp)
+		c.Assert(ToString(p), Equals, tt.result, comment)
 	}
 }

@@ -144,7 +144,7 @@ var tablesCols = []columnInfo{
 	{"UPDATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"CHECK_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"TABLE_COLLATION", mysql.TypeVarchar, 32, mysql.NotNullFlag, "utf8_bin", nil},
-	{"CHECK_SUM", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CHECKSUM", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
 }
@@ -870,6 +870,43 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	return autoIncID, nil
 }
 
+func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if !table.IsView() {
+				continue
+			}
+			collation := table.Collate
+			charset := table.Charset
+			if collation == "" {
+				collation = mysql.DefaultCollationName
+			}
+			if charset == "" {
+				charset = mysql.DefaultCharset
+			}
+			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			record := types.MakeDatums(
+				catalogVal,                      // TABLE_CATALOG
+				schema.Name.O,                   // TABLE_SCHEMA
+				table.Name.O,                    // TABLE_NAME
+				table.View.SelectStmt,           // VIEW_DEFINITION
+				table.View.CheckOption.String(), // CHECK_OPTION
+				"NO",                            // IS_UPDATABLE
+				table.View.Definer.String(),     // DEFINER
+				table.View.Security.String(),    // SECURITY_TYPE
+				charset,                         // CHARACTER_SET_CLIENT
+				collation,                       // COLLATION_CONNECTION
+			)
+			rows = append(rows, record)
+		}
+	}
+	return rows, nil
+}
+
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
@@ -892,48 +929,75 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 			}
 
 			createOptions := ""
-			if table.GetPartitionInfo() != nil {
-				createOptions = "partitioned"
-			}
 
 			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
-			autoIncID, err := getAutoIncrementID(ctx, schema, table)
-			if err != nil {
-				return nil, errors.Trace(err)
+			if !table.IsView() {
+				if table.GetPartitionInfo() != nil {
+					createOptions = "partitioned"
+				}
+				autoIncID, err := getAutoIncrementID(ctx, schema, table)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				rowCount := tableRowsMap[table.ID]
+				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
+				avgRowLength := uint64(0)
+				if rowCount != 0 {
+					avgRowLength = dataLength / rowCount
+				}
+				record := types.MakeDatums(
+					catalogVal,    // TABLE_CATALOG
+					schema.Name.O, // TABLE_SCHEMA
+					table.Name.O,  // TABLE_NAME
+					"BASE TABLE",  // TABLE_TYPE
+					"InnoDB",      // ENGINE
+					uint64(10),    // VERSION
+					"Compact",     // ROW_FORMAT
+					rowCount,      // TABLE_ROWS
+					avgRowLength,  // AVG_ROW_LENGTH
+					dataLength,    // DATA_LENGTH
+					uint64(0),     // MAX_DATA_LENGTH
+					indexLength,   // INDEX_LENGTH
+					uint64(0),     // DATA_FREE
+					autoIncID,     // AUTO_INCREMENT
+					createTime,    // CREATE_TIME
+					nil,           // UPDATE_TIME
+					nil,           // CHECK_TIME
+					collation,     // TABLE_COLLATION
+					nil,           // CHECKSUM
+					createOptions, // CREATE_OPTIONS
+					table.Comment, // TABLE_COMMENT
+				)
+				rows = append(rows, record)
+			} else {
+				record := types.MakeDatums(
+					catalogVal,    // TABLE_CATALOG
+					schema.Name.O, // TABLE_SCHEMA
+					table.Name.O,  // TABLE_NAME
+					"VIEW",        // TABLE_TYPE
+					nil,           // ENGINE
+					nil,           // VERSION
+					nil,           // ROW_FORMAT
+					nil,           // TABLE_ROWS
+					nil,           // AVG_ROW_LENGTH
+					nil,           // DATA_LENGTH
+					nil,           // MAX_DATA_LENGTH
+					nil,           // INDEX_LENGTH
+					nil,           // DATA_FREE
+					nil,           // AUTO_INCREMENT
+					createTime,    // CREATE_TIME
+					nil,           // UPDATE_TIME
+					nil,           // CHECK_TIME
+					nil,           // TABLE_COLLATION
+					nil,           // CHECKSUM
+					nil,           // CREATE_OPTIONS
+					"VIEW",        // TABLE_COMMENT
+				)
+				rows = append(rows, record)
 			}
-			rowCount := tableRowsMap[table.ID]
-			dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
-			avgRowLength := uint64(0)
-			if rowCount != 0 {
-				avgRowLength = dataLength / rowCount
-			}
-			record := types.MakeDatums(
-				catalogVal,    // TABLE_CATALOG
-				schema.Name.O, // TABLE_SCHEMA
-				table.Name.O,  // TABLE_NAME
-				"BASE TABLE",  // TABLE_TYPE
-				"InnoDB",      // ENGINE
-				uint64(10),    // VERSION
-				"Compact",     // ROW_FORMAT
-				rowCount,      // TABLE_ROWS
-				avgRowLength,  // AVG_ROW_LENGTH
-				dataLength,    // DATA_LENGTH
-				uint64(0),     // MAX_DATA_LENGTH
-				indexLength,   // INDEX_LENGTH
-				uint64(0),     // DATA_FREE
-				autoIncID,     // AUTO_INCREMENT
-				createTime,    // CREATE_TIME
-				nil,           // UPDATE_TIME
-				nil,           // CHECK_TIME
-				collation,     // TABLE_COLLATION
-				nil,           // CHECKSUM
-				createOptions, // CREATE_OPTIONS
-				table.Comment, // TABLE_COMMENT
-			)
-			rows = append(rows, record)
 		}
 	}
 	return rows, nil
@@ -1398,6 +1462,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableEngines:
 		fullRows = dataForEngines()
 	case tableViews:
+		fullRows, err = dataForViews(ctx, dbs)
 	case tableRoutines:
 	// TODO: Fill the following tables.
 	case tableSchemaPrivileges:
@@ -1498,7 +1563,7 @@ func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
-func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
