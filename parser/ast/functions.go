@@ -725,7 +725,31 @@ type WindowFuncExpr struct {
 
 // Restore implements Node interface.
 func (n *WindowFuncExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord(n.F)
+	ctx.WritePlain("(")
+	for i, v := range n.Args {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		} else if n.Distinct {
+			ctx.WriteKeyWord("DISTINCT ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore WindowFuncExpr.Args[%d]", i)
+		}
+	}
+	ctx.WritePlain(")")
+	if n.FromLast {
+		ctx.WriteKeyWord(" FROM LAST")
+	}
+	if n.IgnoreNull {
+		ctx.WriteKeyWord(" IGNORE NULLS")
+	}
+	ctx.WriteKeyWord(" OVER ")
+	if err := n.Spec.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore WindowFuncExpr.Spec")
+	}
+
+	return nil
 }
 
 // Format formats the window function expression into a Writer.
