@@ -331,6 +331,8 @@ func (e *ShowExec) fetchShowColumns() error {
 
 	cols := tb.Cols()
 	if tb.Meta().IsView() {
+		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
+		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
 		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is)
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(e.DBName, tb.Meta())
 		if err != nil {
