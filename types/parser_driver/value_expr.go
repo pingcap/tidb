@@ -196,7 +196,7 @@ type ParamMarkerExpr struct {
 }
 
 // Restore implements Node interface.
-func (n *ParamMarkerExpr) Restore(ctx *restore.RestoreCtx) error {
+func (n *ParamMarkerExpr) Restore(ctx *fmtsql.RestoreCtx) error {
 	ctx.WritePlain("?")
 	return nil
 }
