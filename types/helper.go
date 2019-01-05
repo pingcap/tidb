@@ -19,7 +19,6 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 // RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
