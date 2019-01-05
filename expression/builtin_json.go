@@ -849,9 +849,15 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 			}
 			pathExprs = append(pathExprs, pathExpr)
 		}
-		obj.Walk(walkFn, pathExprs...)
+		err = obj.Walk(walkFn, pathExprs...)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
 	} else {
-		obj.Walk(walkFn)
+		err = obj.Walk(walkFn)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
 	}
 
 	// return
