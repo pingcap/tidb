@@ -65,7 +65,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// TestLeakCheckCnt is the check count in the pacakge of executor.
+// TestLeakCheckCnt is the check count in the package of executor.
 // In this package CustomParallelSuiteFlag is true, so we need to increase check count.
 const TestLeakCheckCnt = 1000
 
