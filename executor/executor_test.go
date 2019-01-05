@@ -65,7 +65,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// TestLeakCheckCnt is the check count in the pacakge of executor.
+// TestLeakCheckCnt is the check count in the package of executor.
 // In this package CustomParallelSuiteFlag is true, so we need to increase check count.
 const TestLeakCheckCnt = 1000
 
@@ -3434,10 +3434,14 @@ func (s *testSuite2) TearDownSuite(c *C) {
 func (s *testSuite2) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
+	r := tk.MustQuery("show full tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
 	}
 }
 

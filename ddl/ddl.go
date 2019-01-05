@@ -203,6 +203,8 @@ var (
 	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
 	// ErrViewWrongList returns create view must include all columns in the select clause
 	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
+	// ErrTableIsNotView returns for table is not base table.
+	ErrTableIsNotView = terror.ClassDDL.New(codeErrWrongObject, "'%s.%s' is not VIEW")
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -213,6 +215,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
+	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
@@ -648,6 +651,7 @@ const (
 	codeWrongKeyColumn                         = 1167
 	codeBlobKeyWithoutLength                   = 1170
 	codeInvalidOnUpdate                        = 1294
+	codeErrWrongObject                         = terror.ErrCode(mysql.ErrWrongObject)
 	codeViewWrongList                          = 1353
 	codeUnsupportedOnGeneratedColumn           = 3106
 	codeGeneratedColumnNonPrior                = 3107
@@ -727,6 +731,7 @@ func init() {
 		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
 		codeCoalesceOnlyOnHashPartition:            mysql.ErrCoalesceOnlyOnHashPartition,
 		codeUnknownPartition:                       mysql.ErrUnknownPartition,
+		codeErrWrongObject:                         mysql.ErrWrongObject,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
