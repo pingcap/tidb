@@ -98,7 +98,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
 		if oldTbInfoID > 0 && orReplace {
-			err = t.DropTable(schemaID, oldTbInfoID, true)
+			err = t.DropTableOrView(schemaID, oldTbInfoID, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -140,7 +140,7 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTable(job.SchemaID, job.TableID, true); err != nil {
+		if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
 			break
 		}
 		// Finish this job.
@@ -232,7 +232,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	err = t.DropTable(schemaID, tblInfo.ID, true)
+	err = t.DropTableOrView(schemaID, tblInfo.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -362,7 +362,7 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		tblInfo.OldSchemaID = 0
 	}
 
-	err = t.DropTable(oldSchemaID, tblInfo.ID, shouldDelAutoID)
+	err = t.DropTableOrView(oldSchemaID, tblInfo.ID, shouldDelAutoID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

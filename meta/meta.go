@@ -311,10 +311,10 @@ func (m *Meta) DropDatabase(dbID int64) error {
 	return nil
 }
 
-// DropTable drops table in database.
+// DropTableOrView drops table in database.
 // If delAutoID is true, it will delete the auto_increment id key-value of the table.
 // For rename table, we do not need to rename auto_increment id key-value.
-func (m *Meta) DropTable(dbID int64, tblID int64, delAutoID bool) error {
+func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {

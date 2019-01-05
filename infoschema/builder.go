@@ -89,7 +89,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		}
 	}
 	if tableIDIsValid(newTableID) {
-		// All types except DropTable.
+		// All types except DropTableOrView.
 		err := b.applyCreateTable(m, dbInfo, newTableID, alloc)
 		if err != nil {
 			return nil, errors.Trace(err)
