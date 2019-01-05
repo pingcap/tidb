@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/util/restore"
+	"github.com/pingcap/parser/util/fmtsql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 )
@@ -70,7 +70,7 @@ type ValueExpr struct {
 }
 
 // Restore implements Node interface.
-func (n *ValueExpr) Restore(ctx *restore.RestoreCtx) error {
+func (n *ValueExpr) Restore(ctx *fmtsql.RestoreCtx) error {
 	switch n.Kind() {
 	case types.KindNull:
 		ctx.WriteKeyWord("NULL")
