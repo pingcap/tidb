@@ -35,7 +35,7 @@ type testUnitTestSuit struct {
 }
 
 func (s *testUnitTestSuit) SetUpSuite(c *C) {
-	s.ctx = mockContext()
+	s.ctx = MockContext()
 }
 
 func (s *testUnitTestSuit) newTypeWithFlen(typeByte byte, flen int) *types.FieldType {

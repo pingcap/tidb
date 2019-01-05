@@ -60,7 +60,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	isTablesChanged := validator.isRelatedTablesChanged(item.schemaVer, []int64{10})
 	c.Assert(isTablesChanged, IsTrue)
 	valid = validator.Check(item.leaseGrantTS, item.schemaVer, []int64{10})
-	c.Assert(valid, Equals, ResultFail)
+	c.Assert(valid, Equals, ResultUnknown)
 	validator.Restart()
 
 	// Sleep for a long time, check schema is invalid.

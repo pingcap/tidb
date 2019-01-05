@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sort"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var _ Executor = &IndexLookUpJoin{}
@@ -178,9 +178,12 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
 	// so even txn is destroyed later, the dataReaderBuilder could still use the
 	// cached start ts to construct DAG.
-	e.innerCtx.readerBuilder.getStartTS()
+	_, err := e.innerCtx.readerBuilder.getStartTS()
+	if err != nil {
+		return err
+	}
 
-	err := e.children[0].Open(ctx)
+	err = e.children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -535,7 +538,12 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 	dLookupKey := make([]types.Datum, 0, keyLen)
 	for i, keyCol := range iw.outerCtx.keyCols {
 		outerValue := outerRow.GetDatum(keyCol, iw.outerCtx.rowTypes[keyCol])
-
+		// Join-on-condition can be promised to be equal-condition in
+		// IndexNestedLoopJoin, thus the filter will always be false if
+		// outerValue is null, and we don't need to lookup it.
+		if outerValue.IsNull() {
+			return nil, nil
+		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {

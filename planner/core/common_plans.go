@@ -305,13 +305,14 @@ type Deallocate struct {
 type Show struct {
 	baseSchemaProducer
 
-	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName string
-	Table  *ast.TableName  // Used for showing columns.
-	Column *ast.ColumnName // Used for `desc table column`.
-	Flag   int             // Some flag parsed from sql, such as FULL.
-	Full   bool
-	User   *auth.UserIdentity // Used for show grants.
+	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName      string
+	Table       *ast.TableName  // Used for showing columns.
+	Column      *ast.ColumnName // Used for `desc table column`.
+	Flag        int             // Some flag parsed from sql, such as FULL.
+	Full        bool
+	User        *auth.UserIdentity // Used for show grants.
+	IfNotExists bool               // Used for `show create database if not exists`
 
 	Conditions []expression.Expression
 
@@ -521,10 +522,10 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		if taskType == "cop" {
-			row = append(row, "") //TODO: wait collect resp from tikv
-		} else {
+		if runtimeStatsColl.Exists(p.ExplainID()) {
 			row = append(row, runtimeStatsColl.Get(p.ExplainID()).String())
+		} else {
+			row = append(row, "") //TODO: wait collect more executor info from tikv
 		}
 	}
 	e.Rows = append(e.Rows, row)

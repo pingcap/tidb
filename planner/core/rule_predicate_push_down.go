@@ -111,13 +111,6 @@ func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression)
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	simplifyOuterJoin(p, predicates)
-	joinGroup := getCartesianJoinGroup(p)
-	if joinGroup != nil {
-		e := joinReOrderSolver{ctx: p.ctx}
-		e.reorderJoin(joinGroup, predicates)
-		newJoin := e.resultJoin
-		return newJoin.PredicatePushDown(predicates)
-	}
 	leftPlan := p.children[0]
 	rightPlan := p.children[1]
 	var equalCond []*expression.ScalarFunction
@@ -166,10 +159,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
 		tempCond = expression.PropagateConstant(p.ctx, tempCond)
-		// Return table dual when filter is constant false or null.
-		dual := conds2TableDual(p, tempCond)
-		if dual != nil {
-			return ret, dual
+		// Return table dual when filter is constant false or null. Not applicable to AntiSemiJoin.
+		// TODO: For AntiSemiJoin, we can use outer plan to substitute LogicalJoin actually.
+		if p.JoinType != AntiSemiJoin {
+			dual := conds2TableDual(p, tempCond)
+			if dual != nil {
+				return ret, dual
+			}
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(tempCond, leftPlan, rightPlan, true, true)
 		p.LeftConditions = nil
@@ -468,4 +464,11 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	joinConds, predicates = expression.PropConstOverOuterJoin(p.ctx, joinConds, predicates, outerTable.Schema(), innerTable.Schema())
 	p.attachOnConds(joinConds)
 	return predicates
+}
+
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
+func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+	// Window function forbids any condition to push down.
+	p.baseLogicalPlan.PredicatePushDown(nil)
+	return predicates, p
 }

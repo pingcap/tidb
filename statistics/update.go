@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strconv"
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type tableDeltaMap map[int64]variable.TableDelta
@@ -325,11 +325,17 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
+
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	startTS := txn.StartTS()
 	var sql string
 	if delta.Delta < 0 {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", h.mu.ctx.Txn(true).StartTS(), -delta.Delta, delta.Count, id, -delta.Delta)
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 	} else {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.mu.ctx.Txn(true).StartTS(), delta.Delta, delta.Count, id)
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", startTS, delta.Delta, delta.Count, id)
 	}
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {

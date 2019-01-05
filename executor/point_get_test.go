@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestPointGet(c *C) {
+func (s *testSuite1) TestPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
@@ -30,6 +30,7 @@ func (s *testSuite) TestPointGet(c *C) {
 	c.Assert(err, IsNil)
 	fields := result.Fields()
 	c.Assert(fields[0].ColumnAsName.O, Equals, "ident")
+	result.Close()
 
 	tk.MustExec("CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
 	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")

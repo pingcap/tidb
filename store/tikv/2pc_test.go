@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"math"
 	"math/rand"
 	"strings"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 type testCommitterSuite struct {

@@ -14,20 +14,20 @@
 package gcworker
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -42,6 +42,7 @@ type testGCWorkerSuite struct {
 }
 
 var _ = Suite(&testGCWorkerSuite{})
+var _ = SerialSuites(&testGCWorkerSerialSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
@@ -86,6 +87,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare()
 	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 	c.Assert(err, IsNil)
 	c.Assert(lastRun, NotNil)
@@ -144,9 +146,73 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMaxConcurrency)
+
+	// Change GC enable status.
+	s.oracle.AddOffset(time.Minute * 40)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, gcDisableValue)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
+	err = s.gcWorker.saveValueToSysTable(gcEnableKey, gcEnableValue)
+	c.Assert(err, IsNil)
+	ok, _, err = s.gcWorker.prepare()
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
 }
 
-func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
+func (s *testGCWorkerSuite) TestDoGC(c *C) {
+	var err error
+	ctx := context.Background()
+
+	gcSafePointCacheInterval = 1
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
+	c.Assert(err, IsNil)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
+	c.Assert(err, IsNil)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency))
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
+	c.Assert(err, IsNil)
+}
+
+type testGCWorkerSerialSuite struct {
+	store    tikv.Storage
+	oracle   *mockoracle.MockOracle
+	gcWorker *GCWorker
+	dom      *domain.Domain
+}
+
+func (s *testGCWorkerSerialSuite) SetUpTest(c *C) {
+	tikv.NewGCHandlerFunc = NewGCWorker
+	store, err := mockstore.NewMockTikvStore()
+	s.store = store.(tikv.Storage)
+	c.Assert(err, IsNil)
+	s.oracle = &mockoracle.MockOracle{}
+	s.store.SetOracle(s.oracle)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	gcWorker, err := NewGCWorker(s.store, nil)
+	c.Assert(err, IsNil)
+	gcWorker.Start()
+	gcWorker.Close()
+	s.gcWorker = gcWorker.(*GCWorker)
+}
+
+func (s *testGCWorkerSerialSuite) TearDownTest(c *C) {
+	s.dom.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSerialSuite) TestDoGCForOneRegion(c *C) {
 	var successRegions int32
 	var failedRegions int32
 	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
@@ -177,26 +243,4 @@ func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
-}
-
-func (s *testGCWorkerSuite) TestDoGC(c *C) {
-	var err error
-	ctx := context.Background()
-
-	gcSafePointCacheInterval = 1
-
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
-	c.Assert(err, IsNil)
-
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
-	c.Assert(err, IsNil)
-
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency))
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
-	c.Assert(err, IsNil)
 }

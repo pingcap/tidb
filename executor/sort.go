@@ -15,6 +15,7 @@ package executor
 
 import (
 	"container/heap"
+	"context"
 	"sort"
 	"time"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
-	"golang.org/x/net/context"
 )
 
 // SortExec represents sorting executor.

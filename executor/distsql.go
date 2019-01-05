@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"math"
 	"runtime"
 	"sort"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -237,9 +237,13 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
-	e.ctx.StoreQueryFeedback(e.feedback)
 	err := e.result.Close()
 	e.result = nil
+	if e.runtimeStats != nil {
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.plans[0].ExplainID())
+		copStats.SetRowNum(e.feedback.Actual())
+	}
+	e.ctx.StoreQueryFeedback(e.feedback)
 	return errors.Trace(err)
 }
 
@@ -443,15 +447,21 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	e.idxWorkerWg.Add(1)
 	go func() {
 		ctx1, cancel := context.WithCancel(ctx)
-		err := worker.fetchHandles(ctx1, result)
+		count, err := worker.fetchHandles(ctx1, result)
 		if err != nil {
 			e.feedback.Invalidate()
 		}
-		e.ctx.StoreQueryFeedback(e.feedback)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close Select result failed:", errors.ErrorStack(err))
 		}
+		if e.runtimeStats != nil {
+			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.idxPlans[len(e.idxPlans)-1].ExplainID())
+			copStats.SetRowNum(count)
+			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.tblPlans[0].ExplainID())
+			copStats.SetRowNum(count)
+		}
+		e.ctx.StoreQueryFeedback(e.feedback)
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
@@ -521,6 +531,10 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.finished = nil
 	e.memTracker.Detach()
 	e.memTracker = nil
+	if e.runtimeStats != nil {
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.idxPlans[0].ExplainID())
+		copStats.SetRowNum(e.feedback.Actual())
+	}
 	return nil
 }
 
@@ -585,7 +599,7 @@ type indexWorker struct {
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (err error) {
+func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (count int64, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -612,17 +626,18 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			w.resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
-			return err
+			return count, err
 		}
 		if len(handles) == 0 {
-			return nil
+			return count, nil
 		}
+		count += int64(len(handles))
 		task := w.buildTableTask(handles)
 		select {
 		case <-ctx.Done():
-			return nil
+			return count, nil
 		case <-w.finished:
-			return nil
+			return count, nil
 		case w.workCh <- task:
 			w.resultCh <- task
 		}

@@ -14,6 +14,7 @@
 package tikvrpc
 
 import (
+	"context"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"golang.org/x/net/context"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.

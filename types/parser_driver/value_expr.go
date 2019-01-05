@@ -18,6 +18,7 @@ import (
 	"io"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
@@ -65,6 +66,49 @@ type ValueExpr struct {
 	ast.TexprNode
 	types.Datum
 	projectionOffset int
+}
+
+// Restore implements Node interface.
+func (n *ValueExpr) Restore(ctx *ast.RestoreCtx) error {
+	switch n.Kind() {
+	case types.KindNull:
+		ctx.WriteKeyWord("NULL")
+	case types.KindInt64:
+		if n.Type.Flag&mysql.IsBooleanFlag != 0 {
+			if n.GetInt64() > 0 {
+				ctx.WriteKeyWord("TRUE")
+			} else {
+				ctx.WriteKeyWord("FALSE")
+			}
+		} else {
+			ctx.WritePlain(strconv.FormatInt(n.GetInt64(), 10))
+		}
+	case types.KindUint64:
+		ctx.WritePlain(strconv.FormatUint(n.GetUint64(), 10))
+	case types.KindFloat32:
+		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 32))
+	case types.KindFloat64:
+		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
+	case types.KindString, types.KindBytes:
+		ctx.WriteString(n.GetString())
+	case types.KindMysqlDecimal:
+		ctx.WritePlain(n.GetMysqlDecimal().String())
+	case types.KindBinaryLiteral:
+		if n.Type.Flag&mysql.UnsignedFlag != 0 {
+			ctx.WritePlainf("x'%x'", n.GetBytes())
+		} else {
+			ctx.WritePlain(n.GetBinaryLiteral().ToBitLiteralString(true))
+		}
+	case types.KindMysqlDuration, types.KindMysqlEnum,
+		types.KindMysqlBit, types.KindMysqlSet, types.KindMysqlTime,
+		types.KindInterface, types.KindMinNotNull, types.KindMaxValue,
+		types.KindRaw, types.KindMysqlJSON:
+		// TODO implement Restore function
+		return errors.New("Not implemented")
+	default:
+		return errors.New("can't format to string")
+	}
+	return nil
 }
 
 // GetDatumString implements the ast.ValueExpr interface.
@@ -148,6 +192,12 @@ type ParamMarkerExpr struct {
 	ValueExpr
 	Offset int
 	Order  int
+}
+
+// Restore implements Node interface.
+func (n *ParamMarkerExpr) Restore(ctx *ast.RestoreCtx) error {
+	ctx.WritePlain("?")
+	return nil
 }
 
 func newParamMarkerExpr(offset int) ast.ParamMarkerExpr {

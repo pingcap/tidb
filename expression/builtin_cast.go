@@ -26,13 +26,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -115,7 +115,7 @@ type castAsIntFunctionClass struct {
 
 func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), ctx.Value(inUnionCastContext) != nil)
 	bf.tp = c.tp
@@ -161,7 +161,7 @@ type castAsRealFunctionClass struct {
 
 func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), ctx.Value(inUnionCastContext) != nil)
 	bf.tp = c.tp
@@ -212,7 +212,7 @@ type castAsDecimalFunctionClass struct {
 
 func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), ctx.Value(inUnionCastContext) != nil)
 	bf.tp = c.tp
@@ -263,7 +263,7 @@ type castAsStringFunctionClass struct {
 
 func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
@@ -309,7 +309,7 @@ type castAsTimeFunctionClass struct {
 
 func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
@@ -350,7 +350,7 @@ type castAsDurationFunctionClass struct {
 
 func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
@@ -391,7 +391,7 @@ type castAsJSONFunctionClass struct {
 
 func (c *castAsJSONFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
@@ -456,7 +456,7 @@ func (b *builtinCastIntAsRealSig) Clone() builtinFunc {
 func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	if !mysql.HasUnsignedFlag(b.tp.Flag) {
 		res = float64(val)
@@ -467,7 +467,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		res = float64(uVal)
 	}
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastIntAsDecimalSig struct {
@@ -483,7 +483,7 @@ func (b *builtinCastIntAsDecimalSig) Clone() builtinFunc {
 func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = types.NewDecFromInt(val)
@@ -493,12 +493,12 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 		var uVal uint64
 		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
-			return res, false, errors.Trace(err)
+			return res, false, err
 		}
 		res = types.NewDecFromUint(uVal)
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
-	return res, isNull, errors.Trace(err)
+	return res, isNull, err
 }
 
 type builtinCastIntAsStringSig struct {
@@ -514,7 +514,7 @@ func (b *builtinCastIntAsStringSig) Clone() builtinFunc {
 func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = strconv.FormatInt(val, 10)
@@ -522,12 +522,15 @@ func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNul
 		var uVal uint64
 		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
-			return res, false, errors.Trace(err)
+			return res, false, err
 		}
 		res = strconv.FormatUint(uVal, 10)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastIntAsTimeSig struct {
@@ -543,11 +546,11 @@ func (b *builtinCastIntAsTimeSig) Clone() builtinFunc {
 func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res, err = types.ParseTimeFromNum(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return res, true, errors.Trace(err)
+		return res, true, err
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -569,16 +572,16 @@ func (b *builtinCastIntAsDurationSig) Clone() builtinFunc {
 func (b *builtinCastIntAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	dur, err := types.NumberToDuration(val, b.tp.Decimal)
 	if err != nil {
 		if types.ErrOverflow.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
 		}
-		return res, true, errors.Trace(err)
+		return res, true, err
 	}
-	return dur, false, errors.Trace(err)
+	return dur, false, err
 }
 
 type builtinCastIntAsJSONSig struct {
@@ -594,7 +597,7 @@ func (b *builtinCastIntAsJSONSig) Clone() builtinFunc {
 func (b *builtinCastIntAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	if mysql.HasIsBooleanFlag(b.args[0].GetType().Flag) {
 		res = json.CreateBinary(val != 0)
@@ -619,7 +622,7 @@ func (b *builtinCastRealAsJSONSig) Clone() builtinFunc {
 func (b *builtinCastRealAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.
-	return json.CreateBinary(val), isNull, errors.Trace(err)
+	return json.CreateBinary(val), isNull, err
 }
 
 type builtinCastDecimalAsJSONSig struct {
@@ -635,14 +638,14 @@ func (b *builtinCastDecimalAsJSONSig) Clone() builtinFunc {
 func (b *builtinCastDecimalAsJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return json.BinaryJSON{}, true, errors.Trace(err)
+		return json.BinaryJSON{}, true, err
 	}
 	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.
 	f64, err := val.ToFloat64()
 	if err != nil {
-		return json.BinaryJSON{}, true, errors.Trace(err)
+		return json.BinaryJSON{}, true, err
 	}
-	return json.CreateBinary(f64), isNull, errors.Trace(err)
+	return json.CreateBinary(f64), isNull, err
 }
 
 type builtinCastStringAsJSONSig struct {
@@ -658,14 +661,14 @@ func (b *builtinCastStringAsJSONSig) Clone() builtinFunc {
 func (b *builtinCastStringAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	if mysql.HasParseToJSONFlag(b.tp.Flag) {
 		res, err = json.ParseBinaryFromString(val)
 	} else {
 		res = json.CreateBinary(val)
 	}
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDurationAsJSONSig struct {
@@ -681,7 +684,7 @@ func (b *builtinCastDurationAsJSONSig) Clone() builtinFunc {
 func (b *builtinCastDurationAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	val.Fsp = types.MaxFsp
 	return json.CreateBinary(val.String()), false, nil
@@ -700,7 +703,7 @@ func (b *builtinCastTimeAsJSONSig) Clone() builtinFunc {
 func (b *builtinCastTimeAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	if val.Type == mysql.TypeDatetime || val.Type == mysql.TypeTimestamp {
 		val.Fsp = types.MaxFsp
@@ -739,7 +742,7 @@ func (b *builtinCastRealAsIntSig) Clone() builtinFunc {
 func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	if !mysql.HasUnsignedFlag(b.tp.Flag) {
 		res, err = types.ConvertFloatToInt(val, types.SignedLowerBound[mysql.TypeLonglong], types.SignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
@@ -750,7 +753,7 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		uintVal, err = types.ConvertFloatToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
 		res = int64(uintVal)
 	}
-	return res, isNull, errors.Trace(err)
+	return res, isNull, err
 }
 
 type builtinCastRealAsDecimalSig struct {
@@ -766,17 +769,17 @@ func (b *builtinCastRealAsDecimalSig) Clone() builtinFunc {
 func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res = new(types.MyDecimal)
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
 		if err != nil {
-			return res, false, errors.Trace(err)
+			return res, false, err
 		}
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastRealAsStringSig struct {
@@ -792,10 +795,13 @@ func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
 func (b *builtinCastRealAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), b.tp, b.ctx.GetSessionVars().StmtCtx)
-	return res, isNull, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastRealAsTimeSig struct {
@@ -811,12 +817,12 @@ func (b *builtinCastRealAsTimeSig) Clone() builtinFunc {
 func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
-		return types.Time{}, true, errors.Trace(err)
+		return types.Time{}, true, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err := types.ParseTime(sc, strconv.FormatFloat(val, 'f', -1, 64), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return types.Time{}, true, errors.Trace(err)
+		return types.Time{}, true, err
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -838,10 +844,10 @@ func (b *builtinCastRealAsDurationSig) Clone() builtinFunc {
 func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(val, 'f', -1, 64), b.tp.Decimal)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDecimalAsDecimalSig struct {
@@ -857,7 +863,7 @@ func (b *builtinCastDecimalAsDecimalSig) Clone() builtinFunc {
 func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	evalDecimal, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res = &types.MyDecimal{}
 	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && evalDecimal.IsNegative()) {
@@ -865,7 +871,7 @@ func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row chunk.Row) (res *types.
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDecimalAsIntSig struct {
@@ -881,14 +887,14 @@ func (b *builtinCastDecimalAsIntSig) Clone() builtinFunc {
 func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 
 	// Round is needed for both unsigned and signed.
 	var to types.MyDecimal
 	err = val.Round(&to, 0, types.ModeHalfEven)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, err
 	}
 
 	if !mysql.HasUnsignedFlag(b.tp.Flag) {
@@ -906,7 +912,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull b
 		err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
 	}
 
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDecimalAsStringSig struct {
@@ -922,11 +928,14 @@ func (b *builtinCastDecimalAsStringSig) Clone() builtinFunc {
 func (b *builtinCastDecimalAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, sc)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, sc, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastDecimalAsRealSig struct {
@@ -942,14 +951,14 @@ func (b *builtinCastDecimalAsRealSig) Clone() builtinFunc {
 func (b *builtinCastDecimalAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && val.IsNegative() {
 		res = 0
 	} else {
 		res, err = val.ToFloat64()
 	}
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDecimalAsTimeSig struct {
@@ -965,18 +974,18 @@ func (b *builtinCastDecimalAsTimeSig) Clone() builtinFunc {
 func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDecimalAsDurationSig struct {
@@ -992,17 +1001,17 @@ func (b *builtinCastDecimalAsDurationSig) Clone() builtinFunc {
 func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
 		if res == types.ZeroDuration {
-			return res, true, errors.Trace(err)
+			return res, true, err
 		}
 	}
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastStringAsStringSig struct {
@@ -1018,11 +1027,14 @@ func (b *builtinCastStringAsStringSig) Clone() builtinFunc {
 func (b *builtinCastStringAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastStringAsIntSig struct {
@@ -1065,7 +1077,7 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	}
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 
 	val = strings.TrimSpace(val)
@@ -1094,7 +1106,7 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	}
 
 	res, err = b.handleOverflow(res, val, err, isNegative)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastStringAsRealSig struct {
@@ -1113,18 +1125,18 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 	}
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.StrToFloat(sc, val)
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, false, err
 	}
 	if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res < 0 {
 		res = 0
 	}
 	res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastStringAsDecimalSig struct {
@@ -1143,18 +1155,18 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row chunk.Row) (res *types.M
 	}
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res = new(types.MyDecimal)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res.IsNegative()) {
 		err = sc.HandleTruncate(res.FromString([]byte(val)))
 		if err != nil {
-			return res, false, errors.Trace(err)
+			return res, false, err
 		}
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastStringAsTimeSig struct {
@@ -1170,18 +1182,18 @@ func (b *builtinCastStringAsTimeSig) Clone() builtinFunc {
 func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTime(sc, val, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return types.Time{}, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 	}
-	return res, false, errors.Trace(err)
+	return res, false, nil
 }
 
 type builtinCastStringAsDurationSig struct {
@@ -1197,7 +1209,7 @@ func (b *builtinCastStringAsDurationSig) Clone() builtinFunc {
 func (b *builtinCastStringAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
@@ -1205,10 +1217,10 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row chunk.Row) (res types.
 		err = sc.HandleTruncate(err)
 		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
 		if res == types.ZeroDuration {
-			return res, true, errors.Trace(err)
+			return res, true, err
 		}
 	}
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastTimeAsTimeSig struct {
@@ -1224,12 +1236,12 @@ func (b *builtinCastTimeAsTimeSig) Clone() builtinFunc {
 func (b *builtinCastTimeAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if res, err = res.Convert(sc, b.tp.Tp); err != nil {
-		return res, true, errors.Trace(err)
+		return res, true, err
 	}
 	res, err = res.RoundFrac(sc, b.tp.Decimal)
 	if b.tp.Tp == mysql.TypeDate {
@@ -1237,7 +1249,7 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 		res.Time = types.FromDate(res.Time.Year(), res.Time.Month(), res.Time.Day(), 0, 0, 0, 0)
 		res.Type = b.tp.Tp
 	}
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastTimeAsIntSig struct {
@@ -1253,15 +1265,15 @@ func (b *builtinCastTimeAsIntSig) Clone() builtinFunc {
 func (b *builtinCastTimeAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	t, err := val.RoundFrac(sc, types.DefaultFsp)
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	res, err = t.ToNumber().ToInt()
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastTimeAsRealSig struct {
@@ -1277,10 +1289,10 @@ func (b *builtinCastTimeAsRealSig) Clone() builtinFunc {
 func (b *builtinCastTimeAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res, err = val.ToNumber().ToFloat64()
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastTimeAsDecimalSig struct {
@@ -1296,11 +1308,11 @@ func (b *builtinCastTimeAsDecimalSig) Clone() builtinFunc {
 func (b *builtinCastTimeAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(), b.tp, sc)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastTimeAsStringSig struct {
@@ -1316,11 +1328,14 @@ func (b *builtinCastTimeAsStringSig) Clone() builtinFunc {
 func (b *builtinCastTimeAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastTimeAsDurationSig struct {
@@ -1336,14 +1351,14 @@ func (b *builtinCastTimeAsDurationSig) Clone() builtinFunc {
 func (b *builtinCastTimeAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res, err = val.ConvertToDuration()
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	res, err = res.RoundFrac(b.tp.Decimal)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDurationAsDurationSig struct {
@@ -1359,10 +1374,10 @@ func (b *builtinCastDurationAsDurationSig) Clone() builtinFunc {
 func (b *builtinCastDurationAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res, err = res.RoundFrac(b.tp.Decimal)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDurationAsIntSig struct {
@@ -1378,14 +1393,14 @@ func (b *builtinCastDurationAsIntSig) Clone() builtinFunc {
 func (b *builtinCastDurationAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	dur, err := val.RoundFrac(types.DefaultFsp)
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	res, err = dur.ToNumber().ToInt()
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDurationAsRealSig struct {
@@ -1401,10 +1416,10 @@ func (b *builtinCastDurationAsRealSig) Clone() builtinFunc {
 func (b *builtinCastDurationAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	res, err = val.ToNumber().ToFloat64()
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDurationAsDecimalSig struct {
@@ -1420,11 +1435,11 @@ func (b *builtinCastDurationAsDecimalSig) Clone() builtinFunc {
 func (b *builtinCastDurationAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(), b.tp, sc)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastDurationAsStringSig struct {
@@ -1440,11 +1455,33 @@ func (b *builtinCastDurationAsStringSig) Clone() builtinFunc {
 func (b *builtinCastDurationAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
+}
+
+func padZeroForBinaryType(s string, tp *types.FieldType, ctx sessionctx.Context) (string, bool, error) {
+	flen := tp.Flen
+	if tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) && len(s) < flen {
+		sc := ctx.GetSessionVars().StmtCtx
+		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			return "", false, err
+		}
+		if uint64(flen) > maxAllowedPacket {
+			sc.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", maxAllowedPacket))
+			return "", true, nil
+		}
+		padding := make([]byte, flen-len(s))
+		s = string(append([]byte(s), padding...))
+	}
+	return s, false, nil
 }
 
 type builtinCastDurationAsTimeSig struct {
@@ -1460,15 +1497,15 @@ func (b *builtinCastDurationAsTimeSig) Clone() builtinFunc {
 func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = val.ConvertToTime(sc, b.tp.Tp)
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	res, err = res.RoundFrac(sc, b.tp.Decimal)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastJSONAsJSONSig struct {
@@ -1498,7 +1535,7 @@ func (b *builtinCastJSONAsIntSig) Clone() builtinFunc {
 func (b *builtinCastJSONAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ConvertJSONToInt(sc, val, mysql.HasUnsignedFlag(b.tp.Flag))
@@ -1518,7 +1555,7 @@ func (b *builtinCastJSONAsRealSig) Clone() builtinFunc {
 func (b *builtinCastJSONAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ConvertJSONToFloat(sc, val)
@@ -1538,15 +1575,15 @@ func (b *builtinCastJSONAsDecimalSig) Clone() builtinFunc {
 func (b *builtinCastJSONAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ConvertJSONToDecimal(sc, val)
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, sc)
-	return res, false, errors.Trace(err)
+	return res, false, err
 }
 
 type builtinCastJSONAsStringSig struct {
@@ -1562,7 +1599,7 @@ func (b *builtinCastJSONAsStringSig) Clone() builtinFunc {
 func (b *builtinCastJSONAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	return val.String(), false, nil
 }
@@ -1580,16 +1617,16 @@ func (b *builtinCastJSONAsTimeSig) Clone() builtinFunc {
 func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	s, err := val.Unquote()
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTime(sc, s, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
@@ -1611,11 +1648,11 @@ func (b *builtinCastJSONAsDurationSig) Clone() builtinFunc {
 func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	s, err := val.Unquote()
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
@@ -1668,7 +1705,7 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
-	terror.Log(errors.Trace(err))
+	terror.Log(err)
 	res = &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
