@@ -194,25 +194,3 @@ func strToInt(str string) (int64, error) {
 	}
 	return int64(r), err
 }
-
-// shouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
-// This is the case for insert, update, alter table and load data infile statements, when not in strict SQL mode.
-// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-func shouldClipToZero(sc *stmtctx.StatementContext) bool {
-	// Currently altering column of integer to unsigned integer is not supported.
-	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InUpdateOrDeleteStmt || sc.InLoadDataStmt
-}
-
-// strToUintIgnoreError indicates whether we should ignore the error when
-// converting string to uint
-func strToUintIgnoreError(sc *stmtctx.StatementContext) bool {
-	if sc.InInsertStmt && sc.TruncateAsWarning {
-		return true
-	}
-	if sc.InLoadDataStmt {
-		return true
-	}
-
-	return false
-}

@@ -380,3 +380,24 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	sc.mu.Unlock()
 	return details
 }
+
+// ShouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
+// This is the case for `insert`, `update`, `alter table` and `load data infile` statements, when not in strict SQL mode.
+// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+func (sc *StatementContext) ShouldClipToZero() bool {
+	// TODO: Currently altering column of integer to unsigned integer is not supported.
+	// If it is supported one day, that case should be added here.
+	return sc.InInsertStmt || sc.InUpdateOrDeleteStmt || sc.InLoadDataStmt
+}
+
+// StrToUintIgnoreError indicates whether we should ignore the error when
+// converting string to uint overflows
+func (sc *StatementContext) StrToUintIgnoreError() bool {
+	if sc.InInsertStmt && sc.TruncateAsWarning {
+		return true
+	}
+	if sc.InLoadDataStmt {
+		return true
+	}
+	return false
+}

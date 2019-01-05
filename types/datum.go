@@ -872,11 +872,11 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	case KindFloat32, KindFloat64:
 		val, err = ConvertFloatToUint(sc, d.GetFloat64(), upperBound, tp)
 	case KindString, KindBytes:
-		ival, err1 := StrToUint(sc, d.GetString())
-		if err1 != nil && !strToUintIgnoreError(sc) {
+		uval, err1 := StrToUint(sc, d.GetString())
+		if err1 != nil && !sc.StrToUintIgnoreError() {
 			return ret, errors.Trace(err1)
 		}
-		val, err = ConvertUintToUint(ival, upperBound, tp)
+		val, err = ConvertUintToUint(uval, upperBound, tp)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
