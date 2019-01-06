@@ -123,11 +123,17 @@ func (s *Scanner) stmtText() string {
 // Scanner satisfies yyLexer interface which need this function.
 func (s *Scanner) Errorf(format string, a ...interface{}) {
 	str := fmt.Sprintf(format, a...)
-	val := s.r.s[s.r.pos().Offset:]
+	col := s.r.p.Col
+	startPos := s.stmtStartPos
+	if s.r.s[startPos] == '\n' {
+		startPos++
+		col--
+	}
+	val := s.r.s[startPos:]
 	if len(val) > 2048 {
 		val = val[:2048]
 	}
-	err := fmt.Errorf("line %d column %d near \"%s\"%s (total length %d)", s.r.p.Line, s.r.p.Col, val, str, len(s.r.s))
+	err := fmt.Errorf("line %d column %d near \"%s\"%s (total length %d)", s.r.p.Line, col, val, str, len(s.r.s))
 	s.errs = append(s.errs, err)
 }
 
