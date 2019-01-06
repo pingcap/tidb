@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/util/fmtsql"
+	. "github.com/pingcap/parser/format"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -52,7 +52,7 @@ func (s *testValueExprRestoreSuite) TestValueExprRestore(c *C) {
 	for _, testCase := range testCases {
 		sb.Reset()
 		expr := &ValueExpr{Datum: testCase.datum}
-		err := expr.Restore(fmtsql.NewRestoreCtx(fmtsql.DefaultRestoreFlags, &sb))
+		err := expr.Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
 		c.Assert(err, IsNil)
 		c.Assert(sb.String(), Equals, testCase.expect, Commentf("Datum: %#v", testCase.datum))
 	}
