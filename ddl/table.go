@@ -472,33 +472,8 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 
 // TODO: It may have the issue when two clients concurrently add partitions to a table.
 func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	partInfo := &model.PartitionInfo{}
-	err := job.DecodeArgs(&partInfo)
+	tblInfo, partInfo, err := checkAddTablePartitionNotExists(t, job)
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	err = checkAddPartitionValue(tblInfo, partInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	err = checkPartitionNameUnique(tblInfo, partInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 

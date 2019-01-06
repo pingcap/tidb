@@ -1299,3 +1299,72 @@ func (s *testIntegrationSuite) TestPartitionErrorCode(c *C) {
 	_, err = tk.Exec("alter table t_part coalesce partition 4;")
 	c.Assert(ddl.ErrCoalesceOnlyOnHashPartition.Equal(err), IsTrue)
 }
+
+func (s *testDBSuite) TestCancelAddPartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "create database if not exists test_add_partition")
+	s.mustExec(c, "drop table if exists employees")
+	s.mustExec(c, `create table employees (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`)
+	defer s.mustExec(c, "drop table employees;")
+
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
+	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionAddTablePartition && job.State == model.JobStateNone {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.Background())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	rs, err := s.tk.Exec(`alter table employees add partition (
+    partition p4 values less than (2010)
+	);`)
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(checkErr, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	t := s.testGetTable(c, "employees")
+	for _, def := range t.Meta().Partition.Definitions {
+		c.Assert(strings.EqualFold(def.Name.O, "p4"), IsFalse)
+	}
+	s.mustExec(c, `alter table employees add partition (
+    partition p4 values less than (2010)
+	);`)
+}

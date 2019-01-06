@@ -160,6 +160,21 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	return
 }
 
+func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, _, err := checkAddTablePartitionNotExists(t, job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	// Here add table partition is done in a transaction, if the job is not completed, it can be canceled.
+	if tblInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return ver, nil
+}
+
 func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 	tblInfo, err := checkTableExist(t, job, job.SchemaID)
 	if err != nil {
@@ -196,6 +211,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackAddColumn(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddindex(w, d, t, job)
+	case model.ActionAddTablePartition:
+		ver, err = rollingbackAddTablePartition(t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropIndex:
