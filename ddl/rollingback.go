@@ -163,7 +163,6 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, _, err := checkAddTablePartitionNotExists(t, job)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	// Here add table partition is done in a transaction, if the job is not completed, it can be canceled.
@@ -188,6 +187,20 @@ func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 	}
 	job.State = model.JobStateRunning
 	return nil
+}
+
+func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, _, err := checkTablePartitionExist(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Here drop table partition is done in a transaction, if the job is not completed, it can be canceled.
+	if tblInfo.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return ver, nil
 }
 
 func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
@@ -219,6 +232,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackDropIndex(t, job)
 	case model.ActionDropTable, model.ActionDropView:
 		err = rollingbackDropTableOrView(t, job)
+	case model.ActionDropTablePartition:
+		ver, err = rollingbackDropTablePartition(t, job)
 	case model.ActionDropSchema:
 		err = rollingbackDropSchema(t, job)
 	default:
