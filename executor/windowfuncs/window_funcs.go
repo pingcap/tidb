@@ -14,34 +14,44 @@
 package windowfuncs
 
 import (
-	"errors"
+	"unsafe"
 
 	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+// PartialResult represents data structure to store the partial result for the
+// aggregate functions. Here we use unsafe.Pointer to allow the partial result
+// to be any type.
+type PartialResult unsafe.Pointer
+
 // WindowFunc is the interface for processing window functions.
 type WindowFunc interface {
 	// ProcessOneChunk processes one chunk.
-	ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, dest *chunk.Chunk) ([]chunk.Row, error)
+	ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, dest *chunk.Chunk, pr PartialResult) ([]chunk.Row, error)
 	// ExhaustResult exhausts result to the result chunk.
-	ExhaustResult(sctx sessionctx.Context, rows []chunk.Row, dest *chunk.Chunk) ([]chunk.Row, error)
+	ExhaustResult(sctx sessionctx.Context, rows []chunk.Row, dest *chunk.Chunk, pr PartialResult) ([]chunk.Row, error)
 	// HasRemainingResults checks if there are some remained results to be exhausted.
 	HasRemainingResults() bool
+	// AllocPartialResult allocates a specific data structure to store the partial result.
+	AllocPartialResult() PartialResult
 }
 
 // aggWithoutFrame deals with agg functions with no frame specification.
 type aggWithoutFrame struct {
-	result   aggfuncs.PartialResult
-	agg      aggfuncs.AggFunc
+	agg aggfuncs.AggFunc
 	remained int64
 }
 
+type partialResult4AggWithoutFrame struct {
+	result   aggfuncs.PartialResult
+}
+
 // ProcessOneChunk implements the WindowFunc interface.
-func (wf *aggWithoutFrame) ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, dest *chunk.Chunk) ([]chunk.Row, error) {
-	err := wf.agg.UpdatePartialResult(sctx, rows, wf.result)
+func (wf *aggWithoutFrame) ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, dest *chunk.Chunk, pr PartialResult) ([]chunk.Row, error) {
+	p := (*partialResult4AggWithoutFrame)(pr)
+	err := wf.agg.UpdatePartialResult(sctx, rows, p.result)
 	if err != nil {
 		return nil, err
 	}
@@ -51,35 +61,28 @@ func (wf *aggWithoutFrame) ProcessOneChunk(sctx sessionctx.Context, rows []chunk
 }
 
 // ExhaustResult implements the WindowFunc interface.
-func (wf *aggWithoutFrame) ExhaustResult(sctx sessionctx.Context, rows []chunk.Row, dest *chunk.Chunk) ([]chunk.Row, error) {
+func (wf *aggWithoutFrame) ExhaustResult(sctx sessionctx.Context, rows []chunk.Row, dest *chunk.Chunk, pr PartialResult) ([]chunk.Row, error) {
 	rows = rows[:0]
+	p := (*partialResult4AggWithoutFrame)(pr)
 	for wf.remained > 0 && dest.RemainedRows(dest.NumCols()-1) > 0 {
-		err := wf.agg.AppendFinalResult2Chunk(sctx, wf.result, dest)
+		err := wf.agg.AppendFinalResult2Chunk(sctx, p.result, dest)
 		if err != nil {
 			return rows, err
 		}
 		wf.remained--
 	}
 	if wf.remained == 0 {
-		wf.agg.ResetPartialResult(wf.result)
+		wf.agg.ResetPartialResult(p.result)
 	}
 	return rows, nil
+}
+
+// AllocPartialResult implements the WindowFunc interface.
+func (wf *aggWithoutFrame) AllocPartialResult() PartialResult{
+	return PartialResult(&partialResult4AggWithoutFrame{wf.agg.AllocPartialResult()})
 }
 
 // HasRemainingResults implements the WindowFunc interface.
 func (wf *aggWithoutFrame) HasRemainingResults() bool {
 	return wf.remained > 0
-}
-
-// BuildWindowFunc builds window functions according to the window functions description.
-func BuildWindowFunc(ctx sessionctx.Context, window *aggregation.WindowFuncDesc, ordinal int) (WindowFunc, error) {
-	aggDesc := aggregation.NewAggFuncDesc(ctx, window.Name, window.Args, false)
-	agg := aggfuncs.Build(ctx, aggDesc, ordinal)
-	if agg == nil {
-		return nil, errors.New("window evaluator only support aggregation functions without frame now")
-	}
-	return &aggWithoutFrame{
-		agg:    agg,
-		result: agg.AllocPartialResult(),
-	}, nil
 }

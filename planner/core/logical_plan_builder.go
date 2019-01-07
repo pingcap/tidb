@@ -2586,13 +2586,15 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 
 // buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
 // so after the projection, window functions only needs to deal with columns.
-func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []expression.Expression, error) {
+func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []property.Item, []expression.Expression, error) {
 	b.optFlag |= flagEliminateProjection
 
 	var items []*ast.ByItem
 	spec := expr.Spec
+	lenPartition := 0
 	if spec.PartitionBy != nil {
 		items = append(items, spec.PartitionBy.Items...)
+		lenPartition = len(spec.PartitionBy.Items)
 	}
 	if spec.OrderBy != nil {
 		items = append(items, spec.OrderBy.Items...)
@@ -2612,7 +2614,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewrite(item.Expr, p, aggMap, true)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		p = np
 		if col, ok := it.(*expression.Column); ok {
@@ -2633,7 +2635,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 	for _, arg := range expr.Args {
 		newArg, np, err := b.rewrite(arg, p, aggMap, true)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		p = np
 		if col, ok := newArg.(*expression.Column); ok {
@@ -2652,11 +2654,11 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 
 	proj.SetSchema(schema)
 	proj.SetChildren(p)
-	return proj, propertyItems, newArgList, nil
+	return proj, propertyItems[:lenPartition], propertyItems[lenPartition:], newArgList, nil
 }
 
 func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
-	p, byItems, args, err := b.buildProjectionForWindow(p, expr, aggMap)
+	p, partitionBy, orderBy, args, err := b.buildProjectionForWindow(p, expr, aggMap)
 	if err != nil {
 		return nil, err
 	}
@@ -2664,14 +2666,10 @@ func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExp
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
 	// TODO: Check if the function is aggregation function after we support more functions.
 	desc.WrapCastForAggArgs(b.ctx)
-	lenPartition := 0
-	if expr.Spec.PartitionBy != nil {
-		lenPartition = len(expr.Spec.PartitionBy.Items)
-	}
 	window := LogicalWindow{
 		WindowFuncDesc: desc,
-		PartitionBy:    byItems[0:lenPartition],
-		OrderBy:        byItems[lenPartition:],
+		PartitionBy:    partitionBy,
+		OrderBy:        orderBy,
 	}.Init(b.ctx)
 	schema := p.Schema().Clone()
 	schema.Append(&expression.Column{

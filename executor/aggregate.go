@@ -923,6 +923,7 @@ func newGroupChecker(stmtCtx *stmtctx.StatementContext, items []expression.Expre
 }
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
+// TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
 func (e *groupChecker) meetNewGroup(row chunk.Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil

@@ -28,14 +28,15 @@ import (
 type WindowExec struct {
 	baseExecutor
 
-	groupChecker *groupChecker
-	inputIter    *chunk.Iterator4Chunk
-	inputRow     chunk.Row
-	groupRows    []chunk.Row
-	childResults []*chunk.Chunk
-	windowFunc   windowfuncs.WindowFunc
-	executed     bool
-	childCols    []*expression.Column
+	groupChecker  *groupChecker
+	inputIter     *chunk.Iterator4Chunk
+	inputRow      chunk.Row
+	groupRows     []chunk.Row
+	childResults  []*chunk.Chunk
+	windowFunc    windowfuncs.WindowFunc
+	partialResult windowfuncs.PartialResult
+	executed      bool
+	childCols     []*expression.Column
 }
 
 // Close implements the Executor Close interface.
@@ -107,7 +108,7 @@ func (e *WindowExec) consumeGroupRows(chk *chunk.Chunk) error {
 	}
 	e.copyChk(chk)
 	var err error
-	e.groupRows, err = e.windowFunc.ProcessOneChunk(e.ctx, e.groupRows, chk)
+	e.groupRows, err = e.windowFunc.ProcessOneChunk(e.ctx, e.groupRows, chk, e.partialResult)
 	return err
 }
 
@@ -144,7 +145,7 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk
 func (e *WindowExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	e.copyChk(chk)
 	var err error
-	e.groupRows, err = e.windowFunc.ExhaustResult(e.ctx, e.groupRows, chk)
+	e.groupRows, err = e.windowFunc.ExhaustResult(e.ctx, e.groupRows, chk, e.partialResult)
 	return err
 }
 

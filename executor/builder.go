@@ -1887,13 +1887,14 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	for _, item := range v.PartitionBy {
 		groupByItems = append(groupByItems, item.Col)
 	}
-	windowFunc, err := windowfuncs.BuildWindowFunc(b.ctx, v.WindowFuncDesc, len(v.Schema().Columns)-1)
+	windowFunc, err := windowfuncs.Build(b.ctx, v.WindowFuncDesc, len(v.Schema().Columns)-1)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 	e := &WindowExec{baseExecutor: base,
 		windowFunc:   windowFunc,
+		partialResult: windowFunc.AllocPartialResult(),
 		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
 		childCols:    v.ChildCols,
 	}
