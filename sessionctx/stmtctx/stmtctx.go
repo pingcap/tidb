@@ -390,9 +390,9 @@ func (sc *StatementContext) ShouldClipToZero() bool {
 	return sc.InInsertStmt || sc.InUpdateOrDeleteStmt || sc.InLoadDataStmt
 }
 
-// StrToUintIgnoreError indicates whether we should ignore the error when
-// converting string to uint overflows
-func (sc *StatementContext) StrToUintIgnoreError() bool {
+// ShouldIgnoreError indicates whether we should ignore the error when type conversion overflows,
+// so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
+func (sc *StatementContext) ShouldIgnoreError() bool {
 	if sc.InInsertStmt && sc.TruncateAsWarning {
 		return true
 	}

@@ -1954,9 +1954,7 @@ func (s *testSuite2) TestLoadDataOverflowBigintUnsigned(c *C) {
 	c.Assert(ld, NotNil)
 	tests := []testCase{
 		{nil, []byte("-1\n-18446744073709551615\n-18446744073709551616\n"), []string{"0", "0", "0"}, nil, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
-		// manual test can pass but here will fail
-		// {nil, []byte("-9223372036854775809\n"), []string{"0"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
-		// {nil, []byte("18446744073709551616\n"), []string{"18446744073709551615"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{nil, []byte("-9223372036854775809\n18446744073709551616\n"), []string{"0", "18446744073709551615"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"

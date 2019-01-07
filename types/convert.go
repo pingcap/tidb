@@ -131,7 +131,7 @@ func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
 	val := RoundFloat(fval)
 	if val < 0 {
-		if sc != nil && sc.ShouldClipToZero() && val < 0 {
+		if sc != nil && sc.ShouldClipToZero() {
 			return 0, overflow(val, tp)
 		}
 		return uint64(int64(val)), overflow(val, tp)
