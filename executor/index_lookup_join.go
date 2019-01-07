@@ -475,6 +475,7 @@ func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types
 	dLookUpKeys := make([][]types.Datum, 0, task.outerResult.NumRows())
 	keyBuf := make([]byte, 0, 64)
 	valBuf := make([]byte, 8)
+	tmpPtr := make([][]byte, 2)
 	for i := 0; i < task.outerResult.NumRows(); i++ {
 		dLookUpKey, err := iw.constructDatumLookupKey(task, i)
 		if err != nil {
@@ -492,15 +493,20 @@ func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types
 		}
 		// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
 		task.encodedLookUpKeys.AppendBytes(0, keyBuf)
-		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 		if !iw.outerCtx.keepOrder {
 			outerRow := task.outerResult.GetRow(i)
 			if iw.hasNullInOuterJoinKey(outerRow) {
 				continue
 			}
+			if  tmpPtr = task.lookupMap.Get(keyBuf, tmpPtr[:0]); len(tmpPtr) == 0 {
+				dLookUpKeys = append(dLookUpKeys, dLookUpKey)
+			}
 			rowPtr := uint32(i)
 			*(*uint32)(unsafe.Pointer(&valBuf[0])) = rowPtr
 			task.lookupMap.Put(keyBuf, valBuf)
+		} else {
+			dLookUpKeys = append(dLookUpKeys, dLookUpKey)
+
 		}
 	}
 

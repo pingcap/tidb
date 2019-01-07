@@ -242,7 +242,7 @@ func (iw *innerHashWorker) handleTask(ctx context.Context, task *lookUpJoinTask,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dLookUpKeys = iw.sortAndDedupDatumLookUpKeys(dLookUpKeys)
+
 	err = iw.fetchInnerResults(ctx, task, dLookUpKeys)
 	if err != nil {
 		return errors.Trace(err)
