@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -596,13 +597,35 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
-func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int, error) {
+func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, considerWindow bool) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
-	for _, field := range fields {
+	for i, field := range fields {
+		if !field.Auxiliary {
+			oldLen++
+		}
+
+		isWindowFuncField := ast.HasWindowFlag(field.Expr)
+		// Although window functions occurs in the select fields, but it has to be processed after having clause.
+		// So when we build the projection for select fields, we need to skip the window function.
+		// When `considerWindow` is false, we will only build fields for non-window functions, so we add fake placeholders.
+		// for window functions. These fake placeholders will be erased in column pruning.
+		// When `considerWindow` is true, all the non-window fields have been built, so we just use the schema columns.
+		if (considerWindow && !isWindowFuncField) || (!considerWindow && isWindowFuncField) {
+			var expr expression.Expression
+			if isWindowFuncField {
+				expr = expression.Zero
+			} else {
+				expr = p.Schema().Columns[i]
+			}
+			proj.Exprs = append(proj.Exprs, expr)
+			col := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
+			schema.Append(col)
+			continue
+		}
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
@@ -613,10 +636,6 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 
 		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
 		schema.Append(col)
-
-		if !field.Auxiliary {
-			oldLen++
-		}
 	}
 	proj.SetSchema(schema)
 	proj.SetChildren(p)
@@ -999,10 +1018,11 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 	return
 }
 
-// havingAndOrderbyExprResolver visits Expr tree.
+// havingWindowAndOrderbyExprResolver visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
-type havingAndOrderbyExprResolver struct {
+type havingWindowAndOrderbyExprResolver struct {
 	inAggFunc    bool
+	inWindowFunc bool
 	inExpr       bool
 	orderBy      bool
 	err          error
@@ -1016,10 +1036,12 @@ type havingAndOrderbyExprResolver struct {
 }
 
 // Enter implements Visitor interface.
-func (a *havingAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
+func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChildren bool) {
 	switch n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggFunc = true
+	case *ast.WindowFuncExpr:
+		a.inWindowFunc = true
 	case *driver.ParamMarkerExpr, *ast.ColumnNameExpr, *ast.ColumnName:
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		// Enter a new context, skip it.
@@ -1031,7 +1053,7 @@ func (a *havingAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChi
 	return n, false
 }
 
-func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema *expression.Schema) (int, error) {
+func (a *havingWindowAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema *expression.Schema) (int, error) {
 	col, err := schema.FindColumn(v.Name)
 	if err != nil {
 		return -1, errors.Trace(err)
@@ -1045,7 +1067,7 @@ func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, 
 		Name:   col.ColName,
 	}
 	for i, field := range a.selectFields {
-		if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(newColName, c.Name) {
+		if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, newColName) {
 			return i, nil
 		}
 	}
@@ -1059,7 +1081,7 @@ func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, 
 }
 
 // Leave implements Visitor interface.
-func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool) {
+func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool) {
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggFunc = false
@@ -1069,9 +1091,15 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			Expr:      v,
 			AsName:    model.NewCIStr(fmt.Sprintf("sel_agg_%d", len(a.selectFields))),
 		})
+	case *ast.WindowFuncExpr:
+		a.inWindowFunc = false
+		if a.curClause == havingClause {
+			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(v.F)
+			return node, false
+		}
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || (a.orderBy && a.inExpr) {
+		if a.inAggFunc || a.inWindowFunc || (a.orderBy && a.inExpr) {
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && !a.orderBy {
@@ -1089,6 +1117,10 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			if a.err != nil {
 				return node, false
 			}
+			if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
+				a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
+				return node, false
+			}
 			if index == -1 {
 				if a.orderBy {
 					index, a.err = a.resolveFromSchema(v, a.p.Schema())
@@ -1102,8 +1134,12 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			var err error
 			index, err = a.resolveFromSchema(v, a.p.Schema())
 			_ = err
-			if index == -1 {
+			if index == -1 && a.curClause != windowClause {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
+				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
+					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
+					return node, false
+				}
 			}
 		}
 		if a.err != nil {
@@ -1137,7 +1173,7 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 // When we rewrite the order by / having expression, we will find column in map at first.
 func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan) (
 	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int, error) {
-	extractor := &havingAndOrderbyExprResolver{
+	extractor := &havingWindowAndOrderbyExprResolver{
 		p:            p,
 		selectFields: sel.Fields.Fields,
 		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
@@ -1190,6 +1226,31 @@ func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.Aggrega
 	return aggList, totalAggMapper
 }
 
+// resolveWindowFunction will process window functions and resolve the columns that don't exist in select fields.
+func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) (
+	map[*ast.AggregateFuncExpr]int, error) {
+	extractor := &havingWindowAndOrderbyExprResolver{
+		p:            p,
+		selectFields: sel.Fields.Fields,
+		aggMapper:    make(map[*ast.AggregateFuncExpr]int),
+		colMapper:    b.colMapper,
+		outerSchemas: b.outerSchemas,
+	}
+	extractor.curClause = windowClause
+	for _, field := range sel.Fields.Fields {
+		if !ast.HasWindowFlag(field.Expr) {
+			continue
+		}
+		n, ok := field.Expr.Accept(extractor)
+		if !ok {
+			return nil, extractor.err
+		}
+		field.Expr = n.(ast.ExprNode)
+	}
+	sel.Fields.Fields = extractor.selectFields
+	return extractor.aggMapper, nil
+}
+
 // gbyResolver resolves group by items from select fields.
 type gbyResolver struct {
 	ctx     sessionctx.Context
@@ -1234,6 +1295,8 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				ret.Accept(extractor)
 				if len(extractor.AggFuncs) != 0 {
 					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to group function")
+				} else if ast.HasWindowFlag(ret) {
+					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
 				} else {
 					return ret, true
 				}
@@ -1727,6 +1790,7 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	var (
 		aggFuncs                      []*ast.AggregateFuncExpr
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
+		windowMap                     map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
 	)
 
@@ -1759,6 +1823,13 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		}
 	}
 
+	hasWindowFuncField := b.detectSelectWindow(sel)
+	if hasWindowFuncField {
+		windowMap, err = b.resolveWindowFunction(sel, p)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// We must resolve having and order by clause before build projection,
 	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
 	// which only can be done before building projection and extracting Agg functions.
@@ -1792,7 +1863,9 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 	}
 
 	var oldLen int
-	p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, totalMap)
+	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
+	// we can only process window functions after having clause, so `considerWindow` is false now.
+	p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, totalMap, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1802,6 +1875,19 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		p, err = b.buildSelection(p, sel.Having.Expr, havingMap)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+	}
+
+	b.windowSpecs, err = buildWindowSpecs(sel.WindowSpecs)
+	if err != nil {
+		return nil, err
+	}
+
+	if hasWindowFuncField {
+		// Now we build the window function fields.
+		p, oldLen, err = b.buildProjection(p, sel.Fields.Fields, windowMap, true)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -1900,7 +1986,11 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	}
 
 	tableInfo := tbl.Meta()
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", nil)
+
+	if tableInfo.IsView() {
+		return b.BuildDataSourceFromView(dbName, tableInfo)
+	}
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
@@ -1913,6 +2003,13 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 
 	var columns []*table.Column
 	if b.inUpdateStmt {
+		// create table t(a int, b int).
+		// Imagine that, There are 2 TiDB instances in the cluster, name A, B. We add a column `c` to table t in the TiDB cluster.
+		// One of the TiDB, A, the column type in its infoschema is changed to public. And in the other TiDB, the column type is
+		// still StateWriteReorganization.
+		// TiDB A: insert into t values(1, 2, 3);
+		// TiDB B: update t set a = 2 where b = 2;
+		// If we use tbl.Cols() here, the update statement, will ignore the col `c`, and the data `3` will lost.
 		columns = tbl.WritableCols()
 	} else {
 		columns = tbl.Cols()
@@ -1994,6 +2091,43 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	return result, nil
 }
 
+// BuildDataSourceFromView is used to build LogicalPlan from view
+func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	selectNode, err := parser.New().ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
+	if err != nil {
+		return nil, err
+	}
+	selectLogicalPlan, err := b.Build(selectNode)
+	if err != nil {
+		return nil, err
+	}
+
+	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
+	projExprs := make([]expression.Expression, 0, len(tableInfo.View.Cols))
+	for i := range tableInfo.View.Cols {
+		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
+		if col == nil {
+			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		}
+		projSchema.Append(&expression.Column{
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			TblName:     col.TblName,
+			OrigTblName: col.OrigTblName,
+			ColName:     tableInfo.Cols()[i].Name,
+			OrigColName: tableInfo.View.Cols[i],
+			DBName:      col.DBName,
+			RetType:     col.GetType(),
+		})
+		projExprs = append(projExprs, col)
+	}
+
+	projUponView := LogicalProjection{Exprs: projExprs}.Init(b.ctx)
+	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
+	projUponView.SetSchema(projSchema)
+	return projUponView, nil
+}
+
 // projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
 // we add a projection on the original DataSource, and calculate those columns in the projection
 // so that plans above it can reference generated columns by their name.
@@ -2012,6 +2146,7 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		Exprs:            make([]expression.Expression, 0, len(columns)),
 		calculateGenCols: true,
 	}.Init(b.ctx)
+
 	for i, colExpr := range ds.Schema().Columns {
 		var exprIsGen = false
 		var expr expression.Expression
@@ -2033,6 +2168,18 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
+
+	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns, for
+	// example, given:
+	//  column a, column b as (a * 2), column c as (b + 1)
+	// we'll get:
+	//  column a, column b as (a * 2), column c as ((a * 2) + 1)
+	// A generated column definition can refer to only generated columns occurring earlier in the table definition, so
+	// it's safe to iterate in index-ascending order.
+	for i, expr := range proj.Exprs {
+		proj.Exprs[i] = expression.ColumnSubstitute(expr, ds.Schema(), proj.Exprs)
+	}
+
 	proj.SetSchema(ds.Schema().Clone())
 	return proj, nil
 }
@@ -2163,7 +2310,7 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
 	if sel.Where != nil {
@@ -2277,7 +2424,7 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	}
 	for _, assign := range newList {
 		col := assign.Col
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, col.DBName.L, col.TblName.L, "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, col.DBName.L, col.TblName.L, "", nil)
 	}
 	return newList, p, nil
 }
@@ -2294,15 +2441,27 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
 		}
 	case *LogicalProjection:
-		if x.calculateGenCols {
-			ds := x.Children()[0].(*DataSource)
-			alias := extractTableAlias(x)
-			if alias != nil {
-				if _, ok := asNames[ds.tableInfo]; !ok {
-					asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
-				}
-				asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
+		if !x.calculateGenCols {
+			return
+		}
+
+		ds, isDS := x.Children()[0].(*DataSource)
+		if !isDS {
+			// try to extract the DataSource below a LogicalUnionScan.
+			if us, isUS := x.Children()[0].(*LogicalUnionScan); isUS {
+				ds, isDS = us.Children()[0].(*DataSource)
 			}
+		}
+		if !isDS {
+			return
+		}
+
+		alias := extractTableAlias(x)
+		if alias != nil {
+			if _, ok := asNames[ds.tableInfo]; !ok {
+				asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
+			}
+			asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
 		}
 	default:
 		for _, child := range p.Children() {
@@ -2328,6 +2487,8 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	oldSchema := p.Schema()
+	oldLen := oldSchema.Len()
 
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
@@ -2348,6 +2509,15 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+
+	// Add a projection for the following case, otherwise the final schema will be the schema of the join.
+	// delete from t where a in (select ...) or b in (select ...)
+	if !delete.IsMultiTable && oldLen != p.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx)
+		proj.SetChildren(p)
+		proj.SetSchema(oldSchema.Clone())
+		p = proj
 	}
 
 	var tables []*ast.TableName
@@ -2404,7 +2574,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 				// check sql like: `delete b from (select * from t) as a, t`
 				return nil, ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "", nil)
 		}
 	} else {
 		// Delete from a, b, c, d.
@@ -2413,11 +2583,177 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 			if dbName == "" {
 				dbName = b.ctx.GetSessionVars().CurrentDB
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", nil)
 		}
 	}
 
 	return del, nil
+}
+
+// buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
+// so after the projection, window functions only needs to deal with columns.
+func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []expression.Expression, error) {
+	b.optFlag |= flagEliminateProjection
+
+	var items []*ast.ByItem
+	spec := expr.Spec
+	if spec.Ref.L != "" {
+		ref, ok := b.windowSpecs[spec.Ref.L]
+		if !ok {
+			return nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
+		}
+		err := mergeWindowSpec(&spec, &ref)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if spec.PartitionBy != nil {
+		items = append(items, spec.PartitionBy.Items...)
+	}
+	if spec.OrderBy != nil {
+		items = append(items, spec.OrderBy.Items...)
+	}
+	projLen := len(p.Schema().Columns) + len(items) + len(expr.Args)
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, projLen)}.Init(b.ctx)
+	schema := expression.NewSchema(make([]*expression.Column, 0, projLen)...)
+	for _, col := range p.Schema().Columns {
+		proj.Exprs = append(proj.Exprs, col)
+		schema.Append(col)
+	}
+
+	transformer := &itemTransformer{}
+	propertyItems := make([]property.Item, 0, len(items))
+	for _, item := range items {
+		newExpr, _ := item.Expr.Accept(transformer)
+		item.Expr = newExpr.(ast.ExprNode)
+		it, np, err := b.rewrite(item.Expr, p, aggMap, true)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		p = np
+		if col, ok := it.(*expression.Column); ok {
+			propertyItems = append(propertyItems, property.Item{Col: col, Desc: item.Desc})
+			continue
+		}
+		proj.Exprs = append(proj.Exprs, it)
+		col := &expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), schema.Len())),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  it.GetType(),
+		}
+		schema.Append(col)
+		propertyItems = append(propertyItems, property.Item{Col: col, Desc: item.Desc})
+	}
+
+	newArgList := make([]expression.Expression, 0, len(expr.Args))
+	for _, arg := range expr.Args {
+		newArg, np, err := b.rewrite(arg, p, aggMap, true)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		p = np
+		if col, ok := newArg.(*expression.Column); ok {
+			newArgList = append(newArgList, col)
+			continue
+		}
+		proj.Exprs = append(proj.Exprs, newArg)
+		col := &expression.Column{
+			ColName:  model.NewCIStr(fmt.Sprintf("%d_proj_window_%d", p.ID(), schema.Len())),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  newArg.GetType(),
+		}
+		schema.Append(col)
+		newArgList = append(newArgList, col)
+	}
+
+	proj.SetSchema(schema)
+	proj.SetChildren(p)
+	return proj, propertyItems, newArgList, nil
+}
+
+func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
+	p, byItems, args, err := b.buildProjectionForWindow(p, expr, aggMap)
+	if err != nil {
+		return nil, err
+	}
+
+	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
+	window := LogicalWindow{
+		WindowFuncDesc: desc,
+		ByItems:        byItems,
+	}.Init(b.ctx)
+	schema := p.Schema().Clone()
+	schema.Append(&expression.Column{
+		ColName:      model.NewCIStr(fmt.Sprintf("%d_window_%d", window.id, p.Schema().Len())),
+		UniqueID:     b.ctx.GetSessionVars().AllocPlanColumnID(),
+		IsReferenced: true,
+		RetType:      desc.RetTp,
+	})
+	window.SetChildren(p)
+	window.SetSchema(schema)
+	return window, nil
+}
+
+// resolveWindowSpec resolve window specifications for sql like `select ... from t window w1 as (w2), w2 as (partition by a)`.
+// We need to resolve the referenced window to get the definition of current window spec.
+func resolveWindowSpec(spec *ast.WindowSpec, specs map[string]ast.WindowSpec, inStack map[string]bool) error {
+	if inStack[spec.Name.L] {
+		return errors.Trace(ErrWindowCircularityInWindowGraph)
+	}
+	if spec.Ref.L == "" {
+		return nil
+	}
+	ref, ok := specs[spec.Ref.L]
+	if !ok {
+		return ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
+	}
+	inStack[spec.Name.L] = true
+	err := resolveWindowSpec(&ref, specs, inStack)
+	if err != nil {
+		return err
+	}
+	inStack[spec.Name.L] = false
+	return mergeWindowSpec(spec, &ref)
+}
+
+func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
+	if ref.Frame != nil {
+		return ErrWindowNoInherentFrame.GenWithStackByArgs(ref.Name.O)
+	}
+	if ref.OrderBy != nil {
+		if spec.OrderBy != nil {
+			name := spec.Name.O
+			if name == "" {
+				name = "<unnamed window>"
+			}
+			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(name, ref.Name.O)
+		}
+		spec.OrderBy = ref.OrderBy
+	}
+	if spec.PartitionBy != nil {
+		return errors.Trace(ErrWindowNoChildPartitioning)
+	}
+	spec.PartitionBy = ref.PartitionBy
+	spec.Ref = model.NewCIStr("")
+	return nil
+}
+
+func buildWindowSpecs(specs []ast.WindowSpec) (map[string]ast.WindowSpec, error) {
+	specsMap := make(map[string]ast.WindowSpec, len(specs))
+	for _, spec := range specs {
+		if _, ok := specsMap[spec.Name.L]; ok {
+			return nil, ErrWindowDuplicateName.GenWithStackByArgs(spec.Name.O)
+		}
+		specsMap[spec.Name.L] = spec
+	}
+	inStack := make(map[string]bool, len(specs))
+	for _, spec := range specs {
+		err := resolveWindowSpec(&spec, specsMap, inStack)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return specsMap, nil
 }
 
 // extractTableList extracts all the TableNames from node.
@@ -2463,12 +2799,13 @@ func extractTableSourceAsNames(node ast.ResultSetNode, input []string, onlySelec
 	return input
 }
 
-func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col string) []visitInfo {
+func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col string, err error) []visitInfo {
 	return append(vi, visitInfo{
 		privilege: priv,
 		db:        db,
 		table:     tbl,
 		column:    col,
+		err:       err,
 	})
 }
 

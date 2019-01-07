@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite) TestSetVar(c *C) {
+func (s *testSuite2) TestSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
 	tk.MustExec(testSQL)
@@ -276,7 +276,7 @@ func (s *testSuite) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testSuite) TestSetCharset(c *C) {
+func (s *testSuite2) TestSetCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`SET NAMES latin1`)
 
@@ -301,7 +301,7 @@ func (s *testSuite) TestSetCharset(c *C) {
 	tk.MustExec(`SET NAMES binary`)
 }
 
-func (s *testSuite) TestValidateSetVar(c *C) {
+func (s *testSuite2) TestValidateSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")

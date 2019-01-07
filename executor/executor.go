@@ -134,7 +134,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		ctx:          ctx,
 		id:           id,
 		schema:       schema,
-		initCap:      ctx.GetSessionVars().MaxChunkSize,
+		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
@@ -1083,6 +1083,9 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	childChunk := e.children[0].newFirstChunk()
 	err = e.children[0].Next(ctx, childChunk)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if childChunk.NumRows() != 0 {
 		return errors.New("subquery returns more than 1 row")
 	}
