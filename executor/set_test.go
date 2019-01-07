@@ -576,3 +576,17 @@ func (s *testSuite2) TestValidateSetVar(c *C) {
 	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedValueForVar), IsTrue, Commentf("err %v", err))
 }
+
+func (s *testSuite2) TestSelectGlobalVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
+	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("151"))
+
+	tk.MustExec("set @@global.max_connections=100;")
+
+	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("100"))
+
+	tk.MustExec("set @@global.max_connections=151;")
+}
