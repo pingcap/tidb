@@ -3712,7 +3712,7 @@ func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 line 1 column 29 near \" 1\" (total length 31)"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 line 1 column 29 near \"select /*+ unknown_hint(c1)*/ 1\" (total length 31)"))
 	_, err := tk.Exec("select 1 from /*+ test1() */ t")
 	c.Assert(err, NotNil)
 }
