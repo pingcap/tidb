@@ -73,7 +73,6 @@ type IndexLookUpJoin struct {
 	joinChkResourceCh []chan *chunk.Chunk
 }
 
-
 type outerCtx struct {
 	rowTypes  []*types.FieldType
 	keyCols   []int
@@ -122,7 +121,6 @@ type outerWorker struct {
 	parentMemTracker *memory.Tracker
 }
 
-
 type innerWorker struct {
 	innerCtx
 
@@ -140,8 +138,6 @@ type innerWorker struct {
 	joinChkResourceCh []chan *chunk.Chunk
 	joinResultCh      chan *indexLookUpResult
 }
-
-
 
 type indexLookUpResult struct {
 	chk *chunk.Chunk
@@ -183,8 +179,6 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	e.startWorkers(ctx)
 	return nil
 }
-
-
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
@@ -504,7 +498,7 @@ func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types
 			if iw.hasNullInOuterJoinKey(outerRow) {
 				continue
 			}
-			if  tmpPtr = task.lookupMap.Get(keyBuf, tmpPtr[:0]); len(tmpPtr) == 0 {
+			if tmpPtr = task.lookupMap.Get(keyBuf, tmpPtr[:0]); len(tmpPtr) == 0 {
 				dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 			}
 			rowPtr := uint32(i)
@@ -667,5 +661,3 @@ func (e *IndexLookUpJoin) Close() error {
 	e.memTracker = nil
 	return errors.Trace(e.children[0].Close())
 }
-
-
