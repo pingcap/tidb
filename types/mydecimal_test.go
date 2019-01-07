@@ -888,7 +888,7 @@ func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
 	}
 }
 
-func benchmarkMyDecimalToBinOrHashKey(b *testing.B, toHashKey bool) {
+func BenchmarkMyDecimalToBin(b *testing.B) {
 	cases := []string{
 		"1.000000000000", "3", "12.000000000", "120",
 		"120000", "100000000000.00000", "0.000000001200000000",
@@ -907,13 +907,8 @@ func benchmarkMyDecimalToBinOrHashKey(b *testing.B, toHashKey bool) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, dec := range decs {
-			var err error
-			if toHashKey {
-				_, err = dec.ToHashKey()
-			} else {
-				prec, frac := dec.PrecisionAndFrac()
-				_, err = dec.ToBin(prec, frac)
-			}
+			prec, frac := dec.PrecisionAndFrac()
+			_, err := dec.ToBin(prec, frac)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -921,10 +916,29 @@ func benchmarkMyDecimalToBinOrHashKey(b *testing.B, toHashKey bool) {
 	}
 }
 
-func BenchmarkMyDecimalToBin(b *testing.B) {
-	benchmarkMyDecimalToBinOrHashKey(b, false)
-}
-
 func BenchmarkMyDecimalToHashKey(b *testing.B) {
-	benchmarkMyDecimalToBinOrHashKey(b, true)
+	cases := []string{
+		"1.000000000000", "3", "12.000000000", "120",
+		"120000", "100000000000.00000", "0.000000001200000000",
+		"98765.4321", "-123.456000000000000000",
+		"0", "0000000000", "0.00000000000",
+	}
+	decs := make([]*MyDecimal, 0, len(cases))
+	for _, ca := range cases {
+		var dec MyDecimal
+		if err := dec.FromString([]byte(ca)); err != nil {
+			b.Fatal(err)
+		}
+		decs = append(decs, &dec)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for _, dec := range decs {
+			_, err := dec.ToHashKey()
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	}
 }
