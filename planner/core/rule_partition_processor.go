@@ -38,20 +38,18 @@ import (
 type partitionProcessor struct{}
 
 func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
-	return s.rewriteDataSource(nil, lp)
+	return s.rewriteDataSource(lp)
 }
 
-func (s *partitionProcessor) rewriteDataSource(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
+func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, error) {
 	// Assert there will not be sel -> sel in the ast.
 	switch lp.(type) {
 	case *DataSource:
-		return s.prune(sel, lp.(*DataSource))
-	case *LogicalSelection:
-		return s.rewriteDataSource(lp.(*LogicalSelection), lp.Children()[0])
+		return s.prune(lp.(*DataSource))
 	default:
 		children := lp.Children()
 		for i, child := range children {
-			newChild, err := s.rewriteDataSource(nil, child)
+			newChild, err := s.rewriteDataSource(child)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -59,14 +57,6 @@ func (s *partitionProcessor) rewriteDataSource(sel *LogicalSelection, lp Logical
 		}
 	}
 
-	return s.selectOnSomething(sel, lp)
-}
-
-func (s *partitionProcessor) selectOnSomething(sel *LogicalSelection, lp LogicalPlan) (LogicalPlan, error) {
-	if sel != nil {
-		sel.SetChildren(lp)
-		return sel, nil
-	}
 	return lp, nil
 }
 
@@ -75,10 +65,10 @@ type partitionTable interface {
 	PartitionExpr() *tables.PartitionExpr
 }
 
-func (s *partitionProcessor) prune(sel *LogicalSelection, ds *DataSource) (LogicalPlan, error) {
+func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
-		return s.selectOnSomething(sel, ds)
+		return ds, nil
 	}
 
 	var partitionExprs []expression.Expression
@@ -94,13 +84,9 @@ func (s *partitionProcessor) prune(sel *LogicalSelection, ds *DataSource) (Logic
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
-	var selConds []expression.Expression
-	if sel != nil {
-		selConds = sel.Conditions
-	}
 	for i, expr := range partitionExprs {
 		// If the selection condition would never be satisified, prune that partition.
-		prune, err := s.canBePrune(ds.context(), col, expr, selConds, ds.pushedDownConds)
+		prune, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -124,29 +110,28 @@ func (s *partitionProcessor) prune(sel *LogicalSelection, ds *DataSource) (Logic
 		// No result after table pruning.
 		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.context())
 		tableDual.schema = ds.Schema()
-		return s.selectOnSomething(sel, tableDual)
+		return tableDual, nil
 	}
 	if len(children) == 1 {
 		// No need for the union all.
-		return s.selectOnSomething(sel, children[0])
+		return children[0], nil
 	}
 	unionAll := LogicalUnionAll{}.Init(ds.context())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema)
-	return s.selectOnSomething(sel, unionAll)
+	return unionAll, nil
 }
 
 var solver = expression.NewPartitionPruneSolver()
 
-// canBePrune checks if partition expression will never meets the selection condition.
+// canBePruned checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
-func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, rootConds, copConds []expression.Expression) (bool, error) {
-	conds := make([]expression.Expression, 0, 1+len(rootConds)+len(copConds))
-	conds = append(conds, partitionCond)
-	conds = append(conds, rootConds...)
-	conds = append(conds, copConds...)
-	conds = expression.PropagateConstant(ctx, conds)
-	conds = solver.Solve(ctx, conds)
+func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expression.Column, partitionExpr expression.Expression, filterExprs []expression.Expression) (bool, error) {
+	conds := make([]expression.Expression, 0, 1+len(filterExprs))
+	conds = append(conds, partitionExpr)
+	conds = append(conds, filterExprs...)
+	conds = expression.PropagateConstant(sctx, conds)
+	conds = solver.Solve(sctx, conds)
 
 	if len(conds) == 1 {
 		// Constant false.
@@ -161,9 +146,9 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 
 	// Calculate the column range to prune.
 	// TODO: Remove prune by calculating range.
-	if col != nil {
-		accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
-		r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
+	if partCol != nil {
+		accessConds := ranger.ExtractAccessConditionsForColumn(filterExprs, partCol.UniqueID)
+		r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType)
 		if err != nil {
 			return false, errors.Trace(err)
 		}

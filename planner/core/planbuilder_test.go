@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-// CanBePrune is provided for testing.
-func CanBePrune(ctx sessionctx.Context, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
+// CanBePruned is provided for testing.
+func CanBePruned(sctx sessionctx.Context, partitionExpr expression.Expression, filterExprs []expression.Expression) (bool, error) {
 	var s partitionProcessor
-	return s.canBePrune(ctx, nil, partitionCond, nil, copConds)
+	return s.canBePruned(sctx, nil, partitionExpr, filterExprs)
 }
 
 var _ = Suite(&testPlanBuilderSuite{})

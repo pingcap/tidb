@@ -49,13 +49,13 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 	c.Assert(err, IsNil)
 	queryExpr, err := expression.ParseSimpleExprWithTableInfo(ctx, "d < '2000-03-08 00:00:00'", tblInfo)
 	c.Assert(err, IsNil)
-	succ, err := core.CanBePrune(ctx, partitionExpr, []expression.Expression{queryExpr})
+	succ, err := core.CanBePruned(ctx, partitionExpr, []expression.Expression{queryExpr})
 	c.Assert(err, IsNil)
 	c.Assert(succ, IsTrue)
 
 	queryExpr, err = expression.ParseSimpleExprWithTableInfo(ctx, "d > '2018-03-08 00:00:00'", tblInfo)
 	c.Assert(err, IsNil)
-	succ, err = core.CanBePrune(ctx, partitionExpr, []expression.Expression{queryExpr})
+	succ, err = core.CanBePruned(ctx, partitionExpr, []expression.Expression{queryExpr})
 	c.Assert(err, IsNil)
 	c.Assert(succ, IsTrue)
 }
