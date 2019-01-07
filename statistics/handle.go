@@ -72,7 +72,8 @@ func (h *Handle) Clear() {
 		<-h.ddlEventCh
 	}
 	h.feedback = h.feedback[:0]
-	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
+	h.mu.ctx.GetSessionVars().InitChunkSize = 1
+	h.mu.ctx.GetSessionVars().MaxChunkSize = 32
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
 	h.mu.rateMap = make(errorRateDeltaMap)
