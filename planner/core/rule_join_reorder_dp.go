@@ -189,17 +189,15 @@ func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGr
 }
 
 func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
-	totalEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
+	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
 	var (
 		usedEqEdges []joinGroupEqEdge
 		otherConds  []expression.Expression
 	)
-	for _, edge := range totalEdges {
+	for _, edge := range totalEqEdges {
 		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
 		rIdx := uint(oldPos2NewPos[edge.nodeIDs[1]])
-		if (leftMask&(1<<lIdx)) > 0 && (rightMask&(1<<rIdx)) > 0 {
-			usedEqEdges = append(usedEqEdges, edge)
-		} else if (leftMask&(1<<rIdx)) > 0 && (rightMask&(1<<lIdx)) > 0 {
+		if ((leftMask&(1<<lIdx)) > 0 && (rightMask&(1<<rIdx)) > 0) || ((leftMask&(1<<rIdx)) > 0 && (rightMask&(1<<lIdx)) > 0) {
 			usedEqEdges = append(usedEqEdges, edge)
 		}
 	}
@@ -249,8 +247,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, ot
 			mergedSchema := expression.MergeSchema(cartesianJoinGroup[i].Schema(), cartesianJoinGroup[i+1].Schema())
 			var usedOtherConds []expression.Expression
 			for i := len(otherConds) - 1; i >= 0; i-- {
-				cols := expression.ExtractColumns(otherConds[i])
-				if mergedSchema.ColumnsIndices(cols) != nil {
+				if expression.ExprFromSchema(otherConds[i], mergedSchema) {
 					usedOtherConds = append(usedOtherConds, otherConds[i])
 					otherConds = append(otherConds[:i], otherConds[i+1:]...)
 				}
