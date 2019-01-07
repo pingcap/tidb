@@ -2,8 +2,12 @@ package infobind_test
 
 import (
 	"context"
+	"os"
+	"testing"
+	"time"
 	"flag"
 	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
@@ -18,9 +22,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"os"
-	"testing"
-	"time"
 )
 
 // TestLeakCheckCnt is the check count in the pacakge of executor.

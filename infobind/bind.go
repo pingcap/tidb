@@ -12,7 +12,7 @@ var _ Manager = (*BindManager)(nil)
 type BindManager struct {
 	is                 infoschema.InfoSchema
 	currentDB          string
-	*Handle                    //global handle
+	*Handle            //global handle
 	GlobalBindAccessor GlobalBindAccessor
 	copy               bool
 }
