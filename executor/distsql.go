@@ -637,6 +637,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		case w.workCh <- task:
 			w.resultCh <- task
 		}
+		if chk.Capacity() < w.batchSize {
+			chk = chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.batchSize, w.maxChunkSize)
+		}
 	}
 }
 
@@ -654,6 +657,8 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		if len(handles) >= w.batchSize {
 			if w.batchSize < w.maxBatchSize {
 				w.batchSize *= 2
+			} else {
+				chk.Reset()
 			}
 			return handles, nil
 		}
