@@ -304,7 +304,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where e > 1 group by b",
-			best: "IndexLookUp(Index(t.b)[[NULL,+inf]], Table(t)->Sel([gt(test.t.e, 1)]))->StreamAgg",
+			best: "IndexLookUp(Index(t.b)[[NULL,+inf]], Table(t)->Sel([gt(test.t.e, 1)]))->Projection->StreamAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 20",
@@ -367,7 +367,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select sum(a) from t1 use index(idx) where a = 3 and b = 100000 group by a limit 1",
-			best: "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->StreamAgg->Limit",
+			best: "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->Projection->StreamAgg->Limit",
 		},
 	}
 	for _, tt := range tests {
