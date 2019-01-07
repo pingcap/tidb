@@ -74,7 +74,8 @@ func (s *testSessionSuite) TestFailStatementCommitInRetry(c *C) {
 	gofail.Disable("github.com/pingcap/tidb/session/mockCommitError8942")
 	gofail.Disable("github.com/pingcap/tidb/session/mockStmtCommitError")
 
-	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+	tk.MustExec("insert into t values (6)")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("6"))
 }
 
 func (s *testSessionSuite) TestGetTSFailDirtyState(c *C) {
