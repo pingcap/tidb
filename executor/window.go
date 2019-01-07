@@ -37,6 +37,7 @@ type WindowExec struct {
 	partialResult windowfuncs.PartialResult
 	executed      bool
 	childCols     []*expression.Column
+	meetNewGroup  bool
 }
 
 // Close implements the Executor Close interface.
@@ -56,7 +57,7 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
-	if e.windowFunc.HasRemainingResults() {
+	if e.meetNewGroup && e.windowFunc.HasRemainingResults() {
 		err := e.appendResult2Chunk(chk)
 		if err != nil {
 			return err
@@ -73,15 +74,16 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) error {
-	if err := e.fetchChildIfNecessary(ctx, chk); err != nil {
+	var err error
+	if err = e.fetchChildIfNecessary(ctx, chk); err != nil {
 		return errors.Trace(err)
 	}
 	for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-		meetNewGroup, err := e.groupChecker.meetNewGroup(e.inputRow)
+		e.meetNewGroup, err = e.groupChecker.meetNewGroup(e.inputRow)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if meetNewGroup {
+		if e.meetNewGroup {
 			err := e.consumeGroupRows(chk)
 			if err != nil {
 				return errors.Trace(err)
@@ -92,7 +94,7 @@ func (e *WindowExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) erro
 			}
 		}
 		e.groupRows = append(e.groupRows, e.inputRow)
-		if meetNewGroup {
+		if e.meetNewGroup {
 			e.inputRow = e.inputIter.Next()
 			return nil
 		}
