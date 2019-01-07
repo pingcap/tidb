@@ -305,13 +305,14 @@ type Deallocate struct {
 type Show struct {
 	baseSchemaProducer
 
-	Tp     ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName string
-	Table  *ast.TableName  // Used for showing columns.
-	Column *ast.ColumnName // Used for `desc table column`.
-	Flag   int             // Some flag parsed from sql, such as FULL.
-	Full   bool
-	User   *auth.UserIdentity // Used for show grants.
+	Tp          ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName      string
+	Table       *ast.TableName  // Used for showing columns.
+	Column      *ast.ColumnName // Used for `desc table column`.
+	Flag        int             // Some flag parsed from sql, such as FULL.
+	Full        bool
+	User        *auth.UserIdentity // Used for show grants.
+	IfNotExists bool               // Used for `show create database if not exists`
 
 	Conditions []expression.Expression
 
