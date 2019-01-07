@@ -136,7 +136,7 @@ func (dr *delRange) startEmulator() {
 		case <-dr.quitCh:
 			return
 		}
-		if GetEmulatorGCStatus() {
+		if EmulatorGCEnable() {
 			err := dr.doDelRangeWork()
 			terror.Log(errors.Trace(err))
 		}
@@ -152,8 +152,8 @@ func SetEmulatorGCEnable(enable bool) {
 	atomic.StoreInt32(&emulatorGCEnable, val)
 }
 
-// GetEmulatorGCStatus export for testing.
-func GetEmulatorGCStatus() bool {
+// EmulatorGCEnable export for testing.
+func EmulatorGCEnable() bool {
 	return atomic.LoadInt32(&emulatorGCEnable) == 1
 }
 

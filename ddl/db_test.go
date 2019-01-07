@@ -2041,11 +2041,11 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	tk.MustExec("create database if not exists test_restore")
 	tk.MustExec("use test_restore")
 	tk.MustExec("create table t_recover (a int);")
-	defer ddl.SetEmulatorGCEnable(ddl.GetEmulatorGCStatus())
+	defer ddl.SetEmulatorGCEnable(ddl.EmulatorGCEnable())
 
 	// disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	originGC := ddl.GetEmulatorGCStatus()
+	originGC := ddl.EmulatorGCEnable()
 	defer ddl.SetEmulatorGCEnable(originGC)
 	ddl.SetEmulatorGCEnable(false)
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
