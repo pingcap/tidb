@@ -504,7 +504,7 @@ func (s *testSuite3) TestSetDDLReorgWorkerCnt(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	res := tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
 
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
@@ -533,7 +533,7 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
 
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
-	res := tk.MustQuery("select @@tidb_ddl_reorg_batch_size")
+	res := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("100"))
 
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
