@@ -825,11 +825,9 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)
 	_, _, err = s.ExecRestrictedSQL(s, sql)
-
 	return errors.Trace(err)
 }
 

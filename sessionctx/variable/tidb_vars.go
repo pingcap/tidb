@@ -172,10 +172,10 @@ const (
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
 
-	// TiDBMaxChunkSize is used to control the max chunk size during query execution.
+	// tidb_max_chunk_size is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
-	// TiDBInitChunkSize is used to control the init chunk size during query execution.
+	// tidb_init_chunk_size is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
 
 	// tidb_enable_cascades_planner is used to control whether to enable the cascades planner.

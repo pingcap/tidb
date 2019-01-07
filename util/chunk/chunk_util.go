@@ -13,6 +13,8 @@
 
 package chunk
 
+import "unsafe"
+
 // CopySelectedJoinRows copies the selected joined rows from the source Chunk
 // to the destination Chunk.
 // Return true if at least one joined row was selected.
@@ -104,4 +106,15 @@ func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, 
 			dstCol.offsets = offsets
 		}
 	}
+}
+
+// GetInt64InColumn returns all data in special column as int64 slice.
+func GetInt64InColumn(c *Chunk, colIdx int) []int64 {
+	rows := c.NumRows()
+	col := c.columns[colIdx]
+	nums := make([]int64, rows)
+	for ridx := 0; ridx < rows; ridx++ {
+		nums[ridx] = *(*int64)(unsafe.Pointer(&col.data[ridx*8]))
+	}
+	return nums
 }

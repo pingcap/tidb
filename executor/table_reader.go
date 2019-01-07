@@ -113,7 +113,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		e.feedback.Invalidate()
 		return err
 	}
-	return errors.Trace(nil)
+	return nil
 }
 
 // Close implements the Executor Close interface.
