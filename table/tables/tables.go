@@ -939,10 +939,10 @@ func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	return rowID, nil
 }
 
-// overflowShardBits check whether the rowID overflow (64-t.meta.ShardRowIDBits) bits.
+// overflowShardBits check whether the rowID overflow `1<<(64-t.meta.ShardRowIDBits) -1`.
 func (t *tableCommon) overflowShardBits(rowID int64) bool {
-	mark := uint64(^(1<<(64-t.meta.ShardRowIDBits) - 1))
-	return uint64(rowID)&mark > 0
+	mask := uint64(^(1<<(64-t.meta.ShardRowIDBits) - 1))
+	return uint64(rowID)&mask > 0
 }
 
 func (t *tableCommon) calcShard(startTS uint64) int64 {
