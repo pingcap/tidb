@@ -40,12 +40,12 @@ type WindowFunc interface {
 
 // aggWithoutFrame deals with agg functions with no frame specification.
 type aggWithoutFrame struct {
-	agg aggfuncs.AggFunc
+	agg      aggfuncs.AggFunc
 	remained int64
 }
 
 type partialResult4AggWithoutFrame struct {
-	result   aggfuncs.PartialResult
+	result aggfuncs.PartialResult
 }
 
 // ProcessOneChunk implements the WindowFunc interface.
@@ -78,7 +78,7 @@ func (wf *aggWithoutFrame) ExhaustResult(sctx sessionctx.Context, rows []chunk.R
 }
 
 // AllocPartialResult implements the WindowFunc interface.
-func (wf *aggWithoutFrame) AllocPartialResult() PartialResult{
+func (wf *aggWithoutFrame) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4AggWithoutFrame{wf.agg.AllocPartialResult()})
 }
 

@@ -1990,11 +1990,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
-			result: "TableReader(Table(t))->Window(sum(test.t.a))->Window(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Window(avg(cast(test.t.a)))->Projection",
 		},
 		{
 			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
-			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
 		},
 	}
 

@@ -1894,10 +1894,10 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		return nil
 	}
 	e := &WindowExec{baseExecutor: base,
-		windowFunc:   windowFunc,
+		windowFunc:    windowFunc,
 		partialResult: windowFunc.AllocPartialResult(),
-		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
-		childCols:    v.ChildCols,
+		groupChecker:  newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+		childCols:     v.ChildCols,
 	}
 	return e
 }
