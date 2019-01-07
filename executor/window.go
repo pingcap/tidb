@@ -73,30 +73,28 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *WindowExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) error {
-	for !e.executed {
-		if err := e.fetchChildIfNecessary(ctx, chk); err != nil {
+	if err := e.fetchChildIfNecessary(ctx, chk); err != nil {
+		return errors.Trace(err)
+	}
+	for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
+		meetNewGroup, err := e.groupChecker.meetNewGroup(e.inputRow)
+		if err != nil {
 			return errors.Trace(err)
 		}
-		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			meetNewGroup, err := e.groupChecker.meetNewGroup(e.inputRow)
+		if meetNewGroup {
+			err := e.consumeGroupRows(chk)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if meetNewGroup {
-				err := e.consumeGroupRows(chk)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				err = e.appendResult2Chunk(chk)
-				if err != nil {
-					return errors.Trace(err)
-				}
+			err = e.appendResult2Chunk(chk)
+			if err != nil {
+				return errors.Trace(err)
 			}
-			e.groupRows = append(e.groupRows, e.inputRow)
-			if meetNewGroup {
-				e.inputRow = e.inputIter.Next()
-				return nil
-			}
+		}
+		e.groupRows = append(e.groupRows, e.inputRow)
+		if meetNewGroup {
+			e.inputRow = e.inputIter.Next()
+			return nil
 		}
 	}
 	return nil
