@@ -144,15 +144,18 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 		}
 	}
 
-	// Calculate the column range to prune.
-	// TODO: Remove prune by calculating range.
-	if partCol != nil {
-		accessConds := ranger.ExtractAccessConditionsForColumn(conds, partCol.UniqueID)
-		r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		return len(r) == 0, nil
+	if partCol == nil {
+		return false, nil
 	}
-	return false, nil
+
+	// Calculate the column range to prune.
+	// TODO: Remove prune by calculating range. Current constraint propagate doesn't
+	// handle the null condition, while calculate range can prune something like:
+	// "select * from t where t is null"
+	accessConds := ranger.ExtractAccessConditionsForColumn(conds, partCol.UniqueID)
+	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return len(r) == 0, nil
 }

@@ -19,8 +19,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/core"
-	// "github.com/pingcap/tidb/sessionctx"
-	// "github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/mock"
 )
 
