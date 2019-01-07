@@ -146,27 +146,9 @@ func (s *testMyDecimalSuite) TestToFloat(c *C) {
 }
 
 func (s *testMyDecimalSuite) TestToHashKey(c *C) {
-	type tcase struct {
+	tests := []struct {
 		numbers []string
-	}
-	var dotest = func(c *C, tests []tcase) {
-		for _, ca := range tests {
-			keys := make([]string, 0, len(ca.numbers))
-			for _, num := range ca.numbers {
-				var dec MyDecimal
-				c.Check(dec.FromString([]byte(num)), IsNil)
-				key, err := dec.ToHashKey()
-				c.Check(err, IsNil)
-				keys = append(keys, string(key))
-			}
-
-			for i := 1; i < len(keys); i++ {
-				c.Check(keys[0], Equals, keys[i])
-			}
-		}
-	}
-
-	tests := []tcase{
+	}{
 		{[]string{"1.1", "1.1000", "1.1000000", "1.10000000000", "01.1", "0001.1", "001.1000000"}},
 		{[]string{"-1.1", "-1.1000", "-1.1000000", "-1.10000000000", "-01.1", "-0001.1", "-001.1000000"}},
 		{[]string{".1", "0.1", "000000.1", ".10000", "0000.10000", "000000000000000000.1"}},
@@ -177,7 +159,65 @@ func (s *testMyDecimalSuite) TestToHashKey(c *C) {
 		{[]string{"123E5", "12300000", "00123E5", "000000123E5", "12300000.00000000"}},
 		{[]string{"123E-2", "1.23", "00000001.23", "1.2300000000000000", "000000001.23000000000000"}},
 	}
-	dotest(c, tests)
+	for _, ca := range tests {
+		keys := make([]string, 0, len(ca.numbers))
+		for _, num := range ca.numbers {
+			var dec MyDecimal
+			c.Check(dec.FromString([]byte(num)), IsNil)
+			key, err := dec.ToHashKey()
+			c.Check(err, IsNil)
+			keys = append(keys, string(key))
+		}
+
+		for i := 1; i < len(keys); i++ {
+			c.Check(keys[0], Equals, keys[i])
+		}
+	}
+
+	binTests := []struct {
+		hashNumbers []string
+		binNumbers  []string
+	}{
+		{[]string{"1.1", "1.1000", "1.1000000", "1.10000000000", "01.1", "0001.1", "001.1000000"},
+			[]string{"1.1", "0001.1", "01.1"}},
+		{[]string{"-1.1", "-1.1000", "-1.1000000", "-1.10000000000", "-01.1", "-0001.1", "-001.1000000"},
+			[]string{"-1.1", "-0001.1", "-01.1"}},
+		{[]string{".1", "0.1", "000000.1", ".10000", "0000.10000", "000000000000000000.1"},
+			[]string{".1", "0.1", "000000.1", "00.1"}},
+		{[]string{"0", "0000", ".0", ".00000", "00000.00000", "-0", "-0000", "-.0", "-.00000", "-00000.00000"},
+			[]string{"0", "0000", "00", "-0", "-00", "-000000"}},
+		{[]string{".123456789123456789", ".1234567891234567890", ".12345678912345678900", ".123456789123456789000", ".1234567891234567890000", "0.123456789123456789",
+			".1234567891234567890000000000", "0000000.123456789123456789000"},
+			[]string{".123456789123456789", "0.123456789123456789", "0000.123456789123456789", "0000000.123456789123456789"}},
+		{[]string{"12345", "012345", "0012345", "0000012345", "0000000012345", "00000000000012345", "12345.", "12345.00", "12345.000000000", "000012345.0000"},
+			[]string{"12345", "012345", "000012345", "000000000000012345"}},
+		{[]string{"123E5", "12300000", "00123E5", "000000123E5", "12300000.00000000"},
+			[]string{"12300000", "123E5", "00123E5", "0000000000123E5"}},
+		{[]string{"123E-2", "1.23", "00000001.23", "1.2300000000000000", "000000001.23000000000000"},
+			[]string{"123E-2", "1.23", "000001.23", "0000000000001.23"}},
+	}
+	for _, ca := range binTests {
+		keys := make([]string, 0, len(ca.hashNumbers)+len(ca.binNumbers))
+		for _, num := range ca.hashNumbers {
+			var dec MyDecimal
+			c.Check(dec.FromString([]byte(num)), IsNil)
+			key, err := dec.ToHashKey()
+			c.Check(err, IsNil)
+			keys = append(keys, string(key))
+		}
+		for _, num := range ca.binNumbers {
+			var dec MyDecimal
+			c.Check(dec.FromString([]byte(num)), IsNil)
+			prec, frac := dec.PrecisionAndFrac() // remove leading zeros but trailing zeros remain
+			key, err := dec.ToBin(prec, frac)
+			c.Check(err, IsNil)
+			keys = append(keys, string(key))
+		}
+
+		for i := 1; i < len(keys); i++ {
+			c.Check(keys[0], Equals, keys[i])
+		}
+	}
 }
 
 func (s *testMyDecimalSuite) TestShift(c *C) {
