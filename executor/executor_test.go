@@ -65,7 +65,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// TestLeakCheckCnt is the check count in the pacakge of executor.
+// TestLeakCheckCnt is the check count in the package of executor.
 // In this package CustomParallelSuiteFlag is true, so we need to increase check count.
 const TestLeakCheckCnt = 1000
 
@@ -85,6 +85,7 @@ var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testBypassSuite{})
+var _ = Suite(&testUpdateSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -1082,7 +1083,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec(`insert into t1 select * from t1;`)
 	tk.MustExec(`insert into t1 select * from t1;`)
 	tk.MustExec(`insert into t2 values(1, 1);`)
-	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
 	tk.MustQuery(`select count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("128"))
 	tk.MustQuery(`select tmp.a, count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("1 128"))
 
@@ -1095,7 +1096,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("insert into t1 value(1,2),(1,1),(2,2),(2,2),(3,2),(3,2)")
-	tk.MustExec("set @@tidb_max_chunk_size=2;")
+	tk.MustExec("set @@tidb_init_chunk_size=2;")
 	tk.MustQuery("select count(*) from (select a as c, a as d from t1 union all select a, b from t1) t;").Check(testkit.Rows("12"))
 
 	// #issue 8189 and #issue 8199
@@ -2021,7 +2022,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
-	safePointValue := "20060102-15:04:05 -0700 MST"
+	safePointValue := "20060102-15:04:05 -0700"
 	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
 	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
@@ -2321,10 +2322,9 @@ func (s *testSuite) TestIssue4024(c *C) {
 }
 
 const (
-	checkRequestOff          = 0
-	checkRequestPriority     = 1
-	checkRequestSyncLog      = 3
-	checkDDLAddIndexPriority = 4
+	checkRequestOff = iota
+	checkRequestSyncLog
+	checkDDLAddIndexPriority
 )
 
 type checkRequestClient struct {
@@ -2351,14 +2351,7 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
 	c.mu.RUnlock()
-	if checkFlags == checkRequestPriority {
-		switch req.Type {
-		case tikvrpc.CmdCop:
-			if c.getCheckPriority() != req.Priority {
-				return nil, errors.New("fail to set priority")
-			}
-		}
-	} else if checkFlags == checkRequestSyncLog {
+	if checkFlags == checkRequestSyncLog {
 		switch req.Type {
 		case tikvrpc.CmdPrewrite, tikvrpc.CmdCommit:
 			c.mu.RLock()
@@ -2500,69 +2493,6 @@ func (s *testSuite1) TestAlterTableComment(c *C) {
 	tk.MustExec("alter table `t_1` comment 'table t comment';")
 	result = tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';")
 	result.Check(testkit.Rows("table t comment"))
-}
-
-func (s *testSuite1) TestCoprocessorPriority(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key)")
-	tk.MustExec("create table t1 (id int, v int, unique index i_id (id))")
-	defer tk.MustExec("drop table t")
-	defer tk.MustExec("drop table t1")
-	tk.MustExec("insert into t values (1)")
-
-	// Insert some data to make sure plan build IndexLookup for t1.
-	for i := 0; i < 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
-	}
-
-	cli := s.cli
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestPriority
-	cli.mu.Unlock()
-
-	cli.setCheckPriority(pb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
-
-	cli.setCheckPriority(pb.CommandPri_Normal)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("update t set id = 3")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t select * from t limit 2")
-	tk.MustExec("delete from t")
-
-	// Insert some data to make sure plan build IndexLookup for t.
-	tk.MustExec("insert into t values (1), (2)")
-
-	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
-	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
-	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
-
-	cli.setCheckPriority(pb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
-
-	cli.setCheckPriority(pb.CommandPri_Low)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (3)")
-
-	// TODO: Those are not point get, but they should be high priority.
-	// cli.priority = pb.CommandPri_High
-	// tk.MustExec("delete from t where id = 2")
-	// tk.MustExec("update t set id = 2 where id = 1")
-
-	// Test priority specified by SQL statement.
-	cli.setCheckPriority(pb.CommandPri_High)
-	tk.MustQuery("select HIGH_PRIORITY * from t")
-
-	cli.setCheckPriority(pb.CommandPri_Low)
-	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
 }
 
 func (s *testSuite) TestTimezonePushDown(c *C) {
@@ -2884,9 +2814,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
-	_, err = tb.AddRecord(s.ctx, recordVal1, false)
+	_, err = tb.AddRecord(s.ctx, recordVal1)
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(s.ctx, recordVal2, false)
+	_, err = tb.AddRecord(s.ctx, recordVal2)
 	c.Assert(err, IsNil)
 	txn, err := s.ctx.Txn(true)
 	c.Assert(err, IsNil)
@@ -3045,7 +2975,7 @@ func (s *testSuite) TestLimit(c *C) {
 		"4 4",
 		"5 5",
 	))
-	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
 	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
 		"3 3",
 	))
@@ -3303,7 +3233,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	tk.MustExec(`create table t2(a double, b double);`)
 	tk.MustExec(`insert into t1 values(1, 1), (2, 2), (3, 3);`)
 	tk.MustExec(`insert into t2 values(0, 0);`)
-	tk.MustExec(`set @@tidb_max_chunk_size=1;`)
+	tk.MustExec(`set @@tidb_init_chunk_size=1;`)
 	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
 	c.Assert(err, IsNil)
 
@@ -3504,10 +3434,14 @@ func (s *testSuite2) TearDownSuite(c *C) {
 func (s *testSuite2) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
+	r := tk.MustQuery("show full tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
 	}
 }
 

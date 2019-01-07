@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -291,4 +292,28 @@ func MockContext() sessionctx.Context {
 	do.CreateStatsHandle(ctx)
 	domain.BindDomain(ctx, do)
 	return ctx
+}
+
+// MockPartitionInfoSchema mocks an info schema for partition table.
+func MockPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
+	tableInfo := *MockTable()
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    10,
+		Name:      model.NewCIStr("h"),
+		FieldType: newLongType(),
+		ID:        11,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeRange,
+		Expr:        "h",
+		Enable:      true,
+		Definitions: definitions,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
+	return is
 }

@@ -229,6 +229,13 @@ func checkInt64SystemVar(name, value string, min, max int64, vars *SessionVars) 
 	return value, nil
 }
 
+const (
+	// initChunkSizeUpperBound indicates upper bound value of tidb_init_chunk_size.
+	initChunkSizeUpperBound = 32
+	// maxChunkSizeLowerBound indicates lower bound value of tidb_max_chunk_size.
+	maxChunkSizeLowerBound = 32
+)
+
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string, error) {
 	if strings.EqualFold(value, "DEFAULT") {
@@ -315,7 +322,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
 		}
-		return value, nil
+		_, err := parseTimeZone(value)
+		return value, err
 	case ValidatePasswordLength, ValidatePasswordNumberCount:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case WarningCount, ErrorCount:
@@ -355,7 +363,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBHashAggFinalConcurrency,
 		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
-		TiDBBackoffLockFast, TiDBMaxChunkSize,
+		TiDBBackoffLockFast,
 		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel, TiDBOptJoinOrderAlgoThreshold:
 		v, err := strconv.Atoi(value)
 		if err != nil {
@@ -399,6 +407,27 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", ErrUnsupportedValueForVar.GenWithStackByArgs(name, value)
 		}
 		return upVal, nil
+	case TiDBInitChunkSize:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v <= 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		if v > initChunkSizeUpperBound {
+			return value, errors.Errorf("tidb_init_chunk_size(%d) cannot be bigger than %d", v, initChunkSizeUpperBound)
+		}
+		return value, nil
+	case TiDBMaxChunkSize:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < maxChunkSizeLowerBound {
+			return value, errors.Errorf("tidb_max_chunk_size(%d) cannot be smaller than %d", v, maxChunkSizeLowerBound)
+		}
+		return value, nil
 	}
 	return value, nil
 }

@@ -610,7 +610,7 @@ commit;`
 	create table m (id int primary key auto_increment, code int unique);
 	insert tmp (code) values (1);
 	insert tmp (code) values (1);
-	set tidb_max_chunk_size=1;
+	set tidb_init_chunk_size=1;
 	insert m (code) select code from tmp on duplicate key update code = values(code);`
 	tk.MustExec(testSQL)
 	testSQL = `select * from m;`
@@ -2336,7 +2336,7 @@ func (s *testSuite2) TestRebaseIfNeeded(c *C) {
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
-	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
+	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2))
 	c.Assert(err, IsNil)
 	txn, err := s.ctx.Txn(true)
 	c.Assert(err, IsNil)
