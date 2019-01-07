@@ -220,6 +220,39 @@ func (s *testMyDecimalSuite) TestToHashKey(c *C) {
 	}
 }
 
+func (s *testMyDecimalSuite) TestRemoveTrailingZeros(c *C) {
+	tests := []string{
+		"0", "0.0", ".0", ".00000000", "0.0000", "0000", "0000.0", "0000.000",
+		"-0", "-0.0", "-.0", "-.00000000", "-0.0000", "-0000", "-0000.0", "-0000.000",
+		"123123123", "213123.", "21312.000", "21321.123", "213.1230000", "213123.000123000",
+		"-123123123", "-213123.", "-21312.000", "-21321.123", "-213.1230000", "-213123.000123000",
+		"123E5", "12300E-5", "0.00100E1", "0.001230E-3",
+		"123987654321.123456789000", "000000000123", "123456789.987654321", "999.999000",
+	}
+	for _, ca := range tests {
+		var dec MyDecimal
+		c.Check(dec.FromString([]byte(ca)), IsNil)
+
+		// calculate the number of digits after point but trailing zero
+		digitsFracExp := 0
+		str := string(dec.ToString())
+		point := strings.Index(str, ".")
+		if point != -1 {
+			pos := len(str) - 1
+			for pos > point {
+				if str[pos] != '0' {
+					break
+				}
+				pos--
+			}
+			digitsFracExp = pos - point
+		}
+
+		_, digitsFrac := dec.removeTrailingZeros()
+		c.Check(digitsFrac, Equals, digitsFracExp)
+	}
+}
+
 func (s *testMyDecimalSuite) TestShift(c *C) {
 	type tcase struct {
 		input  string
