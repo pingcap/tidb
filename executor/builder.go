@@ -1551,7 +1551,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.joinResult = e.newFirstChunk()
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
 	if !v.KeepOuterOrder {
-		return &IndexLookUpHash{IndexLookUpJoin: *e}
+		return &IndexLookUpHashJoin{IndexLookUpJoin: *e}
 	}
 	return e
 }
