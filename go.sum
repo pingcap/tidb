@@ -86,7 +86,10 @@ github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5 h1:2U0HzY8BJ8hVwDK
 github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5/go.mod h1:Pj4uuM528wm8OyEC2QMXAi2YiTZ96dNQPGgoMS4s3ek=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1 h1:mweAR1A6xJ3oS2pRaGiHgQ4OO8tzTaLawm8vnODuwDk=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=
+github.com/lnhote/parser v0.0.0-20190107045230-65923d41587d h1:3JqF5q6UZIbSSz0BJS0nHjk7ZLWw7FYhgKCzeqIcSwM=
 github.com/lnhote/parser v0.0.0-20190107045230-65923d41587d/go.mod h1:MLMwrc6N+89E/qlszMXEEdfl7hisvjCEcsi1PWO5LqM=
+github.com/lnhote/parser v0.0.0-20190107155725-d26aa6e96da4 h1:OsIznqGkyYtJDghAbt7ZGw9Qsz2IPPKjsO7HBpJzVkI=
+github.com/lnhote/parser v0.0.0-20190107155725-d26aa6e96da4/go.mod h1:MLMwrc6N+89E/qlszMXEEdfl7hisvjCEcsi1PWO5LqM=
 github.com/mattn/go-colorable v0.0.9 h1:UVL0vNpWh04HeJXV0KLcaT7r06gOH2l4OW6ddYRUIY4=
 github.com/mattn/go-colorable v0.0.9/go.mod h1:9vuHe8Xs5qXnSaW/c/ABM9alt+Vo+STaOChaDxuIBZU=
 github.com/mattn/go-isatty v0.0.4 h1:bnP0vzxcAdeI1zdubAl5PjU6zsERjGZb7raWodagDYs=
