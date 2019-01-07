@@ -888,13 +888,17 @@ func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
 	}
 }
 
-func BenchmarkMyDecimalToBin(b *testing.B) {
-	cases := []string{
+func benchmarkMyDecimalToBinOrHashCases() []string {
+	return []string{
 		"1.000000000000", "3", "12.000000000", "120",
 		"120000", "100000000000.00000", "0.000000001200000000",
 		"98765.4321", "-123.456000000000000000",
 		"0", "0000000000", "0.00000000000",
 	}
+}
+
+func BenchmarkMyDecimalToBin(b *testing.B) {
+	cases := benchmarkMyDecimalToBinOrHashCases()
 	decs := make([]*MyDecimal, 0, len(cases))
 	for _, ca := range cases {
 		var dec MyDecimal
@@ -917,12 +921,7 @@ func BenchmarkMyDecimalToBin(b *testing.B) {
 }
 
 func BenchmarkMyDecimalToHashKey(b *testing.B) {
-	cases := []string{
-		"1.000000000000", "3", "12.000000000", "120",
-		"120000", "100000000000.00000", "0.000000001200000000",
-		"98765.4321", "-123.456000000000000000",
-		"0", "0000000000", "0.00000000000",
-	}
+	cases := benchmarkMyDecimalToBinOrHashCases()
 	decs := make([]*MyDecimal, 0, len(cases))
 	for _, ca := range cases {
 		var dec MyDecimal
