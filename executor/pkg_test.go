@@ -158,6 +158,7 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
 	sv.L2CacheSize = 100
 	sv.EnableRadixJoin = true
+	// FIXME: use initChunkSize when join support initChunkSize.
 	sv.MaxChunkSize = 100
 	defer func() {
 		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
