@@ -35,6 +35,7 @@
 package server
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -45,7 +46,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
-	"golang.org/x/net/context"
 )
 
 func (cc *clientConn) handleStmtPrepare(sql string) error {
@@ -174,6 +174,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		}
 
 		err = parseStmtArgs(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
+		stmt.Reset()
 		if err != nil {
 			return errors.Annotatef(err, "%s", cc.preparedStmt2String(stmtID))
 		}

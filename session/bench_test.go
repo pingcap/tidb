@@ -14,6 +14,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var smallCount = 100

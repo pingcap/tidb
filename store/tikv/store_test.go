@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 var errStopped = errors.New("stopped")

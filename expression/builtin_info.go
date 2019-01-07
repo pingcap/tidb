@@ -61,7 +61,7 @@ type databaseFunctionClass struct {
 }
 
 func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
@@ -92,7 +92,7 @@ type foundRowsFunctionClass struct {
 }
 
 func (c *foundRowsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
@@ -127,8 +127,8 @@ type currentUserFunctionClass struct {
 }
 
 func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
-		return nil, errors.Trace(err)
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 64
@@ -161,7 +161,7 @@ type userFunctionClass struct {
 }
 
 func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
@@ -196,7 +196,7 @@ type connectionIDFunctionClass struct {
 }
 
 func (c *connectionIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
@@ -229,7 +229,7 @@ type lastInsertIDFunctionClass struct {
 
 func (c *lastInsertIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	var argsTp []types.EvalType
@@ -244,7 +244,7 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	} else {
 		sig = &builtinLastInsertIDSig{bf}
 	}
-	return sig, errors.Trace(err)
+	return sig, err
 }
 
 type builtinLastInsertIDSig struct {
@@ -260,7 +260,7 @@ func (b *builtinLastInsertIDSig) Clone() builtinFunc {
 // evalInt evals LAST_INSERT_ID().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(b.ctx.GetSessionVars().PrevLastInsertID)
+	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
 	return res, false, nil
 }
 
@@ -279,7 +279,7 @@ func (b *builtinLastInsertIDWithIDSig) Clone() builtinFunc {
 func (b *builtinLastInsertIDWithIDSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 
 	b.ctx.GetSessionVars().SetLastInsertID(uint64(res))
@@ -291,7 +291,7 @@ type versionFunctionClass struct {
 }
 
 func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := errors.Trace(c.verifyArgs(args)); err != nil {
+	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
@@ -322,7 +322,7 @@ type tidbVersionFunctionClass struct {
 
 func (c *tidbVersionFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = len(printer.GetTiDBInfo())
@@ -352,7 +352,7 @@ type tidbIsDDLOwnerFunctionClass struct {
 
 func (c *tidbIsDDLOwnerFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	sig := &builtinTiDBIsDDLOwnerSig{bf}
@@ -417,7 +417,7 @@ type rowCountFunctionClass struct {
 
 func (c *rowCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
 	sig = &builtinRowCountSig{bf}
@@ -437,6 +437,6 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
 func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(b.ctx.GetSessionVars().PrevAffectedRows)
+	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
 	return res, false, nil
 }

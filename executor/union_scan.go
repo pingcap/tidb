@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"sort"
 	"time"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.

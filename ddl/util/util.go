@@ -14,6 +14,7 @@
 package util
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 const (

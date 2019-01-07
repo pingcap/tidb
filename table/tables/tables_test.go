@@ -14,9 +14,11 @@
 package tables_test
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -31,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -67,7 +68,7 @@ func (ts *testSuite) TearDownSuite(c *C) {
 func (ts *testSuite) TestBasic(c *C) {
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(tb.Meta().ID, Greater, int64(0))
@@ -86,7 +87,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	ctx := ts.se
 	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpsClient()
 	ctx.GetSessionVars().InRestrictedSQL = false
-	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
+	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(rid, Greater, int64(0))
 	row, err := tb.Row(ctx, rid)
@@ -94,9 +95,9 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].GetInt64(), Equals, int64(1))
 
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"), false)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "aba"))
 	c.Assert(err, NotNil)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"), false)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, NotNil)
 
 	c.Assert(tb.UpdateRecord(ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
@@ -127,7 +128,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(tb.RemoveRecord(ctx, rid, types.MakeDatums(1, "cba")), IsNil)
 	// Make sure index data is also removed after tb.RemoveRecord().
 	c.Assert(indexCnt(), Equals, 0)
-	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
+	_, err = tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	c.Assert(indexCnt(), Greater, 0)
 	handle, found, err := tb.Seek(ctx, 0)
@@ -147,7 +148,11 @@ func (ts *testSuite) TestBasic(c *C) {
 
 func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) {
 	cnt := 0
-	err := util.ScanMetaWithPrefix(ctx.Txn(true), prefix, func(k kv.Key, v []byte) bool {
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	err = util.ScanMetaWithPrefix(txn, prefix, func(k kv.Key, v []byte) bool {
 		cnt++
 		return true
 	})
@@ -225,12 +230,14 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	sctx := ts.se
 	c.Assert(err, IsNil)
 	c.Assert(autoid, Greater, int64(0))
-	c.Assert(sctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil), false)
+	c.Assert(sctx.NewTxn(ctx), IsNil)
+	_, err = tb.AddRecord(sctx, types.MakeDatums(1, nil))
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(sctx, types.MakeDatums(2, nil), false)
+	_, err = tb.AddRecord(sctx, types.MakeDatums(2, nil))
 	c.Assert(err, IsNil)
-	c.Assert(sctx.Txn(true).Rollback(), IsNil)
+	txn, err := sctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Rollback(), IsNil)
 	_, err = ts.se.Execute(context.Background(), "drop table test.t")
 	c.Assert(err, IsNil)
 }
@@ -282,14 +289,17 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tPK"))
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
-	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1, "abc"), false)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
+	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
 	row, err := tb.Row(ts.se, rid)
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
-	c.Assert(ts.se.Txn(true).Commit(context.Background()), IsNil)
+	c.Assert(ts.se.StmtCommit(), IsNil)
+	txn, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 }
 
 func (ts *testSuite) TestIterRecords(c *C) {
@@ -298,7 +308,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "INSERT test.tIter VALUES (-1, 2), (2, NULL)")
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	c.Assert(err, IsNil)
 	totalCount := 0
@@ -309,13 +319,15 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	})
 	c.Assert(err, IsNil)
 	c.Assert(totalCount, Equals, 2)
-	c.Assert(ts.se.Txn(true).Commit(context.Background()), IsNil)
+	txn, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 }
 
 func (ts *testSuite) TestTableFromMeta(c *C) {
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.meta (a int primary key auto_increment, b varchar(255) unique)")
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("meta"))
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
@@ -339,22 +351,25 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 )`
-
-	_, err := ts.se.Execute(context.Background(), "drop table if exists t1;")
+	ctx := context.Background()
+	_, err := ts.se.Execute(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), createTable1)
+	_, err = ts.se.Execute(ctx, "drop table if exists t1, t2;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(ctx, createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	c.Assert(p0.Name, Equals, model.NewCIStr("p0"))
-	c.Assert(ts.se.NewTxn(), IsNil)
-	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1), false)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
+	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1))
 	c.Assert(err, IsNil)
 
 	// Check that add record writes to the partition, rather than the table.
-	txn := ts.se.Txn(true)
+	txn, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
 	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
@@ -362,11 +377,11 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(7), false)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(7))
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(12), false)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(12))
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(16), false)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(16))
 	c.Assert(err, IsNil)
 
 	// Make the changes visible.
@@ -380,7 +395,7 @@ PARTITION BY RANGE ( id ) (
 	tk.MustQuery("select count(*) from t1 use index(id) where id > 6").Check(testkit.Rows("3"))
 
 	// Value must locates in one partition.
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(table.ErrTrgInvalidCreationCtx.Equal(err), IsTrue)
 	ts.se.Execute(context.Background(), "rollback")
 
@@ -391,12 +406,78 @@ PARTITION BY RANGE ( id ) (
 )`
 	_, err = ts.se.Execute(context.Background(), createTable2)
 	c.Assert(err, IsNil)
-	c.Assert(ts.se.NewTxn(), IsNil)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 	tbInfo = tb.Meta()
-	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
+}
+
+func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
+	_, err := ts.se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition = '1';")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t1 (id int(11), index(id)) PARTITION BY HASH (id) partitions 4;`)
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tbInfo := tb.Meta()
+	p0 := tbInfo.Partition.Definitions[0]
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
+	rid, err := tb.AddRecord(ts.se, types.MakeDatums(8))
+	c.Assert(err, IsNil)
+
+	// Check that add record writes to the partition, rather than the table.
+	txn, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
+	val, err := txn.Get(tables.PartitionRecordKey(p0.ID, rid))
+	c.Assert(err, IsNil)
+	c.Assert(len(val), Greater, 0)
+	_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
+	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
+
+	// Cover more code.
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(-1))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(3))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(6))
+	c.Assert(err, IsNil)
+
+	// Make the changes visible.
+	_, err = ts.se.Execute(context.Background(), "commit")
+	c.Assert(err, IsNil)
+
+	// Check index count equals to data count.
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from t1 use index(id)").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from t1 use index(id) where id > 2").Check(testkit.Rows("3"))
+
+	// Test for partition expression is negative number.
+	_, err = ts.se.Execute(context.Background(), `CREATE TABLE test.t2 (id int(11), index(id)) PARTITION BY HASH (id) partitions 11;`)
+	c.Assert(err, IsNil)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	tbInfo = tb.Meta()
+	for i := 0; i < 11; i++ {
+		c.Assert(ts.se.NewTxn(context.Background()), IsNil)
+		rid, err = tb.AddRecord(ts.se, types.MakeDatums(-i))
+		c.Assert(err, IsNil)
+		txn, err = ts.se.Txn(true)
+		c.Assert(err, IsNil)
+		val, err = txn.Get(tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid))
+		c.Assert(err, IsNil)
+		c.Assert(len(val), Greater, 0)
+		_, err = txn.Get(tables.PartitionRecordKey(tbInfo.ID, rid))
+		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
+	}
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
+	c.Assert(err, IsNil)
 }
 
 // TestPartitionGetPhysicalID tests partition.GetPhysicalID().

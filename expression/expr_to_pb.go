@@ -16,7 +16,6 @@ package expression
 import (
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -162,7 +161,7 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 			t := d.GetMysqlTime()
 			if t.Type == mysql.TypeTimestamp && loc != time.UTC {
 				err := t.ConvertTimeZone(loc, time.UTC)
-				terror.Log(errors.Trace(err))
+				terror.Log(err)
 			}
 			v, err := t.ToPackedUint()
 			if err != nil {

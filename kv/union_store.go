@@ -105,7 +105,7 @@ type lazyMemBuffer struct {
 
 func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 	if lmb.mb == nil {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, ErrNotExist
 	}
 
 	return lmb.mb.Get(k)
@@ -176,7 +176,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 			} else {
 				us.markLazyConditionPair(k, nil, ErrKeyExists)
 			}
-			return nil, errors.Trace(ErrNotExist)
+			return nil, ErrNotExist
 		}
 	}
 	if IsErrNotFound(err) {
@@ -186,7 +186,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 		return v, errors.Trace(err)
 	}
 	if len(v) == 0 {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, ErrNotExist
 	}
 	return v, nil
 }

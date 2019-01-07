@@ -24,8 +24,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -39,28 +37,9 @@ import (
 
 const eps = 1e-9
 
-var _ = Suite(&testSelectivitySuite{})
-
-type testSelectivitySuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-}
-
-func (s *testSelectivitySuite) SetUpSuite(c *C) {
-	store, dom, err := newStoreWithBootstrap(0)
-	c.Assert(err, IsNil)
-	s.dom = dom
-	s.store = store
-}
-
-func (s *testSelectivitySuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
 // If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
-func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Datum, error) {
+func (s *testStatsSuite) generateIntDatum(dimension, num int) ([]types.Datum, error) {
 	length := int(math.Pow(float64(num), float64(dimension)))
 	ret := make([]types.Datum, length)
 	if dimension == 1 {
@@ -111,12 +90,12 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 	return statsTbl
 }
 
-func (s *testSelectivitySuite) prepareSelectivity(testKit *testkit.TestKit, c *C) *statistics.Table {
+func (s *testStatsSuite) prepareSelectivity(testKit *testkit.TestKit, c *C) *statistics.Table {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx_cd(c, d), index idx_de(d, e))")
 
-	is := s.dom.InfoSchema()
+	is := s.do.InfoSchema()
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tbl := tb.Meta()
@@ -139,10 +118,11 @@ func (s *testSelectivitySuite) prepareSelectivity(testKit *testkit.TestKit, c *C
 	return statsTbl
 }
 
-func (s *testSelectivitySuite) TestSelectivity(c *C) {
+func (s *testStatsSuite) TestSelectivity(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.dom.InfoSchema()
+	is := s.do.InfoSchema()
 
 	tests := []struct {
 		exprs       string
@@ -212,7 +192,8 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
 // consists several columns, and the first column has small NDV.
-func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
+func (s *testStatsSuite) TestDiscreteDistribution(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -229,7 +210,8 @@ func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
 		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
 }
 
-func (s *testSelectivitySuite) TestSelectCombinedLowBound(c *C) {
+func (s *testStatsSuite) TestSelectCombinedLowBound(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -249,7 +231,8 @@ func getRange(start, end int64) []*ranger.Range {
 	return []*ranger.Range{ran}
 }
 
-func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
+func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -258,15 +241,15 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
-	h := s.dom.StatsHandle()
+	h := s.do.StatsHandle()
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	testKit.MustExec("analyze table t")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
-	c.Assert(h.Update(s.dom.InfoSchema()), IsNil)
-	table, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	statsTbl := h.GetTableStats(table.Meta())
 
@@ -296,7 +279,7 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
 	testKit.MustExec("analyze table t")
-	table, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err = s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	statsTbl = h.GetTableStats(table.Meta())
 
@@ -309,7 +292,7 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	testKit.MustExec("create table t(a int, b int, index idx(b))")
 	testKit.MustExec("insert into t values (1,1)")
 	testKit.MustExec("analyze table t")
-	table, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err = s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	statsTbl = h.GetTableStats(table.Meta())
 
@@ -324,7 +307,8 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	c.Assert(count, Equals, 0.0)
 }
 
-func (s *testSelectivitySuite) TestPrimaryKeySelectivity(c *C) {
+func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -343,13 +327,13 @@ func (s *testSelectivitySuite) TestPrimaryKeySelectivity(c *C) {
 
 func BenchmarkSelectivity(b *testing.B) {
 	c := &C{}
-	s := &testSelectivitySuite{}
+	s := &testStatsSuite{}
 	s.SetUpSuite(c)
 	defer s.TearDownSuite(c)
 
 	testKit := testkit.NewTestKit(c, s.store)
 	statsTbl := s.prepareSelectivity(testKit, c)
-	is := s.dom.InfoSchema()
+	is := s.do.InfoSchema()
 	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)

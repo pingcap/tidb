@@ -31,12 +31,8 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncAvg,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
-	}
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncAvg, args, false)
 	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build avg func for partial phase.
@@ -86,13 +82,8 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 		srcChk.AppendFloat64(0, float64(i))
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
-
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncAvg,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeDouble),
-	}
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncAvg, args, false)
 	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build avg func for partial phase.

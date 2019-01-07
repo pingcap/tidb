@@ -14,6 +14,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testBootstrapSuite{})

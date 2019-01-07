@@ -14,12 +14,12 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -66,23 +65,17 @@ type worker struct {
 	delRangeManager delRangeManager
 }
 
-func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
-	sessPool := &sessionPool{resPool: ctxPool}
+func newWorker(tp workerType, store kv.Storage, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
 	worker := &worker{
-		id:       atomic.AddInt32(&ddlWorkerID, 1),
-		tp:       tp,
-		ddlJobCh: make(chan struct{}, 1),
-		quitCh:   make(chan struct{}),
-		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
-		sessPool: sessPool,
+		id:              atomic.AddInt32(&ddlWorkerID, 1),
+		tp:              tp,
+		ddlJobCh:        make(chan struct{}, 1),
+		quitCh:          make(chan struct{}),
+		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
+		sessPool:        sessPool,
+		delRangeManager: delRangeMgr,
 	}
 
-	if ctxPool != nil {
-		worker.delRangeManager = newDelRangeManager(store, sessPool)
-		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !store.SupportDeleteRange())
-	} else {
-		worker.delRangeManager = newMockDelRangeManager()
-	}
 	return worker
 }
 
@@ -105,8 +98,6 @@ func (w *worker) String() string {
 
 func (w *worker) close() {
 	close(w.quitCh)
-	w.delRangeManager.clear()
-	w.sessPool.close()
 	w.wg.Wait()
 	log.Infof("[ddl-%s] close DDL worker", w)
 }
@@ -116,8 +107,6 @@ func (w *worker) close() {
 func (w *worker) start(d *ddlCtx) {
 	log.Infof("[ddl-%s] start DDL worker", w)
 	defer w.wg.Done()
-
-	w.delRangeManager.start()
 
 	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
 	// every 2 * lease time. If lease is 0, we will use default 1s.
@@ -282,9 +271,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			if job.State != model.JobStateRollbackDone {
 				break
 			}
+
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition:
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
 		}
 		if err != nil {
@@ -453,16 +443,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
-		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
-		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			log.Infof("[ddl-%s] run the cancelling DDL job %s", w, job)
-			w.reorgCtx.notifyReorgCancel()
-		} else {
-			job.State = model.JobStateCancelled
-			job.Error = errCancelledDDLJob
-			job.ErrorCount++
-			return
-		}
+		return convertJob2RollbackJob(w, d, t, job)
 	}
 
 	if !job.IsRollingback() && !job.IsCancelling() {
@@ -476,10 +457,14 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
 		ver, err = onCreateTable(d, t, job)
-	case model.ActionDropTable:
-		ver, err = onDropTable(t, job)
+	case model.ActionCreateView:
+		ver, err = onCreateView(d, t, job)
+	case model.ActionDropTable, model.ActionDropView:
+		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = onDropTablePartition(t, job)
+	case model.ActionTruncateTablePartition:
+		ver, err = onTruncateTablePartition(t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
 	case model.ActionDropColumn:
@@ -510,6 +495,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifyTableComment(t, job)
 	case model.ActionAddTablePartition:
 		ver, err = onAddTablePartition(t, job)
+	case model.ActionModifyTableCharsetAndCollate:
+		ver, err = onModifyTableCharsetAndCollate(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
