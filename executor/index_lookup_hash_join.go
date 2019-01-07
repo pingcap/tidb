@@ -314,7 +314,6 @@ func (iw *innerHashWorker) joinMatchInnerRow2Chunk(innerRow chunk.Row, task *loo
 		matchedOuters = append(matchedOuters, matchedOuter)
 	}
 	innerIter := chunk.NewIterator4Slice([]chunk.Row{innerRow})
-	innerIter.Begin()
 	hasMatch := false
 	for i := 0; i < len(matchedOuters); i++ {
 		innerIter.Begin()

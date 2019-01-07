@@ -486,28 +486,34 @@ func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types
 			task.encodedLookUpKeys.AppendNull(0)
 			continue
 		}
+
 		keyBuf = keyBuf[:0]
 		keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dLookUpKey...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
-		task.encodedLookUpKeys.AppendBytes(0, keyBuf)
+		outerRow := task.outerResult.GetRow(i)
+		if !iw.hasNullInOuterJoinKey(outerRow) {
+			// Store the encoded lookup key in chunk, so we can use it to lookup the matched inners directly.
+			task.encodedLookUpKeys.AppendBytes(0, keyBuf)
+		} else {
+			task.encodedLookUpKeys.AppendNull(0)
+		}
 		if !iw.outerCtx.keepOrder {
-			outerRow := task.outerResult.GetRow(i)
-			if iw.hasNullInOuterJoinKey(outerRow) {
-				continue
-			}
 			if tmpPtr = task.lookupMap.Get(keyBuf, tmpPtr[:0]); len(tmpPtr) == 0 {
-				dLookUpKeys = append(dLookUpKeys, dLookUpKey)
+				if !iw.hasNullInOuterJoinKey(outerRow) {
+					dLookUpKeys = append(dLookUpKeys, dLookUpKey)
+				}
 			}
 			rowPtr := uint32(i)
 			*(*uint32)(unsafe.Pointer(&valBuf[0])) = rowPtr
 			task.lookupMap.Put(keyBuf, valBuf)
 		} else {
-			dLookUpKeys = append(dLookUpKeys, dLookUpKey)
-
+			if !iw.hasNullInOuterJoinKey(outerRow) {
+				dLookUpKeys = append(dLookUpKeys, dLookUpKey)
+			}
 		}
+
 	}
 
 	task.memTracker.Consume(task.encodedLookUpKeys.MemoryUsage())
@@ -528,7 +534,8 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 		// IndexNestedLoopJoin, thus the filter will always be false if
 		// outerValue is null, and we don't need to lookup it.
 		if outerValue.IsNull() {
-			return nil, nil
+			dLookupKey = append(dLookupKey, outerValue)
+			continue
 		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
