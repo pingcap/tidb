@@ -1317,9 +1317,9 @@ func (s *testDBSuite) TestCancelAddPartitionAndDropPartition(c *C) {
 	defer s.mustExec(c, "drop table employees;")
 
 	testCases := []struct {
-		action           model.ActionType
-		jobState         model.JobState
-		JobSchemaState   model.SchemaState
+		action         model.ActionType
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
 	}{
 		// Check add table partition.
 		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone},
