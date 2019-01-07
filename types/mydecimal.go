@@ -1248,7 +1248,12 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 	}
 	buf, err := d.ToBin(prec, digitsFrac)
 	if err == ErrTruncated {
-		err = nil // trailing zeros are truncated, we ignore this error
+		// This err is caused by shorter digitsFrac;
+		// Our digitsFrac returned by removeTrailingZeros() includes all digits after the point,
+		// 	but the trailing zeros;
+		// So if we got this error, these truncated digits must be the trailing zeros,
+		// 	and we just ignore them;
+		err = nil
 	}
 	return buf, err
 }
