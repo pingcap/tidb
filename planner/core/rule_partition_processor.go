@@ -147,7 +147,7 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 	// Calculate the column range to prune.
 	// TODO: Remove prune by calculating range.
 	if partCol != nil {
-		accessConds := ranger.ExtractAccessConditionsForColumn(filterExprs, partCol.UniqueID)
+		accessConds := ranger.ExtractAccessConditionsForColumn(conds, partCol.UniqueID)
 		r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType)
 		if err != nil {
 			return false, errors.Trace(err)
