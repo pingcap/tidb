@@ -192,6 +192,10 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	var err error
 	var rs sqlexec.RecordSet
 	se := sctx.(*session)
+	err = se.isTxnAborted(s)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	rs, err = s.Exec(ctx)
 	sessVars := se.GetSessionVars()
 	// All the history should be added here.

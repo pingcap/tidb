@@ -326,6 +326,12 @@ func (s *session) doCommit(ctx context.Context) error {
 	//	return kv.ErrRetryable
 	// }
 
+	// mockCommitError8942 is used for PR #8942.
+	// gofail: var mockCommitError8942 bool
+	// if mockCommitError8942 {
+	//	return kv.ErrRetryable
+	// }
+
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
@@ -514,6 +520,19 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
+func (s *session) isTxnAborted(stmt sqlexec.Statement) error {
+	if s.txn.doNotCommit == nil {
+		return nil
+	}
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+		return nil
+	}
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
+		return nil
+	}
+	return errors.New("current transaction is aborted, commands ignored until end of transaction block")
+}
+
 func (s *session) retry(ctx context.Context, maxCnt uint) error {
 	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
@@ -566,6 +585,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 			err = s.StmtCommit()
 			if err != nil {
+				s.txn.reset()
 				return errors.Trace(err)
 			}
 		}
