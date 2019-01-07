@@ -34,6 +34,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway v1.5.1 // indirect
 	github.com/jonboulle/clockwork v0.1.0 // indirect
 	github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5
+	github.com/lnhote/parser v0.0.0-20190107045230-65923d41587d // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/mgechev/revive v0.0.0-20181210140514-b4cc152955fb
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
@@ -49,7 +50,6 @@ require (
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20181203065228-c14302da291c
-	github.com/pingcap/parser v0.0.0-20181221050948-947d4ab3052f
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v2.1.1-0.20181218072513-b2235d442b06+incompatible
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
@@ -86,3 +86,5 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/pingcap/parser => github.com/lnhote/parser v0.0.0-20190107045230-65923d41587d
