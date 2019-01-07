@@ -14,10 +14,10 @@ package core
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -135,11 +135,10 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 
 	if len(conds) == 1 {
 		// Constant false.
-		if c, ok := conds[0].(*expression.Constant); ok {
-			if c.GetType().Tp == mysql.TypeTiny {
-				if c.Value.GetInt64() == 0 {
-					return true, nil
-				}
+		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil {
+			ret, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
+			if err == nil && ret == false {
+				return true, nil
 			}
 		}
 	}
