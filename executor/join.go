@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
+	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -94,7 +95,8 @@ type HashJoinExec struct {
 	// hashTables stores the hash tables built from the inner relation, if there
 	// is no partition phase, a global hash table will be stored in
 	// hashTables[0].
-	hashTables []*mvmap.MVMap
+	hashTables  []*mvmap.MVMap
+	nullPartCnt int
 }
 
 // partition stores the sub-relations of inner relation and outer relation after
@@ -384,11 +386,13 @@ func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 		}
 		e.innerRowPrts = append(e.innerRowPrts, partPtrs)
 	}
+	log.Warnf("During partition phase of HashJoin, null partition cnt[%d], total partition cnt[%d], null-ratio[%f]", e.nullPartCnt, len(e.innerParts), 1.0*e.nullPartCnt/len(e.innerParts))
 	return
 }
 
 func (e *HashJoinExec) getPartition(idx uint32) partition {
 	if e.innerParts[idx] == nil {
+		e.nullPartCnt++
 		e.innerParts[idx] = chunk.New(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	}
 	return e.innerParts[idx]
