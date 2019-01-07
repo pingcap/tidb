@@ -2697,7 +2697,7 @@ func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExp
 // We need to resolve the referenced window to get the definition of current window spec.
 func resolveWindowSpec(spec *ast.WindowSpec, specs map[string]ast.WindowSpec, inStack map[string]bool) error {
 	if inStack[spec.Name.L] {
-		return ErrWindowCircularityInWindowGraph
+		return errors.Trace(ErrWindowCircularityInWindowGraph)
 	}
 	if spec.Ref.L == "" {
 		return nil
@@ -2730,7 +2730,7 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 		spec.OrderBy = ref.OrderBy
 	}
 	if spec.PartitionBy != nil {
-		return ErrWindowNoChildPartitioning
+		return errors.Trace(ErrWindowNoChildPartitioning)
 	}
 	spec.PartitionBy = ref.PartitionBy
 	spec.Ref = model.NewCIStr("")
