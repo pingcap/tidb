@@ -2101,6 +2101,34 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	// restore table by none exits job.
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
 	c.Assert(err, NotNil)
+
+	// Disable gc by manual first, then after recover table, the gc enable status should also be disabled.
+	err = admin.DisableGCForRecover(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("delete from t_recover where a > 1")
+	tk.MustExec("drop table t_recover")
+	rs, err = tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	row = rows[0]
+	c.Assert(row.GetString(1), Equals, "test_restore")
+	c.Assert(row.GetString(3), Equals, "drop table")
+	jobID = row.GetInt64(0)
+
+	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
+
+	// check recover table meta and data record.
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
+	// check recover table autoID.
+	tk.MustExec("insert into t_recover values (7),(8),(9)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	gcEnable, err := admin.CheckGCEnableStatus(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(gcEnable, Equals, false)
+
 }
 
 func (s *testDBSuite) TestTransactionOnAddDropColumn(c *C) {
