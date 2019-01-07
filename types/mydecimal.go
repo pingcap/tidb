@@ -1229,9 +1229,9 @@ func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 	return bin, err
 }
 
-//	ToHashKey removes the leading zeros and trailing zeros and generates a hash key;
-//	Two Decimals dec0 and dec1 with different fraction will generate the same hash keys if dec0.Compare(dec1) == 0.
+//	ToHashKey removes the leading and trailing zeros and generates a hash key;
 //
+//	Two Decimals dec0 and dec1 with different fraction will generate the same hash keys if dec0.Compare(dec1) == 0.
 //	For example:
 //		1.1		decimal(2, 1)
 //		1.10	decimal(3, 2)
@@ -1248,8 +1248,8 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 	if err == ErrTruncated {
 		// This err is caused by shorter digitsFrac;
 		// After removing the trailing zeros from a Decimal,
-		// 	digitsFrac may be less than the real digitsFrac of the Decimal,
-		// 	thus ErrTruncated may be raised, we can ignore it here.
+		// so digitsFrac may be less than the real digitsFrac of the Decimal,
+		// thus ErrTruncated may be raised, we can ignore it here.
 		err = nil
 	}
 	return buf, err
