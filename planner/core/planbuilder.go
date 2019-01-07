@@ -41,6 +41,7 @@ type visitInfo struct {
 	db        string
 	table     string
 	column    string
+	err       error
 }
 
 type tableHintInfo struct {
@@ -136,6 +137,8 @@ type PlanBuilder struct {
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
+
+	windowSpecs map[string]ast.WindowSpec
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -247,6 +250,9 @@ func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
 func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	p := &Set{}
 	for _, vars := range v.Variables {
+		if vars.IsGlobal {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+		}
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
 			IsGlobal: vars.IsGlobal,
@@ -549,7 +555,7 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 	}
 
 	// Admin command can only be executed by administrator.
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return ret, nil
 }
 
@@ -761,8 +767,8 @@ const (
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	for _, tbl := range as.TableNames {
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "")
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", nil)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", nil)
 	}
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
@@ -914,6 +920,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		Flag:        show.Flag,
 		Full:        show.Full,
 		User:        show.User,
+		IfNotExists: show.IfNotExists,
 		GlobalScope: show.GlobalScope,
 	}.Init(b.ctx)
 	switch showTp := show.Tp; showTp {
@@ -932,7 +939,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 				return nil, ErrNoDB
 			}
 		case ast.ShowCreateTable:
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", nil)
 		}
 		p.SetSchema(buildShowSchema(show))
 	}
@@ -970,11 +977,11 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 
 	switch raw := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", nil)
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
 	case *ast.RevokeStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.KillStmt:
 		// If you have the SUPER privilege, you can kill all threads and statements.
 		// Otherwise, you can kill only your own threads and statements.
@@ -984,7 +991,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 			if pi, ok := processList[raw.ConnectionID]; ok {
 				loginUser := b.ctx.GetSessionVars().User
 				if pi.User != loginUser.Username {
-					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 				}
 			}
 		}
@@ -1001,7 +1008,7 @@ func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitI
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
-	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "")
+	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
@@ -1016,11 +1023,11 @@ func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitI
 			}
 			break
 		}
-		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "")
+		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
 	}
 
 	for _, priv := range allPrivs {
-		vi = appendVisitInfo(vi, priv, dbName, tableName, "")
+		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
 	}
 
 	return vi
@@ -1108,6 +1115,7 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		privilege: mysql.InsertPriv,
 		db:        tn.DBInfo.Name.L,
 		table:     tableInfo.Name.L,
+		err:       nil,
 	})
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
@@ -1418,29 +1426,34 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			privilege: mysql.AlterPriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 	case *ast.CreateDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.CreatePriv,
 			db:        v.Name,
+			err:       nil,
 		})
 	case *ast.CreateIndexStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.IndexPriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 	case *ast.CreateTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.CreatePriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 		if v.ReferTable != nil {
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				privilege: mysql.SelectPriv,
 				db:        v.ReferTable.Schema.L,
 				table:     v.ReferTable.Name.L,
+				err:       nil,
 			})
 		}
 	case *ast.CreateViewStmt:
@@ -1465,18 +1478,21 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				privilege: mysql.CreatePriv,
 				db:        v.ViewName.Schema.L,
 				table:     v.ViewName.Name.L,
+				err:       nil,
 			})
 		}
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.DropPriv,
 			db:        v.Name,
+			err:       nil,
 		})
 	case *ast.DropIndexStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.IndexPriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 	case *ast.DropTableStmt:
 		for _, tableVal := range v.Tables {
@@ -1484,6 +1500,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				privilege: mysql.DropPriv,
 				db:        tableVal.Schema.L,
 				table:     tableVal.Name.L,
+				err:       nil,
 			})
 		}
 	case *ast.TruncateTableStmt:
@@ -1491,17 +1508,20 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			privilege: mysql.DeletePriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 	case *ast.RenameTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.AlterPriv,
 			db:        v.OldTable.Schema.L,
 			table:     v.OldTable.Name.L,
+			err:       nil,
 		})
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.AlterPriv,
 			db:        v.NewTable.Schema.L,
 			table:     v.NewTable.Name.L,
+			err:       nil,
 		})
 	}
 
