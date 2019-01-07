@@ -1089,6 +1089,17 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("insert into t values (0.0);")
 	_, err = tk.Exec("update t set c1 = 2.0;")
 	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime not null, b datetime)")
+	tk.MustExec("insert into t value('1999-12-12', '1999-12-13')")
+	tk.MustExec(" set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1999-12-12 00:00:00 1999-12-13 00:00:00"))
+	tk.MustExec("update t set a = ''")
+	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 1999-12-13 00:00:00"))
+	tk.MustExec("update t set b = ''")
+	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 <nil>"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {
