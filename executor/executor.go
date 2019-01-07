@@ -740,7 +740,6 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	// For limit N, we only need request N from child executor.
 	e.childResult = chunk.New(e.children[0].retTypes(), e.initCap, e.maxChunkSize)
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0

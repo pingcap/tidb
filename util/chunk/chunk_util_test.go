@@ -81,3 +81,36 @@ func BenchmarkAppendSelectedRow(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkGetInt64InColumn(b *testing.B) {
+	numRows := 1024
+	srcChk := newChunkWithInitCap(numRows, 8)
+	for i := 0; i < numRows; i++ {
+		srcChk.AppendRow(MutRowFromValues(2).ToRow())
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		GetInt64InColumn(srcChk, 0)
+	}
+}
+
+func BenchmarkGetInt64InRow(b *testing.B) {
+	numRows := 1024
+	srcChk := newChunkWithInitCap(numRows, 8)
+	for i := 0; i < numRows; i++ {
+		srcChk.AppendRow(MutRowFromValues(2).ToRow())
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		nums := make([]int64, 0, srcChk.NumRows())
+		for j := 0; j < srcChk.NumRows(); j++ {
+			num := srcChk.GetRow(j).GetInt64(0)
+			nums = append(nums, num)
+		}
+	}
+}
+
+//BenchmarkGetInt64InColumn-8       	  500000	      3816 ns/op	    8192 B/op	       1 allocs/op
+//BenchmarkGetInt64InRow-8          	  200000	      7506 ns/op	    8192 B/op	       1 allocs/op

@@ -432,7 +432,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		finished:     e.finished,
 		resultCh:     e.resultCh,
 		keepOrder:    e.keepOrder,
-		batchSize:    1,
+		batchSize:    1, // slow start with small batch size to return first row quickly.
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
 	}

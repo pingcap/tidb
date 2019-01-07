@@ -384,9 +384,9 @@ func (s *testSuite1) TestGroupConcatAggr(c *C) {
 	// issue #5411
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// https://github.com/pingcap/tidb/issues/6838 isn't implemented, so use this trick.
+	// `group_concat` parallel gets chunks from blew `tableReader` and parallel running, the final result is unstable order in one group and hard to assert.
+	//  so set a big enough `InitChunkSize` to let tableReader return one group's result in one chunk to keep order.
 	tk.Se.GetSessionVars().InitChunkSize = 3
-	tk.Se.GetSessionVars().MaxChunkSize = 3
 	tk.MustExec("create table test(id int, name int)")
 	tk.MustExec("insert into test values(1, 10);")
 	tk.MustExec("insert into test values(1, 20);")
