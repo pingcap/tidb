@@ -2440,21 +2440,23 @@ func yearNumericTwoDigits(t *MysqlTime, input string, ctx map[string]int) (strin
 }
 
 func yearNumericNDigits(t *MysqlTime, input string, ctx map[string]int, n int) (string, bool) {
-	var l int
-	for l = 1; l < n+1; l++ {
-		if _, succ := parseDigits(input, l); !succ {
+	effectiveCount, effectiveValue := 0, 0
+	for effectiveCount+1 <= n {
+		value, succeed := parseDigits(input, effectiveCount+1)
+		if !succeed {
 			break
 		}
+		effectiveCount++
+		effectiveValue = value
 	}
-	v, succ := parseDigits(input, l-1)
-	if !succ {
+	if effectiveCount == 0 {
 		return input, false
 	}
-	if l <= 3 {
-		v = adjustYear(v)
+	if effectiveCount <= 2 {
+		effectiveValue = adjustYear(effectiveValue)
 	}
-	t.year = uint16(v)
-	return input[l-1:], true
+	t.year = uint16(effectiveValue)
+	return input[effectiveCount:], true
 }
 
 func dayOfYearThreeDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
