@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/infobind"
 	"sort"
 	"strconv"
 	"strings"
@@ -153,7 +154,24 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowMasterStatus()
 	case ast.ShowPrivileges:
 		return e.fetchShowPrivileges()
+	case ast.ShowBindings:
+		return e.fetchShowBind()
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowBind() error {
+	bm := infobind.GetBindManager(e.ctx)
+
+	var bindDataArr []*infobind.BindData
+	if e.GlobalScope {
+		bindDataArr = bm.GetAllGlobalBindData()
+	}
+
+	for _, bindData := range bindDataArr {
+		e.appendRow([]interface{}{bindData.OriginalSql, bindData.BindSql, bindData.Db, bindData.Status, bindData.CreateTime, bindData.UpdateTime})
+	}
+
 	return nil
 }
 

@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/infobind"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
@@ -896,6 +897,67 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return
 }
 
+func (s *session) DropGlobalBind(originSql string, defaultDb string) error {
+	sql := fmt.Sprintf(`UPDATE mysql.bind_info SET status=%d WHERE original_sql='%s' and default_db='%s';`,
+		0, originSql, defaultDb)
+	_, _, err := s.ExecRestrictedSQL(s, sql)
+	return errors.Trace(err)
+}
+
+func (s *session) AddGlobalBind(originSql string, bindSql string, defaultDb string) (err error) {
+	ctx := context.Background()
+
+	_, err = s.Execute(ctx, "BEGIN")
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	defer func() {
+		if err == nil {
+			_, err = s.execute(ctx, "COMMIT")
+		} else {
+			_, rbErr := s.execute(ctx, "ROLLBACK")
+			terror.Log(errors.Trace(rbErr))
+		}
+	}()
+
+	sql := fmt.Sprintf("SELECT status FROM mysql.bind_info WHERE original_sql='%s' AND default_db='%s'",
+		originSql, defaultDb)
+	recordSet, err := s.execute(ctx, sql)
+	if err != nil {
+		return
+	}
+
+	if len(recordSet) == 1 {
+		var rows []chunk.Row
+		rows, err = drainRecordSet(ctx, s, recordSet[0])
+		if err != nil {
+			return
+		}
+
+		if len(rows) > 0 {
+			status := rows[0].GetInt64(0)
+			if status == 1 {
+				err = errors.New("origin sql already has binding sql")
+				return
+			}
+
+			sql = fmt.Sprintf("DELETE FROM mysql.bind_info WHERE original_sql='%s' and default_db='%s'", originSql, defaultDb)
+			_, err = s.execute(ctx, sql)
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	sql = fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status) VALUES ('%s', '%s', '%s', %d)`,
+		originSql, bindSql, defaultDb, 1)
+	_, err = s.execute(ctx, sql)
+
+	return
+}
+
+
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
 	connID := s.sessionVars.ConnectionID
@@ -1227,6 +1289,12 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
+	bm := &infobind.BindManager{
+		Handle:             do.BindHandle(),
+		GlobalBindAccessor: s,
+	}
+	infobind.BindBinderManager(s, bm)
+
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
@@ -1288,6 +1356,16 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 	err = dom.UpdateTableStatsLoop(se1)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	se2, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	parser := se2.GetParser()
+	err = dom.LoadBindInfoLoop(se2, parser)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

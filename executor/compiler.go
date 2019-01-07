@@ -41,6 +41,17 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		defer span1.Finish()
 	}
 
+	var needDefaultDb bool
+	switch x := stmtNode.(type) {
+	case *ast.CreateBindingStmt:
+		needDefaultDb = NeedDefaultDb(x.OriginSel)
+		if !needDefaultDb {
+			needDefaultDb = NeedDefaultDb(x.HintedSel)
+		}
+	case *ast.DropBindingStmt:
+		needDefaultDb = NeedDefaultDb(x.OriginSel)
+	}
+
 	infoSchema := GetInfoSchema(c.Ctx)
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
 		return nil, errors.Trace(err)
@@ -49,6 +60,23 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if needDefaultDb {
+		switch x := finalPlan.(type) {
+		case *plannercore.CreateBindPlan:
+			if c.Ctx.GetSessionVars().CurrentDB != "" {
+				x.DefaultDb = c.Ctx.GetSessionVars().CurrentDB
+			} else {
+				err = errors.Trace(plannercore.ErrNoDB)
+			}
+		case *plannercore.DropBindPlan:
+			if c.Ctx.GetSessionVars().CurrentDB != "" {
+				x.DefaultDb = c.Ctx.GetSessionVars().CurrentDB
+			} else {
+				err = errors.Trace(plannercore.ErrNoDB)
+			}
+		}
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
@@ -201,4 +229,31 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	return is
+}
+
+func NeedDefaultDb(stmtNode ast.ResultSetNode) bool {
+	switch x := stmtNode.(type) {
+	case *ast.TableSource:
+		return NeedDefaultDb(x.Source)
+	case *ast.SelectStmt:
+		return NeedDefaultDb(x.From.TableRefs)
+	case *ast.TableName:
+		if x.Schema.O == "" {
+			return true
+		}
+	case *ast.Join:
+		var need bool
+		if x.Left != nil {
+			need = NeedDefaultDb(x.Left)
+			if !need {
+				if x.Right != nil {
+					return NeedDefaultDb(x.Right)
+				}
+			}
+		}
+
+		return need
+	}
+
+	return false
 }

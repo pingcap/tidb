@@ -16,6 +16,7 @@ package domain
 import (
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/tidb/infobind"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -68,6 +69,8 @@ type Domain struct {
 	wg              sync.WaitGroup
 	gvc             GlobalVariableCache
 	slowQuery       *topNSlowQueries
+
+	bindHandle *infobind.Handle
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -776,9 +779,52 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
+// LoadBindLoop create a goroutine loads BindInfo in a loop, it
+// should be called only once in BootstrapSession.
+func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	do.bindHandle = infobind.NewHandle()
+
+	hu := &infobind.HandleUpdater{
+		Handle: do.BindHandle(),
+		Parser: parser,
+		Ctx:    ctx,
+	}
+
+	fullLoad := true
+	err := hu.Update(fullLoad)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	fullLoad = false
+	duration := 3 * time.Second
+	go func() {
+		defer recoverInDomain("loadBindInLoop", false)
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-time.After(duration):
+			}
+			err = hu.Update(fullLoad)
+			if err != nil {
+				log.Error("[domain] load bindinfo fail:", errors.ErrorStack(err))
+			} else {
+				log.Info("[domain] reload bindinfo success.")
+			}
+		}
+	}()
+	return nil
+}
+
 // StatsHandle returns the statistic handle.
 func (do *Domain) StatsHandle() *statistics.Handle {
 	return (*statistics.Handle)(atomic.LoadPointer(&do.statsHandle))
+}
+
+func (do *Domain) BindHandle() *infobind.Handle {
+	return do.bindHandle
 }
 
 // CreateStatsHandle is used only for test.

@@ -204,8 +204,32 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(x)
+	case *ast.CreateBindingStmt:
+		return b.buildCreateBind(x)
+	case *ast.DropBindingStmt:
+		return b.buildDropBind(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
+}
+
+func (b *PlanBuilder) buildDropBind(v *ast.DropBindingStmt) (Plan, error) {
+	p := &DropBindPlan{}
+
+	p.OriginSql = v.OriginSel.Text()
+	p.IsGlobal = v.GlobalScope
+
+	return p, nil
+}
+
+func (b *PlanBuilder) buildCreateBind(v *ast.CreateBindingStmt) (Plan, error) {
+	p := &CreateBindPlan{}
+
+	p.OriginSql = v.OriginSel.Text()
+	p.BindSql = v.HintedSel.Text()
+	p.IsGlobal = v.GlobalScope
+	p.BindStmt = v.HintedSel
+
+	return p, nil
 }
 
 func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
