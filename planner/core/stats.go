@@ -99,9 +99,6 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.Sta
 	}
 	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && ds.stats.HistColl != nil {
 		finalHist := ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
-		if err != nil {
-			log.Warnf("[stats-in-datasource]: An error happened: %v", err.Error())
-		}
 		return profile, finalHist
 	}
 	return profile.Scale(selectivity), nil
