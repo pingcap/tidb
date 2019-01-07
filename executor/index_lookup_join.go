@@ -498,7 +498,7 @@ func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types
 			if iw.hasNullInOuterJoinKey(outerRow) {
 				continue
 			}
-			if  tmpPtr = task.lookupMap.Get(keyBuf, tmpPtr[:0]); len(tmpPtr) == 0 {
+			if tmpPtr = task.lookupMap.Get(keyBuf, tmpPtr[:0]); len(tmpPtr) == 0 {
 				dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 			}
 			rowPtr := uint32(i)

@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"golang.org/x/net/context"
 )
+
 type IndexLookUpHashJoin struct {
 	IndexLookUpJoin
 }
@@ -37,6 +38,7 @@ func (e *IndexLookUpHashJoin) waitInnerHashWorkersAndCloseResultChan() {
 	e.workerWg.Wait()
 	close(e.joinResultCh)
 }
+
 // Open implements the IndexLookUpHashJoin Executor interface.
 func (e *IndexLookUpHashJoin) Open(ctx context.Context) error {
 	// Be careful, very dirty hack in this line!!!
