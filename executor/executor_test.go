@@ -65,7 +65,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// TestLeakCheckCnt is the check count in the pacakge of executor.
+// TestLeakCheckCnt is the check count in the package of executor.
 // In this package CustomParallelSuiteFlag is true, so we need to increase check count.
 const TestLeakCheckCnt = 1000
 
@@ -1083,7 +1083,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec(`insert into t1 select * from t1;`)
 	tk.MustExec(`insert into t1 select * from t1;`)
 	tk.MustExec(`insert into t2 values(1, 1);`)
-	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
 	tk.MustQuery(`select count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("128"))
 	tk.MustQuery(`select tmp.a, count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("1 128"))
 
@@ -1096,7 +1096,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("insert into t1 value(1,2),(1,1),(2,2),(2,2),(3,2),(3,2)")
-	tk.MustExec("set @@tidb_max_chunk_size=2;")
+	tk.MustExec("set @@tidb_init_chunk_size=2;")
 	tk.MustQuery("select count(*) from (select a as c, a as d from t1 union all select a, b from t1) t;").Check(testkit.Rows("12"))
 
 	// #issue 8189 and #issue 8199
@@ -2975,7 +2975,7 @@ func (s *testSuite) TestLimit(c *C) {
 		"4 4",
 		"5 5",
 	))
-	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
 	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
 		"3 3",
 	))
@@ -3233,7 +3233,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	tk.MustExec(`create table t2(a double, b double);`)
 	tk.MustExec(`insert into t1 values(1, 1), (2, 2), (3, 3);`)
 	tk.MustExec(`insert into t2 values(0, 0);`)
-	tk.MustExec(`set @@tidb_max_chunk_size=1;`)
+	tk.MustExec(`set @@tidb_init_chunk_size=1;`)
 	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
 	c.Assert(err, IsNil)
 
