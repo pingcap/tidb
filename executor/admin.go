@@ -195,7 +195,10 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return err
 		}
 		defer func() {
-			log.Error(admin.EnableGCAfterRecover(e.ctx))
+			// if err == nil, should be enable gc in ddl owner.
+			if err != nil {
+				log.Error(admin.EnableGCAfterRecover(e.ctx))
+			}
 		}()
 	}
 	txn, err := e.ctx.Txn(true)
@@ -244,7 +247,7 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
 	}
 	// Call DDL RestoreTable
-	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID)
+	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID, gcEnable)
 	return errors.Trace(err)
 
 }
