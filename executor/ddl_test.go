@@ -478,7 +478,7 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 
 	tbl, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	maxID := 1<<(64-15) - 1
+	maxID := 1<<(64-15-1) - 1
 	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
 	c.Assert(err, IsNil)
 	tk.MustExec("insert into t1 values(1)")
