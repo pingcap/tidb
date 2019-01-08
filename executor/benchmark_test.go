@@ -3,22 +3,21 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"math/rand"
-	"sort"
-	"testing"
-	"time"
-
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"math/rand"
+	"sort"
+	"testing"
+	"time"
 )
 
 type mockDataSourceParameters struct {
@@ -29,46 +28,36 @@ type mockDataSourceParameters struct {
 	initChunkSize int
 	maxChunkSize  int
 	ctx           *stmtctx.StatementContext
-
-	printResult bool // mainly for debug
 }
 
 type mockDataSrouce struct {
 	p        mockDataSourceParameters
 	chunks   *chunk.List
 	chunkPtr int
+
+	colDatums [][]types.Datum
 }
 
-func (mds *mockDataSrouce) genData() {
-	mds.chunks = chunk.NewList(mds.p.types, mds.p.initChunkSize, mds.p.maxChunkSize)
-
-	colDatums := make([][]types.Datum, len(mds.p.types))
-	for i := 0; i < len(mds.p.types); i++ {
-		colDatums[i] = mds.genDatums(mds.p.types[i], mds.p.orders[i], mds.p.rows, mds.p.NDVs[i])
-	}
-
-	if mds.p.printResult {
-		fmt.Println("mock data")
-		for i := 0; i < mds.p.rows; i++ {
-			for j := 0; j < len(mds.p.types); j++ {
-				tmp, _ := colDatums[j][i].ToString()
-				fmt.Printf("%v\t", tmp)
-			}
-			fmt.Println()
-		}
-		fmt.Println("---------")
-	}
-
+func (mds *mockDataSrouce) constructChunks() {
 	for i := 0; i < mds.p.rows; i++ {
 		row := make([]types.Datum, len(mds.p.types))
 		for colIdx := 0; colIdx < len(mds.p.types); colIdx++ {
-			row[colIdx] = colDatums[colIdx][i]
+			row[colIdx] = mds.colDatums[colIdx][i]
 		}
 		mds.chunks.AppendRow(chunk.MutRowFromDatums(row).ToRow())
 	}
 }
 
-func (mds *mockDataSrouce) genDatums(typ *types.FieldType, order bool, n, NDV int) (results []types.Datum) {
+func (mds *mockDataSrouce) genData() {
+	mds.chunks = chunk.NewList(mds.p.types, mds.p.initChunkSize, mds.p.maxChunkSize)
+
+	mds.colDatums = make([][]types.Datum, len(mds.p.types))
+	for i := 0; i < len(mds.p.types); i++ {
+		mds.colDatums[i] = mds.genColDatums(mds.p.types[i], mds.p.orders[i], mds.p.rows, mds.p.NDVs[i])
+	}
+}
+
+func (mds *mockDataSrouce) genColDatums(typ *types.FieldType, order bool, n, NDV int) (results []types.Datum) {
 	defer func() {
 		if order {
 			sort.Slice(results, func(i, j int) bool {
@@ -123,7 +112,8 @@ func (mds *mockDataSrouce) randDatum(typ *types.FieldType) types.Datum {
 }
 
 func (mds *mockDataSrouce) Open(context.Context) error {
-	mds.genData()
+	mds.chunkPtr = 0
+	mds.constructChunks()
 	return nil
 }
 
@@ -135,6 +125,7 @@ func (mds *mockDataSrouce) Next(ctx context.Context, chk *chunk.Chunk) error {
 	dataChk := mds.chunks.GetChunk(mds.chunkPtr)
 	chk.SwapColumns(dataChk)
 	mds.chunkPtr++
+
 	return nil
 }
 
@@ -155,7 +146,9 @@ func (mds *mockDataSrouce) newFirstChunk() *chunk.Chunk {
 }
 
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSrouce {
-	return &mockDataSrouce{opt, nil, 0}
+	m := &mockDataSrouce{opt, nil, 0, nil}
+	m.genData()
+	return m
 }
 
 type aggExecutorParameters struct {
@@ -164,16 +157,7 @@ type aggExecutorParameters struct {
 	child        Executor
 	aggFuncs     []*aggregation.AggFuncDesc
 	groupByItems []expression.Expression
-}
-
-func newColumnWithType(id int, t *types.FieldType) *expression.Column {
-	return &expression.Column{
-		UniqueID: int64(id),
-		ColName:  model.NewCIStr(fmt.Sprint(id)),
-		TblName:  model.NewCIStr("t"),
-		DBName:   model.NewCIStr("test"),
-		RetType:  t,
-	}
+	concurrency  int
 }
 
 func buildHashAggExecutor(v *aggExecutorParameters) Executor {
@@ -257,17 +241,38 @@ type aggTestCase struct {
 	aggFunc     string // sum, avg, count ....
 	hasDistinct bool
 	rows        int
-	groupByNDV  int  // the number of distinct group-by keys
-	printResult bool // mainly for debug
+	groupByNDV  int // the number of distinct group-by keys
+	concurrency int
 }
 
-type aggTestResult struct {
-	*aggTestCase
+func buildAggDataSrouce(b *testing.B, cas *aggTestCase) *mockDataSrouce {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLong),
+	}
+	cols := make([]*expression.Column, len(fieldTypes))
+	for i := range cols {
+		cols[i] = &expression.Column{Index: i, RetType: fieldTypes[i]}
+	}
+	ctx := core.MockContext()
 
-	cost time.Duration
+	chunkSize := 1 << 10
+	orders := make([]bool, len(fieldTypes))
+	if cas.exec == "stream" {
+		orders[1] = true
+	}
+	child := buildMockDataSource(mockDataSourceParameters{
+		types:         fieldTypes,
+		NDVs:          []int{0, cas.groupByNDV},
+		orders:        orders,
+		rows:          cas.rows,
+		initChunkSize: chunkSize,
+		maxChunkSize:  chunkSize,
+		ctx:           ctx.GetSessionVars().StmtCtx,
+	})
+	return child
 }
 
-func doTest(t *testing.T, cas *aggTestCase) *aggTestResult {
+func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
 	childTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLong),
 	}
@@ -275,34 +280,23 @@ func doTest(t *testing.T, cas *aggTestCase) *aggTestResult {
 	for i := range childCols {
 		childCols[i] = &expression.Column{Index: i, RetType: childTypes[i]}
 	}
-
 	ctx := core.MockContext()
 
-	chunkSize := 1 << 10
-	orders := make([]bool, len(childTypes))
-	if cas.exec == "stream" {
-		orders[1] = true
-	}
-	child := buildMockDataSource(mockDataSourceParameters{
-		types:         childTypes,
-		NDVs:          []int{0, cas.groupByNDV},
-		orders:        orders,
-		rows:          cas.rows,
-		initChunkSize: chunkSize,
-		maxChunkSize:  chunkSize,
-		ctx:           ctx.GetSessionVars().StmtCtx,
-		printResult:   cas.printResult,
-	})
-
-	sumFunc := aggregation.NewAggFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{childCols[0]}, false)
-	frFunc := aggregation.NewAggFuncDesc(ctx, ast.AggFuncFirstRow, []expression.Expression{childCols[1]}, false)
+	sumFunc := aggregation.NewAggFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{childCols[0]}, cas.hasDistinct)
 	groupBy := []expression.Expression{childCols[1]}
+
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", cas.concurrency)); err != nil {
+		b.Fatal(err)
+	}
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", cas.concurrency)); err != nil {
+		b.Fatal(err)
+	}
 
 	p := &aggExecutorParameters{
 		ctx:          ctx,
 		schema:       expression.NewSchema(childCols...),
 		child:        child,
-		aggFuncs:     []*aggregation.AggFuncDesc{sumFunc, frFunc},
+		aggFuncs:     []*aggregation.AggFuncDesc{sumFunc},
 		groupByItems: groupBy,
 	}
 
@@ -313,87 +307,101 @@ func doTest(t *testing.T, cas *aggTestCase) *aggTestResult {
 	case "stream":
 		agg = buildStreamAggExecutor(p)
 	default:
-		t.Fatal("not implement")
+		b.Fatal("not implement")
 	}
 
-	retTypes := agg.retTypes()
-	retCols := make([]*expression.Column, 0, len(retTypes))
-	for i := 0; i < len(retTypes); i++ {
-		retCols = append(retCols, &expression.Column{RetType: retTypes[i], Index: i})
-	}
+	return agg
+}
 
-	if err := agg.Open(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	buf := agg.newFirstChunk()
-	begin := time.Now()
-	for {
-		err := agg.Next(context.Background(), buf)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if buf.NumRows() == 0 {
-			break
+func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
+	dataSource := buildAggDataSrouce(b, cas)
+	b.ResetTimer()
+	defer func(begin time.Time) {
+		fmt.Println(">>>>>>>>>>>>> ", b.N, time.Now().Sub(begin))
+	}(time.Now())
+	for i := 0; i < b.N; i++ {
+		if i%100 == 0 {
+			fmt.Println(">>>>>>>>>>>>>>>>>>>>>>>>> ", i, b.N)
 		}
 
-		if cas.printResult {
-			iter := chunk.NewIterator4Chunk(buf)
-			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				for _, col := range retCols {
-					d, err := col.Eval(row)
-					if err != nil {
-						t.Fatal(err)
-					}
-					tmp, err := d.ToString()
-					if err != nil {
-						t.Fatal(err)
-					}
-					fmt.Printf("%v\t", tmp)
-				}
-				fmt.Println()
+		b.StopTimer() // prepare a new agg-executor
+		aggExec := buildAggExecutor(b, cas, dataSource)
+		tmpCtx := context.Background()
+		if err := aggExec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		chk := aggExec.newFirstChunk()
+
+		b.StartTimer()
+		for {
+			if err := aggExec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(b)
+			}
+			if chk.NumRows() == 0 {
+				break
 			}
 		}
-	}
-	cost := time.Now().Sub(begin)
 
-	return &aggTestResult{
-		cas,
-		cost,
+		b.StopTimer()
+		if err := aggExec.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
-func TestDoTest(t *testing.T) {
-	aggExecs := []string{"stream", "hash"}
-	aggFuncs := []string{ast.AggFuncSum, ast.AggFuncAvg}
-	aggDataSizes := []struct {
-		rows       int
-		groupByNDV int
-	}{
-		{1000000, 100},
-		{1000000, 1000},
-		{1000000, 10000},
-		{2000000, 100},
-		{2000000, 1000},
-		{2000000, 10000},
+func BenchmarkHashAgg(b *testing.B) {
+	cases := []*aggTestCase{
+		{
+			exec:        "hash",
+			aggFunc:     ast.AggFuncSum,
+			hasDistinct: false,
+			rows:        10000,
+			groupByNDV:  100,
+			concurrency: 4,
+		},
 	}
 
-	var testCases []*aggTestCase
-	for _, exec := range aggExecs {
-		for _, aggFunc := range aggFuncs {
-			for _, dataSize := range aggDataSizes {
-				testCases = append(testCases, &aggTestCase{
-					exec:       exec,
-					aggFunc:    aggFunc,
-					rows:       dataSize.rows,
-					groupByNDV: dataSize.groupByNDV,
-				})
+	cas := cases[0]
+
+	dataSource := buildAggDataSrouce(b, cas)
+	b.ResetTimer()
+	defer func(begin time.Time) {
+		fmt.Println(">>>>>>>>>>>>> ", b.N, time.Now().Sub(begin))
+	}(time.Now())
+	for i := 0; i < b.N; i++ {
+		if i%100 == 0 {
+			fmt.Println(">>>>>>>>>>>>>>>>>>>>>>>>> ", i, b.N)
+		}
+
+		b.StopTimer() // prepare a new agg-executor
+		aggExec := buildAggExecutor(b, cas, dataSource)
+		tmpCtx := context.Background()
+		if err := aggExec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		chk := aggExec.newFirstChunk()
+
+		b.StartTimer()
+		for {
+			if err := aggExec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(b)
 			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		b.StopTimer()
+		if err := aggExec.Close(); err != nil {
+			b.Fatal(err)
 		}
 	}
 
-	fmt.Println("Exec\tAggFunc\tRows\tGroupByNDV\tCost")
-	for _, cas := range testCases {
-		r := doTest(t, cas)
-		fmt.Printf("%v\t%v\t%v\t%v\t%v\n", r.exec, r.aggFunc, r.rows, r.groupByNDV, r.cost)
-	}
+	//benchmarkAggExecWithCase(b, cases[0])
+
+	//for _, cas := range cases {
+	//	b.Run("xxx", func(b *testing.B) {
+	//		benchmarkAggExecWithCase(b, cas)
+	//	})
+	//}
 }
