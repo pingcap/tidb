@@ -994,7 +994,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 			}
 			newIdxHist, err := idxHist.newIndexBySelectivity(sc, node)
 			if err != nil {
-				log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v", err)
+				log.Warnf("[Histogram-in-plan]: error happened when calculating row count: %v, failed to build histogram for index %v of table %v", err, idxHist.Info.Name, idxHist.Info.Table)
 				continue
 			}
 			newColl.Indices[node.ID] = newIdxHist
