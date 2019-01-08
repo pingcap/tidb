@@ -1677,13 +1677,48 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 
 	// for failure case
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
-	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	}
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
-	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	}
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
-	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	}
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
+
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("create table if not exists t_exist (c1 int, c2 int)")
+	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t_exist")
+	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test1.t_exist")
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+	}
+	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_exist")
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+	}
+	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_not_exist")
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	}
 
 	// for the same table name
 	s.tk.MustExec("use test1")
