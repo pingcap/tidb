@@ -486,9 +486,6 @@ func (s *testDBSuite) TestCancelRenameIndex(c *C) {
 	}
 	s.mustExec(c, "alter table t add index idx_c2(c2)")
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRenameIndex && job.State == model.JobStateNone {
