@@ -10,7 +10,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package core
 
 import (
 	. "github.com/pingcap/check"
@@ -18,13 +18,14 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testPartitionPruningSuite{})
 
-type testPartitionPruningSuite struct{}
+type testPartitionPruningSuite struct {
+	partitionProcessor
+}
 
 func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 	p := parser.New()
@@ -47,13 +48,13 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 	c.Assert(err, IsNil)
 	queryExpr, err := expression.ParseSimpleExprWithTableInfo(ctx, "d < '2000-03-08 00:00:00'", tblInfo)
 	c.Assert(err, IsNil)
-	succ, err := core.CanBePruned(ctx, partitionExpr, []expression.Expression{queryExpr})
+	succ, err := s.canBePruned(ctx, nil, partitionExpr, []expression.Expression{queryExpr})
 	c.Assert(err, IsNil)
 	c.Assert(succ, IsTrue)
 
 	queryExpr, err = expression.ParseSimpleExprWithTableInfo(ctx, "d > '2018-03-08 00:00:00'", tblInfo)
 	c.Assert(err, IsNil)
-	succ, err = core.CanBePruned(ctx, partitionExpr, []expression.Expression{queryExpr})
+	succ, err = s.canBePruned(ctx, nil, partitionExpr, []expression.Expression{queryExpr})
 	c.Assert(err, IsNil)
 	c.Assert(succ, IsTrue)
 }

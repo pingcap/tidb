@@ -17,15 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
 )
-
-// CanBePruned is provided for testing.
-func CanBePruned(sctx sessionctx.Context, partitionExpr expression.Expression, filterExprs []expression.Expression) (bool, error) {
-	var s partitionProcessor
-	return s.canBePruned(sctx, nil, partitionExpr, filterExprs)
-}
 
 var _ = Suite(&testPlanBuilderSuite{})
 

@@ -85,12 +85,12 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
-		// If the selection condition would never be satisified, prune that partition.
-		prune, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
+		// If the select condition would never be satisified, prune that partition.
+		pruned, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if prune {
+		if pruned {
 			continue
 		}
 
@@ -126,9 +126,9 @@ var solver = expression.NewPartitionPruneSolver()
 
 // canBePruned checks if partition expression will never meets the selection condition.
 // For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
-func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expression.Column, partitionExpr expression.Expression, filterExprs []expression.Expression) (bool, error) {
+func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expression.Column, partExpr expression.Expression, filterExprs []expression.Expression) (bool, error) {
 	conds := make([]expression.Expression, 0, 1+len(filterExprs))
-	conds = append(conds, partitionExpr)
+	conds = append(conds, partExpr)
 	conds = append(conds, filterExprs...)
 	conds = expression.PropagateConstant(sctx, conds)
 	conds = solver.Solve(sctx, conds)
@@ -141,6 +141,8 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 				return true, nil
 			}
 		}
+		// Not a constant false, but this is the only condition, it can't be pruned.
+		return false, nil
 	}
 
 	if partCol == nil {

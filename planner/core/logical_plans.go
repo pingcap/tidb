@@ -300,7 +300,8 @@ type DataSource struct {
 
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
-	// allConds include those conditions that can be pushed down and can't be.
+	// allConds contains all the filters on this table. For now it's maintained
+	// in predicate push down and used only in partition pruning.
 	allConds []expression.Expression
 
 	// relevantIndices means the indices match the push down conditions
