@@ -95,8 +95,8 @@ type HashJoinExec struct {
 	// hashTables stores the hash tables built from the inner relation, if there
 	// is no partition phase, a global hash table will be stored in
 	// hashTables[0].
-	hashTables  []*mvmap.MVMap
-	nullPartCnt int
+	hashTables   []*mvmap.MVMap
+	numEmptyPart int
 }
 
 // partition stores the sub-relations of inner relation and outer relation after
@@ -386,13 +386,15 @@ func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 		}
 		e.innerRowPrts = append(e.innerRowPrts, partPtrs)
 	}
-	log.Warnf("During partition phase of HashJoin, null partition cnt[%d], total partition cnt[%d], null-ratio[%f]", e.nullPartCnt, len(e.innerParts), 1.0*e.nullPartCnt/len(e.innerParts))
+	if e.numEmptyPart > 0 {
+		log.Debugf("[EMPTY_PART_IN_RADIX_HASH_JOIN] txn_start_ts:%v, num_empty_parts:%v, num_total_parts:%v, empty_ratio:%v", e.ctx.GetSessionVars().TxnCtx.StartTS, e.numEmptyPart, len(e.innerParts), 1.0*e.numEmptyPart/len(e.innerParts))
+	}
 	return
 }
 
 func (e *HashJoinExec) getPartition(idx uint32) partition {
 	if e.innerParts[idx] == nil {
-		e.nullPartCnt++
+		e.numEmptyPart++
 		e.innerParts[idx] = chunk.New(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	}
 	return e.innerParts[idx]
