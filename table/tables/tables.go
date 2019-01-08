@@ -425,7 +425,10 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	}
 	var hasRecordID bool
 	cols := t.Cols()
-	if len(r) > len(cols) {
+	// opt.IsUpdate is a flag for update.
+	// If handle ID is changed when update, update will remove the old record first, and then call `AddRecord` to add a new record.
+	// Currently, only insert can set _tidb_rowid, update can not update _tidb_rowid.
+	if len(r) > len(cols) && !opt.IsUpdate {
 		// The last value is _tidb_rowid.
 		recordID = r[len(r)-1].GetInt64()
 		hasRecordID = true
@@ -466,11 +469,20 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
-		if col.State != model.StatePublic {
+		// Update call `AddRecord` will already handle the write only column default value.
+		// Only insert should add default value for write only column.
+		if col.State != model.StatePublic && !opt.IsUpdate {
 			// If col is in write only or write reorganization state, we must add it with its default value.
 			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 			if err != nil {
 				return 0, errors.Trace(err)
+			}
+			// add value to `r` for dirty db in transaction.
+			// Otherwise when update will panic cause by get value of column in write only state from dirty db.
+			if col.Offset < len(r) {
+				r[col.Offset] = value
+			} else {
+				r = append(r, value)
 			}
 		} else {
 			value = r[col.Offset]
@@ -907,6 +919,16 @@ func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 	if t.meta.ShardRowIDBits > 0 {
+		if t.overflowShardBits(rowID) {
+			// If overflow, the rowID may be duplicated. For examples,
+			// t.meta.ShardRowIDBits = 4
+			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
+			// shard = 01000000000000000000000000000000000000000000000000000000000000000
+			// will be duplicated with:
+			// rowID = 0100111111111111111111111111111111111111111111111111111111111111
+			// shard = 0010000000000000000000000000000000000000000000000000000000000000
+			return 0, autoid.ErrAutoincReadFailed
+		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
 		if txnCtx.Shard == nil {
 			shard := t.calcShard(txnCtx.StartTS)
@@ -915,6 +937,12 @@ func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 		rowID |= *txnCtx.Shard
 	}
 	return rowID, nil
+}
+
+// overflowShardBits check whether the rowID overflow `1<<(64-t.meta.ShardRowIDBits-1) -1`.
+func (t *tableCommon) overflowShardBits(rowID int64) bool {
+	mask := (1<<t.meta.ShardRowIDBits - 1) << (64 - t.meta.ShardRowIDBits - 1)
+	return rowID&int64(mask) > 0
 }
 
 func (t *tableCommon) calcShard(startTS uint64) int64 {
@@ -1070,7 +1098,8 @@ func newCtxForPartitionExpr() sessionctx.Context {
 	sctx := &ctxForPartitionExpr{
 		sessionVars: variable.NewSessionVars(),
 	}
-	sctx.sessionVars.MaxChunkSize = 2
+	sctx.sessionVars.InitChunkSize = 2
+	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	return sctx
 }

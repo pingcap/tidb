@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -169,6 +170,7 @@ type expressionRewriter struct {
 	insertPlan *Insert
 }
 
+// constructBinaryOpFunction converts binary operator functions
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. Else constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( a0 NE b0, a0 op b0,
@@ -303,10 +305,23 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.ctx, col.Index, col.RetType))
 		return inNode, true
+	case *ast.WindowFuncExpr:
+		return er.handleWindowFunction(v)
 	default:
 		er.asScalar = true
 	}
 	return inNode, false
+}
+
+func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.Node, bool) {
+	windowPlan, err := er.b.buildWindowFunction(er.p, v, er.aggrMap)
+	if err != nil {
+		er.err = err
+		return v, false
+	}
+	er.ctxStack = append(er.ctxStack, windowPlan.GetWindowResultColumn())
+	er.p = windowPlan
+	return v, true
 }
 
 func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) (ast.Node, bool) {
@@ -751,7 +766,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	}
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
-		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
+		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr:
 	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
@@ -799,6 +814,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.isNullToExpression(v)
 	case *ast.IsTruthExpr:
 		er.isTrueToScalarFunc(v)
+	case *ast.DefaultExpr:
+		er.evalDefaultExpr(v)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -848,7 +865,13 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			return
 		}
 	}
-	if v.IsGlobal {
+	sysVar := variable.SysVars[name]
+	if sysVar == nil {
+		er.err = variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return
+	}
+	// Variable is @@gobal.variable_name or variable is only global scope variable.
+	if v.IsGlobal || sysVar.Scope == variable.ScopeGlobal {
 		val, err = variable.GetGlobalSystemVar(sessionVars, name)
 	} else {
 		val, err = variable.GetSessionSystemVar(sessionVars, name)
@@ -1291,4 +1314,87 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.b.curClause = orderByClause
 	}
 	er.err = ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[er.b.curClause])
+}
+
+func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
+	stkLen := len(er.ctxStack)
+	var colExpr *expression.Column
+	switch c := er.ctxStack[stkLen-1].(type) {
+	case *expression.Column:
+		colExpr = c
+	case *expression.CorrelatedColumn:
+		colExpr = &c.Column
+	default:
+		colExpr, er.err = er.schema.FindColumn(v.Name)
+		if er.err != nil {
+			er.err = errors.Trace(er.err)
+			return
+		}
+		if colExpr == nil {
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field_list")
+			return
+		}
+	}
+	dbName := colExpr.DBName
+	if dbName.O == "" {
+		// if database name is not specified, use current database name
+		dbName = model.NewCIStr(er.ctx.GetSessionVars().CurrentDB)
+	}
+	if colExpr.OrigTblName.O == "" {
+		// column is evaluated by some expressions, for example:
+		// `select default(c) from (select (a+1) as c from t) as t0`
+		// in such case, a 'no default' error is returned
+		er.err = table.ErrNoDefaultValue.GenWithStackByArgs(colExpr.ColName)
+		return
+	}
+	var tbl table.Table
+	tbl, er.err = er.b.is.TableByName(dbName, colExpr.OrigTblName)
+	if er.err != nil {
+		return
+	}
+	colName := colExpr.OrigColName.O
+	if colName == "" {
+		// in some cases, OrigColName is empty, use ColName instead
+		colName = colExpr.ColName.O
+	}
+	col := table.FindCol(tbl.Cols(), colName)
+	if col == nil {
+		er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, "field_list")
+		return
+	}
+	isCurrentTimestamp := hasCurrentDatetimeDefault(col)
+	var val *expression.Constant
+	switch {
+	case isCurrentTimestamp && col.Tp == mysql.TypeDatetime:
+		// for DATETIME column with current_timestamp, use NULL to be compatible with MySQL 5.7
+		val = expression.Null
+	case isCurrentTimestamp && col.Tp == mysql.TypeTimestamp:
+		// for TIMESTAMP column with current_timestamp, use 0 to be compatible with MySQL 5.7
+		zero := types.Time{
+			Time: types.ZeroTime,
+			Type: mysql.TypeTimestamp,
+			Fsp:  col.Decimal,
+		}
+		val = &expression.Constant{
+			Value:   types.NewDatum(zero),
+			RetType: types.NewFieldType(mysql.TypeTimestamp),
+		}
+	default:
+		// for other columns, just use what it is
+		val, er.err = er.b.getDefaultValue(col)
+	}
+	if er.err != nil {
+		return
+	}
+	er.ctxStack = er.ctxStack[:stkLen-1]
+	er.ctxStack = append(er.ctxStack, val)
+}
+
+// hasCurrentDatetimeDefault checks if column has current_timestamp default value
+func hasCurrentDatetimeDefault(col *table.Column) bool {
+	x, ok := col.DefaultValue.(string)
+	if !ok {
+		return false
+	}
+	return strings.ToLower(x) == ast.CurrentTimestamp
 }
