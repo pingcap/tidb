@@ -1354,130 +1354,130 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", ""},
+				{mysql.InsertPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", ""},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t", ""},
+				{mysql.CreatePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t1 like t",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t1", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.CreatePriv, "test", "t1", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "", ""},
+				{mysql.CreatePriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "", ""},
+				{mysql.DropPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: `create user 'test'@'%' identified by '123456'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.CreateUserPriv, "", "", "", nil},
 			},
 		},
 		{
 			sql: `drop user 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.CreateUserPriv, "", "", "", nil},
 			},
 		},
 		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", ""},
-				{mysql.InsertPriv, "test", "", ""},
-				{mysql.UpdatePriv, "test", "", ""},
-				{mysql.DeletePriv, "test", "", ""},
-				{mysql.CreatePriv, "test", "", ""},
-				{mysql.DropPriv, "test", "", ""},
-				{mysql.GrantPriv, "test", "", ""},
-				{mysql.AlterPriv, "test", "", ""},
-				{mysql.ExecutePriv, "test", "", ""},
-				{mysql.IndexPriv, "test", "", ""},
+				{mysql.SelectPriv, "test", "", "", nil},
+				{mysql.InsertPriv, "test", "", "", nil},
+				{mysql.UpdatePriv, "test", "", "", nil},
+				{mysql.DeletePriv, "test", "", "", nil},
+				{mysql.CreatePriv, "test", "", "", nil},
+				{mysql.DropPriv, "test", "", "", nil},
+				{mysql.GrantPriv, "test", "", "", nil},
+				{mysql.AlterPriv, "test", "", "", nil},
+				{mysql.ExecutePriv, "test", "", "", nil},
+				{mysql.IndexPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", ""},
-				{mysql.GrantPriv, "test", "ttt", ""},
+				{mysql.SelectPriv, "test", "ttt", "", nil},
+				{mysql.GrantPriv, "test", "ttt", "", nil},
 			},
 		},
 		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SuperPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", "", nil},
 			},
 		},
 		{
@@ -1487,7 +1487,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", ""},
+				{mysql.AllPrivMask, "test", "ttt", "", nil},
 			},
 		},
 	}
@@ -1959,6 +1959,42 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "select sum(a) over() as sum_a from t group by sum_a",
 			result: "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (w2)",
+			result: "[planner:3579]Window name 'w2' is not defined.",
+		},
+		{
+			sql:    "select sum(a) over(w) from t",
+			result: "[planner:3579]Window name 'w' is not defined.",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (w2), w2 as (w1)",
+			result: "[planner:3580]There is a circularity in the window dependency graph.",
+		},
+		{
+			sql:    "select sum(a) over(w partition by a) from t window w as ()",
+			result: "[planner:3581]A window which depends on another cannot define partitioning.",
+		},
+		{
+			sql:    "select sum(a) over(w) from t window w as (rows between 1 preceding AND 1 following)",
+			result: "[planner:3582]Window 'w' has a frame definition, so cannot be referenced by another window.",
+		},
+		{
+			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
+			result: "[planner:3583]Window '<unnamed window>' cannot inherit 'w' since both contain an ORDER BY clause.",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (), w1 as ()",
+			result: "[planner:3591]Window 'w1' is defined twice.",
+		},
+		{
+			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Window(avg(test.t.a))->Projection",
+		},
+		{
+			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
+			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
 		},
 	}
 
