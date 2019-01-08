@@ -14,6 +14,7 @@ import (
 	"golang.org/x/net/context"
 )
 
+//IndexLookUpHashJoin is the hash join executor
 type IndexLookUpHashJoin struct {
 	IndexLookUpJoin
 }
@@ -58,9 +59,12 @@ func (e *IndexLookUpHashJoin) Open(ctx context.Context) error {
 	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
 	// so even txn is destroyed later, the dataReaderBuilder could still use the
 	// cached start ts to construct DAG.
-	e.innerCtx.readerBuilder.getStartTS()
+	_, err := e.innerCtx.readerBuilder.getStartTS()
+	if err != nil {
+		return err
+	}
 
-	err := e.children[0].Open(ctx)
+	err = e.children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -94,8 +98,8 @@ func (e *IndexLookUpHashJoin) startWorkers(ctx context.Context) {
 	}
 	e.workerWg.Add(concurrency)
 	for i := int(0); i < concurrency; i++ {
-		workerId := i
-		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerId).run(workerCtx, e.workerWg) }, e.finishInnerWorker)
+		workerID := i
+		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, e.workerWg) }, e.finishInnerWorker)
 
 	}
 	go util.WithRecovery(e.waitInnerHashWorkersAndCloseResultChan, nil)
@@ -145,9 +149,13 @@ func (e *IndexLookUpHashJoin) Close() error {
 
 func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 	for {
-		task, _ := ow.buildTask(ctx)
+		task, err := ow.buildTask(ctx)
 		if task == nil {
 			return
+		}
+
+		if err != nil {
+			task.buildError = err
 		}
 
 		if finished := ow.pushToChan(ctx, task, ow.innerCh); finished {
@@ -173,7 +181,7 @@ func (e *IndexLookUpHashJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinT
 	return ow
 }
 
-func (e *IndexLookUpHashJoin) newInnerWorker(taskCh chan *lookUpJoinTask, workerId int) *innerHashWorker {
+func (e *IndexLookUpHashJoin) newInnerWorker(taskCh chan *lookUpJoinTask, workerID int) *innerHashWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
 	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges))
 	for _, ran := range e.indexRanges {
@@ -190,7 +198,7 @@ func (e *IndexLookUpHashJoin) newInnerWorker(taskCh chan *lookUpJoinTask, worker
 			keyOff2IdxOff:     e.keyOff2IdxOff,
 			joiner:            e.joiner,
 			maxChunkSize:      e.maxChunkSize,
-			workerId:          workerId,
+			workerID:          workerID,
 			joinChkResourceCh: e.joinChkResourceCh,
 			joinResultCh:      e.joinResultCh,
 		},
@@ -231,11 +239,11 @@ func (iw *innerHashWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 
 func (iw *innerHashWorker) getNewJoinResult() (bool, *indexLookUpResult) {
 	joinResult := &indexLookUpResult{
-		src: iw.joinChkResourceCh[iw.workerId],
+		src: iw.joinChkResourceCh[iw.workerID],
 	}
 	ok := true
 	select {
-	case joinResult.chk, ok = <-iw.joinChkResourceCh[iw.workerId]:
+	case joinResult.chk, ok = <-iw.joinChkResourceCh[iw.workerID]:
 	}
 	return ok, joinResult
 }

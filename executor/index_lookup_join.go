@@ -134,7 +134,7 @@ type innerWorker struct {
 
 	joiner            joiner
 	maxChunkSize      int
-	workerId          int
+	workerID          int
 	joinChkResourceCh []chan *chunk.Chunk
 	joinResultCh      chan *indexLookUpResult
 }
@@ -374,18 +374,12 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
 	task.memTracker.AttachTo(ow.parentMemTracker)
-	var err error
-	defer func() {
-		if task != nil {
-			task.buildError = err
-		}
-	}()
 
 	ow.increaseBatchSize()
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for task.outerResult.NumRows() < ow.batchSize {
-		err = ow.executor.Next(ctx, ow.executorChk)
+		err := ow.executor.Next(ctx, ow.executorChk)
 		if err != nil {
 			return task, errors.Trace(err)
 		}
