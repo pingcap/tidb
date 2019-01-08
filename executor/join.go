@@ -742,7 +742,7 @@ func (e *HashJoinExec) doBuild(workerID int, finishedCh chan error) {
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
 func (e *HashJoinExec) buildGlobalHashTable() error {
-	e.hashTables = append(e.hashTables, mvmap.NewMVMap())
+	e.globalHashTable = mvmap.NewMVMap()
 	var (
 		hasNull bool
 		err     error
