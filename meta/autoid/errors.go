@@ -14,8 +14,8 @@
 package autoid
 
 import (
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 )
 
 // Error instances.
