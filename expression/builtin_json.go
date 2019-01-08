@@ -722,16 +722,6 @@ type jsonMergePreserveFunctionClass struct {
 	baseFunctionClass
 }
 
-type builtinJSONMergePreserveSig struct {
-	baseBuiltinFunc
-}
-
-func (b *builtinJSONMergePreserveSig) Clone() builtinFunc {
-	newSig := &builtinJSONMergePreserveSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
 func (c *jsonMergePreserveFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -741,23 +731,9 @@ func (c *jsonMergePreserveFunctionClass) getFunction(ctx sessionctx.Context, arg
 		argTps = append(argTps, types.ETJson)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETJson, argTps...)
-	sig := &builtinJSONMergePreserveSig{bf}
+	sig := &builtinJSONMergeSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonMergePreserveSig)
 	return sig, nil
-}
-
-func (b *builtinJSONMergePreserveSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
-	values := make([]json.BinaryJSON, 0, len(b.args))
-	for _, arg := range b.args {
-		var value json.BinaryJSON
-		value, isNull, err = arg.EvalJSON(b.ctx, row)
-		if isNull || err != nil {
-			return res, isNull, err
-		}
-		values = append(values, value)
-	}
-	res = json.MergeBinary(values)
-	return res, false, nil
 }
 
 type jsonPrettyFunctionClass struct {
