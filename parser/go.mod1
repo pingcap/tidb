@@ -7,12 +7,10 @@ require (
 	github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
 	github.com/cznic/strutil v0.0.0-20171016134553-529a34b1c186
 	github.com/cznic/y v0.0.0-20170802143616-045f81c6662a
-	github.com/pingcap/check v0.0.0-20181213055612-5c2b07721bdb
+	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.0
-	github.com/pingcap/tidb v0.0.0-20181217070741-096bb68e6bef
+	github.com/pingcap/tidb v0.0.0-20180108134023-971629b9477a
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
 	github.com/sirupsen/logrus v1.2.0
 	golang.org/x/text v0.3.0
 )
-
-replace github.com/pingcap/tidb => github.com/feloxx/tidb v0.0.0-00000000000000-b06ddb2612bab3e92cc666dca7a50e6a6bbd4a7b
