@@ -20,11 +20,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	. "github.com/pingcap/parser/ast"
+	. "github.com/pingcap/parser/format"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 )
 
 var _ = Suite(&testCacheableSuite{})
-var _ = Suite(&testRestoreCtxSuite{})
 
 type testCacheableSuite struct {
 }
@@ -81,43 +81,6 @@ func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 // Leave implements Visitor interface.
 func (checker *nodeTextCleaner) Leave(in Node) (out Node, ok bool) {
 	return in, true
-}
-
-type testRestoreCtxSuite struct {
-}
-
-func (s *testRestoreCtxSuite) TestRestoreCtx(c *C) {
-	testCases := []struct {
-		flag   RestoreFlags
-		expect string
-	}{
-		{0, "key`.'\"Word\\ str`.'\"ing\\ na`.'\"Me\\"},
-		{RestoreStringSingleQuotes, "key`.'\"Word\\ 'str`.''\"ing\\' na`.'\"Me\\"},
-		{RestoreStringDoubleQuotes, "key`.'\"Word\\ \"str`.'\"\"ing\\\" na`.'\"Me\\"},
-		{RestoreStringEscapeBackslash, "key`.'\"Word\\ str`.'\"ing\\\\ na`.'\"Me\\"},
-		{RestoreKeyWordUppercase, "KEY`.'\"WORD\\ str`.'\"ing\\ na`.'\"Me\\"},
-		{RestoreKeyWordLowercase, "key`.'\"word\\ str`.'\"ing\\ na`.'\"Me\\"},
-		{RestoreNameUppercase, "key`.'\"Word\\ str`.'\"ing\\ NA`.'\"ME\\"},
-		{RestoreNameLowercase, "key`.'\"Word\\ str`.'\"ing\\ na`.'\"me\\"},
-		{RestoreNameDoubleQuotes, "key`.'\"Word\\ str`.'\"ing\\ \"na`.'\"\"Me\\\""},
-		{RestoreNameBackQuotes, "key`.'\"Word\\ str`.'\"ing\\ `na``.'\"Me\\`"},
-		{DefaultRestoreFlags, "KEY`.'\"WORD\\ 'str`.''\"ing\\' `na``.'\"Me\\`"},
-		{RestoreStringSingleQuotes | RestoreStringDoubleQuotes, "key`.'\"Word\\ 'str`.''\"ing\\' na`.'\"Me\\"},
-		{RestoreKeyWordUppercase | RestoreKeyWordLowercase, "KEY`.'\"WORD\\ str`.'\"ing\\ na`.'\"Me\\"},
-		{RestoreNameUppercase | RestoreNameLowercase, "key`.'\"Word\\ str`.'\"ing\\ NA`.'\"ME\\"},
-		{RestoreNameDoubleQuotes | RestoreNameBackQuotes, "key`.'\"Word\\ str`.'\"ing\\ \"na`.'\"\"Me\\\""},
-	}
-	var sb strings.Builder
-	for _, testCase := range testCases {
-		sb.Reset()
-		ctx := NewRestoreCtx(testCase.flag, &sb)
-		ctx.WriteKeyWord("key`.'\"Word\\")
-		ctx.WritePlain(" ")
-		ctx.WriteString("str`.'\"ing\\")
-		ctx.WritePlain(" ")
-		ctx.WriteName("na`.'\"Me\\")
-		c.Assert(sb.String(), Equals, testCase.expect, Commentf("case: %#v", testCase))
-	}
 }
 
 type NodeRestoreTestCase struct {
