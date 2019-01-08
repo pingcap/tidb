@@ -570,9 +570,6 @@ func (b *builtinCastIntAsDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinCastIntAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
-	if b.tp.Decimal > types.MaxFsp {
-		return res, true, errTooBigPrecision.GenWithStackByArgs(b.tp.Decimal, "CAST", types.MaxFsp)
-	}
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -845,9 +842,6 @@ func (b *builtinCastRealAsDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
-	if b.tp.Decimal > types.MaxFsp {
-		return res, true, errTooBigPrecision.GenWithStackByArgs(b.tp.Decimal, "CAST", types.MaxFsp)
-	}
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1005,9 +999,6 @@ func (b *builtinCastDecimalAsDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
-	if b.tp.Decimal > types.MaxFsp {
-		return res, true, errTooBigPrecision.GenWithStackByArgs(b.tp.Decimal, "CAST", types.MaxFsp)
-	}
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, true, err
@@ -1216,9 +1207,6 @@ func (b *builtinCastStringAsDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinCastStringAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
-	if b.tp.Decimal > types.MaxFsp {
-		return res, true, errTooBigPrecision.GenWithStackByArgs(b.tp.Decimal, "CAST", types.MaxFsp)
-	}
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
@@ -1658,9 +1646,6 @@ func (b *builtinCastJSONAsDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
-	if b.tp.Decimal > types.MaxFsp {
-		return res, true, errTooBigPrecision.GenWithStackByArgs(b.tp.Decimal, "CAST", types.MaxFsp)
-	}
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err

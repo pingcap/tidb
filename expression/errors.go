@@ -42,7 +42,6 @@ var (
 	errWarnOptionIgnored             = terror.ClassExpression.New(mysql.WarnOptionIgnored, mysql.MySQLErrName[mysql.WarnOptionIgnored])
 	errTruncatedWrongValue           = terror.ClassExpression.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	errUnknownLocale                 = terror.ClassExpression.New(mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
-	errTooBigPrecision               = terror.ClassExpression.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
 )
 
 func init() {
@@ -63,7 +62,6 @@ func init() {
 		mysql.WarnOptionIgnored:                    mysql.WarnOptionIgnored,
 		mysql.ErrTruncatedWrongValue:               mysql.ErrTruncatedWrongValue,
 		mysql.ErrUnknownLocale:                     mysql.ErrUnknownLocale,
-		mysql.ErrTooBigPrecision:                   mysql.ErrTooBigPrecision,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }

@@ -793,10 +793,18 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.caseToExpression(v)
 	case *ast.FuncCastExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
+
 		er.err = expression.CheckArgsNotMultiColumnRow(arg)
 		if er.err != nil {
 			return retNode, false
 		}
+
+		// check the decimal precision of "CAST(AS TIME)".
+		er.err = er.checkTimePrecision(v.Tp)
+		if er.err != nil {
+			return retNode, false
+		}
+
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.ctx, arg, v.Tp)
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
@@ -825,6 +833,13 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		return retNode, false
 	}
 	return originInNode, true
+}
+
+func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
+	if ft.EvalType() == types.ETDuration && ft.Decimal > types.MaxFsp {
+		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
+	}
+	return nil
 }
 
 func (er *expressionRewriter) useCache() bool {
