@@ -96,106 +96,106 @@ func createPerfSchemaTable(meta *model.TableInfo) *slowQueryTable {
 }
 
 // RowWithCols implements table.Table Type interface.
-func (vt *slowQueryTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (s *slowQueryTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Row implements table.Table Type interface.
-func (vt *slowQueryTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
+func (s *slowQueryTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Cols implements table.Table Type interface.
-func (vt *slowQueryTable) Cols() []*table.Column {
-	return vt.cols
+func (s *slowQueryTable) Cols() []*table.Column {
+	return s.cols
 }
 
 // WritableCols implements table.Table Type interface.
-func (vt *slowQueryTable) WritableCols() []*table.Column {
-	return vt.cols
+func (s *slowQueryTable) WritableCols() []*table.Column {
+	return s.cols
 }
 
 // Indices implements table.Table Type interface.
-func (vt *slowQueryTable) Indices() []table.Index {
+func (s *slowQueryTable) Indices() []table.Index {
 	return nil
 }
 
 // WritableIndices implements table.Table Type interface.
-func (vt *slowQueryTable) WritableIndices() []table.Index {
+func (s *slowQueryTable) WritableIndices() []table.Index {
 	return nil
 }
 
 // DeletableIndices implements table.Table Type interface.
-func (vt *slowQueryTable) DeletableIndices() []table.Index {
+func (s *slowQueryTable) DeletableIndices() []table.Index {
 	return nil
 }
 
 // RecordPrefix implements table.Table Type interface.
-func (vt *slowQueryTable) RecordPrefix() kv.Key {
+func (s *slowQueryTable) RecordPrefix() kv.Key {
 	return nil
 }
 
 // IndexPrefix implements table.Table Type interface.
-func (vt *slowQueryTable) IndexPrefix() kv.Key {
+func (s *slowQueryTable) IndexPrefix() kv.Key {
 	return nil
 }
 
 // FirstKey implements table.Table Type interface.
-func (vt *slowQueryTable) FirstKey() kv.Key {
+func (s *slowQueryTable) FirstKey() kv.Key {
 	return nil
 }
 
 // RecordKey implements table.Table Type interface.
-func (vt *slowQueryTable) RecordKey(h int64) kv.Key {
+func (s *slowQueryTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
 // AddRecord implements table.Table Type interface.
-func (vt *slowQueryTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+func (s *slowQueryTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table Type interface.
-func (vt *slowQueryTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+func (s *slowQueryTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table Type interface.
-func (vt *slowQueryTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (s *slowQueryTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
 // AllocAutoID implements table.Table Type interface.
-func (vt *slowQueryTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+func (s *slowQueryTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
 // Allocator implements table.Table Type interface.
-func (vt *slowQueryTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
+func (s *slowQueryTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
 }
 
 // RebaseAutoID implements table.Table Type interface.
-func (vt *slowQueryTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+func (s *slowQueryTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 
 // Meta implements table.Table Type interface.
-func (vt *slowQueryTable) Meta() *model.TableInfo {
-	return vt.meta
+func (s *slowQueryTable) Meta() *model.TableInfo {
+	return s.meta
 }
 
 // GetID implements table.Table GetID interface.
-func (vt *slowQueryTable) GetPhysicalID() int64 {
-	return vt.meta.ID
+func (s *slowQueryTable) GetPhysicalID() int64 {
+	return s.meta.ID
 }
 
 // Seek implements table.Table Type interface.
-func (vt *slowQueryTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
+func (s *slowQueryTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
 }
 
 // Type implements table.Table Type interface.
-func (vt *slowQueryTable) Type() table.Type {
+func (s *slowQueryTable) Type() table.Type {
 	return table.VirtualTable
 }

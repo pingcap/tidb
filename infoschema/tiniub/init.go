@@ -28,6 +28,7 @@ import (
 
 var once sync.Once
 
+// Init initializes the TiNiuB database.
 func Init() {
 	initOnce := func() {
 		p := parser.New()
