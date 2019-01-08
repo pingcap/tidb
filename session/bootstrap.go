@@ -677,8 +677,8 @@ func upgradeToVer24(s Session) {
 
 // upgradeToVer25 updates tidb_max_chunk_size to new low bound value 32 if previous value is small than 32.
 func upgradeToVer25(s Session) {
-	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET VARIABLE_VALUE = '32' WHERE VARIABLE_NAME = '%s' AND VARIABLE_VALUE < 32",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBMaxChunkSize)
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = '%[4]d' WHERE VARIABLE_NAME = '%[3]s' AND VARIABLE_VALUE < %[4]d",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBMaxChunkSize, variable.DefInitChunkSize)
 	mustExecute(s, sql)
 }
 
