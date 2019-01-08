@@ -1666,7 +1666,9 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn(true).Commit(context.Background()), IsNil)
+	txn, err := s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	tk.MustExec(`update t set b = 3 where a = 30001;`)
 	tk.MustExec(`insert into t (b) values (4);`)
@@ -1687,4 +1689,64 @@ func (s *testSuite) TestDefEnumInsert(c *C) {
 	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
 	tk.MustExec("insert into test (id)  values (1)")
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table a(id int auto_increment, a int default null, primary key(id))")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set id = id*10 where a = 1001")
+	ctx := tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+
+	tk.MustExec("drop table a")
+	tk.MustExec("create table a ( a bigint, b bigint)")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set a = a*10 where b = 1001")
+	ctx = tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+}
+
+func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(a1 bigint primary key, b1 bigint);`)
+	tk.MustExec(`create table t2(a2 bigint primary key, b2 bigint);`)
+	tk.MustExec(`insert into t1 values(1, 100);`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustExec(`insert into t2 values(1, 200);`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update b1 = 1;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update b1 = 200;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 200"))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update a1 = 1;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 200"))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update b1 = 300;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 300"))
+
+	tk.MustExec(`insert into t1 values(1, 1) on duplicate key update b1 = 400;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 400"))
+
+	tk.MustExec(`insert into t1 select 1, 500 from t2 on duplicate key update b1 = 400;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 400"))
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(a bigint primary key, b bigint);`)
+	tk.MustExec(`create table t2(a bigint primary key, b bigint);`)
+	_, err := tk.Exec(`insert into t1 select * from t2 on duplicate key update c = t2.b;`)
+	c.Assert(err.Error(), Equals, `column c not found`)
 }

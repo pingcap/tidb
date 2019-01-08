@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV changelog](https://github.com/pingcap/tikv/blob/master/CHANGELOG.md) and [PD changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.0.11] - 2019-1-3
+- Fix the issue that the error is not handled properly when PD is in an abnormal condition [#8764](https://github.com/pingcap/tidb/pull/8764) [#8923](https://github.com/pingcap/tidb/pull/8923)
+- Fix the issue that the `Rename` operation on a table in TiDB is not compatible with that in MySQL [#8809](https://github.com/pingcap/tidb/pull/8809) 
+- Fix the issue that the error message is wrongly reported when the `ADMIN CHECK TABLE` operation is performed in the process of executing the `ADD INDEX` statement [#8750](https://github.com/pingcap/tidb/pull/8750)
+- Fix the issue that the prefix index range is incorrect in some cases [#8877](https://github.com/pingcap/tidb/pull/8877) 
+- Fix the panic issue of the `UPDATE` statement when columns are added in some cases [#8904](https://github.com/pingcap/tidb/pull/8904)
+
+
+## [2.0.10] - 2018-12-18
+- Fix the possible issue caused by canceling a DDL job [#8513](https://github.com/pingcap/tidb/pull/8513)
+- Fix the issue that the `ORDER BY` and `UNION` clauses cannot quote the column including a table name [#8514](https://github.com/pingcap/tidb/pull/8514)
+- Fix the issue that the `UNCOMPRESS` function does not judge the incorrect input length [#8607](https://github.com/pingcap/tidb/pull/8607)
+- Fix the issue encountered by `ANSI_QUOTES SQL_MODE` when upgrading TiDB [#8575](https://github.com/pingcap/tidb/pull/8575)
+- Fix the issue that `SELECT` returns the wrong result in some cases [#8570](https://github.com/pingcap/tidb/pull/8570)
+- Fix the possible issue that TiDB cannot exit when it receives the exit signal [#8501](https://github.com/pingcap/tidb/pull/8501)
+- Fix the issue that `IndexLookUpJoin` returns the wrong result in some cases [#8508](https://github.com/pingcap/tidb/pull/8508)
+- Avoid pushing down the filter containing `GetVar` or `SetVar` [#8454](https://github.com/pingcap/tidb/pull/8454)
+- Fix the issue that the result length of the `UNION` clauses is incorrect in some cases [#8491](https://github.com/pingcap/tidb/pull/8491)
+- Fix the issue of `PREPARE FROM @var_name` [#8488](https://github.com/pingcap/tidb/pull/8488)
+- Fix the panic issue when dumping statistics information in some cases [#8464](https://github.com/pingcap/tidb/pull/8464)
+- Fix the statistics estimation issue of point queries in some cases [#8493](https://github.com/pingcap/tidb/pull/8493)
+- Fix the panic issue when the returned default `enum` value is a string #[8476](https://github.com/pingcap/tidb/pull/8476)
+- Fix the issue that too much memory is consumed in the scenario of wide tables [#8467](https://github.com/pingcap/tidb/pull/8467)
+- Fix the issue encountered when Parser incorrectly formats the mod opcode [#8431](https://github.com/pingcap/tidb/pull/8431)  
+- Fix the panic issue caused by adding foreign key constraints in some cases [#8421](https://github.com/pingcap/tidb/pull/8421) [#8410](https://github.com/pingcap/tidb/pull/8410)
+- Fix the issue that the `YEAR` column type incorrectly converts the zero value [#8396](https://github.com/pingcap/tidb/pull/8396)
+- Fix the panic issue occurred when the argument of the `VALUES` function is not a column [#8404](https://github.com/pingcap/tidb/pull/8404)
+- Disable Plan Cache for statements containing subqueries  [#8395](https://github.com/pingcap/tidb/pull/8395)  
+
+
 ## [2.0.9] - 2018-11-19
 - Fix the issue caused by the empty statistics histogram [#7927](https://github.com/pingcap/tidb/pull/7927)
 - Fix the panic issue of the `UNION ALL` statement in some cases [#7942](https://github.com/pingcap/tidb/pull/7942) 

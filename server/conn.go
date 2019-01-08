@@ -151,6 +151,10 @@ func (cc *clientConn) Close() error {
 	delete(cc.server.clients, cc.connectionID)
 	connections := len(cc.server.clients)
 	cc.server.rwlock.Unlock()
+	return closeConn(cc, connections)
+}
+
+func closeConn(cc *clientConn, connections int) error {
 	metrics.ConnGauge.Set(float64(connections))
 	err := cc.bufReadConn.Close()
 	terror.Log(errors.Trace(err))
@@ -158,6 +162,11 @@ func (cc *clientConn) Close() error {
 		return cc.ctx.Close()
 	}
 	return nil
+}
+
+func (cc *clientConn) closeWithoutLock() error {
+	delete(cc.server.clients, cc.connectionID)
+	return closeConn(cc, len(cc.server.clients))
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
@@ -746,7 +755,9 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-		loadDataInfo.Ctx.StmtCommit()
+		if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
+			return nil, errors.Trace(err)
+		}
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
 			return nil, errors.Trace(err)
@@ -804,8 +815,10 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 	}
 
-	txn := loadDataInfo.Ctx.Txn(true)
-	loadDataInfo.Ctx.StmtCommit()
+	if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
+		return errors.Trace(err)
+	}
+	txn, err := loadDataInfo.Ctx.Txn(true)
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {

@@ -15,6 +15,7 @@ package session
 
 import (
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/table"
 	"runtime/debug"
 
 	"github.com/opentracing/opentracing-go"
@@ -45,9 +46,9 @@ type TxnState struct {
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
 
-	// If StmtCommit meets error (which should not happen, just in case), mark it.
-	// And rollback the whole transaction when it commit.
-	fail error
+	// If doNotCommit is not nil, Commit() will not commit the transaction.
+	// doNotCommit flag may be set when StmtCommit fail.
+	doNotCommit error
 }
 
 func (st *TxnState) init() {
@@ -122,12 +123,7 @@ type dirtyTableOperation struct {
 
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
-	if st.fail != nil {
-		// If any error happen during StmtCommit, don't commit this transaction.
-		err := st.fail
-		st.fail = nil
-		return errors.Trace(err)
-	}
+	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
 		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
 			st,
@@ -135,19 +131,27 @@ func (st *TxnState) Commit(ctx context.Context) error {
 			st.dirtyTableOP,
 			st.buf,
 			debug.Stack())
-		st.cleanup()
 		return errors.New("invalid transaction")
+	}
+	if st.doNotCommit != nil {
+		if err1 := st.Transaction.Rollback(); err1 != nil {
+			log.Error(err1)
+		}
+		return errors.Trace(st.doNotCommit)
 	}
 	return errors.Trace(st.Transaction.Commit(ctx))
 }
 
 // Rollback overrides the Transaction interface.
 func (st *TxnState) Rollback() error {
-	if st.fail != nil {
-		log.Error(errors.Trace(st.fail))
-		st.fail = nil
-	}
+	defer st.reset()
 	return errors.Trace(st.Transaction.Rollback())
+}
+
+func (st *TxnState) reset() {
+	st.doNotCommit = nil
+	st.cleanup()
+	st.changeToInvalid()
 }
 
 // Get overrides the Transaction interface.
@@ -238,11 +242,11 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 	switch op.kind {
-	case executor.DirtyTableAddRow:
+	case table.DirtyTableAddRow:
 		dirtyDB.AddRow(op.tid, op.handle, op.row)
-	case executor.DirtyTableDeleteRow:
+	case table.DirtyTableDeleteRow:
 		dirtyDB.DeleteRow(op.tid, op.handle)
-	case executor.DirtyTableTruncate:
+	case table.DirtyTableTruncate:
 		dirtyDB.TruncateTable(op.tid)
 	}
 }
@@ -256,11 +260,22 @@ type txnFuture struct {
 	mockFail bool
 }
 
+var mockGetTSErrorInRetryOnce = true
+
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	if tf.mockFail {
 		return nil, errors.New("mock get timestamp fail")
 	}
 
+	// mockGetTSErrorInRetry should wait mockCommitErrorOnce first, then will run into retry() logic.
+	// Then mockGetTSErrorInRetry will return retryable error when first retry.
+	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
+	// This may cause duplicate data to be written.
+	// gofail: var mockGetTSErrorInRetry bool
+	//if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
+	//	 mockGetTSErrorInRetryOnce = false
+	//	 return nil, errors.Errorf("PD server timeout[try again later]")
+	//}
 	startTS, err := tf.future.Wait()
 	tf.span.Finish()
 	if err == nil {
@@ -283,26 +298,28 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() {
-	if s.txn.fail != nil {
-		return
-	}
-
+func (s *session) StmtCommit() error {
 	defer s.txn.cleanup()
 	st := &s.txn
+	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+
 		// gofail: var mockStmtCommitError bool
 		// if mockStmtCommitError {
-		// 	return errors.New("mock stmt commit error")
+		// 	count++
 		// }
+		if count > 3 {
+			return errors.New("mock stmt commit error")
+		}
+
 		if len(v) == 0 {
 			return errors.Trace(st.Transaction.Delete(k))
 		}
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
 	if err != nil {
-		s.txn.fail = errors.Trace(err)
-		return
+		st.doNotCommit = err
+		return errors.Trace(err)
 	}
 
 	// Need to flush binlog.
@@ -317,6 +334,7 @@ func (s *session) StmtCommit() {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.

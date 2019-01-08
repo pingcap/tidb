@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -315,12 +316,13 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	jobs, err := admin.GetDDLJobs(txn)
 	// TODO: need to return the job that the user needs.
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true))
+	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -357,12 +359,16 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobs, err := admin.GetDDLJobs(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true))
+	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -420,7 +426,19 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		for _, idx := range tb.Indices() {
-			txn := e.ctx.Txn(true)
+			if idx.Meta().State != model.StatePublic {
+				continue
+			}
+			txn, err := e.ctx.Txn(true)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !txn.Valid() {
+				if failer, ok := txn.(sqlexec.Failer); ok && failer.Fail() != nil {
+					return failer.Fail()
+				}
+				return errors.New("active transaction fail")
+			}
 			err = admin.CompareIndexData(e.ctx, txn, tb, idx)
 			if err != nil {
 				return errors.Errorf("%v err:%v", t.Name, err)
@@ -523,7 +541,10 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
-	txn := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {

@@ -200,6 +200,9 @@ func (e *AnalyzeIndexExec) open() error {
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	ctx := context.TODO()
 	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
 	if err != nil {
