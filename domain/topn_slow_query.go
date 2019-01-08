@@ -178,6 +178,10 @@ const (
 	queryTypeRecent
 )
 
+func (q *topNSlowQueries) QueryAll() []*SlowQueryInfo {
+	return q.recent.data
+}
+
 func (q *topNSlowQueries) QueryRecent(count int) []*SlowQueryInfo {
 	return q.recent.Query(count)
 }
