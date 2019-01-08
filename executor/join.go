@@ -389,7 +389,9 @@ func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 	if e.numNonEmptyPart < len(e.innerParts) {
 		numTotalPart := len(e.innerParts)
 		numEmptyPart := numTotalPart - e.numNonEmptyPart
-		log.Debugf("[EMPTY_PART_IN_RADIX_HASH_JOIN] txn_start_ts:%v, num_empty_parts:%v, num_total_parts:%v, empty_ratio:%v", e.ctx.GetSessionVars().TxnCtx.StartTS, numEmptyPart, numTotalPart, float64(numEmptyPart)/float64(numTotalPart))
+		log.Debugf("[EMPTY_PART_IN_RADIX_HASH_JOIN] txn_start_ts:%v, num_empty_parts:%v, "+
+			"num_total_parts:%v, empty_ratio:%v", e.ctx.GetSessionVars().TxnCtx.StartTS,
+			numEmptyPart, numTotalPart, float64(numEmptyPart)/float64(numTotalPart))
 	}
 	return
 }
