@@ -1534,7 +1534,7 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v.IsNull(), IsTrue)
 
-	tests := []struct {
+	testMonths := []struct {
 		input    string
 		months   int
 		expected string
@@ -1546,10 +1546,34 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		{"2018-08-31", 1, "2018-09-30"},
 		{"2018-07-31", 2, "2018-09-30"},
 		{"2016-01-31", 27, "2018-04-30"},
+		{"2000-02-29", 12, "2001-02-28"},
 	}
 
-	for _, test := range tests {
+	for _, test := range testMonths {
 		args = types.MakeDatums(test.input, test.months, "MONTH")
+		f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err = evalBuiltinFunc(f, nil)
+		c.Assert(err, IsNil)
+		c.Assert(v.GetMysqlTime().String(), Equals, test.expected)
+	}
+
+	testYears := []struct {
+		input    string
+		year     int
+		expected string
+	}{
+		{"1899-02-28", 1, "1900-02-28"},
+		{"1901-02-28", -1, "1900-02-28"},
+		{"2000-02-29", 1, "2001-02-28"},
+		{"2001-02-28", -1, "2000-02-28"},
+		{"2004-02-29", 1, "2005-02-28"},
+		{"2005-02-28", -1, "2004-02-28"},
+	}
+
+	for _, test := range testYears {
+		args = types.MakeDatums(test.input, test.year, "YEAR")
 		f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)

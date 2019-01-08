@@ -119,7 +119,25 @@ func (t MysqlTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 
 // IsLeapYear returns if it's leap year.
 func (t MysqlTime) IsLeapYear() bool {
-	return (t.year%4 == 0 && t.year%100 != 0) || t.year%400 == 0
+	return isLeapYear(t.year)
+}
+
+func isLeapYear(year uint16) bool {
+	return (year%4 == 0 && year%100 != 0) || year%400 == 0
+}
+
+var daysByMonth = [12]int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
+// GetLastDay returns the last day of the month
+func GetLastDay(year, month int) int {
+	var day = 0
+	if month > 0 {
+		day = daysByMonth[month-1]
+	}
+	if month == 2 && isLeapYear(uint16(year)) {
+		day = 29
+	}
+	return day
 }
 
 func calcTimeFromSec(to *MysqlTime, seconds, microseconds int) {

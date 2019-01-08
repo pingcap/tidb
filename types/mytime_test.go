@@ -210,3 +210,22 @@ func (s *testMyTimeSuite) TestIsLeapYear(c *C) {
 		c.Assert(tt.T.IsLeapYear(), Equals, tt.Expect)
 	}
 }
+
+func (s *testMyTimeSuite) TestGetLastDay(c *C) {
+	tests := []struct {
+		year        int
+		month       int
+		expectedDay int
+	}{
+		{2000, 1, 31},
+		{2000, 2, 29},
+		{2000, 4, 30},
+		{1900, 2, 28},
+		{1996, 2, 29},
+	}
+
+	for _, t := range tests {
+		day := GetLastDay(t.year, t.month)
+		c.Assert(day, Equals, t.expectedDay)
+	}
+}

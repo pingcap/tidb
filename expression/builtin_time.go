@@ -2585,35 +2585,14 @@ func (du *baseDateArithmitical) getIntervalFromInt(ctx sessionctx.Context, args 
 	return strconv.FormatInt(interval, 10), false, nil
 }
 
-var daysByMonth = [12]int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
-
-func getMaxDayInMonth(year, month int) int {
-	var day = 0
-	if month > 0 {
-		day = daysByMonth[month-1]
-	}
-	if month == 2 {
-		r4 := year % 4
-		r100 := year % 100
-		r400 := year % 400
-
-		if r4 == 0 && (r100 != 0 || r400 == 0) {
-			day = 29
-		}
-	}
-
-	return day
-}
-
 func getFixDays(year, month, day int, o time.Time) int {
-	if year == 0 && month != 0 && day == 0 {
+	if (year != 0 || month != 0) && day == 0 {
 		od := o.Day()
 		t := o.AddDate(year, month, day)
-		//log.Println("tmp time",t)
 		td := t.Day()
 		if od != td {
 			tm := int(t.Month()) - 1
-			tMax := getMaxDayInMonth(t.Year(), tm)
+			tMax := types.GetLastDay(t.Year(), tm)
 			dd := tMax - od
 			return dd
 		}
@@ -5406,15 +5385,7 @@ func (b *builtinLastDaySig) evalTime(row types.Row) (types.Time, bool, error) {
 	if year == 0 && month == 0 && tm.Day() == 0 {
 		return types.Time{}, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(arg.String())))
 	}
-	if month == 1 || month == 3 || month == 5 ||
-		month == 7 || month == 8 || month == 10 || month == 12 {
-		day = 31
-	} else if month == 2 {
-		day = 28
-		if tm.IsLeapYear() {
-			day = 29
-		}
-	}
+	day = types.GetLastDay(year, month)
 	ret := types.Time{
 		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
 		Type: mysql.TypeDate,
