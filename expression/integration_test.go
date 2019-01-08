@@ -3812,33 +3812,18 @@ func (s *testIntegrationSuite) TestCastAsTime(c *C) {
 		`<nil> <nil> <nil> <nil> <nil>`,
 	))
 
-	rs, err := tk.Exec(`select cast(col1 as time(31)) from t where col1 is null;`)
-	c.Assert(err, IsNil)
-	_, err = session.GetRows4Test(context.TODO(), tk.Se, rs)
+	err := tk.ExecToErr(`select cast(col1 as time(31)) from t where col1 is null;`)
 	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
-	c.Assert(rs.Close(), IsNil)
 
-	rs, err = tk.Exec(`select cast(col2 as time(31)) from t where col1 is null;`)
-	c.Assert(err, IsNil)
-	_, err = session.GetRows4Test(context.TODO(), tk.Se, rs)
+	err = tk.ExecToErr(`select cast(col2 as time(31)) from t where col1 is null;`)
 	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
-	c.Assert(rs.Close(), IsNil)
 
-	rs, err = tk.Exec(`select cast(col3 as time(31)) from t where col1 is null;`)
-	c.Assert(err, IsNil)
-	_, err = session.GetRows4Test(context.TODO(), tk.Se, rs)
+	err = tk.ExecToErr(`select cast(col3 as time(31)) from t where col1 is null;`)
 	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
-	c.Assert(rs.Close(), IsNil)
 
-	rs, err = tk.Exec(`select cast(col4 as time(31)) from t where col1 is null;`)
-	c.Assert(err, IsNil)
-	_, err = session.GetRows4Test(context.TODO(), tk.Se, rs)
+	err = tk.ExecToErr(`select cast(col4 as time(31)) from t where col1 is null;`)
 	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
-	c.Assert(rs.Close(), IsNil)
 
-	rs, err = tk.Exec(`select cast(col5 as time(31)) from t where col1 is null;`)
-	c.Assert(err, IsNil)
-	_, err = session.GetRows4Test(context.TODO(), tk.Se, rs)
+	err = tk.ExecToErr(`select cast(col5 as time(31)) from t where col1 is null;`)
 	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
-	c.Assert(rs.Close(), IsNil)
 }
