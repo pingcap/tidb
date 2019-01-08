@@ -292,7 +292,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
-	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
+	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11))
 	c.Assert(err, IsNil)
 	txn, err := s.ctx.Txn(true)
 	c.Assert(err, IsNil)
@@ -307,7 +307,7 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
-	_, err = tb.AddRecord(s.ctx, record2.Values, false)
+	_, err = tb.AddRecord(s.ctx, record2.Values)
 	c.Assert(err, IsNil)
 	txn, err = s.ctx.Txn(true)
 	c.Assert(err, IsNil)
