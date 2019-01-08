@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"math"
 	"strings"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 // Histogram represents statistics for a column or index.
@@ -210,7 +210,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn := h.mu.ctx.Txn()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	version := txn.StartTS()
 	var sql string
 	// If the count is less than 0, then we do not want to update the modify count and count.
@@ -280,8 +284,12 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	var sql string
-	version := h.mu.ctx.Txn().StartTS()
+	version := txn.StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
 	_, err = exec.Execute(ctx, sql)
 	return
@@ -411,7 +419,7 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 // lessRowCount estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCountWithBktIdx(value types.Datum) (float64, int) {
 	// all the values is null
-	if hg.Bounds == nil {
+	if hg.Bounds.NumRows() == 0 {
 		return 0, 0
 	}
 	index, match := hg.Bounds.LowerBound(0, &value)
@@ -735,7 +743,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return float64(c.NullCount), nil
 	}
 	// all the values is null
-	if c.Histogram.Bounds == nil {
+	if c.Histogram.Bounds.NumRows() == 0 {
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {

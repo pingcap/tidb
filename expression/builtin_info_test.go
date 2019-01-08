@@ -179,7 +179,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.PrevAffectedRows = 10
+	sessionVars.StmtCtx.PrevAffectedRows = 10
 
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
 	c.Assert(err, IsNil)
@@ -228,7 +228,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 			err error
 		)
 		if t.insertID > 0 {
-			s.ctx.GetSessionVars().PrevLastInsertID = t.insertID
+			s.ctx.GetSessionVars().StmtCtx.PrevLastInsertID = t.insertID
 		}
 
 		if t.args != nil {

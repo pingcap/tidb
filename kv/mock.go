@@ -14,9 +14,10 @@
 package kv
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"golang.org/x/net/context"
 )
 
 // mockTxn is a txn that returns a retryAble error when called Commit.

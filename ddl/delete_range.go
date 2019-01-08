@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"math"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -100,10 +100,9 @@ func (dr *delRange) start() {
 
 // clear implements delRangeManager interface.
 func (dr *delRange) clear() {
-	log.Infof("[ddl] closing delRange session pool")
+	log.Infof("[ddl] closing delRange")
 	close(dr.quitCh)
 	dr.wait.Wait()
-	dr.sessPool.close()
 }
 
 // startEmulator is only used for those storage engines which don't support
@@ -243,7 +242,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
-	case model.ActionDropTablePartition:
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		var physicalTableID int64
 		if err := job.DecodeArgs(&physicalTableID); err != nil {
 			return errors.Trace(err)

@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )

@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // DDLExec represents a DDL executor.
@@ -54,7 +54,12 @@ func (e *DDLExec) toErr(err error) error {
 	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
-	schemaInfoErr := checker.Check(e.ctx.Txn().StartTS())
+	txn, err1 := e.ctx.Txn(true)
+	if err1 != nil {
+		log.Error(err)
+		return errors.Trace(err1)
+	}
+	schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
@@ -69,7 +74,7 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	e.done = true
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
-	if err = e.ctx.NewTxn(); err != nil {
+	if err = e.ctx.NewTxn(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
@@ -81,12 +86,14 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
+	case *ast.CreateViewStmt:
+		err = e.executeCreateView(x)
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.DropDatabaseStmt:
 		err = e.executeDropDatabase(x)
 	case *ast.DropTableStmt:
-		err = e.executeDropTable(x)
+		err = e.executeDropTableOrView(x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.AlterTableStmt:
@@ -122,7 +129,8 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	}
 	oldIdent := ast.Ident{Schema: s.OldTable.Schema, Name: s.OldTable.Name}
 	newIdent := ast.Ident{Schema: s.NewTable.Schema, Name: s.NewTable.Name}
-	err := domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent)
+	isAlterTable := false
+	err := domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
 	return errors.Trace(err)
 }
 
@@ -150,6 +158,11 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
+	return errors.Trace(err)
+}
+
+func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
 	return errors.Trace(err)
 }
 
@@ -209,7 +222,7 @@ func isSystemTable(schema, table string) bool {
 	return false
 }
 
-func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
+func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 	var notExistTables []string
 	for _, tn := range s.Tables {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
@@ -243,7 +256,11 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			}
 		}
 
-		err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
+		if s.IsView {
+			err = domain.GetDomain(e.ctx).DDL().DropView(e.ctx, fullti)
+		} else {
+			err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
+		}
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 		} else if err != nil {

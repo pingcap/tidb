@@ -14,12 +14,14 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -39,9 +41,9 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
+// processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte)
 }
@@ -94,6 +96,11 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
 func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	err := a.executor.Next(ctx, chk)
 	if err != nil {
 		a.lastErr = err
@@ -210,7 +217,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if err := e.Open(ctx); err != nil {
+	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
@@ -229,6 +236,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		}
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd)
+		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
@@ -242,8 +250,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	}
 
 	var txnStartTS uint64
-	if sctx.Txn(false).Valid() {
-		txnStartTS = sctx.Txn().StartTS()
+	txn, err1 := sctx.Txn(false)
+	if err1 != nil {
+		return nil, errors.Trace(err)
+	}
+	if txn.Valid() {
+		txnStartTS = txn.StartTS()
 	}
 	return &recordSet{
 		executor:   e,
@@ -253,6 +265,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 }
 
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -268,8 +285,12 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
 		// Don't active pending txn here.
-		if sctx.Txn(false).Valid() {
-			txnTS = sctx.Txn().StartTS()
+		if txn, err1 := sctx.Txn(false); err1 != nil {
+			log.Error(err1)
+		} else {
+			if txn.Valid() {
+				txnTS = txn.StartTS()
+			}
 		}
 		a.LogSlowQuery(txnTS, err == nil)
 	}()
@@ -287,11 +308,17 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		var err error
-		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		isPointGet, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if isPointGet {
 			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
+		} else if ctx.GetSessionVars().SnapshotTS != 0 {
+			if _, ok := a.Plan.(*plannercore.CheckTable); ok {
+				err = ctx.InitTxnWithStartTS(ctx.GetSessionVars().SnapshotTS)
+			}
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -409,21 +436,25 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 //  1. ctx is auto commit tagged
 //  2. txn is not valid
 //  2. plan is point get by pk or unique key
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) bool {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
-		return false
+		return false, nil
 	}
 
 	// check txn
-	if ctx.Txn(false).Valid() {
-		return false
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if txn.Valid() {
+		return false, nil
 	}
 
 	// check plan
 	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
 		if len(proj.Children()) != 1 {
-			return false
+			return false, nil
 		}
 		p = proj.Children()[0]
 	}
@@ -431,16 +462,16 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	switch v := p.(type) {
 	case *plannercore.PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PhysicalIndexLookUpReader:
 		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PointGetPlan:
-		return true
+		return true, nil
 	default:
-		return false
+		return false, nil
 	}
 }

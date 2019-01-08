@@ -14,9 +14,11 @@
 package executor
 
 import (
+	"context"
 	"sync"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
-	"golang.org/x/net/context"
 )
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
@@ -198,7 +199,7 @@ func (e *HashAggExec) Close() error {
 		e.childResult = nil
 		e.groupSet = nil
 		e.partialResultMap = nil
-		return nil
+		return e.baseExecutor.Close()
 	}
 	// `Close` may be called after `Open` without calling `Next` in test.
 	if !e.prepared {
@@ -215,7 +216,7 @@ func (e *HashAggExec) Close() error {
 	}
 	for range e.finalOutputCh {
 	}
-	return errors.Trace(e.baseExecutor.Close())
+	return e.baseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
@@ -473,7 +474,9 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 	for groupKey := range w.groupSet {
 		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, []byte(groupKey), w.partialResultMap)
 		for i, af := range w.aggFuncs {
-			af.AppendFinalResult2Chunk(sctx, partialResults[i], result)
+			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i], result); err != nil {
+				log.Error(errors.ErrorStack(err))
+			}
 		}
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
@@ -516,6 +519,10 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("hashagg.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
@@ -604,6 +611,12 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepare4ParallelExec(ctx)
 		e.prepared = true
 	}
+
+	// gofail: var parallelHashAggError bool
+	// if parallelHashAggError {
+	// 	return errors.New("HashAggExec.parallelExec error")
+	// }
+
 	for {
 		result, ok := <-e.finalOutputCh
 		if !ok || result.err != nil || result.chk.NumRows() == 0 {
@@ -655,7 +668,9 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
 		}
 		for i, af := range e.PartialAggFuncs {
-			af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk)
+			if err := (af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk)); err != nil {
+				return err
+			}
 		}
 		if chk.NumRows() == e.maxChunkSize {
 			e.cursor4GroupKey++
@@ -673,6 +688,12 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		// gofail: var unparallelHashAggError bool
+		// if unparallelHashAggError {
+		// 	return errors.New("HashAggExec.unparallelExec error")
+		// }
+
 		// no more data.
 		if e.childResult.NumRows() == 0 {
 			return nil
@@ -778,6 +799,10 @@ func (e *StreamAggExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("streamAgg.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()

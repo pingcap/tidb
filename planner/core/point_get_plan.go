@@ -88,8 +88,8 @@ func (p *PointGetPlan) ExplainInfo() string {
 	return buffer.String()
 }
 
-// getChildReqProps gets the required property by child index.
-func (p *PointGetPlan) getChildReqProps(idx int) *property.PhysicalProperty {
+// GetChildReqProps gets the required property by child index.
+func (p *PointGetPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
 }
 
@@ -148,8 +148,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if selStmt.Having != nil || selStmt.LockTp != ast.SelectLockNone {
 		return nil
 	} else if selStmt.Limit != nil {
-		sc := ctx.GetSessionVars().StmtCtx
-		count, offset, err := extractLimitCountOffset(sc, selStmt.Limit)
+		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
 		if err != nil || count == 0 || offset > 0 {
 			return nil
 		}

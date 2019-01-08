@@ -27,6 +27,9 @@ type GlobalVariableCache struct {
 	lastModify time.Time
 	rows       []chunk.Row
 	fields     []*ast.ResultField
+
+	// Unit test may like to disable it.
+	disable bool
 }
 
 const globalVariableCacheExpiry time.Duration = 2 * time.Second
@@ -45,10 +48,18 @@ func (gvc *GlobalVariableCache) Get() (succ bool, rows []chunk.Row, fields []*as
 	gvc.RLock()
 	defer gvc.RUnlock()
 	if time.Now().Sub(gvc.lastModify) < globalVariableCacheExpiry {
-		succ, rows, fields = true, gvc.rows, gvc.fields
+		succ, rows, fields = !gvc.disable, gvc.rows, gvc.fields
 		return
 	}
 	succ = false
+	return
+}
+
+// Disable disables the global variabe cache, used in test only.
+func (gvc *GlobalVariableCache) Disable() (succ bool, rows []chunk.Row, fields []*ast.ResultField) {
+	gvc.Lock()
+	defer gvc.Unlock()
+	gvc.disable = true
 	return
 }
 

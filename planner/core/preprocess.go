@@ -59,6 +59,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.CreateTableStmt:
 		p.inCreateOrDropTable = true
 		p.checkCreateTableGrammar(node)
+	case *ast.CreateViewStmt:
+		p.inCreateOrDropTable = true
+		p.checkCreateViewGrammar(node)
 	case *ast.DropTableStmt:
 		p.inCreateOrDropTable = true
 		p.checkDropTableGrammar(node)
@@ -94,6 +97,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.inCreateOrDropTable = false
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
+	case *ast.CreateViewStmt:
+		p.inCreateOrDropTable = false
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.inCreateOrDropTable = false
 	case *driver.ParamMarkerExpr:
@@ -308,6 +313,21 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrTableMustHaveColumns
 		return
 	}
+}
+
+func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
+	vName := stmt.ViewName.Name.String()
+	if isIncorrectName(vName) {
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(vName)
+		return
+	}
+	for _, col := range stmt.Cols {
+		if isIncorrectName(col.String()) {
+			p.err = ddl.ErrWrongColumnName.GenWithStackByArgs(col)
+			return
+		}
+	}
+	return
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {

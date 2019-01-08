@@ -804,7 +804,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	s, err := ProduceStrWithSpecifiedTp(s, target, sc)
+	s, err := ProduceStrWithSpecifiedTp(s, target, sc, true)
 	ret.SetString(s)
 	if target.Charset == charset.CharsetBin {
 		ret.k = KindBytes
@@ -812,8 +812,9 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	return ret, errors.Trace(err)
 }
 
-// ProduceStrWithSpecifiedTp produces a new string according to `flen` and `chs`.
-func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext) (_ string, err error) {
+// ProduceStrWithSpecifiedTp produces a new string according to `flen` and `chs`. Param `padZero` indicates
+// whether we should pad `\0` for `binary(flen)` type.
+func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.Flen, tp.Charset
 	if flen >= 0 {
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
@@ -842,7 +843,7 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 		} else if len(s) > flen {
 			err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, len(s))
 			s = truncateStr(s, flen)
-		} else if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen {
+		} else if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
 			padding := make([]byte, flen-len(s))
 			s = string(append([]byte(s), padding...))
 		}
@@ -1754,6 +1755,12 @@ func NewBinaryLiteralDatum(b BinaryLiteral) (d Datum) {
 // NewMysqlBitDatum creates a new MysqlBit Datum for a BinaryLiteral value.
 func NewMysqlBitDatum(b BinaryLiteral) (d Datum) {
 	d.SetMysqlBit(b)
+	return d
+}
+
+// NewMysqlEnumDatum creates a new MysqlEnum Datum for a Enum value.
+func NewMysqlEnumDatum(e Enum) (d Datum) {
+	d.SetMysqlEnum(e)
 	return d
 }
 

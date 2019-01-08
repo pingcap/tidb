@@ -103,6 +103,18 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(val, Equals, "1")
 	c.Assert(SetSessionSystemVar(v, "autocommit", types.Datum{}), NotNil)
 
+	// 0 converts to OFF
+	SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("0"))
+	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF")
+
+	// 1/ON is not supported (generates a warning and sets to OFF)
+	SetSessionSystemVar(v, "foreign_key_checks", types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, "foreign_key_checks")
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF")
+
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
 	val, err = GetSessionSystemVar(v, "sql_mode")
 	c.Assert(err, IsNil)
@@ -173,9 +185,12 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
 
-	c.Assert(v.MaxChunkSize, Equals, 32)
-	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
-	c.Assert(v.MaxChunkSize, Equals, 2)
+	c.Assert(v.InitChunkSize, Equals, 32)
+	c.Assert(v.MaxChunkSize, Equals, 1024)
+	err = SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
+	c.Assert(err, NotNil)
+	err = SetSessionSystemVar(v, TiDBInitChunkSize, types.NewStringDatum("1024"))
+	c.Assert(err, NotNil)
 
 	// Test case for TiDBConfig session variable.
 	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))

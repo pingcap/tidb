@@ -14,9 +14,8 @@
 package kv
 
 import (
+	"context"
 	"sync"
-
-	"golang.org/x/net/context"
 )
 
 // InjectionConfig is used for fault injections for KV components.

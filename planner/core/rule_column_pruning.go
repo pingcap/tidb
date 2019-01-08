@@ -14,11 +14,11 @@
 package core
 
 import (
+	"fmt"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	log "github.com/sirupsen/logrus"
 )
 
 type columnPruner struct {
@@ -34,7 +34,7 @@ func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []boo
 	for _, col := range usedCols {
 		idx := schema.ColumnIndex(col)
 		if idx == -1 {
-			log.Errorf("Can't find column %s from schema %s.", col, schema)
+			panic(fmt.Sprintf("Can't find column %s from schema %s.", col, schema))
 		}
 		used[idx] = true
 	}
@@ -263,4 +263,31 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 		p.children[0].PruneColumns(parentUsedCols)
 	}
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) {
+	windowColumn := p.GetWindowResultColumn()
+	len := 0
+	for _, col := range parentUsedCols {
+		if !windowColumn.Equal(nil, col) {
+			parentUsedCols[len] = col
+			len++
+		}
+	}
+	parentUsedCols = parentUsedCols[:len]
+	parentUsedCols = p.extractUsedCols(parentUsedCols)
+	p.children[0].PruneColumns(parentUsedCols)
+	p.SetSchema(p.children[0].Schema().Clone())
+	p.Schema().Append(windowColumn)
+}
+
+func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*expression.Column {
+	for _, arg := range p.WindowFuncDesc.Args {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(arg)...)
+	}
+	for _, by := range p.ByItems {
+		parentUsedCols = append(parentUsedCols, by.Col)
+	}
+	return parentUsedCols
 }

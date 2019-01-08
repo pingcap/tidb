@@ -14,20 +14,20 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"golang.org/x/net/context"
 )
 
-func (s *testSuite) TestAdminCheckIndexRange(c *C) {
+func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists check_index_test;`)
@@ -53,7 +53,7 @@ func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInf
 	return nil
 }
 
-func (s *testSuite) TestAdminRecoverIndex(c *C) {
+func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -167,7 +167,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminRecoverIndex1(c *C) {
+func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
@@ -218,7 +218,7 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tk.MustExec("admin check index admin_test `primary`")
 }
 
-func (s *testSuite) TestAdminCleanupIndex(c *C) {
+func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -297,7 +297,7 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
+func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -345,7 +345,7 @@ func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
+func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -408,7 +408,7 @@ func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCheckTable(c *C) {
+func (s *testSuite1) TestAdminCheckTable(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -508,7 +508,7 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`ADMIN CHECK TABLE td1;`)
 }
 
-func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
+func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
@@ -516,44 +516,61 @@ func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
 	tk.MustExec("admin check index t idx;")
 }
 
-func (s *testSuite) TestAdminShowNextID(c *C) {
-	step := int64(10)
-	autoIDStep := autoid.GetStep()
-	autoid.SetStep(step)
-	defer autoid.SetStep(autoIDStep)
+func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, c int)")
-	// Start handle is 1.
-	r := tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1"))
-	// Row ID is step + 1.
-	tk.MustExec("insert into t values(1, 1)")
-	r = tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11"))
-	// Row ID is original + step.
-	for i := 0; i < int(step); i++ {
-		tk.MustExec("insert into t values(10000, 1)")
-	}
-	r = tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21"))
+	tk.MustExec("drop table if exists admin_t_s")
+	tk.MustExec("create table admin_t_s (a int, b int, key(a));")
+	tk.MustExec("insert into admin_t_s values (0,0),(1,1);")
+	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("admin check index admin_t_s a;")
 
-	// test for a table with the primary key
-	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
-	// Start handle is 1.
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1"))
-	// After rebasing auto ID, row ID is 20 + step + 1.
-	tk.MustExec("insert into tt values(20, 1)")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31"))
-	// test for renaming the table
-	tk.MustExec("create database test1")
-	tk.MustExec("rename table test.tt to test1.tt")
-	tk.MustExec("use test1")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31"))
-	tk.MustExec("insert test1.tt values ()")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41"))
+	snapshotTime := time.Now()
+
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_t_s")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+
+	tblInfo := tbl.Meta()
+	idxInfo := findIndexByName("a", tblInfo.Indices)
+	idxOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = idxOpr.Create(s.ctx, txn, types.MakeDatums(2), 100)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("admin check table admin_t_s")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_t_s a")
+	c.Assert(err, NotNil)
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20060102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+	// For admin check table when use snapshot.
+	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
+	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("admin check index admin_t_s a;")
+
+	tk.MustExec("set @@tidb_snapshot = ''")
+	_, err = tk.Exec("admin check table admin_t_s")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("admin check index admin_t_s a")
+	c.Assert(err, NotNil)
+
+	r := tk.MustQuery("admin cleanup index admin_t_s a")
+	r.Check(testkit.Rows("1"))
+	tk.MustExec("admin check table admin_t_s;")
+	tk.MustExec("admin check index admin_t_s a;")
+	tk.MustExec("drop table if exists admin_t_s")
 }

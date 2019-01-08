@@ -177,14 +177,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{
-					ID:                histID,
-					NDV:               distinct,
-					NullCount:         nullCount,
-					tp:                &colInfo.FieldType,
-					LastUpdateVersion: histVer,
-					TotColSize:        totColSize,
-				},
+				Histogram: *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
 				Info:      colInfo,
 				Count:     count + nullCount,
 				ErrorRate: errorRate,

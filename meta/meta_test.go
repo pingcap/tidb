@@ -14,6 +14,7 @@
 package meta_test
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {

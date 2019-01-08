@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -43,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -133,7 +134,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		ctx:          ctx,
 		id:           id,
 		schema:       schema,
-		initCap:      ctx.GetSessionVars().MaxChunkSize,
+		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
@@ -297,11 +298,15 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(), admin.DefNumHistoryJobs)
+	jobs, err := admin.GetDDLJobs(txn)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -338,14 +343,18 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobs, err := admin.GetDDLJobs(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(), int(e.jobNumber))
+	historyJobs, err := admin.GetHistoryDDLJobs(txn, int(e.jobNumber))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -464,8 +473,14 @@ func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) err
 }
 
 func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for _, idx := range tbl.Indices() {
-		txn := e.ctx.Txn()
+		if idx.Meta().State != model.StatePublic {
+			continue
+		}
 		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.genExprs)
 		if err != nil {
 			return errors.Trace(err)
@@ -628,7 +643,10 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
-	txn := e.ctx.Txn()
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
@@ -663,6 +681,10 @@ type LimitExec struct {
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("limit.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
@@ -782,6 +804,10 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tableDual.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
@@ -837,6 +863,10 @@ func (e *SelectionExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("selection.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
@@ -916,6 +946,10 @@ type TableScanExec struct {
 
 // Next implements the Executor Next interface.
 func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tableScan.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
@@ -1020,6 +1054,10 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("maxOneRow.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
@@ -1045,6 +1083,9 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	childChunk := e.children[0].newFirstChunk()
 	err = e.children[0].Next(ctx, childChunk)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if childChunk.NumRows() != 0 {
 		return errors.New("subquery returns more than 1 row")
 	}
@@ -1166,6 +1207,10 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("union.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
@@ -1290,11 +1335,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.Priority = priority
 		}
 	}
-	if vars.LastInsertID > 0 {
-		vars.PrevLastInsertID = vars.LastInsertID
-		vars.LastInsertID = 0
+	if vars.StmtCtx.LastInsertID > 0 {
+		sc.PrevLastInsertID = vars.StmtCtx.LastInsertID
+	} else {
+		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
-	vars.ResetPrevAffectedRows()
+	sc.PrevAffectedRows = 0
+	if vars.StmtCtx.InUpdateOrDeleteStmt || vars.StmtCtx.InInsertStmt {
+		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
+	} else if vars.StmtCtx.InSelectStmt {
+		sc.PrevAffectedRows = -1
+	}
 	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
 	if err != nil {
 		return errors.Trace(err)
@@ -1303,7 +1354,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	vars.InsertID = 0
 	vars.StmtCtx = sc
 	return
 }

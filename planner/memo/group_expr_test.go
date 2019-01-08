@@ -11,22 +11,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package memo
 
 import (
 	. "github.com/pingcap/check"
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
-func (s *testCascadesSuite) TestNewGroupExpr(c *C) {
+func (s *testMemoSuite) TestNewGroupExpr(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
-	c.Assert(expr.exprNode, Equals, p)
-	c.Assert(expr.children, IsNil)
-	c.Assert(expr.explored, IsFalse)
+	c.Assert(expr.ExprNode, Equals, p)
+	c.Assert(expr.Children, IsNil)
+	c.Assert(expr.Explored, IsFalse)
 }
 
-func (s *testCascadesSuite) TestGroupExprFingerprint(c *C) {
+func (s *testMemoSuite) TestGroupExprFingerprint(c *C) {
 	p := &plannercore.LogicalLimit{}
 	expr := NewGroupExpr(p)
 

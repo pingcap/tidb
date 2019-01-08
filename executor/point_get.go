@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -27,10 +29,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/net/context"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
+	startTS, err := b.getStartTS()
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 	return &PointGetExecutor{
 		ctx:     b.ctx,
 		schema:  p.Schema(),
@@ -38,7 +44,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		idxInfo: p.IndexInfo,
 		idxVals: p.IndexValues,
 		handle:  p.Handle,
-		startTS: b.getStartTS(),
+		startTS: startTS,
 	}
 }
 
@@ -127,7 +133,10 @@ func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
 }
 
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
-	txn := e.ctx.Txn()
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
 		return txn.Get(key)
 	}
