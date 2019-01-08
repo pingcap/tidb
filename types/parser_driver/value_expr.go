@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
@@ -69,7 +70,7 @@ type ValueExpr struct {
 }
 
 // Restore implements Node interface.
-func (n *ValueExpr) Restore(ctx *ast.RestoreCtx) error {
+func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	switch n.Kind() {
 	case types.KindNull:
 		ctx.WriteKeyWord("NULL")
@@ -195,7 +196,7 @@ type ParamMarkerExpr struct {
 }
 
 // Restore implements Node interface.
-func (n *ParamMarkerExpr) Restore(ctx *ast.RestoreCtx) error {
+func (n *ParamMarkerExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain("?")
 	return nil
 }
