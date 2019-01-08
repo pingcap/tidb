@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
@@ -127,4 +128,24 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
+}
+
+const loadDDLReorgVarsSQL = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in ('" +
+	variable.TiDBDDLReorgWorkerCount + "', '" +
+	variable.TiDBDDLReorgBatchSize + "')"
+
+// LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
+func LoadDDLReorgVars(ctx sessionctx.Context) error {
+	if sctx, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
+		rows, _, err := sctx.ExecRestrictedSQL(ctx, loadDDLReorgVarsSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, row := range rows {
+			varName := row.GetString(0)
+			varValue := row.GetString(1)
+			variable.SetLocalSystemVar(varName, varValue)
+		}
+	}
+	return nil
 }

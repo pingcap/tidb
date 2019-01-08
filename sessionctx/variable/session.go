@@ -690,7 +690,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
 	}
-	SetLocalSystemVar(name, val)
 	s.systems[name] = val
 	return nil
 }
