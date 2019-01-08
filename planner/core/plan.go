@@ -140,7 +140,7 @@ type PhysicalPlan interface {
 	SetChildren(...PhysicalPlan)
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	ResolveIndices()
+	ResolveIndices() error
 }
 
 type baseLogicalPlan struct {
