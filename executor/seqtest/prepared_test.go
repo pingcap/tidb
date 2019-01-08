@@ -218,7 +218,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.MustExec("create table prepare1 (a decimal(1))")
 		tk.MustExec("insert into prepare1 values(1);")
 		_, err = tk.Exec("prepare stmt FROM @sql1")
-		c.Assert(err.Error(), Equals, "line 1 column 4 near \"\" (total length 4)")
+		c.Assert(err.Error(), Equals, "line 1 column 4 near \"NULL\" (total length 4)")
 		tk.MustExec("SET @sql = 'update prepare1 set a=5 where a=?';")
 		_, err = tk.Exec("prepare stmt FROM @sql")
 		c.Assert(err, IsNil)
