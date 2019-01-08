@@ -53,6 +53,7 @@ type HashJoinExec struct {
 	prepared bool
 	// concurrency is the number of partition, build and join workers.
 	concurrency     uint
+	globalHashTable *mvmap.MVMap
 	innerFinished   chan error
 	hashJoinBuffers []*hashJoinBuffer
 	// joinWorkerWaitGroup is for sync multiple join workers.
@@ -92,9 +93,7 @@ type HashJoinExec struct {
 	// innerRowPrts indicates the position in corresponding partition of every
 	// row in innerResult.
 	innerRowPrts [][]partRowPtr
-	// hashTables stores the hash tables built from the inner relation, if there
-	// is no partition phase, a global hash table will be stored in
-	// hashTables[0].
+	// hashTables stores the hash tables built from the partitions of inner relation.
 	hashTables      []*mvmap.MVMap
 	numNonEmptyPart int
 }
@@ -288,7 +287,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 			return false, errors.Trace(err)
 		}
 	}
-	if e.hashTables[0].Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
+	if e.innerResult.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
 		return true, nil
 	}
 	return false, nil
@@ -550,7 +549,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		e.joiners[workerID].onMissMatch(outerRow, joinResult.chk)
 		return true, joinResult
 	}
-	e.hashTableValBufs[workerID] = e.hashTables[0].Get(joinKey, e.hashTableValBufs[workerID][:0])
+	e.hashTableValBufs[workerID] = e.globalHashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
 	innerPtrs := e.hashTableValBufs[workerID]
 	if len(innerPtrs) == 0 {
 		e.joiners[workerID].onMissMatch(outerRow, joinResult.chk)
@@ -766,7 +765,7 @@ func (e *HashJoinExec) buildGlobalHashTable() error {
 			}
 			rowPtr := chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(j)}
 			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
-			e.hashTables[0].Put(keyBuf, valBuf)
+			e.globalHashTable.Put(keyBuf, valBuf)
 		}
 	}
 	return nil
