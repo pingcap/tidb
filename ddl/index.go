@@ -437,7 +437,7 @@ func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIS
 	// Double check. See function `RenameIndex` in ddl_api.go
 	duplicate, err := validateRenameIndex(from, to, tblInfo)
 	if duplicate {
-		return nil, from, to, errors.Trace(err)
+		return nil, from, to, nil
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
