@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -307,7 +308,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(ctx c
 	batchSize := sessVars.DMLBatchSize
 
 	for {
-		err := selectExec.Next(ctx, chk)
+		err := selectExec.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 		if err != nil {
 			return errors.Trace(err)
 		}

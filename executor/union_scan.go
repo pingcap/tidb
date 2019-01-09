@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 )
 
 // DirtyDB stores uncommitted write operations for a transaction.
@@ -125,14 +126,14 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (us *UnionScanExec) Next(ctx context.Context, req *execution.ExecRequest) error {
 	if us.runtimeStats != nil {
 		start := time.Now()
-		defer func() { us.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { us.runtimeStats.Record(time.Now().Sub(start), req.RetChunk.NumRows()) }()
 	}
-	chk.GrowAndReset(us.maxChunkSize)
+	req.RetChunk.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	for i, batchSize := 0, chk.Capacity(); i < batchSize; i++ {
+	for i, batchSize := 0, req.RetChunk.Capacity(); i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -142,7 +143,7 @@ func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 		mutableRow.SetDatums(row...)
-		chk.AppendRow(mutableRow.ToRow())
+		req.RetChunk.AppendRow(mutableRow.ToRow())
 	}
 	return nil
 }
@@ -197,7 +198,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = us.children[0].Next(ctx, us.snapshotChunkBuffer)
+		err = us.children[0].Next(ctx, &execution.ExecRequest{RetChunk: us.snapshotChunkBuffer})
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, errors.Trace(err)
 		}

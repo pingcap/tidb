@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/set"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
@@ -518,20 +519,20 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 }
 
 // Next implements the Executor Next interface.
-func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *HashAggExec) Next(ctx context.Context, req *execution.ExecRequest) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("hashagg.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.RetChunk.NumRows()) }()
 	}
-	chk.Reset()
+	req.RetChunk.Reset()
 	if e.isUnparallelExec {
-		return errors.Trace(e.unparallelExec(ctx, chk))
+		return errors.Trace(e.unparallelExec(ctx, req.RetChunk))
 	}
-	return errors.Trace(e.parallelExec(ctx, chk))
+	return errors.Trace(e.parallelExec(ctx, req.RetChunk))
 }
 
 func (e *HashAggExec) fetchChildData(ctx context.Context) {
@@ -559,7 +560,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 			}
 			chk = input.chk
 		}
-		err = e.children[0].Next(ctx, chk)
+		err = e.children[0].Next(ctx, &execution.ExecRequest{RetChunk: chk})
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
 			return
@@ -684,7 +685,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childResult)
 	for {
-		err := e.children[0].Next(ctx, e.childResult)
+		err := e.children[0].Next(ctx, &execution.ExecRequest{RetChunk: e.childResult})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -798,18 +799,18 @@ func (e *StreamAggExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) Next(ctx context.Context, req *execution.ExecRequest) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("streamAgg.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.RetChunk.NumRows()) }()
 	}
-	chk.Reset()
-	for !e.executed && chk.NumRows() < e.maxChunkSize {
-		err := e.consumeOneGroup(ctx, chk)
+	req.RetChunk.Reset()
+	for !e.executed && req.RetChunk.NumRows() < e.maxChunkSize {
+		err := e.consumeOneGroup(ctx, req.RetChunk)
 		if err != nil {
 			e.executed = true
 			return errors.Trace(err)
@@ -874,7 +875,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return errors.Trace(err)
 	}
 
-	err = e.children[0].Next(ctx, e.childResult)
+	err = e.children[0].Next(ctx, &execution.ExecRequest{RetChunk: e.childResult})
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )
@@ -305,7 +306,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	r := rs[0]
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 	if err != nil || chk.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
@@ -543,7 +544,7 @@ func upgradeToVer12(s Session) {
 	defer terror.Call(r.Close)
 	chk := r.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 	for err == nil && chk.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			user := row.GetString(0)
@@ -555,7 +556,7 @@ func upgradeToVer12(s Session) {
 			updateSQL := fmt.Sprintf(`UPDATE HIGH_PRIORITY mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 			sqls = append(sqls, updateSQL)
 		}
-		err = r.Next(ctx, chk)
+		err = r.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 	}
 	terror.MustNil(err)
 

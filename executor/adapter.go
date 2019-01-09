@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
@@ -95,18 +96,18 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (a *recordSet) Next(ctx context.Context, req *execution.ExecRequest) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
-	err := a.executor.Next(ctx, chk)
+	err := a.executor.Next(ctx, req)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
 	}
-	numRows := chk.NumRows()
+	numRows := req.RetChunk.NumRows()
 	if numRows == 0 {
 		if a.stmt != nil {
 			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
@@ -295,7 +296,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.LogSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.Next(ctx, e.newFirstChunk())
+	err = e.Next(ctx, &execution.ExecRequest{RetChunk: e.newFirstChunk()})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

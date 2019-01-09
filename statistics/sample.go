@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -163,9 +164,10 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 	}
 	ctx := context.TODO()
 	chk := s.RecordSet.NewChunk()
+	req := &execution.ExecRequest{RetChunk: chk}
 	it := chunk.NewIterator4Chunk(chk)
 	for {
-		err := s.RecordSet.Next(ctx, chk)
+		err := s.RecordSet.Next(ctx, req)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

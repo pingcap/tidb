@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -66,8 +67,8 @@ type ShowExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.GrowAndReset(e.maxChunkSize)
+func (e *ShowExec) Next(ctx context.Context, req *execution.ExecRequest) error {
+	req.RetChunk.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
 		e.result = e.newFirstChunk()
 		err := e.fetchAll()
@@ -90,8 +91,8 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= e.result.NumRows() {
 		return nil
 	}
-	numCurBatch := mathutil.Min(chk.Capacity(), e.result.NumRows()-e.cursor)
-	chk.Append(e.result, e.cursor, e.cursor+numCurBatch)
+	numCurBatch := mathutil.Min(req.RetChunk.Capacity(), e.result.NumRows()-e.cursor)
+	req.RetChunk.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil
 }

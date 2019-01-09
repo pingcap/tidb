@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -53,7 +53,7 @@ type GrantExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *GrantExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *GrantExec) Next(ctx context.Context, req *execution.ExecRequest) error {
 	if e.done {
 		return nil
 	}

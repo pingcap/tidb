@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -361,7 +362,7 @@ func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 }
 
 func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	return trs.recordSet.Next(ctx, chk)
+	return trs.recordSet.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 }
 
 func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {

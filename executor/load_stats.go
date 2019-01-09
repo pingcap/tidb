@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 )
 
 var _ Executor = &LoadStatsExec{}
@@ -50,8 +50,8 @@ func (k loadStatsVarKeyType) String() string {
 const LoadStatsVarKey loadStatsVarKeyType = 0
 
 // Next implements the Executor Next interface.
-func (e *LoadStatsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.GrowAndReset(e.maxChunkSize)
+func (e *LoadStatsExec) Next(ctx context.Context, req *execution.ExecRequest) error {
+	req.RetChunk.GrowAndReset(e.maxChunkSize)
 	if len(e.info.Path) == 0 {
 		return errors.New("Load Stats: file path is empty")
 	}

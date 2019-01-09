@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -212,14 +213,14 @@ func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error)
 	return datumRow, nil
 }
 
-func (e *analyzeColumnsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *analyzeColumnsExec) Next(ctx context.Context, req *execution.ExecRequest) error {
+	req.RetChunk.Reset()
 	row, err := e.getNext(ctx)
 	if row == nil || err != nil {
 		return errors.Trace(err)
 	}
 	for i := 0; i < len(row); i++ {
-		chk.AppendDatum(i, &row[i])
+		req.RetChunk.AppendDatum(i, &row[i])
 	}
 	return nil
 }

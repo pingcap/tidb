@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 )
 
 // RestrictedSQLExecutor is an interface provides executing restricted sql statement.
@@ -86,7 +87,7 @@ type RecordSet interface {
 	Fields() []*ast.ResultField
 
 	// Next reads records into chunk.
-	Next(ctx context.Context, chk *chunk.Chunk) error
+	Next(ctx context.Context, req *execution.ExecRequest) error
 
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk

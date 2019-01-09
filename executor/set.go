@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -42,8 +43,8 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *SetExecutor) Next(ctx context.Context, req *execution.ExecRequest) error {
+	req.RetChunk.Reset()
 	if e.done {
 		return nil
 	}

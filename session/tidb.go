@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -250,7 +251,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		// Since we collect all the rows, we can not reuse the chunk.
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

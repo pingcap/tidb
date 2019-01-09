@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -111,7 +112,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	rs, err := s.se.Execute(context.Background(), "select count(*) from t")
 	c.Assert(err, IsNil)
 	chk := rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), chk)
+	err = rs[0].Next(context.Background(), &execution.ExecRequest{RetChunk: chk})
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
@@ -144,7 +145,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	rs, err = s.se.Execute(context.Background(), "select count(*) from tx")
 	c.Assert(err, IsNil)
 	chk = rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), chk)
+	err = rs[0].Next(context.Background(), &execution.ExecRequest{RetChunk: chk})
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row = chk.GetRow(0)

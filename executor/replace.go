@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -182,12 +182,12 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ReplaceExec) Next(ctx context.Context, req *execution.ExecRequest) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("replace.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	chk.Reset()
+	req.RetChunk.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
 		return e.insertRowsFromSelect(ctx, e.exec)
 	}

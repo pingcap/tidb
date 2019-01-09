@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -49,7 +49,7 @@ type SimpleExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *SimpleExec) Next(ctx context.Context, req *execution.ExecRequest) (err error) {
 	if e.done {
 		return nil
 	}

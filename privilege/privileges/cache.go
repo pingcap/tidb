@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
@@ -279,7 +280,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	fs := rs.Fields()
 	chk := rs.NewChunk()
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), &execution.ExecRequest{RetChunk: chk})
 		if err != nil {
 			return errors.Trace(err)
 		}

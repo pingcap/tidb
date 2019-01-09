@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -741,7 +742,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 	var rows []chunk.Row
 	chk := rs.NewChunk()
 	for {
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 		if err != nil || chk.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
@@ -1250,7 +1251,7 @@ func loadSystemTZ(se *session) (string, error) {
 		}
 	}()
 	chk := rss[0].NewChunk()
-	if err := rss[0].Next(context.Background(), chk); err != nil {
+	if err := rss[0].Next(context.Background(), &execution.ExecRequest{RetChunk: chk}); err != nil {
 		return "", errors.Trace(err)
 	}
 	return chk.GetRow(0).GetString(0), nil

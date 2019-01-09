@@ -26,6 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/tracing"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -50,8 +51,8 @@ type TraceExec struct {
 }
 
 // Next executes real query and collects span later.
-func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *TraceExec) Next(ctx context.Context, req *execution.ExecRequest) error {
+	req.RetChunk.Reset()
 	if e.exhausted {
 		return nil
 	}
@@ -90,10 +91,10 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			// Split json data into rows to avoid the max packet size limitation.
 			const maxRowLen = 4096
 			for len(data) > maxRowLen {
-				chk.AppendString(0, string(data[:maxRowLen]))
+				req.RetChunk.AppendString(0, string(data[:maxRowLen]))
 				data = data[maxRowLen:]
 			}
-			chk.AppendString(0, string(data))
+			req.RetChunk.AppendString(0, string(data))
 		}
 		e.exhausted = true
 		return nil
@@ -129,7 +130,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
 
 	for {
-		if err := stmtExec.Next(ctx, stmtExecChk); err != nil {
+		if err := stmtExec.Next(ctx, &execution.ExecRequest{RetChunk: stmtExecChk}); err != nil {
 			return errors.Trace(err)
 		}
 		if stmtExecChk.NumRows() == 0 {
@@ -151,7 +152,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 
-	dfsTree(rootSpan, treeSpans, "", false, chk)
+	dfsTree(rootSpan, treeSpans, "", false, req.RetChunk)
 	e.exhausted = true
 	return nil
 }
@@ -161,7 +162,7 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Rec
 	chk := rs.NewChunk()
 
 	for {
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 		if err != nil || chk.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}

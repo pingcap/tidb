@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -95,13 +96,13 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
-		err = e.Next(context.Background(), chk)
+		err = e.Next(context.Background(), &execution.ExecRequest{RetChunk: chk})
 		c.Assert(err, IsNil)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
-	err = e.Next(context.Background(), chk)
+	err = e.Next(context.Background(), &execution.ExecRequest{RetChunk: chk})
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 	err = e.Close()

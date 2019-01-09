@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -90,7 +91,7 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	chk := rs.NewChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 		c.Assert(err1, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -104,7 +105,7 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	chk = rs.NewChunk()
 	it = chunk.NewIterator4Chunk(chk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 		c.Assert(err1, IsNil)
 		if chk.NumRows() == 0 {
 			break
@@ -245,7 +246,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
 	chk := r.NewChunk()
-	err = r.Next(context.Background(), chk)
+	err = r.Next(context.Background(), &execution.ExecRequest{RetChunk: chk})
 	c.Assert(err, IsNil)
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)

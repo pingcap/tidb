@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execution"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
@@ -73,8 +74,8 @@ func (e *PointGetExecutor) Close() error {
 }
 
 // Next implements the Executor interface.
-func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *PointGetExecutor) Next(ctx context.Context, req *execution.ExecRequest) error {
+	req.RetChunk.Reset()
 	if e.done {
 		return nil
 	}
@@ -113,7 +114,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return e.decodeRowValToChunk(val, chk)
+	return e.decodeRowValToChunk(val, req.RetChunk)
 }
 
 func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {

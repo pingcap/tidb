@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -67,7 +67,7 @@ func (e *DDLExec) toErr(err error) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *DDLExec) Next(ctx context.Context, req *execution.ExecRequest) (err error) {
 	if e.done {
 		return nil
 	}

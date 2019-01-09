@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/spaolacci/murmur3"
@@ -32,14 +33,14 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (m *MockExec) Next(ctx context.Context, req *execution.ExecRequest) error {
+	req.RetChunk.Reset()
 	colTypes := m.retTypes()
-	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < chk.Capacity(); m.curRowIdx++ {
+	for ; m.curRowIdx < len(m.Rows) && req.RetChunk.NumRows() < req.RetChunk.Capacity(); m.curRowIdx++ {
 		curRow := m.Rows[m.curRowIdx]
 		for i := 0; i < curRow.Len(); i++ {
 			curDatum := curRow.ToRow().GetDatum(i, colTypes[i])
-			chk.AppendDatum(i, &curDatum)
+			req.RetChunk.AppendDatum(i, &curDatum)
 		}
 	}
 	return nil
@@ -103,7 +104,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	joinChk := join.newFirstChunk()
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
-		err := join.Next(ctx, joinChk)
+		err := join.Next(ctx, &execution.ExecRequest{RetChunk: joinChk})
 		c.Check(err, IsNil)
 		if joinChk.NumRows() == 0 {
 			break

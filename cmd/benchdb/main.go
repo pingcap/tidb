@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
 )
@@ -120,7 +121,7 @@ func (ut *benchDB) mustExec(sql string) {
 		rs := rss[0]
 		chk := rs.NewChunk()
 		for {
-			err := rs.Next(ctx, chk)
+			err := rs.Next(ctx, &execution.ExecRequest{RetChunk: chk})
 			if err != nil {
 				log.Fatal(err)
 			}

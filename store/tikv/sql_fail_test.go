@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	. "github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/execution"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -73,7 +74,7 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 		}
 		c.Assert(err, IsNil)
 		chk := rs[0].NewChunk()
-		err = rs[0].Next(context.Background(), chk)
+		err = rs[0].Next(context.Background(), &execution.ExecRequest{RetChunk: chk})
 		c.Assert(err, IsNil)
 		c.Assert(chk.NumRows() == 0, IsFalse)
 		c.Assert(chk.GetRow(0).GetString(0), Equals, "True")
@@ -109,7 +110,7 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 
 	chk := res[0].NewChunk()
 	for {
-		err := res[0].Next(ctx, chk)
+		err := res[0].Next(ctx, &execution.ExecRequest{RetChunk: chk})
 		c.Assert(err, IsNil)
 		if chk.NumRows() == 0 {
 			break
