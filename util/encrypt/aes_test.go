@@ -411,7 +411,7 @@ func (s *testEncryptSuite) TestAESDecryptWithCBC(c *C) {
 	}
 }
 
-func (s *testEncryptSuite) AESEncryptWithCFB(c *C) {
+func (s *testEncryptSuite) TestAESEncryptWithCFB(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
 		str     string
