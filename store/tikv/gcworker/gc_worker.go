@@ -122,6 +122,11 @@ const (
 	gcEnableValue        = "true"
 	gcDisableValue       = "false"
 	gcDefaultEnableValue = true
+
+	gcModeKey         = "tikv_gc_mode"
+	gcModeLegacy      = "legacy"
+	gcModeDistributed = "distributed"
+	gcModeDefault     = gcModeDistributed
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -136,6 +141,7 @@ var gcVariableComments = map[string]string{
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
 	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 2",
 	gcEnableKey:      "Current GC enable status",
+	gcModeKey:        "Mode of GC, \"legacy\" or \"distributed\"",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -400,13 +406,33 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = w.syncSafePointWithPd(ctx, safePoint)
+
+	useDistributedGC, err := w.checkUseDistributedGC()
 	if err != nil {
-		log.Errorf("[gc worker] %s failed to upload safe point to PD: %v", w.uuid, errors.ErrorStack(err))
-		w.gcIsRunning = false
-		metrics.GCJobFailureCounter.WithLabelValues("upload_safe_point").Inc()
+		log.Errorf("[gc worker] %s failed to load gc mode: %v", w.uuid, errors.ErrorStack(err))
+		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
 		w.done <- errors.Trace(err)
 		return
+	}
+
+	if useDistributedGC {
+		err = w.syncSafePointWithPd(ctx, safePoint)
+		if err != nil {
+			log.Errorf("[gc worker] %s failed to upload safe point to PD: %v", w.uuid, errors.ErrorStack(err))
+			w.gcIsRunning = false
+			metrics.GCJobFailureCounter.WithLabelValues("upload_safe_point").Inc()
+			w.done <- errors.Trace(err)
+			return
+		}
+	} else {
+		err = w.doGC(ctx, safePoint)
+		if err != nil {
+			log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, errors.ErrorStack(err))
+			w.gcIsRunning = false
+			metrics.GCJobFailureCounter.WithLabelValues("gc").Inc()
+			w.done <- errors.Trace(err)
+			return
+		}
 	}
 
 	w.done <- nil
@@ -549,6 +575,28 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	}
 
 	return jobConcurrency, nil
+}
+
+func (w *GCWorker) checkUseDistributedGC() (bool, error) {
+	str, err := w.loadValueFromSysTable(gcModeKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if str == "" {
+		err = w.saveValueToSysTable(gcModeKey, gcModeDefault)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		str = gcModeDefault
+	}
+	if strings.EqualFold(str, gcModeDistributed) {
+		return true, nil
+	}
+	if strings.EqualFold(str, gcModeLegacy) {
+		return false, nil
+	}
+	log.Warnf("[gc worker] \"%v\" is not a valid gc mode. distributed mode will be used.", str)
+	return true, nil
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {

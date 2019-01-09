@@ -214,3 +214,24 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)
 }
+
+func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
+	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeLegacy)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, false)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+}
