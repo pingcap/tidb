@@ -82,8 +82,7 @@ var (
 	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
 	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
 
-	// partition table error
-	// ErrUnknownPartition return unknown partition error.
+	// ErrUnknownPartition returns unknown partition error.
 	ErrUnknownPartition = terror.ClassTable.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 )
 

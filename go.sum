@@ -22,10 +22,6 @@ github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142 h1:3jFq2xL4ZajGK
 github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f h1:lBNOc5arjvs8E5mO2tbpBpLoyyu8B6e44T7hJy6potg=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=
-github.com/crazycs520/parser v0.0.0-20190108065831-68d764a97a01 h1:GqvRo/ZFzWleyqc0YWxXiQ6+w/5rvGv41S/DrtGF/bY=
-github.com/crazycs520/parser v0.0.0-20190108065831-68d764a97a01/go.mod h1:xLjI+gnWYexq011WPMEvCNS8rFM9qe1vdojIEzSKPuc=
-github.com/crazycs520/parser v0.0.0-20190109050946-7d71cc738f65 h1:an6fdEVOXAeVl13AfJYawYXFTe5UbIq1ibmCObE7/TE=
-github.com/crazycs520/parser v0.0.0-20190109050946-7d71cc738f65/go.mod h1:xLjI+gnWYexq011WPMEvCNS8rFM9qe1vdojIEzSKPuc=
 github.com/crazycs520/parser v0.0.0-20190109051250-08c78882ff5e h1:oBrbqdAvCt/DMZF9AkZFZ5fG007Utw1nenHk92pEr88=
 github.com/crazycs520/parser v0.0.0-20190109051250-08c78882ff5e/go.mod h1:xLjI+gnWYexq011WPMEvCNS8rFM9qe1vdojIEzSKPuc=
 github.com/cznic/mathutil v0.0.0-20181021201202-eba54fb065b7 h1:y+DH9ARrWiiNBV+6waYP2IPcsRbxdU1qsnycPfShF4c=
