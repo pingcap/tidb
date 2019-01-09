@@ -2644,6 +2644,21 @@ func (du *baseDateArithmitical) getIntervalFromInt(ctx sessionctx.Context, args 
 	return strconv.FormatInt(interval, 10), false, nil
 }
 
+func getFixDays(year, month, day int, o time.Time) int {
+	if (year != 0 || month != 0) && day == 0 {
+		od := o.Day()
+		t := o.AddDate(year, month, day)
+		td := t.Day()
+		if od != td {
+			tm := int(t.Month()) - 1
+			tMax := types.GetLastDay(t.Year(), tm)
+			dd := tMax - od
+			return dd
+		}
+	}
+	return 0
+}
+
 func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
 	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
 	if err != nil {
@@ -2657,7 +2672,18 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 	duration := time.Duration(dur)
 	goTime = goTime.Add(duration)
-	goTime = goTime.AddDate(int(year), int(month), int(day))
+	// when we execute select date_add('2018-01-31',interval 1 month) in mysql we got 2018-02-28
+	// but in tidb we got 2018-03-03
+	// dig it and we found it's caused by golang api time.DateDate(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time ,
+	// it says October 32 converts to November 1
+	// it conflits with mysql
+	// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
+	df := getFixDays(int(year), int(month), int(day), goTime)
+	if df != 0 {
+		goTime = goTime.AddDate(int(year), int(month), df)
+	} else {
+		goTime = goTime.AddDate(int(year), int(month), int(day))
+	}
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
@@ -2683,7 +2709,12 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 
 	duration := time.Duration(dur)
 	goTime = goTime.Add(duration)
-	goTime = goTime.AddDate(int(year), int(month), int(day))
+	df := getFixDays(int(year), int(month), int(day), goTime)
+	if df != 0 {
+		goTime = goTime.AddDate(int(year), int(month), df)
+	} else {
+		goTime = goTime.AddDate(int(year), int(month), int(day))
+	}
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
@@ -5623,15 +5654,7 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	if year == 0 && month == 0 && tm.Day() == 0 {
 		return types.Time{}, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
 	}
-	if month == 1 || month == 3 || month == 5 ||
-		month == 7 || month == 8 || month == 10 || month == 12 {
-		day = 31
-	} else if month == 2 {
-		day = 28
-		if tm.IsLeapYear() {
-			day = 29
-		}
-	}
+	day = types.GetLastDay(year, month)
 	ret := types.Time{
 		Time: types.FromDate(year, month, day, 0, 0, 0, 0),
 		Type: mysql.TypeDate,
