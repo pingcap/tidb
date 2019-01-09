@@ -383,5 +383,4 @@ type PhysicalWindow struct {
 	WindowFuncDesc *aggregation.WindowFuncDesc
 	PartitionBy    []property.Item
 	OrderBy        []property.Item
-	ChildCols      []*expression.Column
 }

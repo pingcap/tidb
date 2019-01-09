@@ -187,10 +187,10 @@ func (p *PhysicalSort) ResolveIndices() {
 // ResolveIndices implements Plan interface.
 func (p *PhysicalWindow) ResolveIndices() {
 	p.physicalSchemaProducer.ResolveIndices()
-	p.ChildCols = p.Schema().Columns[:len(p.Schema().Columns)-1]
-	for i, col := range p.ChildCols {
+	for i := 0; i < len(p.Schema().Columns)-1; i++ {
+		col := p.Schema().Columns[i]
 		newCol := col.ResolveIndices(p.children[0].Schema())
-		p.ChildCols[i] = newCol.(*expression.Column)
+		p.Schema().Columns[i] = newCol.(*expression.Column)
 	}
 	for i, item := range p.PartitionBy {
 		newCol := item.Col.ResolveIndices(p.children[0].Schema())

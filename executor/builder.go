@@ -1897,7 +1897,6 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		windowFunc:    windowFunc,
 		partialResult: windowFunc.AllocPartialResult(),
 		groupChecker:  newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
-		childCols:     v.ChildCols,
 	}
 	return e
 }

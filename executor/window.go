@@ -20,7 +20,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor/windowfuncs"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -36,7 +35,6 @@ type WindowExec struct {
 	windowFunc    windowfuncs.WindowFunc
 	partialResult windowfuncs.PartialResult
 	executed      bool
-	childCols     []*expression.Column
 	meetNewGroup  bool
 }
 
@@ -155,7 +153,8 @@ func (e *WindowExec) copyChk(chk *chunk.Chunk) {
 	}
 	childResult := e.childResults[0]
 	e.childResults = e.childResults[1:]
-	for i, col := range e.childCols {
+	columns := e.Schema().Columns[:len(e.Schema().Columns)-1]
+	for i, col := range columns {
 		chk.CopyColumns(childResult, i, col.Index)
 	}
 }

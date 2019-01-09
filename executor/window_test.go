@@ -38,4 +38,6 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("8 3", "8 3", "8 3"))
 	result = tk.MustQuery("select sum(t1.a) over() from t t1, t t2")
 	result.Check(testkit.Rows("21", "21", "21", "21", "21", "21", "21", "21", "21"))
+	result = tk.MustQuery("select _tidb_rowid, sum(t.a) over() from t")
+	result.Check(testkit.Rows("1 7", "2 7", "3 7"))
 }
