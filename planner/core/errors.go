@@ -54,6 +54,12 @@ const (
 	codePrivilegeCheckFail              = mysql.ErrUnknown
 	codeWindowInvalidWindowFuncUse      = mysql.ErrWindowInvalidWindowFuncUse
 	codeWindowInvalidWindowFuncAliasUse = mysql.ErrWindowInvalidWindowFuncAliasUse
+	codeWindowNoSuchWindow              = mysql.ErrWindowNoSuchWindow
+	codeWindowCircularityInWindowGraph  = mysql.ErrWindowCircularityInWindowGraph
+	codeWindowNoChildPartitioning       = mysql.ErrWindowNoChildPartitioning
+	codeWindowNoInherentFrame           = mysql.ErrWindowNoInherentFrame
+	codeWindowNoRedefineOrderBy         = mysql.ErrWindowNoRedefineOrderBy
+	codeWindowDuplicateName             = mysql.ErrWindowDuplicateName
 	codePartitionClauseOnNonpartitioned = mysql.ErrPartitionClauseOnNonpartitioned
 )
 
@@ -95,6 +101,12 @@ var (
 	ErrPrivilegeCheckFail              = terror.ClassOptimizer.New(codePrivilegeCheckFail, "privilege check fail")
 	ErrWindowInvalidWindowFuncUse      = terror.ClassOptimizer.New(codeWindowInvalidWindowFuncUse, mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncUse])
 	ErrWindowInvalidWindowFuncAliasUse = terror.ClassOptimizer.New(codeWindowInvalidWindowFuncAliasUse, mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncAliasUse])
+	ErrWindowNoSuchWindow              = terror.ClassOptimizer.New(codeWindowNoSuchWindow, mysql.MySQLErrName[mysql.ErrWindowNoSuchWindow])
+	ErrWindowCircularityInWindowGraph  = terror.ClassOptimizer.New(codeWindowCircularityInWindowGraph, mysql.MySQLErrName[mysql.ErrWindowCircularityInWindowGraph])
+	ErrWindowNoChildPartitioning       = terror.ClassOptimizer.New(codeWindowNoChildPartitioning, mysql.MySQLErrName[mysql.ErrWindowNoChildPartitioning])
+	ErrWindowNoInherentFrame           = terror.ClassOptimizer.New(codeWindowNoInherentFrame, mysql.MySQLErrName[mysql.ErrWindowNoInherentFrame])
+	ErrWindowNoRedefineOrderBy         = terror.ClassOptimizer.New(codeWindowNoRedefineOrderBy, mysql.MySQLErrName[mysql.ErrWindowNoRedefineOrderBy])
+	ErrWindowDuplicateName             = terror.ClassOptimizer.New(codeWindowDuplicateName, mysql.MySQLErrName[mysql.ErrWindowDuplicateName])
 	ErrPartitionClauseOnNonpartitioned = terror.ClassOptimizer.New(codePartitionClauseOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionClauseOnNonpartitioned])
 )
 
@@ -126,6 +138,12 @@ func init() {
 
 		codeWindowInvalidWindowFuncUse:      mysql.ErrWindowInvalidWindowFuncUse,
 		codeWindowInvalidWindowFuncAliasUse: mysql.ErrWindowInvalidWindowFuncAliasUse,
+		codeWindowNoSuchWindow:              mysql.ErrWindowNoSuchWindow,
+		codeWindowCircularityInWindowGraph:  mysql.ErrWindowCircularityInWindowGraph,
+		codeWindowNoChildPartitioning:       mysql.ErrWindowNoChildPartitioning,
+		codeWindowNoInherentFrame:           mysql.ErrWindowNoInherentFrame,
+		codeWindowNoRedefineOrderBy:         mysql.ErrWindowNoRedefineOrderBy,
+		codeWindowDuplicateName:             mysql.ErrWindowDuplicateName,
 		codePartitionClauseOnNonpartitioned: mysql.ErrPartitionClauseOnNonpartitioned,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap

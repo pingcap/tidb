@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -1496,18 +1495,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col.OriginDefaultValue = col.GetDefaultValue()
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		zeroVal := table.GetZeroValue(col.ToInfo())
-		col.OriginDefaultValue, err = zeroVal.ToString()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
-		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
-		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -2294,10 +2284,22 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 	is := d.GetInformationSchema(ctx)
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
+		if isAlterTable {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		}
+		if is.TableExists(newIdent.Schema, newIdent.Name) {
+			return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+		}
 		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	oldTbl, err := is.TableByName(oldIdent.Schema, oldIdent.Name)
 	if err != nil {
+		if isAlterTable {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		}
+		if is.TableExists(newIdent.Schema, newIdent.Name) {
+			return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+		}
 		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
