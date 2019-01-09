@@ -793,7 +793,6 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.caseToExpression(v)
 	case *ast.FuncCastExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
-
 		er.err = expression.CheckArgsNotMultiColumnRow(arg)
 		if er.err != nil {
 			return retNode, false
