@@ -195,6 +195,61 @@ func (ft *FieldType) String() string {
 	return strings.Join(strs, " ")
 }
 
+// Restore implements Node interface.
+func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(TypeToStr(ft.Tp, ft.Charset))
+
+	switch ft.Tp {
+	case mysql.TypeEnum, mysql.TypeSet:
+		ctx.WritePlain("(")
+		for i, e := range ft.Elems {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteString(e)
+		}
+		ctx.WritePlain(")")
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
+		if ft.Flen > 0 && ft.Decimal > 0 {
+			ctx.WritePlainf("(%d)", ft.Decimal)
+		}
+	case mysql.TypeDouble, mysql.TypeFloat:
+		if ft.Flen > 0 && ft.Decimal > 0 {
+			ctx.WritePlainf("(%d,%d)", ft.Flen, ft.Decimal)
+		}
+	case mysql.TypeNewDecimal:
+		if ft.Flen > 0 && ft.Decimal > 0 {
+			ctx.WritePlainf("(%d,%d)", ft.Flen, ft.Decimal)
+		}
+	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+		if ft.Flen > 0 {
+			ctx.WritePlainf("(%d)", ft.Flen)
+		}
+	}
+
+	if mysql.HasUnsignedFlag(ft.Flag) {
+		ctx.WriteKeyWord(" UNSIGNED")
+	}
+	if mysql.HasZerofillFlag(ft.Flag) {
+		ctx.WriteKeyWord(" ZEROFILL")
+	}
+	if mysql.HasBinaryFlag(ft.Flag) && ft.Tp != mysql.TypeString {
+		ctx.WriteKeyWord(" BINARY")
+	}
+
+	if IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) {
+		if ft.Charset != "" && ft.Charset != charset.CharsetBin {
+			ctx.WriteKeyWord(" CHARACTER SET " + ft.Charset)
+		}
+		if ft.Collate != "" && ft.Collate != charset.CharsetBin {
+			ctx.WriteKeyWord(" COLLATE ")
+			ctx.WritePlain(ft.Collate)
+		}
+	}
+
+	return nil
+}
+
 // FormatAsCastType is used for write AST back to string.
 func (ft *FieldType) FormatAsCastType(w io.Writer) {
 	switch ft.Tp {
