@@ -693,16 +693,23 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 func (w *GCWorker) uploadSafePointToPd(ctx context.Context, safePoint uint64) error {
 	var newSafePoint uint64
 	var err error
-	// Try to communicate with PD at most 3 times.
-	for i := 0; i < 3; i++ {
+
+	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
+	for {
 		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
-		if err == nil {
-			break
+		if err != nil {
+			if errors.Cause(err) == context.Canceled {
+				return errors.Trace(err)
+			}
+			err = bo.Backoff(tikv.BoPDRPC, errors.Errorf("failed to upload safe point to pd, err: %v", err))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
 		}
+		break
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
+
 	if newSafePoint != safePoint {
 		log.Warnf("[gc worker] %s, pd rejected our safe point %v but is using another safe point %v", w.uuid, safePoint, newSafePoint)
 		return errors.Errorf("pd rejected our safe point %v but is using another safe point %v", safePoint, newSafePoint)
