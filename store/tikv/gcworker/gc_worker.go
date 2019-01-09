@@ -416,7 +416,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 	}
 
 	if useDistributedGC {
-		err = w.syncSafePointWithPd(ctx, safePoint)
+		err = w.uploadSafePointToPd(ctx, safePoint)
 		if err != nil {
 			log.Errorf("[gc worker] %s failed to upload safe point to PD: %v", w.uuid, errors.ErrorStack(err))
 			w.gcIsRunning = false
@@ -691,7 +691,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 	return nil
 }
 
-func (w *GCWorker) syncSafePointWithPd(ctx context.Context, safePoint uint64) error {
+func (w *GCWorker) uploadSafePointToPd(ctx context.Context, safePoint uint64) error {
 	var newSafePoint uint64
 	var err error
 	// Try to communicate with PD at most 3 times.
@@ -705,8 +705,8 @@ func (w *GCWorker) syncSafePointWithPd(ctx context.Context, safePoint uint64) er
 		return errors.Trace(err)
 	}
 	if newSafePoint != safePoint {
-		log.Warnf("[gc worker] pd rejected our safe point %v, because pd has greater safe point %v", safePoint, newSafePoint)
-		// TODO: If unfortunately this happened, should we do something else?
+		log.Warnf("[gc worker] pd rejected our safe point %v but is using another safe point %v", safePoint, newSafePoint)
+		return errors.Errorf("pd rejected our safe point %v but is using another safe point %v", safePoint, newSafePoint)
 	}
 	return nil
 }
