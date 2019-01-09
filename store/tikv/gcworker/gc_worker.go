@@ -705,9 +705,10 @@ func (w *GCWorker) uploadSafePointToPd(ctx context.Context, safePoint uint64) er
 		return errors.Trace(err)
 	}
 	if newSafePoint != safePoint {
-		log.Warnf("[gc worker] pd rejected our safe point %v but is using another safe point %v", safePoint, newSafePoint)
+		log.Warnf("[gc worker] %s, pd rejected our safe point %v but is using another safe point %v", w.uuid, safePoint, newSafePoint)
 		return errors.Errorf("pd rejected our safe point %v but is using another safe point %v", safePoint, newSafePoint)
 	}
+	log.Infof("[gc worker] %s sent safe point %v to pd", w.uuid, safePoint)
 	return nil
 }
 
