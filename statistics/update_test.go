@@ -969,14 +969,14 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := table.Meta()
-	tbl := h.GetTableStats(tblInfo)
+	h.GetTableStats(tblInfo)
 
 	testKit.MustQuery("select * from t use index(idx) where b <= 5")
 	testKit.MustQuery("select * from t where a > 1")
 	testKit.MustQuery("select * from t use index(idx) where b = 5")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
-	tbl = h.GetTableStats(tblInfo)
+	tbl := h.GetTableStats(tblInfo)
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+

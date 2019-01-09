@@ -23,7 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
@@ -867,7 +867,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	if err != nil {
 		log.Debug("[stats] init stats info failed: ", errors.ErrorStack(err))
 	} else {
-		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
+		log.Info("[stats] init stats info takes ", time.Since(t))
 	}
 	defer func() {
 		do.SetStatsUpdating(false)

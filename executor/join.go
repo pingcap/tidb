@@ -247,7 +247,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 	select {
 	case <-e.closeCh:
 		return true, nil
-	case err, _ := <-e.innerFinished:
+	case err := <-e.innerFinished:
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -428,9 +428,8 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		hasMatch = hasMatch || matched
 
 		if joinResult.chk.NumRows() == e.maxChunkSize {
-			ok := true
 			e.joinResultCh <- joinResult
-			ok, joinResult = e.getNewJoinResult(workerID)
+			ok, joinResult := e.getNewJoinResult(workerID)
 			if !ok {
 				return false, joinResult
 			}
@@ -490,7 +489,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 func (e *HashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
@@ -690,7 +689,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	for {

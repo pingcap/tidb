@@ -60,7 +60,7 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 
 		// Region cache may be out of date, so we need to drop this expired region and load it again.
 		cache.DropRegion(loc.Region)
-		if bytes.Compare(loc.StartKey, []byte(regionStartKey)) == 0 {
+		if bytes.Equal(loc.StartKey, []byte(regionStartKey)) {
 			return
 		}
 		time.Sleep(3 * time.Millisecond)

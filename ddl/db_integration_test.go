@@ -376,7 +376,8 @@ func (s *testIntegrationSuite) TestMySQLErrorCode(c *C) {
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	s.testErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
-	tk.Exec("alter table test_error_code_succ add index idx (c1)")
+	_, err := tk.Exec("alter table test_error_code_succ add index idx (c1)")
+	c.Assert(err, IsNil)
 	sql = "alter table test_error_code_succ add index idx (c1)"
 	s.testErrorCode(c, tk, sql, tmysql.ErrDupKeyName)
 	// drop index
@@ -1133,6 +1134,7 @@ func (s *testIntegrationSuite) TestAlterColumn(c *C) {
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	c.Assert(createSQL, Equals, expected)
 	s.tk.MustExec("alter table mc modify column a bigint") // Drops auto_increment
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]

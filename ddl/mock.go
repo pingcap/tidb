@@ -127,14 +127,10 @@ func (dr *mockDelRange) addDelRangeJob(job *model.Job) error {
 }
 
 // start implements delRangeManager interface.
-func (dr *mockDelRange) start() {
-	return
-}
+func (dr *mockDelRange) start() {}
 
 // clear implements delRangeManager interface.
-func (dr *mockDelRange) clear() {
-	return
-}
+func (dr *mockDelRange) clear() {}
 
 // MockTableInfo mocks a table info by create table stmt ast and a specified table id.
 func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID int64) (*model.TableInfo, error) {

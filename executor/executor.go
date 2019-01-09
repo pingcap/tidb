@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -183,7 +183,7 @@ type CancelDDLJobsExec struct {
 func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
@@ -687,7 +687,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if e.cursor >= e.end {
@@ -810,7 +810,7 @@ func (e *TableDualExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if e.numReturned >= e.numDualRows {
@@ -869,7 +869,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 
@@ -952,7 +952,7 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isVirtualTable {
@@ -1060,7 +1060,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if e.evaluated {
@@ -1213,7 +1213,7 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 	if !e.initialized {
