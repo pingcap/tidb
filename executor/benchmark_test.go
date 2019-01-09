@@ -99,7 +99,7 @@ func (mds *mockDataSrouce) randDatum(typ *types.FieldType) types.Datum {
 	var d types.Datum
 	switch typ.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		d.SetInt64(int64(rand.Int() % 10000))
+		d.SetInt64(int64(rand.Int()))
 	case mysql.TypeFloat:
 		d.SetFloat32(rand.Float32())
 	case mysql.TypeDouble:
@@ -353,16 +353,8 @@ func BenchmarkHashAgg(b *testing.B) {
 			exec:        "hash",
 			aggFunc:     ast.AggFuncSum,
 			hasDistinct: false,
-			rows:        10000,
-			groupByNDV:  100,
-			concurrency: 4,
-		},
-		{
-			exec:        "hash",
-			aggFunc:     ast.AggFuncSum,
-			hasDistinct: false,
 			rows:        100000,
-			groupByNDV:  100,
+			groupByNDV:  1000,
 			concurrency: 4,
 		},
 		{
@@ -370,7 +362,39 @@ func BenchmarkHashAgg(b *testing.B) {
 			aggFunc:     ast.AggFuncSum,
 			hasDistinct: false,
 			rows:        1000000,
-			groupByNDV:  100,
+			groupByNDV:  1000,
+			concurrency: 4,
+		},
+		{
+			exec:        "hash",
+			aggFunc:     ast.AggFuncSum,
+			hasDistinct: false,
+			rows:        10000000,
+			groupByNDV:  1000,
+			concurrency: 4,
+		},
+		{
+			exec:        "stream",
+			aggFunc:     ast.AggFuncSum,
+			hasDistinct: false,
+			rows:        100000,
+			groupByNDV:  1000,
+			concurrency: 4,
+		},
+		{
+			exec:        "stream",
+			aggFunc:     ast.AggFuncSum,
+			hasDistinct: false,
+			rows:        1000000,
+			groupByNDV:  1000,
+			concurrency: 4,
+		},
+		{
+			exec:        "stream",
+			aggFunc:     ast.AggFuncSum,
+			hasDistinct: false,
+			rows:        10000000,
+			groupByNDV:  1000,
 			concurrency: 4,
 		},
 	}
