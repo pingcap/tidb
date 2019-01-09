@@ -198,6 +198,26 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 	c.numVirtualRows = numVirtualRows
 }
 
+// TODO(zhangyuanjia): just for test
+func (c *Chunk) CopyTo(other *Chunk) *Chunk {
+	if other == nil {
+		other = new(Chunk)
+	}
+
+	if len(other.columns) > len(c.columns) {
+		other.columns = other.columns[:len(c.columns)]
+	} else if len(other.columns) < len(c.columns) {
+		other.columns = append(other.columns, make([]*column, len(c.columns)-len(other.columns))...)
+	}
+	for i := range c.columns {
+		other.columns[i] = c.columns[i].copyTo(other.columns[i])
+	}
+
+	other.numVirtualRows = c.numVirtualRows
+	other.capacity = c.capacity
+	return other
+}
+
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {

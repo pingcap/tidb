@@ -17,43 +17,42 @@ import (
 	"math/rand"
 	"sort"
 	"testing"
-	"time"
 )
 
 type mockDataSourceParameters struct {
-	types         []*types.FieldType // type of columns
-	NDVs          []int              // number of distinct values and zero is no limit
-	orders        []bool
-	rows          int
-	initChunkSize int
-	maxChunkSize  int
-	ctx           *stmtctx.StatementContext
+	types     []*types.FieldType // type of columns
+	NDVs      []int              // number of distinct values and zero is no limit
+	orders    []bool
+	rows      int
+	chunkSize int
+	ctx       *stmtctx.StatementContext
 }
 
 type mockDataSrouce struct {
-	p        mockDataSourceParameters
-	chunks   *chunk.List
-	chunkPtr int
-
-	colDatums [][]types.Datum
-}
-
-func (mds *mockDataSrouce) constructChunks() {
-	for i := 0; i < mds.p.rows; i++ {
-		row := make([]types.Datum, len(mds.p.types))
-		for colIdx := 0; colIdx < len(mds.p.types); colIdx++ {
-			row[colIdx] = mds.colDatums[colIdx][i]
-		}
-		mds.chunks.AppendRow(chunk.MutRowFromDatums(row).ToRow())
-	}
+	p           mockDataSourceParameters
+	orgChunks   []*chunk.Chunk
+	toUseChunks []*chunk.Chunk
+	chunkPtr    int
 }
 
 func (mds *mockDataSrouce) genData() {
-	mds.chunks = chunk.NewList(mds.p.types, mds.p.initChunkSize, mds.p.maxChunkSize)
-
-	mds.colDatums = make([][]types.Datum, len(mds.p.types))
+	colDatums := make([][]types.Datum, len(mds.p.types))
 	for i := 0; i < len(mds.p.types); i++ {
-		mds.colDatums[i] = mds.genColDatums(mds.p.types[i], mds.p.orders[i], mds.p.rows, mds.p.NDVs[i])
+		colDatums[i] = mds.genColDatums(mds.p.types[i], mds.p.orders[i], mds.p.rows, mds.p.NDVs[i])
+	}
+	mds.orgChunks = make([]*chunk.Chunk, (mds.p.rows+mds.p.chunkSize-1)/mds.p.chunkSize)
+	for i := range mds.orgChunks {
+		mds.orgChunks[i] = mds.newFirstChunk()
+	}
+
+	for i := 0; i < mds.p.rows; i++ {
+		row := make([]types.Datum, len(mds.p.types))
+		for colIdx := 0; colIdx < len(mds.p.types); colIdx++ {
+			row[colIdx] = colDatums[colIdx][i]
+		}
+
+		idx := mds.p.rows / mds.p.chunkSize
+		mds.orgChunks[idx].AppendRow(chunk.MutRowFromDatums(row).ToRow())
 	}
 }
 
@@ -111,19 +110,25 @@ func (mds *mockDataSrouce) randDatum(typ *types.FieldType) types.Datum {
 	return d
 }
 
-func (mds *mockDataSrouce) Open(context.Context) error {
+func (mds *mockDataSrouce) prepare() {
+	mds.toUseChunks = make([]*chunk.Chunk, len(mds.orgChunks))
+	for i := range mds.toUseChunks {
+		mds.toUseChunks[i] = mds.orgChunks[i].CopyTo(mds.toUseChunks[i])
+	}
 	mds.chunkPtr = 0
-	mds.constructChunks()
+}
+
+func (mds *mockDataSrouce) Open(context.Context) error {
 	return nil
 }
 
 func (mds *mockDataSrouce) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	if mds.chunkPtr >= mds.chunks.NumChunks() {
+	if mds.chunkPtr >= len(mds.toUseChunks) {
+		chk.Reset()
 		return nil
 	}
-	dataChk := mds.chunks.GetChunk(mds.chunkPtr)
-	chk.SwapColumns(dataChk)
+	dataChk := mds.toUseChunks[mds.chunkPtr]
+	dataChk.SwapColumns(chk)
 	mds.chunkPtr++
 
 	return nil
@@ -142,11 +147,11 @@ func (mds *mockDataSrouce) retTypes() []*types.FieldType {
 }
 
 func (mds *mockDataSrouce) newFirstChunk() *chunk.Chunk {
-	return chunk.New(mds.p.types, mds.p.initChunkSize, mds.p.maxChunkSize)
+	return chunk.New(mds.p.types, mds.p.chunkSize, mds.p.chunkSize)
 }
 
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSrouce {
-	m := &mockDataSrouce{opt, nil, 0, nil}
+	m := &mockDataSrouce{opt, nil, nil, 0}
 	m.genData()
 	return m
 }
@@ -261,13 +266,12 @@ func buildAggDataSrouce(b *testing.B, cas *aggTestCase) *mockDataSrouce {
 		orders[1] = true
 	}
 	child := buildMockDataSource(mockDataSourceParameters{
-		types:         fieldTypes,
-		NDVs:          []int{0, cas.groupByNDV},
-		orders:        orders,
-		rows:          cas.rows,
-		initChunkSize: chunkSize,
-		maxChunkSize:  chunkSize,
-		ctx:           ctx.GetSessionVars().StmtCtx,
+		types:     fieldTypes,
+		NDVs:      []int{0, cas.groupByNDV},
+		orders:    orders,
+		rows:      cas.rows,
+		chunkSize: chunkSize,
+		ctx:       ctx.GetSessionVars().StmtCtx,
 	})
 	return child
 }
@@ -316,23 +320,17 @@ func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
 func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
 	dataSource := buildAggDataSrouce(b, cas)
 	b.ResetTimer()
-	defer func(begin time.Time) {
-		fmt.Println(">>>>>>>>>>>>> ", b.N, time.Now().Sub(begin))
-	}(time.Now())
 	for i := 0; i < b.N; i++ {
-		if i%100 == 0 {
-			fmt.Println(">>>>>>>>>>>>>>>>>>>>>>>>> ", i, b.N)
-		}
-
 		b.StopTimer() // prepare a new agg-executor
 		aggExec := buildAggExecutor(b, cas, dataSource)
 		tmpCtx := context.Background()
+		chk := aggExec.newFirstChunk()
+		dataSource.prepare()
+
+		b.StartTimer()
 		if err := aggExec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
 		}
-		chk := aggExec.newFirstChunk()
-
-		b.StartTimer()
 		for {
 			if err := aggExec.Next(tmpCtx, chk); err != nil {
 				b.Fatal(b)
@@ -359,49 +357,27 @@ func BenchmarkHashAgg(b *testing.B) {
 			groupByNDV:  100,
 			concurrency: 4,
 		},
+		{
+			exec:        "hash",
+			aggFunc:     ast.AggFuncSum,
+			hasDistinct: false,
+			rows:        100000,
+			groupByNDV:  100,
+			concurrency: 4,
+		},
+		{
+			exec:        "hash",
+			aggFunc:     ast.AggFuncSum,
+			hasDistinct: false,
+			rows:        1000000,
+			groupByNDV:  100,
+			concurrency: 4,
+		},
 	}
 
-	cas := cases[0]
-
-	dataSource := buildAggDataSrouce(b, cas)
-	b.ResetTimer()
-	defer func(begin time.Time) {
-		fmt.Println(">>>>>>>>>>>>> ", b.N, time.Now().Sub(begin))
-	}(time.Now())
-	for i := 0; i < b.N; i++ {
-		if i%100 == 0 {
-			fmt.Println(">>>>>>>>>>>>>>>>>>>>>>>>> ", i, b.N)
-		}
-
-		b.StopTimer() // prepare a new agg-executor
-		aggExec := buildAggExecutor(b, cas, dataSource)
-		tmpCtx := context.Background()
-		if err := aggExec.Open(tmpCtx); err != nil {
-			b.Fatal(err)
-		}
-		chk := aggExec.newFirstChunk()
-
-		b.StartTimer()
-		for {
-			if err := aggExec.Next(tmpCtx, chk); err != nil {
-				b.Fatal(b)
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-		}
-
-		b.StopTimer()
-		if err := aggExec.Close(); err != nil {
-			b.Fatal(err)
-		}
+	for i, cas := range cases {
+		b.Run(fmt.Sprintf("case-%d", i), func(b *testing.B) {
+			benchmarkAggExecWithCase(b, cas)
+		})
 	}
-
-	//benchmarkAggExecWithCase(b, cases[0])
-
-	//for _, cas := range cases {
-	//	b.Run("xxx", func(b *testing.B) {
-	//		benchmarkAggExecWithCase(b, cas)
-	//	})
-	//}
 }

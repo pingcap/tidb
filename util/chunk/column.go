@@ -52,6 +52,36 @@ type column struct {
 	elemBuf    []byte
 }
 
+func (c *column) copyTo(other *column) *column {
+	if other == nil {
+		other = new(column)
+	}
+	other.length = c.length
+	other.nullCount = c.nullCount
+
+	if len(other.nullBitmap) < len(c.nullBitmap) {
+		other.nullBitmap = append(other.nullBitmap, make([]byte, len(c.nullBitmap)-len(other.nullBitmap))...)
+	}
+	copy(other.nullBitmap, c.nullBitmap)
+
+	if len(other.offsets) < len(c.offsets) {
+		other.offsets = append(other.offsets, make([]int32, len(c.offsets)-len(other.offsets))...)
+	}
+	copy(other.offsets, c.offsets)
+
+	if len(other.data) < len(c.data) {
+		other.data = append(other.data, make([]byte, len(c.data)-len(other.data))...)
+	}
+	copy(other.data, c.data)
+
+	if len(other.elemBuf) < len(c.elemBuf) {
+		other.elemBuf = append(other.elemBuf, make([]byte, len(c.elemBuf)-len(other.elemBuf))...)
+	}
+	copy(other.elemBuf, c.elemBuf)
+
+	return other
+}
+
 func (c *column) isFixed() bool {
 	return c.elemBuf != nil
 }
