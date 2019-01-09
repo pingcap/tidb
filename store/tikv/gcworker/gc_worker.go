@@ -415,7 +415,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 	}
 
 	if useDistributedGC {
-		err = w.uploadSafePointToPd(ctx, safePoint)
+		err = w.uploadSafePointToPD(ctx, safePoint)
 		if err != nil {
 			log.Errorf("[gc worker] %s failed to upload safe point to PD: %v", w.uuid, errors.ErrorStack(err))
 			w.gcIsRunning = false
@@ -510,7 +510,7 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
 	stores, err := w.pdClient.GetAllStores(ctx)
 	if err != nil {
-		log.Errorf("[gc worker] %s delete ranges: got an error while trying to get store list from pd: %v", w.uuid, errors.ErrorStack(err))
+		log.Errorf("[gc worker] %s delete ranges: got an error while trying to get store list from PD: %v", w.uuid, errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 
@@ -690,7 +690,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 	return nil
 }
 
-func (w *GCWorker) uploadSafePointToPd(ctx context.Context, safePoint uint64) error {
+func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
 	var newSafePoint uint64
 	var err error
 
@@ -701,7 +701,7 @@ func (w *GCWorker) uploadSafePointToPd(ctx context.Context, safePoint uint64) er
 			if errors.Cause(err) == context.Canceled {
 				return errors.Trace(err)
 			}
-			err = bo.Backoff(tikv.BoPDRPC, errors.Errorf("failed to upload safe point to pd, err: %v", err))
+			err = bo.Backoff(tikv.BoPDRPC, errors.Errorf("failed to upload safe point to PD, err: %v", err))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -711,10 +711,10 @@ func (w *GCWorker) uploadSafePointToPd(ctx context.Context, safePoint uint64) er
 	}
 
 	if newSafePoint != safePoint {
-		log.Warnf("[gc worker] %s, pd rejected our safe point %v but is using another safe point %v", w.uuid, safePoint, newSafePoint)
-		return errors.Errorf("pd rejected our safe point %v but is using another safe point %v", safePoint, newSafePoint)
+		log.Warnf("[gc worker] %s, PD rejected our safe point %v but is using another safe point %v", w.uuid, safePoint, newSafePoint)
+		return errors.Errorf("PD rejected our safe point %v but is using another safe point %v", safePoint, newSafePoint)
 	}
-	log.Infof("[gc worker] %s sent safe point %v to pd", w.uuid, safePoint)
+	log.Infof("[gc worker] %s sent safe point %v to PD", w.uuid, safePoint)
 	return nil
 }
 

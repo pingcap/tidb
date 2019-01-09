@@ -219,6 +219,10 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, true)
+	// Now the row must be set to the default value.
+	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, gcModeDistributed)
 
 	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
