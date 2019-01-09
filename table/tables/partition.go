@@ -358,6 +358,7 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
 }
 
+// FindPartitionByName finds partition in table meta by name.
 func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 	// TODO: MySQL behavior for hash partition is weird, "create table .. partition by hash partition 4",
 	// it use p0, p1, p2, p3 as partition names automatically.
@@ -370,6 +371,7 @@ func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 	return -1, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
 }
 
+// FindByName checks whether object name exists in list.
 func FindByName(list []model.CIStr, name string) bool {
 	for _, s := range list {
 		if s.L == name {
