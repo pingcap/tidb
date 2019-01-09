@@ -671,7 +671,7 @@ func checkColumnFieldLength(schema *model.DBInfo, colDefs []*ast.ColumnDef, tbIn
 				setCharset = tbInfo.Charset
 			}
 
-			err := IsTooBigFieldLength(colDef, setCharset)
+			err := IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, setCharset)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -681,17 +681,17 @@ func checkColumnFieldLength(schema *model.DBInfo, colDefs []*ast.ColumnDef, tbIn
 }
 
 // IsTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
-func IsTooBigFieldLength(colDef *ast.ColumnDef, setCharset string) error {
+func IsTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
 	desc, err := charset.GetCharsetDesc(setCharset)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	maxFlen := mysql.MaxFieldVarCharLength
 	maxFlen /= desc.Maxlen
-	if colDef.Tp.Flen != types.UnspecifiedLength && colDef.Tp.Flen > maxFlen {
-		return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
+	if colDefTpFlen != types.UnspecifiedLength && colDefTpFlen > maxFlen {
+		return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDefName, maxFlen)
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // checkColumnAttributes check attributes for single column.
@@ -2207,6 +2207,12 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 
+	for _, col := range tb.Meta().Cols() {
+		if col.Tp == mysql.TypeVarchar {
+			err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset)
+			return errors.Trace(err)
+		}
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,

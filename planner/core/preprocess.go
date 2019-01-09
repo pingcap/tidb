@@ -494,7 +494,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if len(tp.Charset) == 0 {
 			return nil
 		}
-		err := ddl.IsTooBigFieldLength(colDef, tp.Charset)
+		err := ddl.IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, tp.Charset)
 		if err != nil {
 			return errors.Trace(err)
 		}
