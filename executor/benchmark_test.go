@@ -21,10 +21,10 @@ import (
 )
 
 type mockDataSourceParameters struct {
-	types     []*types.FieldType // type of columns
-	NDVs      []int              // number of distinct values and zero is no limit
-	orders    []bool
-	rows      int
+	types     []*types.FieldType // types
+	NDVs      []int              // number of distinct values on columns[i] and zero represents no limit
+	orders    []bool             // columns[i] should be ordered if orders[i] is true
+	rows      int                // number of rows the DataSource should output
 	chunkSize int
 	ctx       *stmtctx.StatementContext
 }
@@ -108,7 +108,7 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) types.Datum {
 	return d
 }
 
-func (mds *mockDataSource) PrepareChunks() {
+func (mds *mockDataSource) prepareChunks() {
 	mds.toUseChunks = make([]*chunk.Chunk, len(mds.orgChunks))
 	for i := range mds.toUseChunks {
 		mds.toUseChunks[i] = mds.orgChunks[i].CopyTo(mds.toUseChunks[i])
@@ -116,9 +116,7 @@ func (mds *mockDataSource) PrepareChunks() {
 	mds.chunkPtr = 0
 }
 
-func (mds *mockDataSource) Open(context.Context) error {
-	return nil
-}
+func (mds *mockDataSource) Open(context.Context) error { return nil }
 
 func (mds *mockDataSource) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if mds.chunkPtr >= len(mds.toUseChunks) {
@@ -132,17 +130,11 @@ func (mds *mockDataSource) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (mds *mockDataSource) Close() error {
-	return nil
-}
+func (mds *mockDataSource) Close() error { return nil }
 
-func (mds *mockDataSource) Schema() *expression.Schema {
-	return nil
-}
+func (mds *mockDataSource) Schema() *expression.Schema { return nil }
 
-func (mds *mockDataSource) retTypes() []*types.FieldType {
-	return mds.p.types
-}
+func (mds *mockDataSource) retTypes() []*types.FieldType { return mds.p.types }
 
 func (mds *mockDataSource) newFirstChunk() *chunk.Chunk {
 	return chunk.New(mds.p.types, mds.p.chunkSize, mds.p.chunkSize)
@@ -239,15 +231,12 @@ func buildStreamAggExecutor(v *aggExecutorParameters) Executor {
 }
 
 type aggTestCase struct {
-	/*
-		The test table's schema is fix.
-		It has two columns(Double, Long).
-	*/
+	// The test table's schema is fixed (aggCol Double, groupBy Long).
 	exec        string // "hash" or "stream"
 	aggFunc     string // sum, avg, count ....
+	groupByNDV  int    // the number of distinct group-by keys
 	hasDistinct bool
 	rows        int
-	groupByNDV  int // the number of distinct group-by keys
 	concurrency int
 }
 
@@ -257,7 +246,7 @@ func (a aggTestCase) String() string {
 }
 
 func defaultAggTestCase(exec string) *aggTestCase {
-	return &aggTestCase{exec, ast.AggFuncSum, false, 10000000, 1000, 4}
+	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4}
 }
 
 func buildAggDataSource(b *testing.B, cas *aggTestCase) *mockDataSource {
@@ -296,9 +285,6 @@ func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
 	}
 	ctx := core.MockContext()
 
-	sumFunc := aggregation.NewAggFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{childCols[0]}, cas.hasDistinct)
-	groupBy := []expression.Expression{childCols[1]}
-
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", cas.concurrency)); err != nil {
 		b.Fatal(err)
 	}
@@ -306,12 +292,13 @@ func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
 		b.Fatal(err)
 	}
 
+	aggFunc := aggregation.NewAggFuncDesc(ctx, cas.aggFunc, []expression.Expression{childCols[0]}, cas.hasDistinct)
 	p := &aggExecutorParameters{
 		ctx:          ctx,
 		schema:       expression.NewSchema(childCols...),
 		child:        child,
-		aggFuncs:     []*aggregation.AggFuncDesc{sumFunc},
-		groupByItems: groupBy,
+		aggFuncs:     []*aggregation.AggFuncDesc{aggFunc},
+		groupByItems: []expression.Expression{childCols[1]},
 	}
 
 	var agg Executor
@@ -335,7 +322,7 @@ func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
 		aggExec := buildAggExecutor(b, cas, dataSource)
 		tmpCtx := context.Background()
 		chk := aggExec.newFirstChunk()
-		dataSource.PrepareChunks()
+		dataSource.prepareChunks()
 
 		b.StartTimer()
 		if err := aggExec.Open(tmpCtx); err != nil {

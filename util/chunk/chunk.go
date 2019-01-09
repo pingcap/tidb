@@ -198,7 +198,7 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 	c.numVirtualRows = numVirtualRows
 }
 
-// TODO(zhangyuanjia): just for test
+// CopyTo copy this chunk's data to another chunk
 func (c *Chunk) CopyTo(other *Chunk) *Chunk {
 	if other == nil {
 		other = new(Chunk)
