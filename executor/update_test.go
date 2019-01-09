@@ -65,7 +65,7 @@ func (s *testUpdateSuite) SetUpSuite(c *C) {
 func (s *testUpdateSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
+	testleak.AfterTest(c)
 }
 
 func (s *testUpdateSuite) TearDownTest(c *C) {
@@ -84,8 +84,9 @@ func (s *testUpdateSuite) TestUpdateGenColInTxn(c *C) {
 	tk.MustExec(`create table t(a bigint, b bigint as (a+1));`)
 	tk.MustExec(`begin;`)
 	tk.MustExec(`insert into t(a) values(1);`)
-	err := tk.ExecToErr(`update t set b=6 where b=2;`)
+	rs, err := tk.Exec(`update t set b=6 where b=2;`)
 	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'b' in table 't' is not allowed.")
+	c.Assert(rs, IsNil)
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 2`))
