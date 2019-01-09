@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -998,6 +997,17 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	return nil
 }
 
+func setDefaultTableCharsetAndCollation(tbInfo *model.TableInfo) (err error) {
+	if len(tbInfo.Charset) == 0 {
+		tbInfo.Charset = mysql.DefaultCharset
+	}
+
+	if len(tbInfo.Collate) == 0 {
+		tbInfo.Collate, err = charset.GetDefaultCollation(tbInfo.Charset)
+	}
+	return
+}
+
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
@@ -1022,6 +1032,10 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			}
 		}
 	}
+
+	if err := setDefaultTableCharsetAndCollation(tbInfo); err != nil {
+		log.Error(errors.ErrorStack(err))
+	}
 	return nil
 }
 
@@ -1041,6 +1055,34 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 	return tp == ast.AlterTableLock || tp == ast.AlterTableAlgorithm
 }
 
+// getCharsetAndCollateInTableOption will iterate the charset and collate in the options,
+// and returns the last charset and collate in options. If there is no charset in the options,
+// the returns charset will be "", the same as collate.
+func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (charset, collate string) {
+	charsets := make([]string, len(options))
+	collates := make([]string, len(options))
+	for i := startIdx; i < len(options); i++ {
+		opt := options[i]
+		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
+		// the charset will be utf8, collate will be utf8_bin
+		switch opt.Tp {
+		case ast.TableOptionCharset:
+			charsets = append(charsets, opt.StrValue)
+		case ast.TableOptionCollate:
+			collates = append(collates, opt.StrValue)
+		}
+	}
+
+	if len(charsets) != 0 {
+		charset = charsets[len(charsets)-1]
+	}
+
+	if len(collates) != 0 {
+		collate = collates[len(collates)-1]
+	}
+	return
+}
+
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
 	// Only handle valid specs.
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
@@ -1058,6 +1100,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	for _, spec := range validSpecs {
+		var handledCharsetOrCollate bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
 			if len(spec.NewColumns) != 1 {
@@ -1103,7 +1146,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableOption:
-			for _, opt := range spec.Options {
+			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
 					if opt.UintValue > shardRowIDBitsMax {
@@ -1115,7 +1158,17 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				case ast.TableOptionComment:
 					spec.Comment = opt.StrValue
 					err = d.AlterTableComment(ctx, ident, spec)
+				case ast.TableOptionCharset, ast.TableOptionCollate:
+					// getCharsetAndCollateInTableOption will get the last charset and collate in the options,
+					// so it should be handled only once.
+					if handledCharsetOrCollate {
+						continue
+					}
+					toCharset, toCollate := getCharsetAndCollateInTableOption(i, spec.Options)
+					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate)
+					handledCharsetOrCollate = true
 				}
+
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -1264,18 +1317,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col.OriginDefaultValue = col.GetDefaultValue()
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		zeroVal := table.GetZeroValue(col.ToInfo())
-		col.OriginDefaultValue, err = zeroVal.ToString()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
-		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
-		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -1419,6 +1463,29 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 	return errors.Trace(err)
 }
 
+// modifiableCharsetAndCollation returns error when the charset or collation is not modifiable.
+func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate string) error {
+	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
+		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset, toCollate)
+	}
+
+	if toCharset == charset.CharsetUTF8MB4 || (toCharset == charset.CharsetUTF8 && origCharset != charset.CharsetUTF8MB4) {
+		// TiDB treats all the data as utf8mb4, so we support changing the charset to utf8mb4.
+		// And not allow to change utf8mb4 to utf8.
+		return nil
+	}
+
+	if toCharset != origCharset {
+		msg := fmt.Sprintf("charset from %s to %s", origCharset, toCharset)
+		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
+	}
+	if toCollate != origCollate {
+		msg := fmt.Sprintf("collate from %s to %s", origCollate, toCollate)
+		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
+	}
+	return nil
+}
+
 // modifiable checks if the 'origin' type can be modified to 'to' type with out the need to
 // change or check existing data in the table.
 // It returns true if the two types has the same Charset and Collation, the same sign, both are
@@ -1432,14 +1499,10 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	if to.Charset != origin.Charset {
-		msg := fmt.Sprintf("charset %s not match origin %s", to.Charset, origin.Charset)
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	if err := modifiableCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate); err != nil {
+		return errors.Trace(err)
 	}
-	if to.Collate != origin.Collate {
-		msg := fmt.Sprintf("collate %s not match origin %s", to.Collate, origin.Collate)
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-	}
+
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
@@ -1792,6 +1855,60 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 		Args:       []interface{}{spec.Comment},
 	}
 
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AlterTableCharset changes the table charset and collate.
+func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
+	// use the last one.
+	if toCharset == "" && toCollate == "" {
+		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset)
+	}
+
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	origCharset := tb.Meta().Charset
+	origCollate := tb.Meta().Collate
+	if toCharset == "" {
+		// charset does not change.
+		toCharset = origCharset
+	}
+
+	if toCollate == "" {
+		// get the default collation of the charset.
+		toCollate, err = charset.GetDefaultCollation(toCharset)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if origCharset == toCharset && origCollate == toCollate {
+		// nothing to do.
+		return nil
+	}
+
+	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionModifyTableCharsetAndCollate,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{toCharset, toCollate},
+	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
