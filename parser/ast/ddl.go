@@ -370,7 +370,51 @@ type ColumnOption struct {
 
 // Restore implements Node interface.
 func (n *ColumnOption) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	switch n.Tp {
+	case ColumnOptionNoOption:
+		return nil
+	case ColumnOptionPrimaryKey:
+		ctx.WriteKeyWord("PRIMARY KEY")
+	case ColumnOptionNotNull:
+		ctx.WriteKeyWord("NOT NULL")
+	case ColumnOptionAutoIncrement:
+		ctx.WriteKeyWord("AUTO_INCREMENT")
+	case ColumnOptionDefaultValue:
+		ctx.WriteKeyWord("DEFAULT ")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing ColumnOption DefaultValue Expr")
+		}
+	case ColumnOptionUniqKey:
+		ctx.WriteKeyWord("UNIQUE KEY")
+	case ColumnOptionNull:
+		ctx.WriteKeyWord("NULL")
+	case ColumnOptionOnUpdate:
+		ctx.WriteKeyWord("ON UPDATE ")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing ColumnOption ON UPDATE Expr")
+		}
+	case ColumnOptionFulltext:
+		return errors.New("TiDB Parser ignore the `ColumnOptionFulltext` type now")
+	case ColumnOptionComment:
+		ctx.WriteKeyWord("COMMENT ")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing ColumnOption COMMENT Expr")
+		}
+	case ColumnOptionGenerated:
+		ctx.WriteKeyWord("GENERATED ALWAYS AS")
+		ctx.WritePlain("(")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing ColumnOption GENERATED ALWAYS Expr")
+		}
+		ctx.WritePlain(")")
+	case ColumnOptionReference:
+		if err := n.Refer.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing ColumnOption ReferenceDef")
+		}
+	default:
+		return errors.New("An error occurred while splicing ColumnOption")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -570,7 +614,25 @@ type ColumnDef struct {
 
 // Restore implements Node interface.
 func (n *ColumnDef) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.Name.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while splicing ColumnDef Name")
+	}
+	if n.Tp != nil {
+		ctx.WritePlain(" ")
+		if err := n.Tp.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing ColumnDef Type")
+		}
+	}
+	for i, options := range n.Options {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
+		ctx.WritePlain(" ")
+		if err := options.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing ColumnDef ColumnOption: [%v]", i)
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
