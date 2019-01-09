@@ -51,7 +51,7 @@ func (mds *mockDataSrouce) genData() {
 			row[colIdx] = colDatums[colIdx][i]
 		}
 
-		idx := mds.p.rows / mds.p.chunkSize
+		idx := i / mds.p.chunkSize
 		mds.orgChunks[idx].AppendRow(chunk.MutRowFromDatums(row).ToRow())
 	}
 }
