@@ -160,9 +160,11 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 	runTestMultiStatements(c)
 }
 
-func (ts *TidbTestSuite) TestSocket(c *C) {
+func (ts *TidbTestSuite) TestSocketForwarding(c *C) {
 	cfg := config.NewConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
+	cfg.Port = 3999
+	os.Remove(cfg.Socket)
 	cfg.Status.ReportStatus = false
 
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -178,6 +180,30 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 		config.DBName = "test"
 		config.Strict = true
 	}, "SocketRegression")
+}
+
+func (ts *TidbTestSuite) TestSocket(c *C) {
+	cfg := config.NewConfig()
+	cfg.Socket = "/tmp/tidbtest.sock"
+	cfg.Port = 0
+	os.Remove(cfg.Socket)
+	cfg.Host = ""
+	cfg.Status.ReportStatus = false
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+	defer server.Close()
+
+	runTestRegression(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = "/tmp/tidbtest.sock"
+		config.DBName = "test"
+		config.Strict = true
+	}, "SocketRegression")
+
 }
 
 // generateCert generates a private key and a certificate in PEM format based on parameters.
