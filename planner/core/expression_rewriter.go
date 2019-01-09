@@ -879,7 +879,13 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			return
 		}
 	}
-	if v.IsGlobal {
+	sysVar := variable.SysVars[name]
+	if sysVar == nil {
+		er.err = variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return
+	}
+	// Variable is @@gobal.variable_name or variable is only global scope variable.
+	if v.IsGlobal || sysVar.Scope == variable.ScopeGlobal {
 		val, err = variable.GetGlobalSystemVar(sessionVars, name)
 	} else {
 		val, err = variable.GetSessionSystemVar(sessionVars, name)
