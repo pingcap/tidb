@@ -237,31 +237,32 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	// Make sure the group that contains primary key goes first.
 	if len(groups[primaryRegion]) > 0 {
 		batches = appendBatchBySize(batches, primaryRegion, groups[primaryRegion], sizeFunc, txnCommitBatchSize)
-		primary, others = markBatchAsPrimary(batches, c.primary())
 		delete(groups, primaryRegion)
 	}
 	for id, g := range groups {
-		others = appendBatchBySize(others, id, g, sizeFunc, txnCommitBatchSize)
+		batches = appendBatchBySize(batches, id, g, sizeFunc, txnCommitBatchSize)
 	}
 
+	primary, others = splitBatches(batches, c.primary())
 	if len(primary.keys) > 0 && (action == actionCommit || action == actionCleanup) {
 		// primary should be committed/cleanup first
 		err = c.doActionOnBatches(bo, action, []batchKeys{primary})
 		if err != nil {
 			return errors.Trace(err)
 		}
+		batches = others
 	}
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
 		go func() {
-			e := c.doActionOnBatches(bo, action, others)
+			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
 				log.Debugf("con:%d 2PC async doActionOnBatches %s err: %v", c.connID, action, e)
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
 			}
 		}()
 	} else {
-		err = c.doActionOnBatches(bo, action, others)
+		err = c.doActionOnBatches(bo, action, batches)
 	}
 	return errors.Trace(err)
 }
@@ -752,15 +753,23 @@ func appendBatchBySize(b []batchKeys, region RegionVerID, keys [][]byte, sizeFn 
 	return b
 }
 
-// markBatchAsPrimary marks the batch that contains the primaryKey as primary and return it
-func markBatchAsPrimary(batches []batchKeys, primaryKey []byte) (primary batchKeys, others []batchKeys) {
+// batchContains returns true if batch contains the key
+func batchContains(batch batchKeys, key []byte) bool {
+	for _, k := range batch.keys {
+		if bytes.Compare(k, key) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// splitBatches split the batches to primary and others according to the primaryKey
+func splitBatches(batches []batchKeys, primaryKey []byte) (primary batchKeys, others []batchKeys) {
 	for i := range batches {
-		for _, k := range batches[i].keys {
-			if bytes.Compare(k, primaryKey) == 0 {
-				batches[i].primary = true
-				primary = batches[i]
-				break
-			}
+		if !primary.primary && batchContains(batches[i], primaryKey) {
+			batches[i].primary = true
+			primary = batches[i]
+			continue
 		}
 		others = append(others, batches[i])
 	}
