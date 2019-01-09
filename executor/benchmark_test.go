@@ -346,13 +346,20 @@ func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
 
 func BenchmarkAggRows(b *testing.B) {
 	rows := []int{100000, 1000000, 10000000, 20000000}
+	concs := []int{1, 4, 8, 15, 20, 30, 40}
 	for _, exec := range []string{"hash", "stream"} {
-		for _, row := range rows {
-			cas := defaultAggTestCase(exec)
-			cas.rows = row
-			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-				benchmarkAggExecWithCase(b, cas)
-			})
+		for _, con := range concs {
+			if exec == "stream" && con > 1 {
+				continue
+			}
+			for _, row := range rows {
+				cas := defaultAggTestCase(exec)
+				cas.rows = row
+				cas.concurrency = con
+				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+					benchmarkAggExecWithCase(b, cas)
+				})
+			}
 		}
 	}
 }
