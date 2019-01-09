@@ -47,7 +47,8 @@ type StatementContext struct {
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
 	IsDDLJobInQueue        bool
 	InInsertStmt           bool
-	InUpdateOrDeleteStmt   bool
+	InUpdateStmt           bool
+	InDeleteStmt           bool
 	InSelectStmt           bool
 	InLoadDataStmt         bool
 	IgnoreTruncate         bool
@@ -387,7 +388,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) ShouldClipToZero() bool {
 	// TODO: Currently altering column of integer to unsigned integer is not supported.
 	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InUpdateOrDeleteStmt || sc.InLoadDataStmt
+	return sc.InInsertStmt || sc.InUpdateStmt || sc.InLoadDataStmt
 }
 
 // ShouldIgnoreError indicates whether we should ignore the error when type conversion overflows,
