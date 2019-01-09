@@ -3357,6 +3357,45 @@ func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 	))
 }
 
+func (s *testSuite3) TestSelectPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists th, tr`)
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
+	tk.MustExec(`create table tr (a int, b int)
+							partition by range (a) (
+							partition r0 values less than (4),
+							partition r1 values less than (7),
+							partition r3 values less than maxvalue)`)
+	defer tk.MustExec(`drop table if exists th, tr`)
+	tk.MustExec(`insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);`)
+	tk.MustExec("insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);")
+	tk.MustExec(`insert into tr values (-3,-3),(3,3),(4,4),(7,7),(8,8);`)
+	// select 1 partition.
+	tk.MustQuery("select b from th partition (p0) order by a").Check(testkit.Rows("-6", "-3", "0", "3", "6"))
+	tk.MustQuery("select b from tr partition (r0) order by a").Check(testkit.Rows("-3", "3"))
+	// select multi partition.
+	tk.MustQuery("select b from th partition (P2,p0) order by a").Check(testkit.Rows("-8", "-6", "-5", "-3", "-2", "0", "2", "3", "5", "6", "8"))
+	tk.MustQuery("select b from tr partition (r1,R3) order by a").Check(testkit.Rows("4", "7", "8"))
+
+	// test select unknow partition error
+	_, err := tk.Exec("select b from th partition (p0,p4)")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
+	_, err = tk.Exec("select b from tr partition (r1,r4)")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'r4' in table 'tr'")
+
+	result := tk.MustQuery("desc select * from th partition (p2,p1)")
+	result.Check(testkit.Rows(
+		"Union_7 20000.00 root ",
+		"├─TableReader_9 10000.00 root data:TableScan_8",
+		"│ └─TableScan_8 10000.00 cop table:th, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_11 10000.00 root data:TableScan_10",
+		"  └─TableScan_10 10000.00 cop table:th, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo",
+	)) // test explain.
+
+}
+
 func (s *testSuite) TestSelectView(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
