@@ -405,7 +405,9 @@ func (b *builtinJSONMergeSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNu
 	res = json.MergeBinary(values)
 	// function "JSON_MERGE" is deprecated since MySQL 5.7.22. Synonym for function "JSON_MERGE_PRESERVE".
 	// See https://dev.mysql.com/doc/refman/5.7/en/json-modification-functions.html#function_json-merge
-	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("JSON_MERGE"))
+	if b.pbCode == tipb.ScalarFuncSig_JsonMergeSig {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("JSON_MERGE"))
+	}
 	return res, false, nil
 }
 
