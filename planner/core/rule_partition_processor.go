@@ -82,6 +82,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
 	}
+	partitionDefs := ds.table.Meta().Partition.Definitions
 
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to the filter conditions pushed to the DataSource.
@@ -94,6 +95,11 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 				return nil, errors.Trace(err)
 			}
 			if prune {
+				continue
+			}
+		}
+		if len(ds.partitionNames) != 0 {
+			if !tables.FindByName(ds.partitionNames, partitionDefs[i].Name.L) {
 				continue
 			}
 		}

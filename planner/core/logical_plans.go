@@ -312,6 +312,7 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	isPartition     bool
 	physicalTableID int64
+	partitionNames  []model.CIStr
 }
 
 // accessPath tells how we access one index or just access table.

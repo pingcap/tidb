@@ -54,6 +54,7 @@ const (
 	codePrivilegeCheckFail              = mysql.ErrUnknown
 	codeWindowInvalidWindowFuncUse      = mysql.ErrWindowInvalidWindowFuncUse
 	codeWindowInvalidWindowFuncAliasUse = mysql.ErrWindowInvalidWindowFuncAliasUse
+	codePartitionClauseOnNonpartitioned = mysql.ErrPartitionClauseOnNonpartitioned
 )
 
 // error definitions.
@@ -94,6 +95,7 @@ var (
 	ErrPrivilegeCheckFail              = terror.ClassOptimizer.New(codePrivilegeCheckFail, "privilege check fail")
 	ErrWindowInvalidWindowFuncUse      = terror.ClassOptimizer.New(codeWindowInvalidWindowFuncUse, mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncUse])
 	ErrWindowInvalidWindowFuncAliasUse = terror.ClassOptimizer.New(codeWindowInvalidWindowFuncAliasUse, mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncAliasUse])
+	ErrPartitionClauseOnNonpartitioned = terror.ClassOptimizer.New(codePartitionClauseOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionClauseOnNonpartitioned])
 )
 
 func init() {
@@ -124,6 +126,7 @@ func init() {
 
 		codeWindowInvalidWindowFuncUse:      mysql.ErrWindowInvalidWindowFuncUse,
 		codeWindowInvalidWindowFuncAliasUse: mysql.ErrWindowInvalidWindowFuncAliasUse,
+		codePartitionClauseOnNonpartitioned: mysql.ErrPartitionClauseOnNonpartitioned,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }

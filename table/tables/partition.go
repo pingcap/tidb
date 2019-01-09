@@ -357,3 +357,25 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 	tbl := t.GetPartition(to)
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
 }
+
+func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
+	// TODO: MySQL behavior for hash partition is weird, "create table .. partition by hash partition 4",
+	// it use p0, p1, p2, p3 as partition names automatically.
+	parName = strings.ToLower(parName)
+	for _, def := range meta.Partition.Definitions {
+		fmt.Printf("name: %v, list: %v\n", parName, def.Name)
+		if strings.EqualFold(def.Name.L, parName) {
+			return def.ID, nil
+		}
+	}
+	return -1, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
+}
+
+func FindByName(list []model.CIStr, name string) bool {
+	for _, s := range list {
+		if s.L == name {
+			return true
+		}
+	}
+	return false
+}
