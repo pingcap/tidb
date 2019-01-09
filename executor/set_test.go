@@ -542,3 +542,23 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@tx_isolation;")
 	result.Check(testkit.Rows("SERIALIZABLE"))
 }
+
+func (s *testSuite) TestSelectGlobalVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
+	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("151"))
+
+	tk.MustExec("set @@global.max_connections=100;")
+
+	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("100"))
+
+	tk.MustExec("set @@global.max_connections=151;")
+
+	// test for unknown variable.
+	_, err := tk.Exec("select @@invalid")
+	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
+	_, err = tk.Exec("select @@global.invalid")
+	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
+}
