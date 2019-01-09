@@ -345,14 +345,14 @@ func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
 }
 
 func BenchmarkAggRows(b *testing.B) {
-	rows := []int{100000, 1000000, 10000000, 20000000}
+	rows := []int{100000, 1000000, 10000000}
 	concs := []int{1, 4, 8, 15, 20, 30, 40}
-	for _, exec := range []string{"hash", "stream"} {
+	for _, row := range rows {
 		for _, con := range concs {
-			if exec == "stream" && con > 1 {
-				continue
-			}
-			for _, row := range rows {
+			for _, exec := range []string{"hash", "stream"} {
+				if exec == "stream" && con > 1 {
+					continue
+				}
 				cas := defaultAggTestCase(exec)
 				cas.rows = row
 				cas.concurrency = con
@@ -365,9 +365,9 @@ func BenchmarkAggRows(b *testing.B) {
 }
 
 func BenchmarkAggGroupByNDV(b *testing.B) {
-	NDVs := []int{10, 100, 1000, 10000, 100000, 500000, 1000000, 5000000, 10000000}
-	for _, exec := range []string{"hash", "stream"} {
-		for _, NDV := range NDVs {
+	NDVs := []int{10, 100, 1000, 10000, 100000, 1000000, 10000000}
+	for _, NDV := range NDVs {
+		for _, exec := range []string{"hash", "stream"} {
 			cas := defaultAggTestCase(exec)
 			cas.groupByNDV = NDV
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
@@ -378,9 +378,12 @@ func BenchmarkAggGroupByNDV(b *testing.B) {
 }
 
 func BenchmarkAggConcurrency(b *testing.B) {
-	concs := []int{1, 2, 3, 4, 8, 15, 20, 30, 50}
-	for _, exec := range []string{"hash", "stream"} {
-		for _, con := range concs {
+	concs := []int{1, 4, 8, 15, 20, 30, 40}
+	for _, con := range concs {
+		for _, exec := range []string{"hash", "stream"} {
+			if exec == "stream" && con > 1 {
+				continue
+			}
 			cas := defaultAggTestCase(exec)
 			cas.concurrency = con
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
@@ -393,8 +396,8 @@ func BenchmarkAggConcurrency(b *testing.B) {
 func BenchmarkAggDistinct(b *testing.B) {
 	rows := []int{100000, 1000000, 10000000}
 	distincts := []bool{false, true}
-	for _, exec := range []string{"hash", "stream"} {
-		for _, row := range rows {
+	for _, row := range rows {
+		for _, exec := range []string{"hash", "stream"} {
 			for _, distinct := range distincts {
 				cas := defaultAggTestCase(exec)
 				cas.rows = row
