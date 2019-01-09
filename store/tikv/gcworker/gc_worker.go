@@ -124,7 +124,7 @@ const (
 	gcDefaultEnableValue = true
 
 	gcModeKey         = "tikv_gc_mode"
-	gcModeLegacy      = "legacy"
+	gcModeCentral     = "central"
 	gcModeDistributed = "distributed"
 	gcModeDefault     = gcModeDistributed
 )
@@ -141,7 +141,7 @@ var gcVariableComments = map[string]string{
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
 	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 2",
 	gcEnableKey:      "Current GC enable status",
-	gcModeKey:        "Mode of GC, \"legacy\" or \"distributed\"",
+	gcModeKey:        "Mode of GC, \"central\" or \"distributed\"",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -409,10 +409,9 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 
 	useDistributedGC, err := w.checkUseDistributedGC()
 	if err != nil {
-		log.Errorf("[gc worker] %s failed to load gc mode: %v", w.uuid, errors.ErrorStack(err))
+		log.Errorf("[gc worker] %s failed to load gc mode, fall back to central mode. err: %v", w.uuid, errors.ErrorStack(err))
 		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
-		w.done <- errors.Trace(err)
-		return
+		useDistributedGC = false
 	}
 
 	if useDistributedGC {
@@ -592,7 +591,7 @@ func (w *GCWorker) checkUseDistributedGC() (bool, error) {
 	if strings.EqualFold(str, gcModeDistributed) {
 		return true, nil
 	}
-	if strings.EqualFold(str, gcModeLegacy) {
+	if strings.EqualFold(str, gcModeCentral) {
 		return false, nil
 	}
 	log.Warnf("[gc worker] \"%v\" is not a valid gc mode. distributed mode will be used.", str)

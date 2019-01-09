@@ -220,7 +220,7 @@ func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, true)
 
-	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeLegacy)
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
 	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
 	c.Assert(err, IsNil)
 	c.Assert(useDistributedGC, Equals, false)
