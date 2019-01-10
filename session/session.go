@@ -326,12 +326,6 @@ func (s *session) doCommit(ctx context.Context) error {
 	//	return kv.ErrRetryable
 	// }
 
-	// mockCommitError8942 is used for PR #8942.
-	// gofail: var mockCommitError8942 bool
-	// if mockCommitError8942 {
-	//	return kv.ErrRetryable
-	// }
-
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
