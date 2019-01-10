@@ -825,11 +825,10 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	name = strings.ToLower(name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)
+		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(s, sql)
-
 	return errors.Trace(err)
 }
 
@@ -1450,8 +1449,6 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBHashAggFinalConcurrency + quoteCommaQuote +
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBConstraintCheckInPlace + quoteCommaQuote +
-	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
-	variable.TiDBDDLReorgBatchSize + quoteCommaQuote +
 	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBInitChunkSize + quoteCommaQuote +
