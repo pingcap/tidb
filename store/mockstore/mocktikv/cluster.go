@@ -215,7 +215,7 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	return nil, nil
 }
 
-// GetRegionByEndKey returns the Region and its leader of the first region with a start key smaller than end key.
+// GetRegionByEndKey returns the Region and its leader that the given key is in the region's (startKey, endKey].
 func (c *Cluster) GetRegionByEndKey(endKey []byte) (*metapb.Region, *metapb.Peer) {
 	c.RLock()
 	defer c.RUnlock()
