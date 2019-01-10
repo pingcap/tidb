@@ -52,6 +52,7 @@ type term struct {
 	val  interface{}
 
 	parent *terms
+	fp     *Failpoint
 }
 
 type mod interface {
@@ -83,8 +84,8 @@ func (ml *modList) allow() bool {
 	return true
 }
 
-func newTerms(fpath, desc string) (*terms, error) {
-	chain := parse(desc)
+func newTerms(fpath, desc string, fp *Failpoint) (*terms, error) {
+	chain := parse(desc, fp)
 	if len(chain) == 0 {
 		return nil, ErrBadParse
 	}
@@ -109,10 +110,10 @@ func (t *terms) eval() (interface{}, error) {
 }
 
 // split terms from a -> b -> ... into [a, b, ...]
-func parse(desc string) (chain []*term) {
+func parse(desc string, fp *Failpoint) (chain []*term) {
 	origDesc := desc
 	for len(desc) != 0 {
-		t := parseTerm(desc)
+		t := parseTerm(desc, fp)
 		if t == nil {
 			fmt.Printf("failed to parse %q past %q\n", origDesc, desc)
 			return nil
@@ -131,7 +132,7 @@ func parse(desc string) (chain []*term) {
 }
 
 // <term> :: <mod> <act> [ "(" <val> ")" ]
-func parseTerm(desc string) *term {
+func parseTerm(desc string, fp *Failpoint) *term {
 	t := &term{}
 	modStr, mods := parseMod(desc)
 	t.mods = &modList{mods}
@@ -140,6 +141,7 @@ func parseTerm(desc string) *term {
 	valStr, val := parseVal(desc[len(modStr)+len(actStr):])
 	t.val = val
 	t.desc = desc[:len(modStr)+len(actStr)+len(valStr)]
+	t.fp = fp
 	if len(t.desc) == 0 {
 		return nil
 	}
@@ -230,7 +232,7 @@ func parseIntFloat(desc string) (string, interface{}) {
 }
 
 // parseAct parses an action
-// <act> :: "off" | "return" | "sleep" | "panic" | "break" | "print"
+// <act> :: "off" | "return" | "sleep" | "panic" | "break" | "print" | "pause"
 func parseAct(desc string) (string, actFunc) {
 	for k, v := range actMap {
 		if strings.HasPrefix(desc, k) {
@@ -285,6 +287,7 @@ var actMap = map[string]actFunc{
 	"panic":  actPanic,
 	"break":  actBreak,
 	"print":  actPrint,
+	"pause":  actPause,
 }
 
 func (t *term) do() interface{} { return t.act(t) }
@@ -310,6 +313,13 @@ func actSleep(t *term) interface{} {
 		return nil
 	}
 	time.Sleep(dur)
+	return nil
+}
+
+func actPause(t *term) interface{} {
+	if t.fp != nil {
+		t.fp.Pause()
+	}
 	return nil
 }
 

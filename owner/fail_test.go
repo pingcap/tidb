@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"

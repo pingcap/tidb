@@ -28,8 +28,6 @@ github.com/cznic/sortutil
 github.com/cznic/strutil
 # github.com/cznic/y v0.0.0-20160420101755-9fdf92d4aac0
 github.com/cznic/y
-# github.com/etcd-io/gofail v0.0.0-20180808172546-51ce9a71510a
-github.com/etcd-io/gofail/runtime
 # github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
 github.com/go-sql-driver/mysql
 # github.com/golang/protobuf v1.2.0
@@ -68,6 +66,8 @@ github.com/opentracing/opentracing-go/log
 github.com/opentracing/opentracing-go/ext
 # github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
 github.com/pingcap/check
+# github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
+github.com/pingcap/gofail/runtime
 # github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 github.com/pingcap/goleveldb/leveldb
 github.com/pingcap/goleveldb/leveldb/comparer

@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
