@@ -1005,7 +1005,7 @@ func (b *builtinCastDecimalAsDurationSig) Clone() builtinFunc {
 func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return res, false, err
+		return res, true, err
 	}
 	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
