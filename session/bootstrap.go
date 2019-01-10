@@ -752,6 +752,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
 	mustExecute(s, CreateStatsFeedbackTable)
+	// Create bind_info table.
+	mustExecute(s, CreateBindInfoTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
