@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -25,17 +27,33 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// Init should be called before perfschema.Init()
+func Init() {
+	perfschema.RegisterTable("slow_query", tableSlowQuery, tableFromMeta)
+}
+
 type slowQueryTable struct {
+	infoschema.VirtualTable
 	meta *model.TableInfo
 	cols []*table.Column
 }
 
-func tableFromMeta(alloc autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
-	return createSlowQueryTable(meta), nil
-}
+const tableSlowQuery = "CREATE TABLE if not exists slow_query (" +
+	"`SQL` VARCHAR(4096)," +
+	"`START` TIMESTAMP (6)," +
+	"`DURATION` TIME (6)," +
+	"DETAILS VARCHAR(256)," +
+	"SUCC TINYINT," +
+	"CONN_ID BIGINT," +
+	"TRANSACTION_TS BIGINT," +
+	"USER VARCHAR(32) NOT NULL," +
+	"DB VARCHAR(64) NOT NULL," +
+	"TABLE_IDS VARCHAR(256)," +
+	"INDEX_IDS VARCHAR(256)," +
+	"INTERNAL TINYINT);"
 
-// createSlowQueryTable creates all slowQueryTables
-func createSlowQueryTable(meta *model.TableInfo) *slowQueryTable {
+// tableFromMeta creates the slow query table.
+func tableFromMeta(alloc autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)
@@ -45,7 +63,7 @@ func createSlowQueryTable(meta *model.TableInfo) *slowQueryTable {
 		meta: meta,
 		cols: columns,
 	}
-	return t
+	return t, nil
 }
 
 // IterRecords rewrites the IterRecords method of slowQueryTable.
@@ -55,20 +73,35 @@ func (s slowQueryTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, col
 
 	for i, item := range result {
 		row := make([]types.Datum, 0, len(cols))
-		row = append(row, types.NewDatum(item.SQL))
-
-		ts := types.NewTimeDatum(types.Time{types.FromGoTime(item.Start), mysql.TypeTimestamp, types.MaxFsp})
-		row = append(row, ts)
-		row = append(row, types.NewDurationDatum(types.Duration{item.Duration, types.MaxFsp}))
-		row = append(row, types.NewDatum(item.Detail.String()))
-		row = append(row, types.NewDatum(item.Succ))
-		row = append(row, types.NewDatum(item.ConnID))
-		row = append(row, types.NewDatum(item.TxnTS))
-		row = append(row, types.NewDatum(item.User))
-		row = append(row, types.NewDatum(item.DB))
-		row = append(row, types.NewDatum(item.TableIDs))
-		row = append(row, types.NewDatum(item.IndexIDs))
-		row = append(row, types.NewDatum(item.Internal))
+		for _, col := range cols {
+			switch col.Name.L {
+			case "sql":
+				row = append(row, types.NewDatum(item.SQL))
+			case "start":
+				ts := types.NewTimeDatum(types.Time{types.FromGoTime(item.Start), mysql.TypeTimestamp, types.MaxFsp})
+				row = append(row, ts)
+			case "duration":
+				row = append(row, types.NewDurationDatum(types.Duration{item.Duration, types.MaxFsp}))
+			case "details":
+				row = append(row, types.NewDatum(item.Detail.String()))
+			case "succ":
+				row = append(row, types.NewDatum(item.Succ))
+			case "conn_id":
+				row = append(row, types.NewDatum(item.ConnID))
+			case "transaction_ts":
+				row = append(row, types.NewDatum(item.TxnTS))
+			case "user":
+				row = append(row, types.NewDatum(item.User))
+			case "db":
+				row = append(row, types.NewDatum(item.DB))
+			case "table_ids":
+				row = append(row, types.NewDatum(item.TableIDs))
+			case "index_ids":
+				row = append(row, types.NewDatum(item.IndexIDs))
+			case "internal":
+				row = append(row, types.NewDatum(item.Internal))
+			}
+		}
 
 		more, err := fn(int64(i), row, cols)
 		if err != nil {
@@ -81,121 +114,22 @@ func (s slowQueryTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, col
 	return nil
 }
 
-// createPerfSchemaTable creates all slowQueryTables
-func createPerfSchemaTable(meta *model.TableInfo) *slowQueryTable {
-	columns := make([]*table.Column, 0, len(meta.Columns))
-	for _, colInfo := range meta.Columns {
-		col := table.ToColumn(colInfo)
-		columns = append(columns, col)
-	}
-	t := &slowQueryTable{
-		meta: meta,
-		cols: columns,
-	}
-	return t
-}
-
-// RowWithCols implements table.Table Type interface.
-func (s *slowQueryTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
-}
-
-// Row implements table.Table Type interface.
-func (s *slowQueryTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
-	return nil, table.ErrUnsupportedOp
-}
-
 // Cols implements table.Table Type interface.
-func (s *slowQueryTable) Cols() []*table.Column {
-	return s.cols
+func (vt *slowQueryTable) Cols() []*table.Column {
+	return vt.cols
 }
 
 // WritableCols implements table.Table Type interface.
-func (s *slowQueryTable) WritableCols() []*table.Column {
-	return s.cols
-}
-
-// Indices implements table.Table Type interface.
-func (s *slowQueryTable) Indices() []table.Index {
-	return nil
-}
-
-// WritableIndices implements table.Table Type interface.
-func (s *slowQueryTable) WritableIndices() []table.Index {
-	return nil
-}
-
-// DeletableIndices implements table.Table Type interface.
-func (s *slowQueryTable) DeletableIndices() []table.Index {
-	return nil
-}
-
-// RecordPrefix implements table.Table Type interface.
-func (s *slowQueryTable) RecordPrefix() kv.Key {
-	return nil
-}
-
-// IndexPrefix implements table.Table Type interface.
-func (s *slowQueryTable) IndexPrefix() kv.Key {
-	return nil
-}
-
-// FirstKey implements table.Table Type interface.
-func (s *slowQueryTable) FirstKey() kv.Key {
-	return nil
-}
-
-// RecordKey implements table.Table Type interface.
-func (s *slowQueryTable) RecordKey(h int64) kv.Key {
-	return nil
-}
-
-// AddRecord implements table.Table Type interface.
-func (s *slowQueryTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
-	return 0, table.ErrUnsupportedOp
-}
-
-// RemoveRecord implements table.Table Type interface.
-func (s *slowQueryTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
-	return table.ErrUnsupportedOp
-}
-
-// UpdateRecord implements table.Table Type interface.
-func (s *slowQueryTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
-	return table.ErrUnsupportedOp
-}
-
-// AllocAutoID implements table.Table Type interface.
-func (s *slowQueryTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
-	return 0, table.ErrUnsupportedOp
-}
-
-// Allocator implements table.Table Type interface.
-func (s *slowQueryTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
-	return nil
-}
-
-// RebaseAutoID implements table.Table Type interface.
-func (s *slowQueryTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
-	return table.ErrUnsupportedOp
-}
-
-// Meta implements table.Table Type interface.
-func (s *slowQueryTable) Meta() *model.TableInfo {
-	return s.meta
+func (vt *slowQueryTable) WritableCols() []*table.Column {
+	return vt.cols
 }
 
 // GetID implements table.Table GetID interface.
-func (s *slowQueryTable) GetPhysicalID() int64 {
-	return s.meta.ID
+func (vt *slowQueryTable) GetPhysicalID() int64 {
+	return vt.meta.ID
 }
 
-// Seek implements table.Table Type interface.
-func (s *slowQueryTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
-	return 0, false, table.ErrUnsupportedOp
-}
-
-// Type implements table.Table Type interface.
-func (s *slowQueryTable) Type() table.Type {
-	return table.VirtualTable
+// Meta implements table.Table Type interface.
+func (vt *slowQueryTable) Meta() *model.TableInfo {
+	return vt.meta
 }

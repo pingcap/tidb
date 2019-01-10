@@ -47,6 +47,6 @@ func (s *testSuite) TestTiNiuBTables(c *C) {
 
 	tk := testkit.NewTestKit(c, store)
 
-	tk.MustExec("use tiniub")
+	tk.MustExec("use PERFORMANCE_SCHEMA")
 	tk.MustQuery("select * from slow_query").Check(testkit.Rows())
 }

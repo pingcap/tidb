@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	tt "github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
@@ -711,6 +712,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
+			if tbl.Type() != tt.NormalTable {
+				continue
+			}
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
