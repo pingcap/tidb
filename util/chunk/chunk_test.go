@@ -232,6 +232,22 @@ func (s *testChunkSuite) TestCopyTo(c *check.C) {
 		c.Assert(cmpFunc(rowBig, i, rowSmall, i), check.Equals, 1)
 		c.Assert(cmpFunc(rowBig, i, rowBig, i), check.Equals, 0)
 	}
+
+	copied.columns = append(copied.columns, nil, nil, nil)
+	copied = chunk.CopyTo(copied)
+	rowNull = copied.GetRow(0)
+	rowSmall = copied.GetRow(1)
+	rowBig = copied.GetRow(2)
+	for i := 0; i < len(allTypes); i++ {
+		cmpFunc := GetCompareFunc(allTypes[i])
+		c.Assert(cmpFunc(rowNull, i, rowNull, i), check.Equals, 0)
+		c.Assert(cmpFunc(rowNull, i, rowSmall, i), check.Equals, -1)
+		c.Assert(cmpFunc(rowSmall, i, rowNull, i), check.Equals, 1)
+		c.Assert(cmpFunc(rowSmall, i, rowSmall, i), check.Equals, 0)
+		c.Assert(cmpFunc(rowSmall, i, rowBig, i), check.Equals, -1, check.Commentf("%d", allTypes[i].Tp))
+		c.Assert(cmpFunc(rowBig, i, rowSmall, i), check.Equals, 1)
+		c.Assert(cmpFunc(rowBig, i, rowBig, i), check.Equals, 0)
+	}
 }
 
 func (s *testChunkSuite) TestAppend(c *check.C) {
