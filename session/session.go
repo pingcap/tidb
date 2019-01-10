@@ -532,14 +532,14 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	var retryCnt uint
 	defer func() {
-		if err != nil {
-			s.rollbackOnError(ctx)
-		}
 		s.sessionVars.RetryInfo.Retrying = false
-		s.txn.changeToInvalid()
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		if err != nil {
+			s.rollbackOnError(ctx)
+		}
+		s.txn.changeToInvalid()
 	}()
 
 	connID := s.sessionVars.ConnectionID
