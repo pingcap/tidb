@@ -148,6 +148,9 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
+// mockRestoreTableCommitErrOnce use to make sure `mockRestoreTableCommitErr` only mock error once.
+var mockRestoreTableCommitErrOnce = true
+
 func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// check gc enable status again.
 	gcEnable, err := checkGCEnable(w)
@@ -192,6 +195,12 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+
+	// gofail: var mockRestoreTableCommitErr bool
+	// if mockRestoreTableCommitErr && mockRestoreTableCommitErrOnce {
+	//	 mockRestoreTableCommitErrOnce = false
+	//	 kv.MockCommitErrorEnable  = true
+	// }
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)

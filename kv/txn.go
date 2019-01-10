@@ -123,3 +123,6 @@ func BatchGetValues(txn Transaction, keys []Key) (map[string][]byte, error) {
 	}
 	return storageValues, nil
 }
+
+// MockCommitErrorEnable use to enable `mockCommitError` and only mock error once.
+var MockCommitErrorEnable = true

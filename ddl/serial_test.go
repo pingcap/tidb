@@ -171,6 +171,7 @@ func (s *testSerialSuite) TestRestoreTableFail(c *C) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRestoreTable {
 			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
+			gofail.Enable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr", `return(true)`)
 		}
 	}
 	origHook := s.dom.DDL().GetHook()
@@ -180,6 +181,7 @@ func (s *testSerialSuite) TestRestoreTableFail(c *C) {
 	// do restore table.
 	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
+	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
 
 	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))

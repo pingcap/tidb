@@ -163,9 +163,6 @@ func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
 }
 
-// mockCommitErrorOnce use to make sure `mockCommitError` only mock error once.
-var mockCommitErrorOnce = true
-
 func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if !txn.valid {
 		return kv.ErrInvalidTxn
@@ -173,8 +170,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	defer txn.close()
 
 	// gofail: var mockCommitError bool
-	// if mockCommitError && mockCommitErrorOnce {
-	//	mockCommitErrorOnce = false
+	// if mockCommitError && kv.MockCommitErrorEnable {
+	//	kv.MockCommitErrorEnable = false
 	//	return errors.New("mock commit error")
 	// }
 
