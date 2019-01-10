@@ -199,7 +199,7 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	// gofail: var mockRestoreTableCommitErr bool
 	// if mockRestoreTableCommitErr && mockRestoreTableCommitErrOnce {
 	//	 mockRestoreTableCommitErrOnce = false
-	//	 atomic.StoreInt64(&kv.MockCommitErrorEnable,1)
+	//	 kv.MockCommitErrorEnable()
 	// }
 
 	// Finish this job.
