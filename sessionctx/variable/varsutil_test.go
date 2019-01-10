@@ -216,10 +216,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
 
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
-
 	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
 	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
