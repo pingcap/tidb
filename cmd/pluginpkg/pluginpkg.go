@@ -138,7 +138,7 @@ func main() {
 		"-o", outputFile, pkgDir)
 	buildCmd.Stderr = os.Stderr
 	buildCmd.Stdout = os.Stdout
-	buildCmd.Env = append(os.Environ(), "GO111MODULE=off")
+	buildCmd.Env = append(os.Environ(), "GO111MODULE=on")
 	err = buildCmd.Run()
 	if err != nil {
 		log.Printf("compile plugin source code failurd, %+v\n", err)
