@@ -409,7 +409,6 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 				buf = buf[0:0]
 				enclosed = false
 				start = true
-				continue
 			} else {
 				// if not at the ned, roll back.
 				pos = chkpt
@@ -471,7 +470,6 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 					buf = buf[0:0]
 					enclosed = false
 					start = true
-					continue
 				} else {
 					// If not terminated, roll back
 					pos = chkpt
