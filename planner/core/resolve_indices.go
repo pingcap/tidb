@@ -432,11 +432,6 @@ func (p *Show) ResolveIndices() (err error) {
 	return err
 }
 
-/*
-func (p *PhysicalUnionAll) ResolveIndices() (err error) {
-}
-*/
-
 func (p *physicalSchemaProducer) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
