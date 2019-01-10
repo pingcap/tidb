@@ -110,7 +110,6 @@ func (st *TxnState) changeInvalidToValid(txn kv.Transaction) {
 }
 
 func (st *TxnState) changeInvalidToPending(future *txnFuture) {
-	st.reset()
 	st.Transaction = nil
 	st.txnFuture = future
 }
