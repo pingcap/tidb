@@ -17,7 +17,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
 )
@@ -261,7 +260,7 @@ func (s *testSuite) TestSelectGlobalVar(c *C) {
 
 	// test for unknown variable.
 	_, err := tk.Exec("select @@invalid")
-	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
+	c.Assert(err.Error(), Equals, variable.UnknownSystemVar.GenByArgs("invalid").Error())
 	_, err = tk.Exec("select @@global.invalid")
-	c.Assert(terror.ErrorEqual(err, variable.UnknownSystemVar), IsTrue, Commentf("err %v", err))
+	c.Assert(err.Error(), Equals, variable.UnknownSystemVar.GenByArgs("invalid").Error())
 }
