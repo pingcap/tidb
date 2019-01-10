@@ -535,27 +535,25 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	return errors.New("current transaction is aborted, commands ignored until end of transaction block")
 }
 
-func (s *session) retry(ctx context.Context, maxCnt uint) error {
-	var err error
+func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
+	var retryCnt uint
 	defer func() {
 		if err != nil {
 			s.rollbackOnError(ctx)
 		}
-	}()
-	connID := s.sessionVars.ConnectionID
-	if s.sessionVars.TxnCtx.ForUpdate {
-		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
-		return err
-	}
-	s.sessionVars.RetryInfo.Retrying = true
-	var retryCnt uint
-	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
 		s.txn.changeToInvalid()
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+
+	connID := s.sessionVars.ConnectionID
+	s.sessionVars.RetryInfo.Retrying = true
+	if s.sessionVars.TxnCtx.ForUpdate {
+		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		return err
+	}
 
 	nh := GetHistory(s)
 	var schemaVersion int64
