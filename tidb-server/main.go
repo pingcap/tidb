@@ -544,7 +544,7 @@ func closeDomainAndStorage() {
 
 func cleanup() {
 	if graceful {
-		svr.GracefulDown(context.Background())
+		svr.GracefulDown(context.Background(), nil)
 	} else {
 		svr.TryGracefulDown()
 	}
