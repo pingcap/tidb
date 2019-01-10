@@ -7,8 +7,7 @@ import (
 
 var _ Manager = (*BindManager)(nil)
 
-// User implements infobind.Manager interface.
-// This is used to update or check Ast.
+// BindManager use to manage both global bind info and session bind info
 type BindManager struct {
 	is            infoschema.InfoSchema
 	currentDB     string
@@ -29,7 +28,7 @@ type Manager interface {
 
 const key keyType = 0
 
-// BindManager binds Manager to context.
+//BindBinderManager binds Manager to context.
 func BindBinderManager(ctx sessionctx.Context, pc Manager) {
 	ctx.SetValue(key, pc)
 }

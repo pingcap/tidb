@@ -16,19 +16,23 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+//BindData store the basic bind info and bindSql astNode
 type BindData struct {
 	bindRecord
 	ast ast.StmtNode
 }
 
+//BindCache hold a bindDataMap, key:origin sql hash value: bindData slice
 type BindCache struct {
 	Cache map[string][]*BindData
 }
 
+//Handle hold a atomic bindCache
 type Handle struct {
 	bind atomic.Value
 }
 
+//HandleUpdater use to update the BindCache
 type HandleUpdater struct {
 	Parser         *parser.Parser
 	LastUpdateTime types.Time
@@ -37,14 +41,15 @@ type HandleUpdater struct {
 }
 
 type bindRecord struct {
-	OriginalSql string
-	BindSql     string
+	OriginalSQL string
+	BindSQL     string
 	Db          string
 	Status      int64
 	CreateTime  types.Time
 	UpdateTime  types.Time
 }
 
+//NewHandle create a Handle with a BindCache
 func NewHandle() *Handle {
 	handle := &Handle{}
 	bc := &BindCache{
@@ -54,6 +59,7 @@ func NewHandle() *Handle {
 	return handle
 }
 
+//Get get bindCache from a Handle
 func (h *Handle) Get() *BindCache {
 	bc := h.bind.Load()
 	if bc != nil {
@@ -64,7 +70,8 @@ func (h *Handle) Get() *BindCache {
 	}
 }
 
-func (h *HandleUpdater) LoadDiff(sql string, bc *BindCache) error {
+//Load Diff use to load new bind info to bindCache bc
+func (h *HandleUpdater) loadDiff(sql string, bc *BindCache) error {
 	tmp, err := h.Ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -104,6 +111,7 @@ func (h *HandleUpdater) LoadDiff(sql string, bc *BindCache) error {
 	}
 }
 
+//Update update the HandleUpdater's bindCache if tidb first startup,the fullLoad is true,otherwise fullLoad is false
 func (h *HandleUpdater) Update(fullLoad bool) error {
 	var (
 		err error
@@ -115,7 +123,7 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 	} else {
 		sql = fmt.Sprintf("select * from mysql.bind_info where update_time > \"%s\"", h.LastUpdateTime.String())
 	}
-	err = h.LoadDiff(sql, bc)
+	err = h.loadDiff(sql, bc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -137,9 +145,9 @@ func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) (error, bindRecord
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "original_sql":
-			value.OriginalSql = row.GetString(i)
+			value.OriginalSQL = row.GetString(i)
 		case f.ColumnAsName.L == "bind_sql":
-			value.BindSql = row.GetString(i)
+			value.BindSQL = row.GetString(i)
 		case f.ColumnAsName.L == "default_db":
 			value.Db = row.GetString(i)
 		case f.ColumnAsName.L == "status":
@@ -162,7 +170,7 @@ func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) (error, bindRecord
 }
 
 func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparser *parser.Parser) error {
-	hash := parser.Digest(value.OriginalSql)
+	hash := parser.Digest(value.OriginalSQL)
 	if value.Status == 0 {
 		if bindArr, ok := b.Cache[hash]; ok {
 			if len(bindArr) == 1 {
@@ -180,9 +188,9 @@ func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparse
 		return nil
 	}
 
-	stmtNodes, _, err := parseSQL(sctx, sparser, value.BindSql)
+	stmtNodes, _, err := parseSQL(sctx, sparser, value.BindSQL)
 	if err != nil {
-		log.Warnf("parse error:\n%v\n%s", err, value.BindSql)
+		log.Warnf("parse error:\n%v\n%s", err, value.BindSQL)
 		return errors.Trace(err)
 	}
 
@@ -191,7 +199,7 @@ func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparse
 		ast:        stmtNodes[0],
 	}
 
-	log.Infof("original sql [%s] bind sql [%s]", value.OriginalSql, value.BindSql)
+	log.Infof("original sql [%s] bind sql [%s]", value.OriginalSQL, value.BindSQL)
 	if bindArr, ok := b.Cache[hash]; ok {
 		for idx, v := range bindArr {
 			if v.Db == value.Db {
@@ -205,6 +213,7 @@ func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparse
 
 }
 
+//Display print all bind info into log
 func (b *BindCache) Display() {
 	for hash, bindArr := range b.Cache {
 		log.Infof("------------------hash entry %s-----------------------", hash)
