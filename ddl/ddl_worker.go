@@ -276,6 +276,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			err = w.deleteRange(job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
+		case model.ActionRestoreTable:
+			err = finishRestoreTable(w, t, job)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -291,6 +293,23 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	log.Infof("[ddl-%s] finish DDL job %v", w, job)
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
+}
+
+func finishRestoreTable(w *worker, t *meta.Meta, job *model.Job) error {
+	tbInfo := &model.TableInfo{}
+	var autoID, dropJobID int64
+	var enableGCAfterRecover bool
+	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &enableGCAfterRecover)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if enableGCAfterRecover {
+		err = enableGC(w)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {

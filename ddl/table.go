@@ -192,12 +192,7 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if enableGCAfterRecover {
-		err = enableGC(w)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-	}
+
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, nil

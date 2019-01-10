@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -122,4 +123,68 @@ func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+}
+
+func (s *testSerialSuite) TestRestoreTableFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_restore")
+	tk.MustExec("use test_restore")
+	tk.MustExec("create table t_recover (a int);")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+
+	tk.MustExec("insert into t_recover values (1),(2),(3)")
+	tk.MustExec("drop table t_recover")
+
+	rs, err := tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	row := rows[0]
+	c.Assert(row.GetString(1), Equals, "test_restore")
+	c.Assert(row.GetString(3), Equals, "drop table")
+	jobID := row.GetInt64(0)
+
+	// enableGC first
+	err = admin.EnableGCAfterRecover(tk.Se)
+	c.Assert(err, IsNil)
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	// set hook
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionRestoreTable {
+			gofail.Enable("github.com/pingcap/tidb/store/tikv/mockCommitError", `return(true)`)
+		}
+	}
+	origHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	// do restore table.
+	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
+	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
+
+	// check recover table meta and data record.
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	// check recover table autoID.
+	tk.MustExec("insert into t_recover values (4),(5),(6)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+
 }
