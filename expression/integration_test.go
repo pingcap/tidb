@@ -3797,3 +3797,33 @@ func (s *testIntegrationSuite) TestUserVarMockWindFunc(c *C) {
 		`3 6 3 key3-value6 insert_order6`,
 	))
 }
+
+func (s *testIntegrationSuite) TestCastAsTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (col1 bigint, col2 double, col3 decimal, col4 varchar(20), col5 json);`)
+	tk.MustExec(`insert into t values (1, 1, 1, "1", "1");`)
+	tk.MustExec(`insert into t values (null, null, null, null, null);`)
+	tk.MustQuery(`select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 = 1;`).Check(testkit.Rows(
+		`00:00:01 00:00:01 00:00:01 00:00:01 00:00:01`,
+	))
+	tk.MustQuery(`select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 is null;`).Check(testkit.Rows(
+		`<nil> <nil> <nil> <nil> <nil>`,
+	))
+
+	err := tk.ExecToErr(`select cast(col1 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+
+	err = tk.ExecToErr(`select cast(col2 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+
+	err = tk.ExecToErr(`select cast(col3 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+
+	err = tk.ExecToErr(`select cast(col4 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+
+	err = tk.ExecToErr(`select cast(col5 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+}
