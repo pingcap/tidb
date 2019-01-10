@@ -41,6 +41,7 @@ var (
 	errWarnAllowedPacketOverflowed   = terror.ClassExpression.New(mysql.ErrWarnAllowedPacketOverflowed, mysql.MySQLErrName[mysql.ErrWarnAllowedPacketOverflowed])
 	errWarnOptionIgnored             = terror.ClassExpression.New(mysql.WarnOptionIgnored, mysql.MySQLErrName[mysql.WarnOptionIgnored])
 	errTruncatedWrongValue           = terror.ClassExpression.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	errUnknownLocale                 = terror.ClassExpression.New(mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
 )
 
 func init() {
@@ -60,6 +61,7 @@ func init() {
 		mysql.ErrWarnAllowedPacketOverflowed:       mysql.ErrWarnAllowedPacketOverflowed,
 		mysql.WarnOptionIgnored:                    mysql.WarnOptionIgnored,
 		mysql.ErrTruncatedWrongValue:               mysql.ErrTruncatedWrongValue,
+		mysql.ErrUnknownLocale:                     mysql.ErrUnknownLocale,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
@@ -70,7 +72,7 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateOrDeleteStmt) {
+	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
 		return err
 	}
 	sc.AppendWarning(err)
@@ -80,7 +82,7 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 // handleDivisionByZeroError reports error or warning depend on the context.
 func handleDivisionByZeroError(ctx sessionctx.Context) error {
 	sc := ctx.GetSessionVars().StmtCtx
-	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
+	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
 		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
 			return nil
 		}

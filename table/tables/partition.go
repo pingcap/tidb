@@ -296,7 +296,7 @@ func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.D
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
@@ -304,7 +304,7 @@ func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, sk
 	}
 
 	tbl := t.GetPartition(pid)
-	return tbl.AddRecord(ctx, r, skipHandleCheck)
+	return tbl.AddRecord(ctx, r, opts...)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
@@ -336,7 +336,7 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
-		_, err = t.GetPartition(to).AddRecord(ctx, newData, false)
+		_, err = t.GetPartition(to).AddRecord(ctx, newData)
 		if err != nil {
 			return errors.Trace(err)
 		}
