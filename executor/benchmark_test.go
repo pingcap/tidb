@@ -12,12 +12,12 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 type mockDataSourceParameters struct {
@@ -257,7 +257,7 @@ func buildAggDataSource(b *testing.B, cas *aggTestCase) *mockDataSource {
 	for i := range cols {
 		cols[i] = &expression.Column{Index: i, RetType: fieldTypes[i]}
 	}
-	ctx := core.MockContext()
+	ctx := mock.NewContext()
 
 	chunkSize := 1 << 10
 	orders := make([]bool, len(fieldTypes))
@@ -283,7 +283,7 @@ func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
 	for i := range childCols {
 		childCols[i] = &expression.Column{Index: i, RetType: childTypes[i]}
 	}
-	ctx := core.MockContext()
+	ctx := mock.NewContext()
 
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", cas.concurrency)); err != nil {
 		b.Fatal(err)
