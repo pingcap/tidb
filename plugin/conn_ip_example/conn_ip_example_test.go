@@ -21,11 +21,12 @@ import (
 
 func Example_LoadRunShutdownPlugin() {
 	ctx := context.Background()
+	var pluginVarNames []string
 	cfg := plugin.Config{
 		Plugins:        []string{"conn_ip_example-1"},
 		PluginDir:      "/home/robi/Code/go/src/github.com/pingcap/tidb/plugin/conn_ip_example",
 		GlobalSysVar:   &variable.SysVars,
-		PluginVarNames: &variable.PluginVarNames,
+		PluginVarNames: &pluginVarNames,
 	}
 
 	err := plugin.Init(ctx, cfg)
@@ -38,7 +39,7 @@ func Example_LoadRunShutdownPlugin() {
 		if auditPlugin.State != plugin.Ready {
 			continue
 		}
-		plugin.DeclareAuditManifest(auditPlugin.Manifest).NotifyEvent(context.Background())
+		plugin.DeclareAuditManifest(auditPlugin.Manifest).NotifyEvent(context.Background(), nil)
 	}
 
 	err = plugin.Reload(ctx, cfg, plugin.ID("conn_ip_example-2"))
@@ -51,7 +52,7 @@ func Example_LoadRunShutdownPlugin() {
 			continue
 		}
 		plugin.DeclareAuditManifest(auditPlugin.Manifest).NotifyEvent(
-			context.WithValue(context.Background(), "ip", "1.1.1.2"),
+			context.WithValue(context.Background(), "ip", "1.1.1.2"), nil,
 		)
 	}
 

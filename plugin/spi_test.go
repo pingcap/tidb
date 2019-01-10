@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 func TestExportManifest(t *testing.T) {
@@ -35,7 +36,7 @@ func TestExportManifest(t *testing.T) {
 				return nil
 			},
 		},
-		NotifyEvent: func(ctx context.Context) error {
+		NotifyEvent: func(ctx context.Context, sctx *variable.SessionVars) error {
 			callRecorder.NotifyEventCalled = true
 			return nil
 		},
@@ -43,7 +44,7 @@ func TestExportManifest(t *testing.T) {
 	exported := plugin.ExportManifest(manifest)
 	exported.OnInit(context.Background(), exported)
 	audit := plugin.DeclareAuditManifest(exported)
-	audit.NotifyEvent(context.Background())
+	audit.NotifyEvent(context.Background(), nil)
 	if !callRecorder.NotifyEventCalled || !callRecorder.OnInitCalled {
 		t.Fatalf("export test failure")
 	}
