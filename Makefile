@@ -9,7 +9,7 @@ CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
-GO        := go
+GO        := GO111MODULE=on go
 GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 OVERALLS  := CGO_ENABLED=1 overalls
@@ -71,30 +71,26 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check: fmt errcheck lint vet
+check: fmt errcheck lint
 
 fmt:
 	@echo "gofmt (simplify)"
 	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 goword:
-	go get github.com/chzchzchz/goword
+	$(GO) get github.com/chzchzchz/goword
 	@echo "goword"
 	@ goword $(FILES) | awk '{print} END{if(NR>0) {exit 1}}'
 
 errcheck:
-	go get github.com/kisielk/errcheck
+	$(GO) get github.com/kisielk/errcheck
 	@echo "errcheck"
 	@ GOPATH=$(GOPATH) errcheck -exclude errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:
-	go get golang.org/x/lint/golint
-	@echo "golint"
-	@ golint -set_exit_status $(PACKAGES)
-
-vet:
-	@echo "vet"
-	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
+	$(GO) build -o ./bin/revive github.com/mgechev/revive
+	@echo "linting"
+	@./bin/revive -formatter friendly -config revive.toml $(PACKAGES)
 
 clean:
 	$(GO) clean -i ./...
@@ -109,13 +105,13 @@ todo:
 test: checklist gotest
 
 gotest: parserlib
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	@export log_level=error; \
-	go get github.com/go-playground/overalls
-	go get github.com/mattn/goveralls
+	$(GO) get github.com/go-playground/overalls
+	$(GO) get github.com/mattn/goveralls
 	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,_vendor' || { $(GOFAIL_DISABLE); exit 1; }
 	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile || { $(GOFAIL_DISABLE); exit 1; }
 else
@@ -126,21 +122,21 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race: parserlib
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -race $(PACKAGES)
 	@$(GOFAIL_DISABLE)
 
 leak: parserlib
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES)
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	$(GOTEST) ./store/tikv/. -with-tikv=true
 	@$(GOFAIL_DISABLE)
@@ -168,17 +164,6 @@ benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 importer:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
-
-update:
-	which dep 2>/dev/null || go get -u github.com/golang/dep/cmd/dep
-ifdef PKG
-	dep ensure -add ${PKG}
-else
-	dep ensure -update
-endif
-	@echo "removing test files"
-	dep prune
-	bash ./hack/clean_vendor.sh
 
 checklist:
 	cat checklist.md
