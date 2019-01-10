@@ -33,6 +33,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"net"
@@ -81,6 +82,7 @@ type Server struct {
 	tlsConfig         *tls.Config
 	driver            IDriver
 	listener          net.Listener
+	socket            net.Listener
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
@@ -134,6 +136,39 @@ func (s *Server) isUnixSocket() bool {
 	return s.cfg.Socket != ""
 }
 
+func (s *Server) forwardUnixSocketToTCP() {
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	for {
+		if s.listener == nil {
+			return // server shutdown has started
+		}
+		if uconn, err := s.socket.Accept(); err == nil {
+			log.Infof("server socket forwarding from [%s] to [%s]", s.cfg.Socket, addr)
+			go s.handleForwardedConnection(uconn, addr)
+		} else {
+			if s.listener != nil {
+				log.Errorf("server failed to forward from [%s] to [%s], err: %s", s.cfg.Socket, addr, err)
+			}
+		}
+	}
+}
+
+func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
+	defer terror.Call(uconn.Close)
+	if tconn, err := net.Dial("tcp", addr); err == nil {
+		go func() {
+			if _, err := io.Copy(uconn, tconn); err != nil {
+				log.Warningf("copy server to socket failed: %s", err)
+			}
+		}()
+		if _, err := io.Copy(tconn, uconn); err != nil {
+			log.Warningf("socket forward copy failed: %s", err)
+		}
+	} else {
+		log.Warningf("socket forward failed: could not connect to [%s], err: %s", addr, err)
+	}
+}
+
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
@@ -152,15 +187,24 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	var err error
-	if cfg.Socket != "" {
+
+	if s.cfg.Host != "" && s.cfg.Port != 0 {
+		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+		if s.listener, err = net.Listen("tcp", addr); err == nil {
+			log.Infof("Server is running MySQL Protocol at [%s]", addr)
+			if cfg.Socket != "" {
+				if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
+					log.Infof("Server redirecting [%s] to [%s]", s.cfg.Socket, addr)
+					go s.forwardUnixSocketToTCP()
+				}
+			}
+		}
+	} else if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
 			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
 		}
 	} else {
-		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-		if s.listener, err = net.Listen("tcp", addr); err == nil {
-			log.Infof("Server is running MySQL Protocol at [%s]", addr)
-		}
+		err = errors.New("Server not configured to listen on either -socket or -host and -port")
 	}
 
 	if cfg.ProxyProtocol.Networks != "" {
@@ -292,6 +336,11 @@ func (s *Server) Close() {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
 		s.listener = nil
+	}
+	if s.socket != nil {
+		err := s.socket.Close()
+		terror.Log(errors.Trace(err))
+		s.socket = nil
 	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
@@ -449,7 +498,7 @@ func (s *Server) kickIdleConnection() {
 	for _, cc := range conns {
 		err := cc.Close()
 		if err != nil {
-			log.Error("close connection error:", err)
+			log.Errorf("close connection error: %s", err)
 		}
 	}
 }

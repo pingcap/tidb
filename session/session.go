@@ -825,9 +825,11 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)
 	_, _, err = s.ExecRestrictedSQL(s, sql)
+
 	return errors.Trace(err)
 }
 
@@ -1202,7 +1204,8 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 	s, err := CreateSession(store)
 	if err == nil {
 		// initialize session variables for test.
-		s.GetSessionVars().MaxChunkSize = 2
+		s.GetSessionVars().InitChunkSize = 2
+		s.GetSessionVars().MaxChunkSize = 32
 	}
 	return s, errors.Trace(err)
 }
@@ -1376,7 +1379,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 24
+	currentBootstrapVersion = 25
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1451,6 +1454,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBDDLReorgBatchSize + quoteCommaQuote +
 	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
+	variable.TiDBInitChunkSize + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBEnableCascadesPlanner + quoteCommaQuote +
 	variable.TiDBRetryLimit + quoteCommaQuote +

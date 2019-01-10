@@ -111,6 +111,7 @@ type StatementContext struct {
 	IndexIDs         []int64
 	NowTs            time.Time
 	SysTs            time.Time
+	StmtType         string
 }
 
 // AddAffectedRows adds affected rows.
