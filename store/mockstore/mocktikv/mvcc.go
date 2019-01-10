@@ -438,8 +438,8 @@ type MVCCStore interface {
 type RawKV interface {
 	RawGet(key []byte) []byte
 	RawBatchGet(keys [][]byte) [][]byte
-	RawScan(startKey, endKey []byte, limit int) []Pair
-	RawReverseScan(startKey, endKey []byte, limit int) []Pair
+	RawScan(startKey, endKey []byte, limit int) []Pair        // Scan the range of [startKey, endKey)
+	RawReverseScan(startKey, endKey []byte, limit int) []Pair // Scan the range of [endKey, startKey)
 	RawPut(key, value []byte)
 	RawBatchPut(keys, values [][]byte)
 	RawDelete(key []byte)
@@ -463,11 +463,6 @@ type Pair struct {
 func regionContains(startKey []byte, endKey []byte, key []byte) bool {
 	return bytes.Compare(startKey, key) <= 0 &&
 		(bytes.Compare(key, endKey) < 0 || len(endKey) == 0)
-}
-
-func regionContainsByEndKey(startKey []byte, endKey []byte, key []byte) bool {
-	return bytes.Compare(startKey, key) < 0 &&
-		(bytes.Compare(key, endKey) <= 0 || len(endKey) == 0)
 }
 
 // MvccKey is the encoded key type.

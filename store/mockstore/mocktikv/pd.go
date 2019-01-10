@@ -79,7 +79,7 @@ func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *
 }
 
 func (c *pdClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
-	region, peer := c.cluster.GetRegionByEndKey(key)
+	region, peer := c.cluster.GetPrevRegionByKey(key)
 	return region, peer, nil
 }
 
