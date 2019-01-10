@@ -235,7 +235,11 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 		err = errors.Errorf("can not read plugin %s's manifest", string(pluginID))
 		return
 	}
-	pName, pVersion, _ := pluginID.Decode()
+	pName, pVersion, err := pluginID.Decode()
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
 	plugin.Manifest = manifest()
 	if plugin.Name != pName {
 		err = errors.Errorf("plugin load with %s but got wrong name %s", string(pluginID), plugin.Name)
