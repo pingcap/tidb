@@ -220,15 +220,14 @@ func (c *Cluster) GetPrevRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) 
 	c.RLock()
 	defer c.RUnlock()
 
-	var lastRegion *Region
+	currentRegion, _ := c.GetRegionByKey(key)
+	if len(currentRegion.StartKey) == 0 {
+		return nil, nil
+	}
 	for _, r := range c.regions {
-		if regionContains(r.Meta.StartKey, r.Meta.EndKey, key) {
-			if lastRegion == nil {
-				return nil, nil
-			}
-			return proto.Clone(lastRegion.Meta).(*metapb.Region), proto.Clone(lastRegion.leaderPeer()).(*metapb.Peer)
+		if bytes.Equal(r.Meta.EndKey, currentRegion.StartKey) {
+			return proto.Clone(r.Meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
 		}
-		lastRegion = r
 	}
 	return nil, nil
 }
