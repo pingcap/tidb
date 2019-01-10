@@ -1996,6 +1996,54 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
 			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
 		},
+		{
+			sql:    "select sum(a) over(groups 1 preceding) from t",
+			result: "[planner:1235]This version of MySQL doesn't yet support 'GROUPS'",
+		},
+		{
+			sql:    "select sum(a) over(rows between unbounded following and 1 preceding) from t",
+			result: "[planner:3584]Window '<unnamed window>': frame start cannot be UNBOUNDED FOLLOWING.",
+		},
+		{
+			sql:    "select sum(a) over(rows between current row and unbounded preceding) from t",
+			result: "[planner:3585]Window '<unnamed window>': frame end cannot be UNBOUNDED PRECEDING.",
+		},
+		{
+			sql:    "select sum(a) over(rows interval 1 MINUTE_SECOND preceding) from t",
+			result: "[planner:3596]Window '<unnamed window>': INTERVAL can only be used with RANGE frames.",
+		},
+		{
+			sql:    "select sum(a) over(rows between 1.0 preceding and 1 following) from t",
+			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "select sum(a) over(range between 1 preceding and 1 following) from t",
+			result: "[planner:3587]Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
+			sql:    "select sum(a) over(order by c_str range between 1 preceding and 1 following) from t",
+			result: "[planner:3587]Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
+			sql:    "select sum(a) over(order by a range interval 1 MINUTE_SECOND preceding) from t",
+			result: "[planner:3589]Window '<unnamed window>' with RANGE frame has ORDER BY expression of numeric type, INTERVAL bound value not allowed.",
+		},
+		{
+			sql:    "select sum(a) over(order by i_date range interval a MINUTE_SECOND preceding) from t",
+			result: "[planner:3590]Window '<unnamed window>' has a non-constant frame bound.",
+		},
+		{
+			sql:    "select sum(a) over(order by i_date range interval -1 MINUTE_SECOND preceding) from t",
+			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "select sum(a) over(order by i_date range 1 preceding) from t",
+			result: "[planner:3588]Window '<unnamed window>' with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed.",
+		},
+		{
+			sql:    "select sum(a) over(order by a range between 1.0 preceding and 1 following) from t",
+			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+		},
 	}
 
 	s.Parser.EnableWindowFunc(true)
