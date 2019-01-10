@@ -1333,7 +1333,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 
 func tblInfoFromCol(from ast.ResultSetNode, col *expression.Column) *model.TableInfo {
 	var tableList []*ast.TableName
-	tableList = extractTableList(from, tableList)
+	tableList = extractTableList(from, tableList, true)
 	for _, field := range tableList {
 		if field.Name.L == col.TblName.L {
 			return field.TableInfo
@@ -2304,7 +2304,7 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	}
 
 	var tableList []*ast.TableName
-	tableList = extractTableList(sel.From.TableRefs, tableList)
+	tableList = extractTableList(sel.From.TableRefs, tableList, false)
 	for _, t := range tableList {
 		dbName := t.Schema.L
 		if dbName == "" {
@@ -2424,7 +2424,12 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	}
 	for _, assign := range newList {
 		col := assign.Col
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, col.DBName.L, col.TblName.L, "", nil)
+
+		dbName := col.DBName.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, "", nil)
 	}
 	return newList, p, nil
 }
@@ -2538,7 +2543,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	del.SetSchema(expression.NewSchema())
 
 	var tableList []*ast.TableName
-	tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
+	tableList = extractTableList(delete.TableRefs.TableRefs, tableList, true)
 
 	// Collect visitInfo.
 	if delete.Tables != nil {
@@ -2757,14 +2762,16 @@ func buildWindowSpecs(specs []ast.WindowSpec) (map[string]ast.WindowSpec, error)
 }
 
 // extractTableList extracts all the TableNames from node.
-func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.TableName {
+// If asName is true, extract AsName prior to OrigName.
+// Privilege check should use OrigName, while expression may use AsName.
+func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
 	case *ast.Join:
-		input = extractTableList(x.Left, input)
-		input = extractTableList(x.Right, input)
+		input = extractTableList(x.Left, input, asName)
+		input = extractTableList(x.Right, input, asName)
 	case *ast.TableSource:
 		if s, ok := x.Source.(*ast.TableName); ok {
-			if x.AsName.L != "" {
+			if x.AsName.L != "" && asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
 				s.Name = x.AsName
