@@ -1003,6 +1003,8 @@ func (s *testSuite2) TestJoinDifferentDecimals(c *C) {
 	tk.MustExec("Insert into t2 value (1)")
 	tk.MustExec("Insert into t2 value (2.0)")
 	tk.MustExec("Insert into t2 value (000003.000000)")
-	row := tk.MustQuery("Select * from t1, t2 where t1.v = t2.v").Rows()
+	rst := tk.MustQuery("Select * from t1, t2 where t1.v = t2.v order by t1.v")
+	row := rst.Rows()
 	c.Assert(len(row), Equals, 3)
+	rst.Check(testkit.Rows("1 1.000", "2 2.000", "3 3.000"))
 }
