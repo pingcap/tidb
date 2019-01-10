@@ -32,7 +32,11 @@ var (
 	_ Executor = &RadixHashJoinExec{}
 )
 
-// RadixHashJoinExec implements the hash join algorithm.
+// RadixHashJoinExec implements the radix partition-based hash join algorithm.
+// It will partition the input relations into small pairs of partitions where
+// one of the partitions typically fits into one of the caches. The overall goal
+// of this method is to minimize the number of cache misses when building and
+// probing hash tables.
 type RadixHashJoinExec struct {
 	*HashJoinExec
 
@@ -45,16 +49,16 @@ type RadixHashJoinExec struct {
 	// sub-relation and join result of the sub-relations can be totally loaded
 	// in L2 cache size. `3/4` is a magic number, we may adjust it after
 	// benchmark.
-	radixBits  uint32
-	innerParts []partition
+	radixBits       uint32
+	innerParts      []partition
+	numNonEmptyPart int
 	// innerRowPrts indicates the position in corresponding partition of every
 	// row in innerResult.
 	innerRowPrts [][]partRowPtr
 	// hashTables stores the hash tables built from the inner relation, if there
 	// is no partition phase, a global hash table will be stored in
 	// hashTables[0].
-	hashTables      []*mvmap.MVMap
-	numNonEmptyPart int
+	hashTables []*mvmap.MVMap
 }
 
 // partition stores the sub-relations of inner relation and outer relation after
