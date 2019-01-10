@@ -328,7 +328,7 @@ func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 	var r *Region
 	c.mu.sorted.DescendLessOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
 		r = item.(*btreeItem).region
-		if isEndKey && bytes.Compare(r.StartKey(), key) == 0 {
+		if isEndKey && bytes.Equal(r.StartKey(), key) {
 			r = nil     // clear result
 			return true // iterate next item
 		}
