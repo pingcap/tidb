@@ -81,9 +81,6 @@ github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5 h1:2U0HzY8BJ8hVwDK
 github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5/go.mod h1:Pj4uuM528wm8OyEC2QMXAi2YiTZ96dNQPGgoMS4s3ek=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1 h1:mweAR1A6xJ3oS2pRaGiHgQ4OO8tzTaLawm8vnODuwDk=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=
-github.com/lamxTyler/parser v0.0.0-20190110015358-4ec9de20a11b h1:mq1ABHPXp94kmIPDMxCrjwv+2JSIXYw1RZ+/fRq5GA4=
-github.com/lamxTyler/parser v0.0.0-20190110015358-4ec9de20a11b/go.mod h1:6c1rwSy9dUuNebYdr1IMI4+/sT3/Q65MXP2UCg7/vJI=
-github.com/lamxTyler/parser v0.0.0-20190110050506-0a8a0d27dc45 h1:SzUeJQ9/sftN0xYeZhiLS4/9JQ5XSJNHdRTSYb6c8no=
 github.com/lamxTyler/parser v0.0.0-20190110050506-0a8a0d27dc45/go.mod h1:6c1rwSy9dUuNebYdr1IMI4+/sT3/Q65MXP2UCg7/vJI=
 github.com/matttproud/golang_protobuf_extensions v1.0.1 h1:4hp9jkHxhMHkqkrB3Ix0jegS5sx/RkqARlsWZ6pIwiU=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
