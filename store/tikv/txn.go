@@ -170,8 +170,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	defer txn.close()
 
 	// gofail: var mockCommitError bool
-	// if mockCommitError && kv.MockCommitErrorEnable {
-	//	kv.MockCommitErrorEnable = false
+	// if mockCommitError && atomic.LoadInt64(&kv.MockCommitErrorEnable) == 1 {
+	//	atomic.StoreInt64(&kv.MockCommitErrorEnable, 0)
 	//	return errors.New("mock commit error")
 	// }
 
