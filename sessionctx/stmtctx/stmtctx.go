@@ -391,13 +391,10 @@ func (sc *StatementContext) ShouldClipToZero() bool {
 	return sc.InInsertStmt || sc.InLoadDataStmt
 }
 
-// ShouldIgnoreError indicates whether we should ignore the error when type conversion overflows,
+// ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
 // so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
-func (sc *StatementContext) ShouldIgnoreError() bool {
-	if sc.InInsertStmt && sc.TruncateAsWarning {
-		return true
-	}
-	if sc.InLoadDataStmt {
+func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
+	if (sc.InInsertStmt && sc.TruncateAsWarning) || sc.InLoadDataStmt {
 		return true
 	}
 	return false
