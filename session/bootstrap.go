@@ -209,6 +209,17 @@ const (
 		feedback blob NOT NULL,
 		index hist(table_id, is_index, hist_id)
 	);`
+
+	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache
+	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
+		original_sql varchar(1024) NOT NULL  ,
+      	bind_sql varchar(1024) NOT NULL ,
+      	default_db varchar(1024)  NOT NULL,
+		status int(10) NOT NULL DEFAULT 1,
+		create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+ 		UNIQUE KEY sql_db (original_sql, default_db)
+	); `
 )
 
 // bootstrap initiates system DB for a store.
@@ -263,6 +274,7 @@ const (
 	version23 = 23
 	version24 = 24
 	version25 = 25
+	version26 = 26
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -419,6 +431,10 @@ func upgrade(s Session) {
 
 	if ver < version25 {
 		upgradeToVer25(s)
+	}
+
+	if ver < version26 {
+		upgradeToVer26(s)
 	}
 
 	updateBootstrapVer(s)
@@ -680,6 +696,10 @@ func upgradeToVer25(s Session) {
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = '%[4]d' WHERE VARIABLE_NAME = '%[3]s' AND VARIABLE_VALUE < %[4]d",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBMaxChunkSize, variable.DefInitChunkSize)
 	mustExecute(s, sql)
+}
+
+func upgradeToVer26(s Session) {
+	doReentrantDDL(s, CreateBindInfoTable)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

@@ -22,6 +22,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/infobind"
 	"net"
 	"strconv"
 	"strings"
@@ -1150,6 +1151,10 @@ func (s *session) GetSessionVars() *variable.SessionVars {
 	return s.sessionVars
 }
 
+func (s *session) GetParser() *parser.Parser {
+	return s.parser
+}
+
 func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []byte) bool {
 	pm := privilege.GetPrivilegeManager(s)
 
@@ -1226,6 +1231,12 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
+	bm := &infobind.BindManager{
+		Handle:        do.BindHandle(),
+		SessionHandle: infobind.NewHandle(),
+	}
+	infobind.BindBinderManager(s, bm)
+
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
@@ -1287,6 +1298,16 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 	err = dom.UpdateTableStatsLoop(se1)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	se2, err := createSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	parser := se2.GetParser()
+	err = dom.LoadBindInfoLoop(se2, parser)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1378,7 +1399,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 25
+	currentBootstrapVersion = 26
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
