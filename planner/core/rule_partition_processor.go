@@ -14,6 +14,7 @@ package core
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
@@ -98,8 +99,9 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 				continue
 			}
 		}
+		// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
 		if len(ds.partitionNames) != 0 {
-			if !tables.FindByName(ds.partitionNames, partitionDefs[i].Name.L) {
+			if !findByName(ds.partitionNames, partitionDefs[i].Name.L) {
 				continue
 			}
 		}
@@ -147,4 +149,14 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 		return false, errors.Trace(err)
 	}
 	return len(r) == 0, nil
+}
+
+// findByName checks whether object name exists in list.
+func findByName(list []model.CIStr, name string) bool {
+	for _, s := range list {
+		if s.L == name {
+			return true
+		}
+	}
+	return false
 }
