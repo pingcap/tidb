@@ -70,9 +70,10 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 
 	rs := rss[0]
 	chk := rs.NewChunk()
+	req := chunk.NewRecordBatch(chk)
 	it := chunk.NewIterator4Chunk(chk)
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

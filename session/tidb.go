@@ -254,7 +254,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		// Since we collect all the rows, we can not reuse the chunk.
 		iter := chunk.NewIterator4Chunk(chk)
 
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

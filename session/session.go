@@ -760,7 +760,7 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]c
 	var rows []chunk.Row
 	chk := rs.NewChunk()
 	for {
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil || chk.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
@@ -1268,7 +1268,7 @@ func loadSystemTZ(se *session) (string, error) {
 		}
 	}()
 	chk := rss[0].NewChunk()
-	if err := rss[0].Next(context.Background(), chk); err != nil {
+	if err := rss[0].Next(context.Background(), chunk.NewRecordBatch(chk)); err != nil {
 		return "", errors.Trace(err)
 	}
 	return chk.GetRow(0).GetString(0), nil

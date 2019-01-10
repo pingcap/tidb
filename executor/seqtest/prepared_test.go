@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -143,7 +144,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		rs, err = stmt.Exec(ctx)
 		c.Assert(err, IsNil)
 		chk := rs.NewChunk()
-		err = rs.Next(ctx, chk)
+		err = rs.Next(ctx, chunk.NewRecordBatch(chk))
 		c.Assert(err, IsNil)
 		c.Assert(rs.Close(), IsNil)
 

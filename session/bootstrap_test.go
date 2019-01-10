@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -52,7 +53,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(r, NotNil)
 	ctx := context.Background()
 	chk := r.NewChunk()
-	err := r.Next(ctx, chk)
+	err := r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	datums := statistics.RowToDatums(chk.GetRow(0), r.Fields())
@@ -68,7 +69,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	c.Assert(r, NotNil)
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetInt64(0), Equals, globalVarsCount())
 
@@ -89,7 +90,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	c.Assert(r, NotNil)
 
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	datums = statistics.RowToDatums(chk.GetRow(0), r.Fields())
 	match(c, datums, 3)
@@ -155,7 +156,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	mustExecSQL(c, se, "USE mysql;")
 	r := mustExecSQL(c, se, `select * from user;`)
 	chk := r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
@@ -171,7 +172,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	// Check global variables.
 	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	v := chk.GetRow(0)
 	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
@@ -179,7 +180,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row = chk.GetRow(0)
@@ -200,7 +201,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	// bootstrap with currentBootstrapVersion
 	r := mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	chk := r.NewChunk()
-	err := r.Next(ctx, chk)
+	err := r.Next(ctx, chunk.NewRecordBatch(chk))
 	row := chk.GetRow(0)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
@@ -230,7 +231,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	// Make sure the version is downgraded.
 	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsTrue)
 	c.Assert(r.Close(), IsNil)
@@ -246,7 +247,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	se2 := newSession(c, store, s.dbName)
 	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row = chk.GetRow(0)

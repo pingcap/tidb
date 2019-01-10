@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -150,7 +151,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 	chk := r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
@@ -160,7 +161,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 4)
@@ -175,7 +176,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsTrue)
 	err = txn.Rollback()
@@ -185,7 +186,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 10)
@@ -201,7 +202,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin show ddl jobs 20")
 	c.Assert(err, IsNil)
 	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	err = r.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 10)
@@ -851,7 +852,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
+	err = rs.Next(context.Background(), chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
 	rs.Close()
@@ -2610,7 +2611,7 @@ func (s *testSuite) TestBit(c *C) {
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
 	chk := r.NewChunk()
-	err = r.Next(context.Background(), chk)
+	err = r.Next(context.Background(), chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 	r.Close()
@@ -3238,7 +3239,7 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
 	c.Assert(err, IsNil)
 
-	err = rs.Next(context.TODO(), rs.NewChunk())
+	err = rs.Next(context.TODO(), chunk.NewRecordBatch(rs.NewChunk()))
 	c.Assert(err.Error(), Equals, "subquery returns more than 1 row")
 
 	err = rs.Close()

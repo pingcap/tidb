@@ -361,7 +361,7 @@ func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 }
 
 func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	return trs.recordSet.Next(ctx, chk)
+	return trs.recordSet.Next(ctx, chunk.NewRecordBatch(chk))
 }
 
 func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {

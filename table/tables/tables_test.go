@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -170,7 +171,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	rs, err := ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
 	chk := rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	err = rs[0].Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	c.Assert(rs[0].Close(), IsNil)
@@ -184,7 +185,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	rs, err = ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
 	chk = rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	err = rs[0].Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
@@ -200,7 +201,7 @@ func (ts *testSuite) TestTypes(c *C) {
 	rs, err = ts.se.Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
 	c.Assert(err, IsNil)
 	chk = rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	err = rs[0].Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	c.Assert(chk.GetRow(0).GetFloat64(0), DeepEquals, float64(2))

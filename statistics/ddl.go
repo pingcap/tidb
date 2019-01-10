@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -138,7 +139,8 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 			return
 		}
 		chk := rs[0].NewChunk()
-		err = rs[0].Next(ctx, chk)
+		req := chunk.NewRecordBatch(chk)
+		err = rs[0].Next(ctx, req)
 		if err != nil {
 			return
 		}

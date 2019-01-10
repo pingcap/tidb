@@ -279,7 +279,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	fs := rs.Fields()
 	chk := rs.NewChunk()
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chunk.NewRecordBatch(chk))
 		if err != nil {
 			return errors.Trace(err)
 		}

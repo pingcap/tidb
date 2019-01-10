@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -69,7 +70,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	err = rs.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
@@ -84,7 +85,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
 	chk = rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	err = rs.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
@@ -93,7 +94,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
 	chk = rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	err = rs.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"

@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -1072,7 +1073,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 		return "", errors.Trace(err)
 	}
 	chk := rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	err = rs[0].Next(ctx, chunk.NewRecordBatch(chk))
 	if err != nil {
 		return "", errors.Trace(err)
 	}

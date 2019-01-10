@@ -17,6 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -33,7 +34,7 @@ func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
 	for i := 0; i < 5; i++ {
-		rs.Next(context.Background(), chk)
+		rs.Next(context.Background(), chunk.NewRecordBatch(chk))
 	}
 	rs.Close()
 }

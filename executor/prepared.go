@@ -94,7 +94,7 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -201,7 +201,7 @@ type ExecuteExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ExecuteExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	return nil
 }
 
@@ -237,7 +237,7 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *DeallocateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {

@@ -68,9 +68,10 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	}
 	tables := statsCache{}
 	chk := rc[0].NewChunk()
+	req := chunk.NewRecordBatch(chk)
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		err := rc[0].Next(context.TODO(), chk)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -137,9 +138,10 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 		return errors.Trace(err)
 	}
 	chk := rc[0].NewChunk()
+	req := chunk.NewRecordBatch(chk)
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		err := rc[0].Next(context.TODO(), chk)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -209,9 +211,10 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		return errors.Trace(err)
 	}
 	chk := rc[0].NewChunk()
+	req := chunk.NewRecordBatch(chk)
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
-		err := rc[0].Next(context.TODO(), chk)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}

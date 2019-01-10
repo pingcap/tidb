@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -135,7 +136,7 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 		c.Assert(err1, IsNil)
 		rs := rss[0]
 		chk := rs.NewChunk()
-		err = rs.Next(ctx, chk)
+		err = rs.Next(ctx, chunk.NewRecordBatch(chk))
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
@@ -147,7 +148,7 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	c.Assert(err, IsNil)
 	rs := rss[0]
 	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	err = rs.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err, NotNil)
 	rs.Close()
 }
@@ -643,7 +644,7 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
 	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
+	err = rs.Next(context.Background(), chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
@@ -673,7 +674,7 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	c.Assert(err, IsNil)
 	rs := rss[0]
 	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	err = rs.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err.Error(), Equals, "HashAggExec.parallelExec error")
 }
 
@@ -692,7 +693,7 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 	c.Assert(err, IsNil)
 	rs := rss[0]
 	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	err = rs.Next(ctx, chunk.NewRecordBatch(chk))
 	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")
 }
 
