@@ -198,6 +198,11 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 			`"\0\b\n\r\t\Z\\\  \c\'\""`,
 			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
 		},
+		// Test mixed.
+		{
+			`"123",456,"\t7890",abcd`,
+			[]string{"123", "456", "\t7890", "abcd"},
+		},
 	}
 
 	ldInfo := LoadDataInfo{

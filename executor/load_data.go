@@ -316,43 +316,60 @@ type field struct {
 // getFieldsFromLine splits line according to fieldsInfo.
 func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	var (
+		// fields slice store fields which are not processed by escape()
 		fields []field
-		ret    []field
-		buf    []byte
+		// ret slice store final results
+		ret []field
+		// buf is buffer to process field.str
+		buf []byte
 	)
 
+	// enclosed is flag to represent whether is start from a enclosed character
+	// start is flag to represent whether is start of word
 	enclosed, start := false, true
 	pos := 0
+
 	enclosedChar := e.FieldsInfo.Enclosed
 	fieldTermChar := e.FieldsInfo.Terminated[0]
 
 	if len(line) == 0 {
-		return nil, nil
+		// If line is an empty string
+		ret = append(ret, field{[]byte(""), false, false})
+		return ret, nil
 	}
+	// getchar
 	ch := line[pos]
 	pos++
+	// start of line
 	if ch == enclosedChar {
+		// If started with enclosed char, set enclosed flag to true
 		enclosed = true
 		start = false
 		buf = append(buf, ch)
 	} else {
+		// Else roll back
 		pos--
 	}
 	for {
 		if pos == len(line) {
+			// If read the end of line
 			var fild []byte
 			for i := 0; i < len(buf); i++ {
 				fild = append(fild, buf[i])
 			}
+			if len(fild) == 0 {
+				fild = []byte("")
+			}
 			fields = append(fields, field{fild, false, false})
 			enclosed = false
+			// clear buffer
 			buf = buf[0:0]
 			break
 		}
-		if pos < len(line) {
-			ch = line[pos]
-			pos++
-		}
+		// getchar
+		ch = line[pos]
+		pos++
+		// If is at start of line and has enclosed char, set flag
 		if ch == enclosedChar && start {
 			start = false
 			enclosed = true
@@ -361,9 +378,12 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 		} else if start {
 			start = false
 		}
+		// In order to judge whether is at terminate of word, save current pos and char.
 		chkpt := pos
+		curChar := ch
 		if ch == fieldTermChar && !enclosed {
 			isTerm, i := true, 0
+			// judge whether is at the end of word.
 			for i = 1; i < len(e.FieldsInfo.Terminated); i++ {
 				if pos >= len(line) {
 					isTerm = false
@@ -377,9 +397,13 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 				}
 			}
 			if isTerm {
+				// If it is the end or word, save field and clear buffer.
 				var fild []byte
 				for i := 0; i < len(buf); i++ {
 					fild = append(fild, buf[i])
+				}
+				if len(fild) == 0 {
+					fild = []byte("")
 				}
 				fields = append(fields, field{fild, false, false})
 				buf = buf[0:0]
@@ -387,13 +411,20 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 				start = true
 				continue
 			} else {
+				// if not at the ned, roll back.
 				pos = chkpt
+				buf = append(buf, curChar)
 			}
 		} else if ch == enclosedChar && enclosed {
+			// If it is enclosed and has a enclosed char currently
 			if pos == len(line) {
+				// If reach the end of line
 				var fild []byte
 				for i := 1; i < len(buf); i++ {
 					fild = append(fild, buf[i])
+				}
+				if len(fild) == 0 {
+					fild = []byte("")
 				}
 				fields = append(fields, field{fild, false, true})
 				enclosed = false
@@ -402,15 +433,19 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 				break
 			}
 			if pos < len(line) {
+				// getchar
 				ch = line[pos]
 				pos++
 			}
 			if ch == enclosedChar {
+				// Remove dupplicated
 				buf = append(buf, ch)
 				continue
 			}
 			if ch == fieldTermChar {
+				// If reach the end of field
 				chkpt := pos
+				curChar := ch
 				isTerm, i := true, 0
 				for i = 1; i < len(e.FieldsInfo.Terminated); i++ {
 					if pos >= len(line) {
@@ -429,45 +464,24 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 					for i := 1; i < len(buf); i++ {
 						fild = append(fild, buf[i])
 					}
+					if len(fild) == 0 {
+						fild = []byte("")
+					}
 					fields = append(fields, field{fild, false, true})
 					buf = buf[0:0]
 					enclosed = false
 					start = true
 					continue
 				} else {
+					// If not terminated, roll back
 					pos = chkpt
+					buf = append(buf, curChar)
 				}
 			}
+			// roll back
 			pos--
-		} else if ch == fieldTermChar && !enclosed {
-			chkpt := pos
-			isTerm, i := true, 0
-			for i = 1; i < len(e.FieldsInfo.Terminated); i++ {
-				if pos >= len(line) {
-					isTerm = false
-					break
-				}
-				ch = line[pos]
-				pos++
-				if ch != e.FieldsInfo.Terminated[i] {
-					isTerm = false
-					break
-				}
-			}
-			if isTerm {
-				var fild []byte
-				for i := 0; i < len(buf); i++ {
-					fild = append(fild, buf[i])
-				}
-				fields = append(fields, field{fild, false, false})
-				buf = buf[0:0]
-				enclosed = false
-				start = true
-				continue
-			} else {
-				pos = chkpt
-			}
 		} else if ch == '\\' {
+			// deal with \"
 			buf = append(buf, ch)
 			if pos < len(line) {
 				ch = line[pos]
@@ -479,12 +493,12 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 				}
 			}
 		} else {
+			// For regular character
 			buf = append(buf, ch)
 		}
 	}
 	for _, v := range fields {
 		f := v.escape()
-		//fmt.Println(string(f.str), f.str, f.maybeNull, f.enclosed)
 		if string(f.str) == "NULL" && !f.enclosed {
 			f.str = []byte{'N'}
 			f.maybeNull = true
