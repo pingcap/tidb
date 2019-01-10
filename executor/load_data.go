@@ -410,11 +410,10 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 				enclosed = false
 				start = true
 				continue
-			} else {
-				// if not at the ned, roll back.
-				pos = chkpt
-				buf = append(buf, curChar)
 			}
+			// if not at the ned, roll back.
+			pos = chkpt
+			buf = append(buf, curChar)
 		} else if ch == enclosedChar && enclosed {
 			// If it is enclosed and has a enclosed char currently
 			if pos == len(line) {
@@ -472,11 +471,10 @@ func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 					enclosed = false
 					start = true
 					continue
-				} else {
-					// If not terminated, roll back
-					pos = chkpt
-					buf = append(buf, curChar)
 				}
+				// If not terminated, roll back
+				pos = chkpt
+				buf = append(buf, curChar)
 			}
 			// roll back
 			pos--
