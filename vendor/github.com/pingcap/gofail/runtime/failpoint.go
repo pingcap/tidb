@@ -20,12 +20,13 @@ import (
 )
 
 type Failpoint struct {
-	mu sync.RWMutex
-	t  *terms
+	mu       sync.RWMutex
+	t        *terms
+	waitChan chan struct{}
 }
 
 func NewFailpoint(pkg, name string) *Failpoint {
-	fp := &Failpoint{}
+	fp := &Failpoint{waitChan: make(chan struct{})}
 	register(pkg+"/"+name, fp)
 	return fp
 }
@@ -50,6 +51,11 @@ func (fp *Failpoint) Acquire() (interface{}, error) {
 
 // Release is called when the failpoint exists.
 func (fp *Failpoint) Release() { fp.mu.RUnlock() }
+
+// Pause will pause until the failpoint is disabled.
+func (fp *Failpoint) Pause() {
+	<-fp.waitChan
+}
 
 // BadType is called when the failpoint evaluates to the wrong type.
 func (fp *Failpoint) BadType(v interface{}, t string) {
