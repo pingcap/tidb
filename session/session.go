@@ -520,10 +520,12 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) isTxnAborted(stmt sqlexec.Statement) error {
+func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	if s.txn.doNotCommit == nil {
 		return nil
 	}
+	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
+	// because they are used to finish the aborted transaction.
 	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
 		return nil
 	}
@@ -534,9 +536,16 @@ func (s *session) isTxnAborted(stmt sqlexec.Statement) error {
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) error {
+	var err error
+	defer func() {
+		if err != nil {
+			s.rollbackOnError(ctx)
+		}
+	}()
 	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
-		return errForUpdateCantRetry.GenWithStackByArgs(connID)
+		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		return err
 	}
 	s.sessionVars.RetryInfo.Retrying = true
 	var retryCnt uint
@@ -549,7 +558,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 	}()
 
 	nh := GetHistory(s)
-	var err error
 	var schemaVersion int64
 	sessVars := s.GetSessionVars()
 	orgStartTS := sessVars.TxnCtx.StartTS
@@ -585,7 +593,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 			err = s.StmtCommit()
 			if err != nil {
-				s.txn.reset()
 				return errors.Trace(err)
 			}
 		}
