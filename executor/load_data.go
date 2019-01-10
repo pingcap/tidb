@@ -201,7 +201,7 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 }
 
 // InsertData inserts data into specified table according to the specified format.
-// If it has the rest of data isn't completed the processing, then is returns without completed data.
+// If it has the rest of data isn't completed the processing, then it returns without completed data.
 // If the number of inserted rows reaches the batchRows, then the second return value is true.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
 func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error) {
