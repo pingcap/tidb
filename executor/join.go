@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
+	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -52,7 +53,7 @@ type HashJoinExec struct {
 	prepared bool
 	// concurrency is the number of partition, build and join workers.
 	concurrency     uint
-	hashTable       *mvmap.MVMap
+	globalHashTable *mvmap.MVMap
 	innerFinished   chan error
 	hashJoinBuffers []*hashJoinBuffer
 	// joinWorkerWaitGroup is for sync multiple join workers.
@@ -92,6 +93,9 @@ type HashJoinExec struct {
 	// innerRowPrts indicates the position in corresponding partition of every
 	// row in innerResult.
 	innerRowPrts [][]partRowPtr
+	// hashTables stores the hash tables built from the partitions of inner relation.
+	hashTables      []*mvmap.MVMap
+	numNonEmptyPart int
 }
 
 // partition stores the sub-relations of inner relation and outer relation after
@@ -188,6 +192,11 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 		e.hashJoinBuffers = append(e.hashJoinBuffers, buffer)
 	}
 
+	e.innerKeyColIdx = make([]int, len(e.innerKeys))
+	for i := range e.innerKeys {
+		e.innerKeyColIdx[i] = e.innerKeys[i].Index
+	}
+
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 	e.joinWorkerWaitGroup = sync.WaitGroup{}
@@ -278,47 +287,29 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 			return false, errors.Trace(err)
 		}
 	}
-	if e.hashTable.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
+	if e.innerResult.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
 		return true, nil
 	}
 	return false, nil
 }
 
-// fetchInnerRows fetches all rows from inner executor,
-// and append them to e.innerResult.
-func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
-	defer close(chkCh)
+// fetchInnerRows fetches all rows from inner executor, and append them to
+// e.innerResult.
+func (e *HashJoinExec) fetchInnerRows(ctx context.Context) error {
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	var err error
 	for {
-		select {
-		case <-doneCh:
-			return
-		case <-e.closeCh:
-			return
-		default:
-			if e.finished.Load().(bool) {
-				return
-			}
-			chk := e.children[e.innerIdx].newFirstChunk()
-			err = e.innerExec.Next(ctx, chk)
-			if err != nil {
-				e.innerFinished <- errors.Trace(err)
-				return
-			}
-			if chk.NumRows() == 0 {
-				return
-			}
-			select {
-			case chkCh <- chk:
-				break
-			case <-e.closeCh:
-				return
-			}
-			e.innerResult.Add(chk)
+		if e.finished.Load().(bool) {
+			return nil
 		}
+		chk := e.children[e.innerIdx].newFirstChunk()
+		err = e.innerExec.Next(ctx, chk)
+		if err != nil || chk.NumRows() == 0 {
+			return err
+		}
+		e.innerResult.Add(chk)
 	}
 }
 
@@ -353,6 +344,9 @@ func (e *HashJoinExec) handlePartitionPanic(r interface{}) {
 func (e *HashJoinExec) doInnerPartition(workerID int) {
 	chkIdx, chkNum := workerID, e.innerResult.NumChunks()
 	for ; chkIdx < chkNum; chkIdx += int(e.concurrency) {
+		if e.finished.Load().(bool) {
+			return
+		}
 		chk := e.innerResult.GetChunk(chkIdx)
 		for srcRowIdx, partPtr := range e.innerRowPrts[chkIdx] {
 			if partPtr == partPtr4NullKey {
@@ -391,11 +385,19 @@ func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
 		}
 		e.innerRowPrts = append(e.innerRowPrts, partPtrs)
 	}
+	if e.numNonEmptyPart < len(e.innerParts) {
+		numTotalPart := len(e.innerParts)
+		numEmptyPart := numTotalPart - e.numNonEmptyPart
+		log.Debugf("[EMPTY_PART_IN_RADIX_HASH_JOIN] txn_start_ts:%v, num_empty_parts:%v, "+
+			"num_total_parts:%v, empty_ratio:%v", e.ctx.GetSessionVars().TxnCtx.StartTS,
+			numEmptyPart, numTotalPart, float64(numEmptyPart)/float64(numTotalPart))
+	}
 	return
 }
 
 func (e *HashJoinExec) getPartition(idx uint32) partition {
 	if e.innerParts[idx] == nil {
+		e.numNonEmptyPart++
 		e.innerParts[idx] = chunk.New(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	}
 	return e.innerParts[idx]
@@ -547,7 +549,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		e.joiners[workerID].onMissMatch(outerRow, joinResult.chk)
 		return true, joinResult
 	}
-	e.hashTableValBufs[workerID] = e.hashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
+	e.hashTableValBufs[workerID] = e.globalHashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
 	innerPtrs := e.hashTableValBufs[workerID]
 	if len(innerPtrs) == 0 {
 		e.joiners[workerID].onMissMatch(outerRow, joinResult.chk)
@@ -665,50 +667,82 @@ func (e *HashJoinExec) handleFetchInnerAndBuildHashTablePanic(r interface{}) {
 }
 
 func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
-	// innerResultCh transfers inner chunk from inner fetch to build hash table.
-	innerResultCh := make(chan *chunk.Chunk, 1)
-	doneCh := make(chan struct{})
-	// TODO: just used in test now, thus we return directly in this if-branch.
-	// Remained work:
-	// 1. parallel build hash tables for the inner sub-partitions
-	// 2. partition the outer relation into sub-partitions
-	// 3. parallel join corresponded inner-partitions with outer-partitions
-	if e.ctx.GetSessionVars().EnableRadixJoin {
-		go util.WithRecovery(func() {
-			e.fetchInnerRows(ctx, innerResultCh, doneCh)
-			if !e.evalRadixBit() {
-				return
-			}
-			if e.partitionInnerRows() != nil {
-				return
-			}
-
-		}, nil)
+	// Fetch all the data of the inner relation into memory.
+	if err := e.fetchInnerRows(ctx); err != nil {
+		e.innerFinished <- err
 		return
 	}
 
-	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
+	// Do parallel partition if needed.
+	needPartition := e.ctx.GetSessionVars().EnableRadixJoin && e.evalRadixBit()
 
-	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
-	err := e.buildHashTableForList(innerResultCh)
-	if err != nil {
-		e.innerFinished <- errors.Trace(err)
-		close(doneCh)
+	// non-partitioned hash join
+	if !needPartition {
+		if err := e.buildGlobalHashTable(); err != nil {
+			e.innerFinished <- err
+		}
+		return
 	}
-	// wait fetchInnerRows be finished.
-	for range innerResultCh {
+
+	// radix-partitioned hash join
+	if err := e.partitionInnerRows(); err != nil {
+		e.innerFinished <- err
+		return
+	}
+	if err := e.buildHashTable4Partitions(); err != nil {
+		e.innerFinished <- err
 	}
 }
 
-// buildHashTableForList builds hash table from `list`.
+func (e *HashJoinExec) wait4BuildHashTable(wg *sync.WaitGroup, finishedCh chan error) {
+	wg.Wait()
+	close(finishedCh)
+}
+
+func (e *HashJoinExec) buildHashTable4Partitions() error {
+	e.hashTables = make([]*mvmap.MVMap, len(e.innerParts))
+	buildFinishedCh := make(chan error, e.concurrency)
+	wg := &sync.WaitGroup{}
+	wg.Add(int(e.concurrency))
+	go e.wait4BuildHashTable(wg, buildFinishedCh)
+	for i := 0; i < int(e.concurrency); i++ {
+		workerID := i
+		go util.WithRecovery(func() {
+			defer wg.Done()
+			e.doBuild(workerID, buildFinishedCh)
+		}, nil)
+	}
+	return <-buildFinishedCh
+}
+
+func (e *HashJoinExec) doBuild(workerID int, finishedCh chan error) {
+	var err error
+	keyBuf, valBuf := make([]byte, 0, 64), make([]byte, 4)
+	for i := workerID; i < len(e.innerParts); i += int(e.concurrency) {
+		if e.innerParts[i] == nil {
+			continue
+		}
+		e.hashTables[i] = mvmap.NewMVMap()
+		keyBuf = keyBuf[:0]
+		for rowIdx, numRows := 0, e.innerParts[i].NumRows(); rowIdx < numRows; rowIdx++ {
+			// Join-key can be promised to be NOT NULL in a partition(see `partPtr4NullKey`), so we do not check it.
+			_, keyBuf, err = e.getJoinKeyFromChkRow(false, e.innerParts[i].GetRow(rowIdx), keyBuf)
+			if err != nil {
+				e.finished.Store(true)
+				finishedCh <- err
+				return
+			}
+			*(*uint32)(unsafe.Pointer(&valBuf[0])) = uint32(rowIdx)
+			e.hashTables[i].Put(keyBuf, valBuf)
+		}
+	}
+}
+
+// buildGlobalHashTable builds a global hash table for the inner relation.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) error {
-	e.hashTable = mvmap.NewMVMap()
-	e.innerKeyColIdx = make([]int, len(e.innerKeys))
-	for i := range e.innerKeys {
-		e.innerKeyColIdx[i] = e.innerKeys[i].Index
-	}
+func (e *HashJoinExec) buildGlobalHashTable() error {
+	e.globalHashTable = mvmap.NewMVMap()
 	var (
 		hasNull bool
 		err     error
@@ -716,25 +750,23 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) er
 		valBuf  = make([]byte, 8)
 	)
 
-	chkIdx := uint32(0)
-	for chk := range innerResultCh {
+	for chkIdx := 0; chkIdx < e.innerResult.NumChunks(); chkIdx++ {
 		if e.finished.Load().(bool) {
 			return nil
 		}
-		numRows := chk.NumRows()
-		for j := 0; j < numRows; j++ {
+		chk := e.innerResult.GetChunk(chkIdx)
+		for j, numRows := 0, chk.NumRows(); j < numRows; j++ {
 			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
 			if err != nil {
-				return errors.Trace(err)
+				return err
 			}
 			if hasNull {
 				continue
 			}
-			rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(j)}
+			rowPtr := chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(j)}
 			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
-			e.hashTable.Put(keyBuf, valBuf)
+			e.globalHashTable.Put(keyBuf, valBuf)
 		}
-		chkIdx++
 	}
 	return nil
 }
