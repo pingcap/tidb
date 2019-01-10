@@ -175,7 +175,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// gofail: var mockCommitError bool
 	// if mockCommitError && mockCommitErrorOnce {
 	//	mockCommitErrorOnce = false
-	//	fmt.Println("go fail test cs")
 	//	return errors.New("mock commit error")
 	// }
 
