@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -209,7 +208,6 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	if len(prevData) == 0 && len(curData) == 0 {
 		return nil, false, nil
 	}
-
 	var line []byte
 	var isEOF, hasStarting, reachLimit bool
 	if len(prevData) > 0 && len(curData) == 0 {
@@ -220,7 +218,6 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
-
 		// If it doesn't find the terminated symbol and this data isn't the last data,
 		// the data can't be inserted.
 		if line == nil && !isEOF {
@@ -313,30 +310,188 @@ func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 type field struct {
 	str       []byte
 	maybeNull bool
+	enclosed  bool
 }
 
 // getFieldsFromLine splits line according to fieldsInfo.
 func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
-	var sep []byte
-	if e.FieldsInfo.Enclosed != 0 {
-		if line[0] != e.FieldsInfo.Enclosed || line[len(line)-1] != e.FieldsInfo.Enclosed {
-			return nil, errors.Errorf("line %s should begin and end with %c", string(line), e.FieldsInfo.Enclosed)
-		}
-		line = line[1 : len(line)-1]
-		sep = make([]byte, 0, len(e.FieldsInfo.Terminated)+2)
-		sep = append(sep, e.FieldsInfo.Enclosed)
-		sep = append(sep, e.FieldsInfo.Terminated...)
-		sep = append(sep, e.FieldsInfo.Enclosed)
+	var (
+		fields []field
+		ret    []field
+		buf    []byte
+	)
+
+	enclosed, start := false, true
+	pos := 0
+	enclosedChar := e.FieldsInfo.Enclosed
+	fieldTermChar := e.FieldsInfo.Terminated[0]
+
+	if len(line) == 0 {
+		return nil, nil
+	}
+	ch := line[pos]
+	pos++
+	if ch == enclosedChar {
+		enclosed = true
+		start = false
+		buf = append(buf, ch)
 	} else {
-		sep = []byte(e.FieldsInfo.Terminated)
+		pos--
 	}
-	rawCols := bytes.Split(line, sep)
-	fields := make([]field, 0, len(rawCols))
-	for _, v := range rawCols {
-		f := field{v, false}
-		fields = append(fields, f.escape())
+	for {
+		if pos == len(line) {
+			var fild []byte
+			for i := 0; i < len(buf); i++ {
+				fild = append(fild, buf[i])
+			}
+			fields = append(fields, field{fild, false, false})
+			enclosed = false
+			buf = buf[0:0]
+			break
+		}
+		if pos < len(line) {
+			ch = line[pos]
+			pos++
+		}
+		if ch == enclosedChar && start {
+			start = false
+			enclosed = true
+			buf = append(buf, ch)
+			continue
+		} else if start {
+			start = false
+		}
+		chkpt := pos
+		if ch == fieldTermChar && !enclosed {
+			isTerm, i := true, 0
+			for i = 1; i < len(e.FieldsInfo.Terminated); i++ {
+				if pos >= len(line) {
+					isTerm = false
+					break
+				}
+				ch = line[pos]
+				pos++
+				if ch != e.FieldsInfo.Terminated[i] {
+					isTerm = false
+					break
+				}
+			}
+			if isTerm {
+				var fild []byte
+				for i := 0; i < len(buf); i++ {
+					fild = append(fild, buf[i])
+				}
+				fields = append(fields, field{fild, false, false})
+				buf = buf[0:0]
+				enclosed = false
+				start = true
+				continue
+			} else {
+				pos = chkpt
+			}
+		} else if ch == enclosedChar && enclosed {
+			if pos == len(line) {
+				var fild []byte
+				for i := 1; i < len(buf); i++ {
+					fild = append(fild, buf[i])
+				}
+				fields = append(fields, field{fild, false, true})
+				enclosed = false
+				start = true
+				buf = buf[0:0]
+				break
+			}
+			if pos < len(line) {
+				ch = line[pos]
+				pos++
+			}
+			if ch == enclosedChar {
+				buf = append(buf, ch)
+				continue
+			}
+			if ch == fieldTermChar {
+				chkpt := pos
+				isTerm, i := true, 0
+				for i = 1; i < len(e.FieldsInfo.Terminated); i++ {
+					if pos >= len(line) {
+						isTerm = false
+						break
+					}
+					ch = line[pos]
+					pos++
+					if ch != e.FieldsInfo.Terminated[i] {
+						isTerm = false
+						break
+					}
+				}
+				if isTerm {
+					var fild []byte
+					for i := 1; i < len(buf); i++ {
+						fild = append(fild, buf[i])
+					}
+					fields = append(fields, field{fild, false, true})
+					buf = buf[0:0]
+					enclosed = false
+					start = true
+					continue
+				} else {
+					pos = chkpt
+				}
+			}
+			pos--
+		} else if ch == fieldTermChar && !enclosed {
+			chkpt := pos
+			isTerm, i := true, 0
+			for i = 1; i < len(e.FieldsInfo.Terminated); i++ {
+				if pos >= len(line) {
+					isTerm = false
+					break
+				}
+				ch = line[pos]
+				pos++
+				if ch != e.FieldsInfo.Terminated[i] {
+					isTerm = false
+					break
+				}
+			}
+			if isTerm {
+				var fild []byte
+				for i := 0; i < len(buf); i++ {
+					fild = append(fild, buf[i])
+				}
+				fields = append(fields, field{fild, false, false})
+				buf = buf[0:0]
+				enclosed = false
+				start = true
+				continue
+			} else {
+				pos = chkpt
+			}
+		} else if ch == '\\' {
+			buf = append(buf, ch)
+			if pos < len(line) {
+				ch = line[pos]
+				pos++
+				if ch == enclosedChar {
+					buf = append(buf, ch)
+				} else {
+					pos--
+				}
+			}
+		} else {
+			buf = append(buf, ch)
+		}
 	}
-	return fields, nil
+	for _, v := range fields {
+		f := v.escape()
+		//fmt.Println(string(f.str), f.str, f.maybeNull, f.enclosed)
+		if string(f.str) == "NULL" && !f.enclosed {
+			f.str = []byte{'N'}
+			f.maybeNull = true
+		}
+		ret = append(ret, f)
+	}
+	return ret, nil
 }
 
 // escape handles escape characters when running load data statement.
@@ -354,7 +509,7 @@ func (f *field) escape() field {
 		f.str[pos] = c
 		pos++
 	}
-	return field{f.str[:pos], f.maybeNull}
+	return field{f.str[:pos], f.maybeNull, f.enclosed}
 }
 
 func (f *field) escapeChar(c byte) byte {

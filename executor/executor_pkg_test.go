@@ -214,7 +214,7 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 	}
 
 	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 }
 
 func assertEqualStrings(c *C, got []field, expect []string) {
