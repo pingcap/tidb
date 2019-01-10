@@ -30,44 +30,29 @@ type mockDataSourceParameters struct {
 }
 
 type mockDataSource struct {
-	p           mockDataSourceParameters
-	orgChunks   []*chunk.Chunk
-	toUseChunks []*chunk.Chunk
-	chunkPtr    int
+	p        mockDataSourceParameters
+	colData  [][]interface{}
+	chunks   []*chunk.Chunk
+	chunkPtr int
 }
 
-func (mds *mockDataSource) genData() {
-	colDatums := make([][]types.Datum, len(mds.p.types))
-	for i := 0; i < len(mds.p.types); i++ {
-		colDatums[i] = mds.genColDatums(mds.p.types[i], mds.p.orders[i], mds.p.rows, mds.p.NDVs[i])
-	}
-	mds.orgChunks = make([]*chunk.Chunk, (mds.p.rows+mds.p.chunkSize-1)/mds.p.chunkSize)
-	for i := range mds.orgChunks {
-		mds.orgChunks[i] = mds.newFirstChunk()
-	}
-
-	for i := 0; i < mds.p.rows; i++ {
-		row := make([]types.Datum, len(mds.p.types))
-		for colIdx := 0; colIdx < len(mds.p.types); colIdx++ {
-			row[colIdx] = colDatums[colIdx][i]
-		}
-
-		idx := i / mds.p.chunkSize
-		mds.orgChunks[idx].AppendRow(chunk.MutRowFromDatums(row).ToRow())
-	}
-}
-
-func (mds *mockDataSource) genColDatums(typ *types.FieldType, order bool, rows, NDV int) (results []types.Datum) {
+func (mds *mockDataSource) genColDatums(typ *types.FieldType, order bool, rows, NDV int) (results []interface{}) {
 	defer func() {
 		if order {
 			sort.Slice(results, func(i, j int) bool {
-				cmp, _ := results[i].CompareDatum(mds.p.ctx, &results[j])
-				return cmp < 0
+				switch typ.Tp {
+				case mysql.TypeLong:
+					return results[i].(int64) < results[j].(int64)
+				case mysql.TypeDouble:
+					return results[i].(float64) < results[j].(float64)
+				default:
+					panic("not implement")
+				}
 			})
 		}
 	}()
 
-	results = make([]types.Datum, 0, rows)
+	results = make([]interface{}, 0, rows)
 	if NDV == 0 {
 		for i := 0; i < rows; i++ {
 			results = append(results, mds.randDatum(typ))
@@ -76,10 +61,10 @@ func (mds *mockDataSource) genColDatums(typ *types.FieldType, order bool, rows, 
 	}
 
 	datumSet := make(map[string]bool, NDV)
-	datums := make([]types.Datum, 0, NDV)
+	datums := make([]interface{}, 0, NDV)
 	for len(datums) < NDV {
 		d := mds.randDatum(typ)
-		str, _ := d.ToString()
+		str := fmt.Sprintf("%v", d)
 		if datumSet[str] {
 			continue
 		}
@@ -93,25 +78,35 @@ func (mds *mockDataSource) genColDatums(typ *types.FieldType, order bool, rows, 
 	return
 }
 
-func (mds *mockDataSource) randDatum(typ *types.FieldType) types.Datum {
-	var d types.Datum
+func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	switch typ.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		d.SetInt64(int64(rand.Int()))
-	case mysql.TypeFloat:
-		d.SetFloat32(rand.Float32())
+	case mysql.TypeLong:
+		return int64(rand.Int())
 	case mysql.TypeDouble:
-		d.SetFloat64(rand.Float64())
+		return rand.Float64()
 	default:
 		panic("not implement")
 	}
-	return d
 }
 
 func (mds *mockDataSource) prepareChunks() {
-	mds.toUseChunks = make([]*chunk.Chunk, len(mds.orgChunks))
-	for i := range mds.toUseChunks {
-		mds.toUseChunks[i] = mds.orgChunks[i].CopyTo(mds.toUseChunks[i])
+	mds.chunks = make([]*chunk.Chunk, (mds.p.rows+mds.p.chunkSize-1)/mds.p.chunkSize)
+	for i := range mds.chunks {
+		mds.chunks[i] = mds.newFirstChunk()
+	}
+
+	for i := 0; i < mds.p.rows; i++ {
+		idx := i / mds.p.chunkSize
+		for colIdx := 0; colIdx < len(mds.p.types); colIdx++ {
+			switch mds.p.types[colIdx].Tp {
+			case mysql.TypeLong:
+				mds.chunks[idx].AppendInt64(colIdx, mds.colData[colIdx][i].(int64))
+			case mysql.TypeDouble:
+				mds.chunks[idx].AppendFloat64(colIdx, mds.colData[colIdx][i].(float64))
+			default:
+				panic("not implement")
+			}
+		}
 	}
 	mds.chunkPtr = 0
 }
@@ -119,14 +114,13 @@ func (mds *mockDataSource) prepareChunks() {
 func (mds *mockDataSource) Open(context.Context) error { return nil }
 
 func (mds *mockDataSource) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if mds.chunkPtr >= len(mds.toUseChunks) {
+	if mds.chunkPtr >= len(mds.chunks) {
 		chk.Reset()
 		return nil
 	}
-	dataChk := mds.toUseChunks[mds.chunkPtr]
+	dataChk := mds.chunks[mds.chunkPtr]
 	dataChk.SwapColumns(chk)
 	mds.chunkPtr++
-
 	return nil
 }
 
@@ -142,7 +136,10 @@ func (mds *mockDataSource) newFirstChunk() *chunk.Chunk {
 
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	m := &mockDataSource{opt, nil, nil, 0}
-	m.genData()
+	m.colData = make([][]interface{}, len(m.p.types))
+	for i := 0; i < len(m.p.types); i++ {
+		m.colData[i] = m.genColDatums(m.p.types[i], m.p.orders[i], m.p.rows, m.p.NDVs[i])
+	}
 	return m
 }
 
