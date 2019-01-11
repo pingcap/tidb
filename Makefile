@@ -223,3 +223,7 @@ tools/bin/gosec:
 tools/bin/errcheck:
 	cd tools/check; \
 	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
+
+tools/bin/gofail: go.mod
+	$(GO) build -o $@ github.com/pingcap/gofail
+
