@@ -294,7 +294,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	}
 	total := 0
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	min, max := getMinValue(h.tp), getMaxValue(h.tp)
+	min, max := getMinValue(h.Tp), getMaxValue(h.Tp)
 	for _, fb := range feedback.feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
@@ -1078,14 +1078,14 @@ func (q *QueryFeedback) dumpRangeFeedback(sc *stmtctx.StatementContext, h *Handl
 		ran.LowVal[0].SetBytes(lower)
 		ran.HighVal[0].SetBytes(upper)
 	} else {
-		if !supportColumnType(q.hist.tp) {
+		if !supportColumnType(q.hist.Tp) {
 			return nil
 		}
 		if ran.LowVal[0].Kind() == types.KindMinNotNull {
-			ran.LowVal[0] = getMinValue(q.hist.tp)
+			ran.LowVal[0] = getMinValue(q.hist.Tp)
 		}
 		if ran.HighVal[0].Kind() == types.KindMaxValue {
-			ran.HighVal[0] = getMaxValue(q.hist.tp)
+			ran.HighVal[0] = getMaxValue(q.hist.Tp)
 		}
 	}
 	ranges := q.hist.SplitRange(sc, []*ranger.Range{ran}, q.tp == indexType)
