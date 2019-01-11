@@ -22,8 +22,8 @@ PACKAGES  := $$(go list ./...| grep -vE "vendor")
 FILES     := $$(find . -name "*.go" | grep -vE "vendor")
 TOPDIRS   := $$(ls -d */ | grep -vE "vendor")
 
-GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail enable)
-GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail disable)
+GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs tools/bin/gofail enable)
+GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs tools/bin/gofail disable)
 
 LDFLAGS += -X "github.com/pingcap/tidb/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
@@ -82,10 +82,10 @@ goword:
 	@echo "goword"
 	@ goword $(FILES) | awk '{print} END{if(NR>0) {exit 1}}'
 
-errcheck:
-	$(GO) get github.com/kisielk/errcheck
+errcheck:tools/bin/errcheck
 	@echo "errcheck"
-	@ GOPATH=$(GOPATH) errcheck -exclude errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@$(GO) mod vendor
+	@tools/bin/errcheck -exclude errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:
 	$(GO) build -o ./bin/revive github.com/mgechev/revive
@@ -104,9 +104,7 @@ todo:
 
 test: checklist gotest
 
-gotest: parserlib
-	$(GO) get github.com/etcd-io/gofail
-	@$(GOFAIL_ENABLE)
+gotest: parserlib gofail-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	@export log_level=error; \
@@ -121,22 +119,19 @@ else
 endif
 	@$(GOFAIL_DISABLE)
 
-race: parserlib
-	$(GO) get github.com/etcd-io/gofail
+race: parserlib tools/bin/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -race $(PACKAGES)
 	@$(GOFAIL_DISABLE)
 
-leak: parserlib
-	$(GO) get github.com/etcd-io/gofail
+leak: parserlib tools/bin/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES)
 	@$(GOFAIL_DISABLE)
 
-tikv_integration_test: parserlib
-	$(GO) get github.com/etcd-io/gofail
+tikv_integration_test: parserlib tools/bin/gofail
 	@$(GOFAIL_ENABLE)
 	$(GOTEST) ./store/tikv/. -with-tikv=true
 	@$(GOFAIL_DISABLE)
@@ -168,10 +163,17 @@ importer:
 checklist:
 	cat checklist.md
 
-gofail-enable:
+gofail-enable:tools/bin/gofail
 # Converting gofail failpoints...
 	@$(GOFAIL_ENABLE)
 
-gofail-disable:
+gofail-disable:tools/bin/gofail
 # Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)
+
+tools/bin/gofail: go.mod
+	$(GO) build -o $@ github.com/pingcap/gofail
+
+tools/bin/errcheck: tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck

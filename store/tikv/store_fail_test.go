@@ -17,8 +17,8 @@ import (
 	"sync"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"golang.org/x/net/context"
 )
 
