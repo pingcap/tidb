@@ -314,16 +314,16 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 	table := []testCase{
 		{"", true, ""},
 		{";", true, ""},
-		{"INSERT INTO foo VALUES (1234)", true, ""},
-		{"INSERT INTO foo VALUES (1234, 5678)", true, ""},
+		{"INSERT INTO foo VALUES (1234)", true, "INSERT INTO `foo` VALUES (1234)"},
+		{"INSERT INTO foo VALUES (1234, 5678)", true, "INSERT INTO `foo` VALUES (1234,5678)"},
 		{"INSERT INTO t1 (SELECT * FROM t2)", true, ""},
 		// 15
-		{"INSERT INTO foo VALUES (1 || 2)", true, ""},
-		{"INSERT INTO foo VALUES (1 | 2)", true, ""},
-		{"INSERT INTO foo VALUES (false || true)", true, ""},
+		{"INSERT INTO foo VALUES (1 || 2)", true, "INSERT INTO `foo` VALUES (1||2)"},
+		{"INSERT INTO foo VALUES (1 | 2)", true, "INSERT INTO `foo` VALUES (1|2)"},
+		{"INSERT INTO foo VALUES (false || true)", true, "INSERT INTO `foo` VALUES (FALSE||TRUE)"},
 		{"INSERT INTO foo VALUES (bar(5678))", true, ""},
 		// 20
-		{"INSERT INTO foo VALUES ()", true, ""},
+		{"INSERT INTO foo VALUES ()", true, "INSERT INTO `foo` VALUES ()"},
 		{"SELECT * FROM t", true, ""},
 		{"SELECT * FROM t AS u", true, ""},
 		// 25
@@ -339,29 +339,29 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"SELECT ALL * FROM t", true, ""},
 		{"SELECT DISTINCT ALL * FROM t", false, ""},
 		{"SELECT DISTINCTROW ALL * FROM t", false, ""},
-		{"INSERT INTO foo (a) VALUES (42)", true, ""},
+		{"INSERT INTO foo (a) VALUES (42)", true, "INSERT INTO `foo` (`a`) VALUES (42)"},
 		{"INSERT INTO foo (a,) VALUES (42,)", false, ""},
 		// 35
-		{"INSERT INTO foo (a,b) VALUES (42,314)", true, ""},
+		{"INSERT INTO foo (a,b) VALUES (42,314)", true, "INSERT INTO `foo` (`a`,`b`) VALUES (42,314)"},
 		{"INSERT INTO foo (a,b,) VALUES (42,314)", false, ""},
 		{"INSERT INTO foo (a,b,) VALUES (42,314,)", false, ""},
-		{"INSERT INTO foo () VALUES ()", true, ""},
-		{"INSERT INTO foo VALUE ()", true, ""},
+		{"INSERT INTO foo () VALUES ()", true, "INSERT INTO `foo` () VALUES ()"},
+		{"INSERT INTO foo VALUE ()", true, "INSERT INTO `foo` VALUES ()"},
 
 		// for issue 2402
-		{"INSERT INTO tt VALUES (01000001783);", true, ""},
-		{"INSERT INTO tt VALUES (default);", true, ""},
+		{"INSERT INTO tt VALUES (01000001783);", true, "INSERT INTO `tt` VALUES (1000001783)"},
+		{"INSERT INTO tt VALUES (default);", true, "INSERT INTO `tt` VALUES (DEFAULT)"},
 
-		{"REPLACE INTO foo VALUES (1 || 2)", true, ""},
-		{"REPLACE INTO foo VALUES (1 | 2)", true, ""},
-		{"REPLACE INTO foo VALUES (false || true)", true, ""},
+		{"REPLACE INTO foo VALUES (1 || 2)", true, "REPLACE INTO `foo` VALUES (1||2)"},
+		{"REPLACE INTO foo VALUES (1 | 2)", true, "REPLACE INTO `foo` VALUES (1|2)"},
+		{"REPLACE INTO foo VALUES (false || true)", true, "REPLACE INTO `foo` VALUES (FALSE||TRUE)"},
 		{"REPLACE INTO foo VALUES (bar(5678))", true, ""},
-		{"REPLACE INTO foo VALUES ()", true, ""},
-		{"REPLACE INTO foo (a,b) VALUES (42,314)", true, ""},
+		{"REPLACE INTO foo VALUES ()", true, "REPLACE INTO `foo` VALUES ()"},
+		{"REPLACE INTO foo (a,b) VALUES (42,314)", true, "REPLACE INTO `foo` (`a`,`b`) VALUES (42,314)"},
 		{"REPLACE INTO foo (a,b,) VALUES (42,314)", false, ""},
 		{"REPLACE INTO foo (a,b,) VALUES (42,314,)", false, ""},
-		{"REPLACE INTO foo () VALUES ()", true, ""},
-		{"REPLACE INTO foo VALUE ()", true, ""},
+		{"REPLACE INTO foo () VALUES ()", true, "REPLACE INTO `foo` () VALUES ()"},
+		{"REPLACE INTO foo VALUE ()", true, "REPLACE INTO `foo` VALUES ()"},
 		// 40
 		{`SELECT stuff.id
 			FROM stuff
@@ -487,8 +487,12 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin restore table by job", false, ""},
 
 		// for on duplicate key update
-		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, ""},
-		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, ""},
+		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
+		{"INSERT IGNORE INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT IGNORE INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
+
+		// for insert ... set
+		{"INSERT INTO t SET a=1,b=2", true, "INSERT INTO `t` SET `a`=1,`b`=2"},
+		{"INSERT INTO t (a) SET a=1", false, ""},
 
 		// for delete statement
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id;", true, ""},
@@ -2217,18 +2221,18 @@ func (s *testParserSuite) TestPriority(c *C) {
 		{`select high_priority * from t`, true, ""},
 		{`select low_priority * from t`, true, ""},
 		{`select delayed * from t`, true, ""},
-		{`insert high_priority into t values (1)`, true, ""},
-		{`insert LOW_PRIORITY into t values (1)`, true, ""},
-		{`insert delayed into t values (1)`, true, ""},
+		{`insert high_priority into t values (1)`, true, "INSERT HIGH_PRIORITY INTO `t` VALUES (1)"},
+		{`insert LOW_PRIORITY into t values (1)`, true, "INSERT LOW_PRIORITY INTO `t` VALUES (1)"},
+		{`insert delayed into t values (1)`, true, "INSERT DELAYED INTO `t` VALUES (1)"},
 		{`update low_priority t set a = 2`, true, ""},
 		{`update high_priority t set a = 2`, true, ""},
 		{`update delayed t set a = 2`, true, ""},
 		{`delete low_priority from t where a = 2`, true, ""},
 		{`delete high_priority from t where a = 2`, true, ""},
 		{`delete delayed from t where a = 2`, true, ""},
-		{`replace high_priority into t values (1)`, true, ""},
-		{`replace LOW_PRIORITY into t values (1)`, true, ""},
-		{`replace delayed into t values (1)`, true, ""},
+		{`replace high_priority into t values (1)`, true, "REPLACE HIGH_PRIORITY INTO `t` VALUES (1)"},
+		{`replace LOW_PRIORITY into t values (1)`, true, "REPLACE LOW_PRIORITY INTO `t` VALUES (1)"},
+		{`replace delayed into t values (1)`, true, "REPLACE DELAYED INTO `t` VALUES (1)"},
 	}
 	s.RunTest(c, table)
 
