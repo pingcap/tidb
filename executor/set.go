@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -158,7 +159,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
 		if newSnapshotIsSet {
-			err = validateSnapshot(e.ctx, sessionVars.SnapshotTS)
+			err = gcutil.ValidateSnapshot(e.ctx, sessionVars.SnapshotTS)
 			if err != nil {
 				sessionVars.SnapshotTS = oldSnapshotTS
 				return errors.Trace(err)

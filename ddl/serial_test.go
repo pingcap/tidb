@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -162,7 +163,7 @@ func (s *testSerialSuite) TestRestoreTableFail(c *C) {
 	jobID := row.GetInt64(0)
 
 	// enableGC first
-	err = admin.EnableGCAfterRecover(tk.Se)
+	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 

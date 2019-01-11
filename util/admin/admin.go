@@ -721,39 +721,6 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	return nil
 }
 
-// CheckGCEnableStatus is use to check whether gc is enable.
-func CheckGCEnableStatus(ctx sessionctx.Context) (enable bool, err error) {
-	sql := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, "tikv_gc_enable")
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if len(rows) != 1 {
-		return false, errors.New("can not get 'tikv_gc_enable'")
-	}
-	return rows[0].GetString(0) == "true", nil
-}
-
-// DisableGCForRecover will disable gc enable variable.
-func DisableGCForRecover(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		"tikv_gc_enable", "false", "Current GC enable status")
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
-	return errors.Trace(err)
-}
-
-// EnableGCAfterRecover will enable gc enable variable.
-func EnableGCAfterRecover(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		"tikv_gc_enable", "true", "Current GC enable status")
-	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
-	return errors.Trace(err)
-}
-
 // admin error codes.
 const (
 	codeDataNotEqual       terror.ErrCode = 1

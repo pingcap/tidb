@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -185,22 +186,6 @@ func (e *RestoreTableExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Open interface.
 func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	gcEnable, err := admin.CheckGCEnableStatus(e.ctx)
-	if err != nil {
-		return err
-	}
-	if gcEnable {
-		err = admin.DisableGCForRecover(e.ctx)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			// if err == nil, should be enable gc in ddl owner.
-			if err != nil {
-				log.Error(admin.EnableGCAfterRecover(e.ctx))
-			}
-		}()
-	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
@@ -214,11 +199,11 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return admin.ErrDDLJobNotFound.GenWithStackByArgs(e.jobID)
 	}
 	if job.Type != model.ActionDropTable {
-		return errors.Errorf("Job %v doesn't drop any table", job.ID)
+		return errors.Errorf("Job %v type is %v, not drop table", job.ID, job.Type)
 	}
 
 	// check gc safe point
-	err = validateSnapshot(e.ctx, job.StartTS)
+	err = gcutil.ValidateSnapshot(e.ctx, job.StartTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -246,8 +231,13 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
 	}
+	// check gc enable use to decide whether enable gc after restore table.
+	gcEnable, err := gcutil.CheckGCEnable(e.ctx)
+	if err != nil {
+		return err
+	}
 	// Call DDL RestoreTable
-	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID, gcEnable)
+	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID, job.StartTS, gcEnable)
 	return errors.Trace(err)
 
 }

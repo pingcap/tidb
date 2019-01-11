@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/testkit"
@@ -2171,7 +2172,7 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_enable'")
 
-	err = admin.EnableGCAfterRecover(tk.Se)
+	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
 
 	// if gc safe point is not exists in mysql.tidb
@@ -2200,7 +2201,7 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	c.Assert(err, NotNil)
 
 	// Disable gc by manual first, then after recover table, the gc enable status should also be disabled.
-	err = admin.DisableGCForRecover(tk.Se)
+	err = gcutil.DisableGC(tk.Se)
 	c.Assert(err, IsNil)
 
 	tk.MustExec("delete from t_recover where a > 1")
@@ -2222,7 +2223,7 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	tk.MustExec("insert into t_recover values (7),(8),(9)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
 
-	gcEnable, err := admin.CheckGCEnableStatus(tk.Se)
+	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
 

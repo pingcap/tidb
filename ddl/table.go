@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/gcutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -148,27 +148,38 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-// mockRestoreTableCommitErrOnce use to make sure `mockRestoreTableCommitErr` only mock error once.
-var mockRestoreTableCommitErrOnce = true
-
-func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	// check gc enable status again.
+func checkGCForRestoreTable(w *worker, snapshotTS uint64) error {
 	gcEnable, err := checkGCEnable(w)
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if gcEnable {
-		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("can not restore deleted table when gc is enable")
+		if err = disableGC(w); err != nil {
+			return errors.Errorf("disable gc failed, try again later. err: %v", err)
+		}
 	}
+	err = checkSafePoint(w, snapshotTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
 
+func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	var autoID, dropJobID int64
+	var snapshotTS uint64
 	var enableGCAfterRecover bool
-	if err = job.DecodeArgs(tbInfo, &autoID, &dropJobID, &enableGCAfterRecover); err != nil {
+	if err = job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &enableGCAfterRecover); err != nil {
 		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// check gc and safe point
+	err = checkGCForRestoreTable(w, snapshotTS)
+	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -207,6 +218,9 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
+// mockRestoreTableCommitErrOnce use to make sure `mockRestoreTableCommitErr` only mock error once.
+var mockRestoreTableCommitErrOnce = true
+
 func enableGC(w *worker) error {
 	ctx, err := w.sessPool.get()
 	if err != nil {
@@ -214,7 +228,17 @@ func enableGC(w *worker) error {
 	}
 	defer w.sessPool.put(ctx)
 
-	return admin.EnableGCAfterRecover(ctx)
+	return gcutil.EnableGC(ctx)
+}
+
+func disableGC(w *worker) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.DisableGC(ctx)
 }
 
 func checkGCEnable(w *worker) (enable bool, err error) {
@@ -224,7 +248,17 @@ func checkGCEnable(w *worker) (enable bool, err error) {
 	}
 	defer w.sessPool.put(ctx)
 
-	return admin.CheckGCEnableStatus(ctx)
+	return gcutil.CheckGCEnable(ctx)
+}
+
+func checkSafePoint(w *worker, snapshotTS uint64) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
 type splitableStore interface {
