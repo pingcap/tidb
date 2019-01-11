@@ -2186,8 +2186,17 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, variable.ErrSnapshotTooOld.GenWithStackByArgs(timeAfterDrop).Error())
 
-	// recover job after gc safe point
+	// set gc safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// if there is a new table with the same name, should return failed.
+	tk.MustExec("create table t_recover (a int);")
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
+
+	// drop the new table with the same name, then restore table.
+	tk.MustExec("drop table t_recover")
+
+	// do restore table.
 	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
 
 	// check recover table meta and data record.
