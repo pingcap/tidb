@@ -14,3 +14,4 @@ Before asking a question, make sure you have:
 - Read the documentation:
   - [TiDB Readme](https://github.com/pingcap/tidb)
   - [TiDB Doc](https://github.com/pingcap/docs)
+

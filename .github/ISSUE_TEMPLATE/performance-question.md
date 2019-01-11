@@ -21,3 +21,4 @@ about: Performance question about TiDB which is not caused by bug.
         - use `curl -G "http://${tidb-server-ip}:${tidb-server-status-port}/stats/dump/${db_name}/${table_name}" > ${table_name}_stats.json` to get the dumped statistics of one involved table.
     - provide the `EXPLAIN` result of the compared database. For mysql, `EXPLAIN format=json`'s result will be more helpful.
     - other information that you think it's useful to distinguish the property of this SQL.
+
