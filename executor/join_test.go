@@ -997,3 +997,22 @@ func (s *testSuite) TestHashJoin(c *C) {
 	innerExecInfo = row[3][4].(string)
 	c.Assert(innerExecInfo[len(innerExecInfo)-1:], LessEqual, "5")
 }
+
+func (s *testSuite) TestJoinDifferentDecimals(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("Use test")
+	tk.MustExec("Drop table if exists t1")
+	tk.MustExec("Create table t1 (v int)")
+	tk.MustExec("Insert into t1 value (1)")
+	tk.MustExec("Insert into t1 value (2)")
+	tk.MustExec("Insert into t1 value (3)")
+	tk.MustExec("Drop table if exists t2")
+	tk.MustExec("Create table t2 (v decimal(12, 3))")
+	tk.MustExec("Insert into t2 value (1)")
+	tk.MustExec("Insert into t2 value (2.0)")
+	tk.MustExec("Insert into t2 value (000003.000000)")
+	rst := tk.MustQuery("Select * from t1, t2 where t1.v = t2.v order by t1.v")
+	row := rst.Rows()
+	c.Assert(len(row), Equals, 3)
+	rst.Check(testkit.Rows("1 1.000", "2 2.000", "3 3.000"))
+}
