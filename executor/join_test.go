@@ -940,3 +940,79 @@ func (s *testSuite) TestEmbeddedOuterJoin(c *C) {
 	tk.MustQuery("select * from (t1 left join t2 on t1.a = t2.a) left join (t2 t3 left join t2 t4 on t3.a = t4.a) on t2.b = 1").
 		Check(testkit.Rows("1 1 <nil> <nil> <nil> <nil> <nil> <nil>"))
 }
+
+func (s *testSuite2) TestHashJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int);")
+	tk.MustExec("create table t2(a int, b int);")
+	tk.MustExec("insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);")
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("5"))
+	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("0"))
+	tk.MustExec("set @@tidb_init_chunk_size=1;")
+	result := tk.MustQuery("explain analyze select /*+ TIDB_HJ(t1, t2) */ * from t1 where exists (select a from t2 where t1.a = t2.a);")
+	// id	count	task	operator info	execution info
+	// HashLeftJoin_9	8000.00	root	semi join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)]	time:1.036712ms, loops:1, rows:0
+	// ├─TableReader_11	10000.00	root	data:TableScan_10	time:441.096µs, loops:1, rows:1
+	// │ └─TableScan_10	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+	// └─TableReader_13	10000.00	root	data:TableScan_12	time:212.376µs, loops:1, rows:0
+	//   └─TableScan_12	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+	row := result.Rows()
+	c.Assert(len(row), Equals, 5)
+	outerExecInfo := row[1][4].(string)
+	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
+	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "5")
+	innerExecInfo := row[3][4].(string)
+	c.Assert(innerExecInfo[len(innerExecInfo)-1:], Equals, "0")
+
+	tk.MustExec("insert into t2 select * from t1;")
+	tk.MustExec("delete from t1;")
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("5"))
+	result = tk.MustQuery("explain analyze select /*+ TIDB_HJ(t1, t2) */ * from t1 where not exists (select a from t2 where t1.a = t2.a);")
+	// id	count	task	operator info	execution info
+	// HashLeftJoin_9	8000.00	root	anti semi join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)]	time:534.643µs, loops:1, rows:0
+	// ├─TableReader_11	10000.00	root	data:TableScan_10	time:35.042µs, loops:1, rows:0
+	// │ └─TableScan_10	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+	// └─TableReader_13	10000.00	root	data:TableScan_12	time:0s, loops:0, rows:0
+	//   └─TableScan_12	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+	row = result.Rows()
+	c.Assert(len(row), Equals, 5)
+	outerExecInfo = row[1][4].(string)
+	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "0")
+	innerExecInfo = row[3][4].(string)
+	c.Assert(innerExecInfo[len(innerExecInfo)-1:], LessEqual, "5")
+
+	result = tk.MustQuery("explain select /*+ TIDB_HJ(t1, t2) */ * from t1 left outer join t2 on t1.a = t2.a;")
+	// id	count	task	operator info	execution info
+	// HashLeftJoin_6	12500.00	root	left outer join, inner:TableReader_10, equal:[eq(test.t1.a, test.t2.a)]	time:502.553µs, loops:1, rows:0
+	// ├─TableReader_8	10000.00	root	data:TableScan_7	time:27.302µs, loops:1, rows:0
+	// │ └─TableScan_7	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+	// └─TableReader_10	10000.00	root	data:TableScan_9	time:0s, loops:0, rows:0
+	//   └─TableScan_9	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+	c.Assert(len(row), Equals, 5)
+	outerExecInfo = row[1][4].(string)
+	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "0")
+	innerExecInfo = row[3][4].(string)
+	c.Assert(innerExecInfo[len(innerExecInfo)-1:], LessEqual, "5")
+}
+
+func (s *testSuite2) TestJoinDifferentDecimals(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("Use test")
+	tk.MustExec("Drop table if exists t1")
+	tk.MustExec("Create table t1 (v int)")
+	tk.MustExec("Insert into t1 value (1)")
+	tk.MustExec("Insert into t1 value (2)")
+	tk.MustExec("Insert into t1 value (3)")
+	tk.MustExec("Drop table if exists t2")
+	tk.MustExec("Create table t2 (v decimal(12, 3))")
+	tk.MustExec("Insert into t2 value (1)")
+	tk.MustExec("Insert into t2 value (2.0)")
+	tk.MustExec("Insert into t2 value (000003.000000)")
+	rst := tk.MustQuery("Select * from t1, t2 where t1.v = t2.v order by t1.v")
+	row := rst.Rows()
+	c.Assert(len(row), Equals, 3)
+	rst.Check(testkit.Rows("1 1.000", "2 2.000", "3 3.000"))
+}
