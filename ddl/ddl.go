@@ -209,7 +209,6 @@ var (
 	ErrTableIsNotView = terror.ClassDDL.New(codeErrWrongObject, "'%s.%s' is not VIEW")
 	// ErrInvalidDefaultValue returns invalid default value
 	ErrInvalidDefaultValue = terror.ClassDDL.New(codeInvalidDefaultValue, mysql.MySQLErrName[mysql.ErrInvalidDefault])
-
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
