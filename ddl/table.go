@@ -179,6 +179,13 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 	// Restore table divide into 2 steps:
 	// 1. Check gc enable status, to decided whether enable gc after restore table.
+	//     1. Why not disable gc before put the job to ddl job queue?
+	//        Think about concurrency problem. If a restore job-1 is doing and already disabled GC,
+	//        then, another restore table job-2 check gc enable will get disable before into the job queue.
+	//        then, after restore table job-2 finished, the gc will be disabled.
+	//     2. Why split into 2 steps? 1 step also can finish this job: check gc -> disable gc -> restore table -> finish job.
+	//        What if the transaction commit failed? then, the job will retry, but the gc already disabled when first running.
+	//        So, after this job retry succeed, the gc will be disabled.
 	// 2. Do restore table job.
 	//     1. Check whether gc enabled, if enabled, disable gc first.
 	//     2. Check gc safe point. If drop table time if after safe point time, then can do restore.
