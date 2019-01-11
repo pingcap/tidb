@@ -141,7 +141,7 @@ func main() {
 	buildCmd.Env = append(os.Environ(), "GO111MODULE=on")
 	err = buildCmd.Run()
 	if err != nil {
-		log.Printf("compile plugin source code failurd, %+v\n", err)
+		log.Printf("compile plugin source code failure, %+v\n", err)
 		os.Exit(1)
 	}
 	fmt.Printf(`Package "%s" as plugin "%s" success.`+"\nManifest:\n", pkgDir, outputFile)
