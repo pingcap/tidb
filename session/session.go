@@ -479,26 +479,44 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) retry(ctx context.Context, maxCnt uint) error {
+func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
+	if s.txn.doNotCommit == nil {
+		return nil
+	}
+	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
+	// because they are used to finish the aborted transaction.
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+		return nil
+	}
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
+		return nil
+	}
+	return errors.New("current transaction is aborted, commands ignored until end of transaction block")
+}
+
+func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "retry")
 	defer span.Finish()
-
-	connID := s.sessionVars.ConnectionID
-	if s.sessionVars.TxnCtx.ForUpdate {
-		return errors.Errorf("[%d] can not retry select for update statement", connID)
-	}
-	s.sessionVars.RetryInfo.Retrying = true
 	var retryCnt uint
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
-		s.txn.changeToInvalid()
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		if err != nil {
+			s.rollbackOnError(ctx)
+		}
+		s.txn.changeToInvalid()
 	}()
 
+	connID := s.sessionVars.ConnectionID
+	s.sessionVars.RetryInfo.Retrying = true
+	if s.sessionVars.TxnCtx.ForUpdate {
+		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		return err
+	}
+
 	nh := GetHistory(s)
-	var err error
 	orgStartTS := s.GetSessionVars().TxnCtx.StartTS
 	for {
 		s.PrepareTxnCtx(ctx)
