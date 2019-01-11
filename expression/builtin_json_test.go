@@ -187,6 +187,39 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 			j2 := d.GetMysqlJSON()
 			cmp := json.CompareBinary(j1, j2)
 			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
+		case nil:
+			c.Assert(d.IsNull(), IsTrue)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONMergePreserve(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONMergePreserve]
+	tbl := []struct {
+		Input    []interface{}
+		Expected interface{}
+	}{
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{`{}`, `[]`}, `[{}]`},
+		{[]interface{}{`{}`, `[]`, `3`, `"4"`}, `[{}, 3, "4"]`},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+
+		switch x := t.Expected.(type) {
+		case string:
+			j1, err := json.ParseBinaryFromString(x)
+			c.Assert(err, IsNil)
+			j2 := d.GetMysqlJSON()
+			cmp := json.CompareBinary(j1, j2)
+			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
+		case nil:
+			c.Assert(d.IsNull(), IsTrue)
 		}
 	}
 }
