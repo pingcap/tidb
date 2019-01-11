@@ -789,6 +789,18 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 	return []PhysicalPlan{apply}
 }
 
+func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: p.ByItems, Enforced: true}
+	if !prop.IsPrefix(childProperty) {
+		return nil
+	}
+	window := PhysicalWindow{
+		WindowFuncDesc: p.WindowFuncDesc,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
+	window.SetSchema(p.Schema())
+	return []PhysicalPlan{window}
+}
+
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
 func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []PhysicalPlan {
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
