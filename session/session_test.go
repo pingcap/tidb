@@ -2457,6 +2457,17 @@ func (s *testSessionSuite) TestUpdatePrivilege(c *C) {
 	// In fact, the privlege check for t1 should be update, and for t2 should be select.
 	_, err = tk1.Exec("update t1,t2 set t1.id = t2.id;")
 	c.Assert(err, IsNil)
+
+	// Fix issue 8911
+	tk.MustExec("create database weperk")
+	tk.MustExec("use weperk")
+	tk.MustExec("create table tb_wehub_server (id int, active_count int, used_count int)")
+	tk.MustExec("create user 'weperk'")
+	tk.MustExec("grant all privileges on weperk.* to 'weperk'@'%'")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"},
+		[]byte(""), []byte("")), IsTrue)
+	tk1.MustExec("use weperk")
+	tk1.MustExec("update tb_wehub_server a set a.active_count=a.active_count+1,a.used_count=a.used_count+1 where id=1")
 }
 
 func (s *testSessionSuite) TestTxnGoString(c *C) {
