@@ -483,6 +483,51 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.Assert(err, NotNil)
 	})
 
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test mixed unenclosed and enclosed fields.
+	_, err = fp.WriteString(
+		"\"abc\",123\n" +
+			"def,456,\n" +
+			"hig,\"789\",")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("create table test (str varchar(10) default null, i int default null)")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
+		dbt.Assert(err1, IsNil)
+		var (
+			str string
+			id  int
+		)
+		rows := dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&str, &id)
+		dbt.Check(err, IsNil)
+		dbt.Check(str, DeepEquals, "abc")
+		dbt.Check(id, DeepEquals, 123)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&str, &id)
+		dbt.Check(str, DeepEquals, "def")
+		dbt.Check(id, DeepEquals, 456)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&str, &id)
+		dbt.Check(str, DeepEquals, "hig")
+		dbt.Check(id, DeepEquals, 789)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		dbt.mustExec("delete from test")
+	})
+
 	// unsupport ClientLocalFiles capability
 	server.capability ^= tmysql.ClientLocalFiles
 	runTestsOnNewDB(c, func(config *mysql.Config) {
