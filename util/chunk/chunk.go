@@ -542,8 +542,3 @@ func readTime(buf []byte) types.Time {
 		Fsp:  fsp,
 	}
 }
-
-// RemainedRows returns the number of rows needs to be appended in specific column.
-func (c *Chunk) RemainedRows(colIdx int) int {
-	return c.columns[0].length - c.columns[colIdx].length
-}
