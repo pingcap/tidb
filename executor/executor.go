@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -257,17 +258,33 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 
 	ddlJobs := ""
+	query := ""
 	l := len(e.ddlInfo.Jobs)
 	for i, job := range e.ddlInfo.Jobs {
 		ddlJobs += job.String()
+		query += job.Query
 		if i != l-1 {
 			ddlJobs += "\n"
+			query += "\n"
 		}
 	}
+
+	do := domain.GetDomain(e.ctx)
+	serverInfo, err := do.InfoSyncer().GetServerInfoByID(ctx, e.ddlOwnerID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	serverAddress := serverInfo.IP + ":" +
+		strconv.FormatUint(uint64(serverInfo.Port), 10)
+
 	req.AppendInt64(0, e.ddlInfo.SchemaVer)
 	req.AppendString(1, e.ddlOwnerID)
-	req.AppendString(2, ddlJobs)
-	req.AppendString(3, e.selfID)
+	req.AppendString(2, serverAddress)
+	req.AppendString(3, ddlJobs)
+	req.AppendString(4, e.selfID)
+	req.AppendString(5, query)
+
 	e.done = true
 	return nil
 }
