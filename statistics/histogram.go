@@ -468,10 +468,7 @@ func (hg *Histogram) betweenRowCount(a, b types.Datum) float64 {
 }
 
 func (hg *Histogram) totalRowCount() float64 {
-	if hg.Len() == 0 {
-		return float64(hg.NullCount)
-	}
-	return float64(hg.Buckets[hg.Len()-1].Count + hg.NullCount)
+	return hg.notNullCount() + float64(hg.NullCount)
 }
 
 func (hg *Histogram) notNullCount() float64 {
