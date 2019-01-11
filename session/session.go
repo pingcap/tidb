@@ -479,7 +479,7 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
+func (s *session) checkTxnAborted(stmt ast.Statement) error {
 	if s.txn.doNotCommit == nil {
 		return nil
 	}
@@ -512,7 +512,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	connID := s.sessionVars.ConnectionID
 	s.sessionVars.RetryInfo.Retrying = true
 	if s.sessionVars.TxnCtx.ForUpdate {
-		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		err = errors.Errorf("[%d] can not retry select for update statement", connID)
 		return err
 	}
 
