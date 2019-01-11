@@ -998,7 +998,7 @@ func (s *testSuite) TestHashJoin(c *C) {
 	c.Assert(innerExecInfo[len(innerExecInfo)-1:], LessEqual, "5")
 }
 
-func (s *testSuite2) TestJoinDifferentDecimals(c *C) {
+func (s *testSuite) TestJoinDifferentDecimals(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("Use test")
 	tk.MustExec("Drop table if exists t1")
