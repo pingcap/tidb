@@ -140,7 +140,7 @@ func parseSQL(sctx sessionctx.Context, parser *parser.Parser, sql string) ([]ast
 	return parser.Parse(sql, charset, collation)
 }
 
-func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) (error, bindRecord) {
+func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) (bindRecord, error) {
 	var value bindRecord
 	for i, f := range fs {
 		switch {
@@ -156,17 +156,17 @@ func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) (error, bindRecord
 			var err error
 			value.CreateTime = row.GetTime(i)
 			if err != nil {
-				return errors.Trace(err), value
+				return value, errors.Trace(err)
 			}
 		case f.ColumnAsName.L == "update_time":
 			var err error
 			value.UpdateTime = row.GetTime(i)
 			if err != nil {
-				return errors.Trace(err), value
+				return value, errors.Trace(err)
 			}
 		}
 	}
-	return nil, value
+	return value, nil
 }
 
 func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparser *parser.Parser) error {

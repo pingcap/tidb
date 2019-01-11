@@ -784,7 +784,7 @@ func (do *Domain) BindHandle() *infobind.Handle {
 	return do.bindHandle
 }
 
-// LoadBindLoop create a goroutine loads BindInfo in a loop, it should be called only once in BootstrapSession.
+// LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.bindHandle = infobind.NewHandle()
