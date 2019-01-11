@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -543,9 +544,9 @@ func closeDomainAndStorage() {
 
 func cleanup() {
 	if graceful {
-		svr.GracefulDown()
+		svr.GracefulDown(context.Background(), nil)
 	} else {
-		svr.KillAllConnections()
+		svr.TryGracefulDown()
 	}
 	closeDomainAndStorage()
 }
