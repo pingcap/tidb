@@ -187,6 +187,8 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 			j2 := d.GetMysqlJSON()
 			cmp := json.CompareBinary(j1, j2)
 			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
+		case nil:
+			c.Assert(d.IsNull(), IsTrue)
 		}
 	}
 }
@@ -216,6 +218,8 @@ func (s *testEvaluatorSuite) TestJSONMergePreserve(c *C) {
 			j2 := d.GetMysqlJSON()
 			cmp := json.CompareBinary(j1, j2)
 			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
+		case nil:
+			c.Assert(d.IsNull(), IsTrue)
 		}
 	}
 }
