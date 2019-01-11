@@ -187,4 +187,22 @@ var (
 			Help:      "Wait time of a get local latch.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 20),
 		})
+
+	// TiKVPendingBatchRequests indicates the number of requests pending in the batch channel.
+	TiKVPendingBatchRequests = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "pending_batch_requests",
+			Help:      "Pending batch requests",
+		})
+
+	TiKVBatchWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_wait_duration",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30),
+			Help:      "batch wait duration",
+		})
 )
