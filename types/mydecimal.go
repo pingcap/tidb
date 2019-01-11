@@ -234,6 +234,23 @@ func (d *MyDecimal) removeLeadingZeros() (wordIdx int, digitsInt int) {
 	return
 }
 
+func (d *MyDecimal) removeTrailingZeros() (lastWordIdx int, digitsFrac int) {
+	digitsFrac = int(d.digitsFrac)
+	i := ((digitsFrac - 1) % digitsPerWord) + 1
+	lastWordIdx = digitsToWords(int(d.digitsInt)) + digitsToWords(int(d.digitsFrac))
+	for digitsFrac > 0 && d.wordBuf[lastWordIdx-1] == 0 {
+		digitsFrac -= i
+		i = digitsPerWord
+		lastWordIdx--
+	}
+	if digitsFrac > 0 {
+		digitsFrac -= countTrailingZeroes(9-((digitsFrac-1)%digitsPerWord), d.wordBuf[lastWordIdx-1])
+	} else {
+		digitsFrac = 0
+	}
+	return
+}
+
 // ToString converts decimal to its printable string representation without rounding.
 //
 //  RETURN VALUE
@@ -1210,6 +1227,26 @@ func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 	}
 	bin[0] ^= 0x80
 	return bin, err
+}
+
+// ToHashKey removes the leading and trailing zeros and generates a hash key.
+// Two Decimals dec0 and dec1 with different fraction will generate the same hash keys if dec0.Compare(dec1) == 0.
+func (d *MyDecimal) ToHashKey() ([]byte, error) {
+	_, digitsInt := d.removeLeadingZeros()
+	_, digitsFrac := d.removeTrailingZeros()
+	prec := digitsInt + digitsFrac
+	if prec == 0 { // zeroDecimal
+		prec = 1
+	}
+	buf, err := d.ToBin(prec, digitsFrac)
+	if err == ErrTruncated {
+		// This err is caused by shorter digitsFrac;
+		// After removing the trailing zeros from a Decimal,
+		// so digitsFrac may be less than the real digitsFrac of the Decimal,
+		// thus ErrTruncated may be raised, we can ignore it here.
+		err = nil
+	}
+	return buf, err
 }
 
 // PrecisionAndFrac returns the internal precision and frac number.
