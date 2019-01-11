@@ -148,73 +148,100 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func checkGCForRestoreTable(w *worker, snapshotTS uint64) error {
-	gcEnable, err := checkGCEnable(w)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if gcEnable {
-		if err = disableGC(w); err != nil {
-			return errors.Errorf("disable gc failed, try again later. err: %v", err)
-		}
-	}
-	err = checkSafePoint(w, snapshotTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
+const (
+	restoreTableCheckFlagNone int64 = iota
+	restoreTableCheckFlagEnableGC
+	restoreTableCheckFlagDisableGC
+)
 
 func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
-	tbInfo := &model.TableInfo{}
-	var autoID, dropJobID int64
+	tblInfo := &model.TableInfo{}
+	var autoID, dropJobID, restoreTableCheckFlag int64
 	var snapshotTS uint64
-	var enableGCAfterRecover bool
-	if err = job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &enableGCAfterRecover); err != nil {
+	if err = job.DecodeArgs(tblInfo, &autoID, &dropJobID, &snapshotTS, &restoreTableCheckFlag); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	// check gc and safe point
-	err = checkGCForRestoreTable(w, snapshotTS)
+	gcEnable, err := checkGCEnable(w)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	err = checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
+	err = checkTableNotExists(t, job, schemaID, tblInfo.Name.L)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
+	// Restore table divide into 2 steps:
+	// 1. Check gc enable status, to decided whether enable gc after restore table.
+	// 2. Do restore table job.
+	//     1. Check whether gc enabled, if enabled, disable gc first.
+	//     2. Check gc safe point. If drop table time if after safe point time, then can do restore.
+	//        otherwise, can't restore table, because the records of the table may already delete by gc.
+	//     3. Remove gc task of the table from gc_delete_range table.
+	//     4. Create table and rebase table auto ID.
+	//     5. Finish.
+	switch tblInfo.State {
+	case model.StateNone:
+		// none -> write only
+		// check gc enable and update flag.
+		if gcEnable {
+			job.Args[len(job.Args)-1] = restoreTableCheckFlagEnableGC
+		} else {
+			job.Args[len(job.Args)-1] = restoreTableCheckFlagDisableGC
+		}
+
+		job.SchemaState = model.StateWriteOnly
+		tblInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, false)
+	case model.StateWriteOnly:
+		// write only -> public
+		// do restore table.
+		if gcEnable {
+			err = disableGC(w)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
+			}
+		}
+		// check gc safe point
+		err = checkSafePoint(w, snapshotTS)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// Remove dropped table DDL job from gc_delete_range table.
+		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tblInfo.ID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// gofail: var mockRestoreTableCommitErr bool
+		// if mockRestoreTableCommitErr && mockRestoreTableCommitErrOnce {
+		//	 mockRestoreTableCommitErrOnce = false
+		//	 kv.MockCommitErrorEnable()
+		// }
+
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	}
-
-	// Remove dropped table DDL job from gc_delete_range table.
-	err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tbInfo.ID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	tbInfo.State = model.StatePublic
-	tbInfo.UpdateTS = t.StartTS
-	err = t.CreateTableAndSetAutoID(schemaID, tbInfo, autoID)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	// gofail: var mockRestoreTableCommitErr bool
-	// if mockRestoreTableCommitErr && mockRestoreTableCommitErrOnce {
-	//	 mockRestoreTableCommitErrOnce = false
-	//	 kv.MockCommitErrorEnable()
-	// }
-
-	// Finish this job.
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, nil
 }
 

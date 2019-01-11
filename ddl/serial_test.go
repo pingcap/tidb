@@ -182,6 +182,11 @@ func (s *testSerialSuite) TestRestoreTableFail(c *C) {
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
 	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
 
+	// make sure enable gc after restore table.
+	enable, err := gcutil.CheckGCEnable(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(enable, Equals, true)
+
 	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
 	// check recover table autoID.

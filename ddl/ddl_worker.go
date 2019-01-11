@@ -297,14 +297,13 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 
 func finishRestoreTable(w *worker, t *meta.Meta, job *model.Job) error {
 	tbInfo := &model.TableInfo{}
-	var autoID, dropJobID int64
+	var autoID, dropJobID, restoreTableCheckFlag int64
 	var snapshotTS uint64
-	var enableGCAfterRecover bool
-	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &enableGCAfterRecover)
+	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &restoreTableCheckFlag)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if enableGCAfterRecover {
+	if restoreTableCheckFlag == restoreTableCheckFlagEnableGC {
 		err = enableGC(w)
 		if err != nil {
 			return errors.Trace(err)

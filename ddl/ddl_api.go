@@ -1023,13 +1023,14 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	return errors.Trace(err)
 }
 
-func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64, enableGCAfterRecover bool) (err error) {
+func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
+	tbInfo.State = model.StateNone
 	job := &model.Job{
 		SchemaID:   schemaID,
 		TableID:    tbInfo.ID,
 		Type:       model.ActionRestoreTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, enableGCAfterRecover},
+		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, restoreTableCheckFlagNone},
 	}
 	err = d.doDDLJob(ctx, job)
 	return errors.Trace(err)

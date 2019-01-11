@@ -2165,18 +2165,20 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	c.Assert(row.GetString(3), Equals, "drop table")
 	jobID := row.GetInt64(0)
 
-	// if gc enable is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_enable'")
-
-	err = gcutil.EnableGC(tk.Se)
-	c.Assert(err, IsNil)
-
 	// if gc safe point is not exists in mysql.tidb
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
+	// set gc safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	// if gc enable is not exists in mysql.tidb
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+
+	err = gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
 
 	// recover job is before gc safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
