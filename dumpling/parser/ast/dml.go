@@ -1037,7 +1037,90 @@ type InsertStmt struct {
 
 // Restore implements Node interface.
 func (n *InsertStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if n.IsReplace {
+		ctx.WriteKeyWord("REPLACE ")
+	} else {
+		ctx.WriteKeyWord("INSERT ")
+	}
+	switch n.Priority {
+	case mysql.LowPriority:
+		ctx.WriteKeyWord("LOW_PRIORITY ")
+	case mysql.HighPriority:
+		ctx.WriteKeyWord("HIGH_PRIORITY ")
+	case mysql.DelayedPriority:
+		ctx.WriteKeyWord("DELAYED ")
+	}
+	if n.IgnoreErr {
+		ctx.WriteKeyWord("IGNORE ")
+	}
+	ctx.WriteKeyWord("INTO ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore InsertStmt.Table")
+	}
+	if n.Columns != nil {
+		ctx.WritePlain(" (")
+		for i, v := range n.Columns {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore InsertStmt.Columns[%d]", i)
+			}
+		}
+		ctx.WritePlain(")")
+	}
+	if n.Lists != nil {
+		ctx.WriteKeyWord(" VALUES ")
+		for i, row := range n.Lists {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain("(")
+			for j, v := range row {
+				if j != 0 {
+					ctx.WritePlain(",")
+				}
+				if err := v.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore InsertStmt.Lists[%d][%d]", i, j)
+				}
+			}
+			ctx.WritePlain(")")
+		}
+	}
+	if n.Select != nil {
+		switch v := n.Select.(type) {
+		case *SelectStmt, *UnionStmt:
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore InsertStmt.Select")
+			}
+		default:
+			return errors.Errorf("Incorrect type for InsertStmt.Select: %T", v)
+		}
+	}
+	if n.Setlist != nil {
+		ctx.WriteKeyWord(" SET ")
+		for i, v := range n.Setlist {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore InsertStmt.Setlist[%d]", i)
+			}
+		}
+	}
+	if n.OnDuplicate != nil {
+		ctx.WriteKeyWord(" ON DUPLICATE KEY UPDATE ")
+		for i, v := range n.OnDuplicate {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore InsertStmt.OnDuplicate[%d]", i)
+			}
+		}
+	}
+
+	return nil
 }
 
 // Accept implements Node Accept interface.
