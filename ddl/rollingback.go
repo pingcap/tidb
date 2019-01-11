@@ -160,7 +160,7 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	return
 }
 
-func rollingbackDropTable(t *meta.Meta, job *model.Job) error {
+func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 	tblInfo, err := checkTableExist(t, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -190,6 +190,21 @@ func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
 	return nil
 }
 
+func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, from, _, err := checkRenameIndex(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Here rename index is done in a transaction, if the job is not completed, it can be canceled.
+	idx := schemautil.FindIndexByName(from.L, tblInfo.Indices)
+	if idx.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return ver, errors.Trace(err)
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -200,10 +215,12 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropIndex:
 		ver, err = rollingbackDropIndex(t, job)
-	case model.ActionDropTable:
-		err = rollingbackDropTable(t, job)
+	case model.ActionDropTable, model.ActionDropView:
+		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropSchema:
 		err = rollingbackDropSchema(t, job)
+	case model.ActionRenameIndex:
+		ver, err = rollingbackRenameIndex(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob

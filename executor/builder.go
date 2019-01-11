@@ -502,6 +502,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		Table:        v.Table,
 		Column:       v.Column,
 		User:         v.User,
+		IfNotExists:  v.IfNotExists,
 		Flag:         v.Flag,
 		Full:         v.Full,
 		GlobalScope:  v.GlobalScope,
@@ -915,6 +916,9 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	metrics.ExecutorCounter.WithLabelValues("HashJoinExec").Inc()
+	if e.ctx.GetSessionVars().EnableRadixJoin {
+		return &RadixHashJoinExec{HashJoinExec: e}
+	}
 	return e
 }
 
