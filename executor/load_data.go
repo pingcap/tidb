@@ -428,9 +428,8 @@ func (w *fieldWriter) GetField() (bool, field) {
 				if w.isTerminator() {
 					ret := w.outputField(true)
 					return false, ret
-				} else {
-					w.OutputBuf = append(w.OutputBuf, ch)
 				}
+				w.OutputBuf = append(w.OutputBuf, ch)
 			} else {
 				w.OutputBuf = append(w.OutputBuf, w.enclosedChar)
 				w.rollback()
