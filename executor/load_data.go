@@ -313,197 +313,172 @@ type field struct {
 	enclosed  bool
 }
 
-// getFieldsFromLine splits line according to fieldsInfo.
-func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
-	var (
-		// fields slice store fields which are not processed by escape()
-		fields []field
-		// ret slice store final results
-		ret []field
-		// buf is buffer to process field.str
-		buf []byte
-	)
+type fieldWriter struct {
+	pos           int
+	enclosedChar  byte
+	fieldTermChar byte
+	term          *string
+	isEnclosed    bool
+	isLineStart   bool
+	isFieldStart  bool
+	ReadBuf       *[]byte
+	OutputBuf     []byte
+}
 
-	// enclosed is flag to represent whether is start from a enclosed character
-	// start is flag to represent whether is start of word
-	enclosed, start := false, true
-	pos := 0
+func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf *[]byte, term *string) {
+	w.isEnclosed = false
+	w.isLineStart = true
+	w.isFieldStart = true
+	w.ReadBuf = readBuf
+	w.enclosedChar = enclosedChar
+	w.fieldTermChar = fieldTermChar
+	w.term = term
+}
 
-	enclosedChar := e.FieldsInfo.Enclosed
-	fieldTermChar := e.FieldsInfo.Terminated[0]
+func (w *fieldWriter) rollback() {
+	w.pos--
+}
 
-	if len(line) == 0 {
-		// If line is an empty string
-		ret = append(ret, field{[]byte(""), false, false})
-		return ret, nil
+func (w *fieldWriter) getChar() (bool, byte) {
+	if w.pos < len(*w.ReadBuf) {
+		ret := (*w.ReadBuf)[w.pos]
+		w.pos++
+		return true, ret
 	}
-	// getchar
-	ch := line[pos]
-	pos++
-	// start of line
-	if ch == enclosedChar {
-		// If started with enclosed char, set enclosed flag to true
-		enclosed = true
-		start = false
-		buf = append(buf, ch)
-	} else {
-		// Else roll back
-		pos--
-	}
-	for {
-		if pos == len(line) {
-			// If read the end of line
-			var fild []byte
-			for i := 0; i < len(buf); i++ {
-				fild = append(fild, buf[i])
-			}
-			if len(fild) == 0 {
-				fild = []byte("")
-			}
-			fields = append(fields, field{fild, false, false})
-			enclosed = false
-			// clear buffer
-			buf = buf[0:0]
+	return false, 0
+}
+
+func (w *fieldWriter) isTerminator() bool {
+	chkpt, isterm := w.pos, true
+	for i := 1; i < len(*w.term); i++ {
+		flag, ch := w.getChar()
+		if !flag || ch != (*w.term)[i] {
+			isterm = false
 			break
 		}
-		// getchar
-		ch = line[pos]
-		pos++
-		// If is at start of line and has enclosed char, set flag
-		if ch == enclosedChar && start {
-			start = false
-			enclosed = true
-			buf = append(buf, ch)
-			continue
-		} else if start {
-			start = false
+	}
+	if !isterm {
+		w.pos = chkpt
+		return false
+	}
+	return true
+}
+
+func (w *fieldWriter) outputField(enclosed bool) field {
+	var fild []byte
+	start := 0
+	if enclosed {
+		start = 1
+	}
+	for i := start; i < len(w.OutputBuf); i++ {
+		fild = append(fild, w.OutputBuf[i])
+	}
+	if len(fild) == 0 {
+		fild = []byte("")
+	}
+	w.OutputBuf = w.OutputBuf[0:0]
+	w.isEnclosed = false
+	w.isFieldStart = true
+	return field{fild, false, enclosed}
+}
+
+func (w *fieldWriter) GetField() (bool, field) {
+	// the bool return value implies whether is at the end of line.
+	if w.isLineStart {
+		_, ch := w.getChar()
+		if ch == w.enclosedChar {
+			w.isEnclosed = true
+			w.isFieldStart, w.isLineStart = false, false
+			w.OutputBuf = append(w.OutputBuf, ch)
+		} else {
+			w.rollback()
 		}
-		// In order to judge whether is at terminate of word, save current pos and char.
-		chkpt := pos
-		curChar := ch
-		if ch == fieldTermChar && !enclosed {
-			isTerm, i := true, 0
-			// judge whether is at the end of word.
-			for i = 1; i < len(e.FieldsInfo.Terminated); i++ {
-				if pos >= len(line) {
-					isTerm = false
-					break
-				}
-				ch = line[pos]
-				pos++
-				if ch != e.FieldsInfo.Terminated[i] {
-					isTerm = false
-					break
-				}
+	}
+	for {
+		flag, ch := w.getChar()
+		if !flag {
+			ret := w.outputField(false)
+			return true, ret
+		}
+		if ch == w.enclosedChar && w.isFieldStart {
+			// If read enclosed char at field start.
+			w.isEnclosed = true
+			w.OutputBuf = append(w.OutputBuf, ch)
+			w.isLineStart, w.isFieldStart = false, false
+			continue
+		}
+		w.isLineStart, w.isFieldStart = false, false
+		if ch == w.fieldTermChar && !w.isEnclosed {
+			// If read filed terminate char.
+			if w.isTerminator() {
+				ret := w.outputField(false)
+				return false, ret
 			}
-			if isTerm {
-				// If it is the end or word, save field and clear buffer.
-				var fild []byte
-				for i := 0; i < len(buf); i++ {
-					fild = append(fild, buf[i])
-				}
-				if len(fild) == 0 {
-					fild = []byte("")
-				}
-				fields = append(fields, field{fild, false, false})
-				buf = buf[0:0]
-				enclosed = false
-				start = true
+			w.OutputBuf = append(w.OutputBuf, ch)
+		} else if ch == w.enclosedChar && w.isEnclosed {
+			// If read enclosed char, look ahead.
+			flag, ch = w.getChar()
+			if !flag {
+				ret := w.outputField(true)
+				return true, ret
+			} else if ch == w.enclosedChar {
+				w.OutputBuf = append(w.OutputBuf, ch)
 				continue
-			}
-			// if not at the ned, roll back.
-			pos = chkpt
-			buf = append(buf, curChar)
-		} else if ch == enclosedChar && enclosed {
-			// If it is enclosed and has a enclosed char currently
-			if pos == len(line) {
-				// If reach the end of line
-				var fild []byte
-				for i := 1; i < len(buf); i++ {
-					fild = append(fild, buf[i])
-				}
-				if len(fild) == 0 {
-					fild = []byte("")
-				}
-				fields = append(fields, field{fild, false, true})
-				enclosed = false
-				start = true
-				buf = buf[0:0]
-				break
-			}
-			if pos < len(line) {
-				// getchar
-				ch = line[pos]
-				pos++
-			}
-			if ch == enclosedChar {
-				// Remove dupplicated
-				buf = append(buf, ch)
-				continue
-			}
-			if ch == fieldTermChar {
-				// If reach the end of field
-				chkpt := pos
-				curChar := ch
-				isTerm, i := true, 0
-				for i = 1; i < len(e.FieldsInfo.Terminated); i++ {
-					if pos >= len(line) {
-						isTerm = false
-						break
-					}
-					ch = line[pos]
-					pos++
-					if ch != e.FieldsInfo.Terminated[i] {
-						isTerm = false
-						break
-					}
-				}
-				if isTerm {
-					var fild []byte
-					for i := 1; i < len(buf); i++ {
-						fild = append(fild, buf[i])
-					}
-					if len(fild) == 0 {
-						fild = []byte("")
-					}
-					fields = append(fields, field{fild, false, true})
-					buf = buf[0:0]
-					enclosed = false
-					start = true
-					continue
-				}
-				// If not terminated, roll back
-				pos = chkpt
-				buf = append(buf, curChar)
-			}
-			// roll back
-			pos--
-		} else if ch == '\\' {
-			// deal with \"
-			buf = append(buf, ch)
-			if pos < len(line) {
-				ch = line[pos]
-				pos++
-				if ch == enclosedChar {
-					buf = append(buf, ch)
+			} else if ch == w.fieldTermChar {
+				if w.isTerminator() {
+					ret := w.outputField(true)
+					return false, ret
 				} else {
-					pos--
+					w.OutputBuf = append(w.OutputBuf, ch)
+				}
+			} else {
+				w.OutputBuf = append(w.OutputBuf, w.enclosedChar)
+				w.rollback()
+			}
+		} else if ch == '\\' {
+			// TODO: escape only support '\'
+			w.OutputBuf = append(w.OutputBuf, ch)
+			flag, ch = w.getChar()
+			if flag {
+				if ch == w.enclosedChar {
+					w.OutputBuf = append(w.OutputBuf, ch)
+				} else {
+					w.rollback()
 				}
 			}
 		} else {
-			// For regular character
-			buf = append(buf, ch)
+			w.OutputBuf = append(w.OutputBuf, ch)
 		}
 	}
-	for _, v := range fields {
-		f := v.escape()
+}
+
+// getFieldsFromLine splits line according to fieldsInfo.
+func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
+	var (
+		reader fieldWriter
+		fields []field
+	)
+
+	if len(line) == 0 {
+		str := []byte("")
+		fields = append(fields, field{str, false, false})
+		return fields, nil
+	}
+
+	reader.Init(e.FieldsInfo.Enclosed, e.FieldsInfo.Terminated[0], &line, &e.FieldsInfo.Terminated)
+	for {
+		eol, f := reader.GetField()
+		f = f.escape()
 		if string(f.str) == "NULL" && !f.enclosed {
 			f.str = []byte{'N'}
 			f.maybeNull = true
 		}
-		ret = append(ret, f)
+		fields = append(fields, f)
+		if eol {
+			break
+		}
 	}
-	return ret, nil
+	return fields, nil
 }
 
 // escape handles escape characters when running load data statement.
