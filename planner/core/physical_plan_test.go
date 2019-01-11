@@ -1410,6 +1410,6 @@ func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
 	c.Assert(core.ToString(p), Equals, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}")
 	warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 	lastWarn := warnings[len(warnings)-1]
-	err = core.ErrInternal.GenWithStack("TIDB_INLJ hint inapplicable for cartesian product")
+	err = core.ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
 	c.Assert(terror.ErrorEqual(err, lastWarn.Err), IsTrue)
 }

@@ -614,7 +614,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]Phys
 	leftOuter := (p.preferJoinType & preferRightAsIndexInner) > 0
 	if len(p.EqualConditions) == 0 {
 		if leftOuter || rightOuter {
-			warning := ErrInternal.GenWithStack("TIDB_INLJ hint inapplicable for cartesian product")
+			warning := ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
 			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 		return nil, false
