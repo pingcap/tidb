@@ -127,8 +127,8 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 		if newRows[i] != nil {
 			newHandle, err := e.addRecord(newRows[i], &table.AddRecordOpt{
 				CreateIdxOpt: table.CreateIdxOpt{
-					SkipHandleCheck: true,
-					SkipCheck:       true,
+					SkipHandleCheck:      true,
+					SkipUniqueIndexCheck: true,
 				},
 			})
 			if err != nil {

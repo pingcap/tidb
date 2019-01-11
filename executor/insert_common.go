@@ -564,8 +564,8 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 			// All the rows are checked, so it is safe to skip the constraint check when adding record.
 			_, err = addRecord(rows[i], &table.AddRecordOpt{
 				CreateIdxOpt: table.CreateIdxOpt{
-					SkipHandleCheck: true,
-					SkipCheck:       true,
+					SkipHandleCheck:      true,
+					SkipUniqueIndexCheck: true,
 				},
 			})
 			if err != nil {

@@ -203,7 +203,7 @@ func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedVa
 		opt = opts[0]
 	}
 	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
-	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck || opt.SkipCheck
+	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck || opt.SkipUniqueIndexCheck
 	key, distinct, err := c.GenIndexKey(ctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return 0, errors.Trace(err)
