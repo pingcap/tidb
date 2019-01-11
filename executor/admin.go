@@ -202,6 +202,11 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Errorf("Job %v type is %v, not drop table", job.ID, job.Type)
 	}
 
+	// check gc enable use to decide whether enable gc after restore table.
+	gcEnable, err := gcutil.CheckGCEnable(e.ctx)
+	if err != nil {
+		return err
+	}
 	// check gc safe point
 	err = gcutil.ValidateSnapshot(e.ctx, job.StartTS)
 	if err != nil {
@@ -230,11 +235,6 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	autoID, err := m.GetAutoTableID(job.SchemaID, job.TableID)
 	if err != nil {
 		return errors.Errorf("recover table_id: %d, get original autoID from snapshot meta err: %s", job.TableID, err.Error())
-	}
-	// check gc enable use to decide whether enable gc after restore table.
-	gcEnable, err := gcutil.CheckGCEnable(e.ctx)
-	if err != nil {
-		return err
 	}
 	// Call DDL RestoreTable
 	err = domain.GetDomain(e.ctx).DDL().RestoreTable(e.ctx, table.Meta(), job.SchemaID, autoID, job.ID, job.StartTS, gcEnable)
