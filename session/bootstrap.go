@@ -218,7 +218,7 @@ const (
 		status int(10) NOT NULL DEFAULT 1,
 		create_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
- 		UNIQUE KEY sql_db (original_sql, default_db)
+ 		UNIQUE KEY sql_db (original_sql, default_db) DEFAULT CHARSET=utf8
 	); `
 )
 
