@@ -92,7 +92,7 @@ func (h *HandleUpdater) loadDiff(sql string, bc *BindCache) error {
 		}
 		it := chunk.NewIterator4Chunk(chk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			err, record := decodeBindTableRow(row, fs)
+			record, err := decodeBindTableRow(row, fs)
 			if err != nil {
 				log.Errorf("row decode error %s", err)
 				continue
