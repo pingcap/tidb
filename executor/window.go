@@ -19,11 +19,11 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/executor/windowfuncs"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-// WindowExec is the executor for window functions.
+// WindowExec is the executor for window functions. Note that it only supports aggregation without frame clause now.
 type WindowExec struct {
 	baseExecutor
 
@@ -32,10 +32,12 @@ type WindowExec struct {
 	inputRow      chunk.Row
 	groupRows     []chunk.Row
 	childResults  []*chunk.Chunk
-	windowFunc    windowfuncs.WindowFunc
-	partialResult windowfuncs.PartialResult
+	windowFunc    aggfuncs.AggFunc
+	partialResult aggfuncs.PartialResult
+	resultColIdx  int
 	executed      bool
 	meetNewGroup  bool
+	remainingRows int64
 }
 
 // Close implements the Executor Close interface.
@@ -55,13 +57,13 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
-	if e.meetNewGroup && e.windowFunc.HasRemainingResults() {
+	if e.meetNewGroup && e.remainingRows > 0 {
 		err := e.appendResult2Chunk(chk)
 		if err != nil {
 			return err
 		}
 	}
-	for !e.executed && (chk.NumRows() == 0 || chk.RemainedRows(chk.NumCols()-1) > 0) {
+	for !e.executed && (chk.NumRows() == 0 || chk.RemainedRows(e.resultColIdx) > 0) {
 		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {
 			e.executed = true
@@ -104,10 +106,13 @@ func (e *WindowExec) consumeGroupRows(chk *chunk.Chunk) error {
 	if len(e.groupRows) == 0 {
 		return nil
 	}
-	e.copyChk(chk)
-	var err error
-	e.groupRows, err = e.windowFunc.ProcessOneChunk(e.ctx, e.groupRows, chk, e.partialResult)
-	return err
+	err := e.windowFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResult)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.remainingRows += int64(len(e.groupRows))
+	e.groupRows = e.groupRows[:0]
+	return nil
 }
 
 func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk) (err error) {
@@ -142,9 +147,18 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk
 // appendResult2Chunk appends result of the window function to the result chunk.
 func (e *WindowExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	e.copyChk(chk)
-	var err error
-	e.groupRows, err = e.windowFunc.ExhaustResult(e.ctx, e.groupRows, chk, e.partialResult)
-	return err
+	for e.remainingRows > 0 && chk.RemainedRows(e.resultColIdx) > 0 {
+		// TODO: We can extend the agg func interface to avoid the `for` loop  here.
+		err := e.windowFunc.AppendFinalResult2Chunk(e.ctx, e.partialResult, chk)
+		if err != nil {
+			return err
+		}
+		e.remainingRows--
+	}
+	if e.remainingRows == 0 {
+		e.windowFunc.ResetPartialResult(e.partialResult)
+	}
+	return nil
 }
 
 func (e *WindowExec) copyChk(chk *chunk.Chunk) {

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/executor/windowfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -1888,14 +1887,17 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	for _, item := range v.PartitionBy {
 		groupByItems = append(groupByItems, item.Col)
 	}
-	windowFunc, err := windowfuncs.Build(b.ctx, v.WindowFuncDesc, len(v.Schema().Columns)-1)
-	if err != nil {
-		b.err = err
+	aggDesc := aggregation.NewAggFuncDesc(b.ctx, v.WindowFuncDesc.Name, v.WindowFuncDesc.Args, false)
+	resultColIdx := len(v.Schema().Columns) - 1
+	agg := aggfuncs.Build(b.ctx, aggDesc, resultColIdx)
+	if agg == nil {
+		b.err = errors.Trace(errors.New("window evaluator only support aggregation functions without frame now"))
 		return nil
 	}
 	e := &WindowExec{baseExecutor: base,
-		windowFunc:    windowFunc,
-		partialResult: windowFunc.AllocPartialResult(),
+		windowFunc:    agg,
+		partialResult: agg.AllocPartialResult(),
+		resultColIdx:  resultColIdx,
 		groupChecker:  newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
 	}
 	return e
