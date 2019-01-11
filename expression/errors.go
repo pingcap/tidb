@@ -72,7 +72,7 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateOrDeleteStmt) {
+	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
 		return err
 	}
 	sc.AppendWarning(err)
@@ -82,7 +82,7 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 // handleDivisionByZeroError reports error or warning depend on the context.
 func handleDivisionByZeroError(ctx sessionctx.Context) error {
 	sc := ctx.GetSessionVars().StmtCtx
-	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
+	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
 		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
 			return nil
 		}

@@ -53,13 +53,13 @@ type CommitDetails struct {
 func (d ExecDetails) String() string {
 	parts := make([]string, 0, 6)
 	if d.ProcessTime > 0 {
-		parts = append(parts, fmt.Sprintf("process_time:%v", d.ProcessTime))
+		parts = append(parts, fmt.Sprintf("process_time:%vs", d.ProcessTime.Seconds()))
 	}
 	if d.WaitTime > 0 {
-		parts = append(parts, fmt.Sprintf("wait_time:%v", d.WaitTime))
+		parts = append(parts, fmt.Sprintf("wait_time:%vs", d.WaitTime.Seconds()))
 	}
 	if d.BackoffTime > 0 {
-		parts = append(parts, fmt.Sprintf("backoff_time:%v", d.BackoffTime))
+		parts = append(parts, fmt.Sprintf("backoff_time:%vs", d.BackoffTime.Seconds()))
 	}
 	if d.RequestCount > 0 {
 		parts = append(parts, fmt.Sprintf("request_count:%d", d.RequestCount))
@@ -73,23 +73,23 @@ func (d ExecDetails) String() string {
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
 		if commitDetails.PrewriteTime > 0 {
-			parts = append(parts, fmt.Sprintf("prewrite_time:%v", commitDetails.PrewriteTime))
+			parts = append(parts, fmt.Sprintf("prewrite_time:%vs", commitDetails.PrewriteTime.Seconds()))
 		}
 		if commitDetails.CommitTime > 0 {
-			parts = append(parts, fmt.Sprintf("commit_time:%v", commitDetails.CommitTime))
+			parts = append(parts, fmt.Sprintf("commit_time:%vs", commitDetails.CommitTime.Seconds()))
 		}
 		if commitDetails.GetCommitTsTime > 0 {
-			parts = append(parts, fmt.Sprintf("get_commit_ts_time:%v", commitDetails.GetCommitTsTime))
+			parts = append(parts, fmt.Sprintf("get_commit_ts_time:%vs", commitDetails.GetCommitTsTime.Seconds()))
 		}
 		if commitDetails.TotalBackoffTime > 0 {
-			parts = append(parts, fmt.Sprintf("total_backoff_time:%v", commitDetails.TotalBackoffTime))
+			parts = append(parts, fmt.Sprintf("total_backoff_time:%vs", commitDetails.TotalBackoffTime.Seconds()))
 		}
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
 		if resolveLockTime > 0 {
-			parts = append(parts, fmt.Sprintf("resolve_lock_time:%d", time.Duration(resolveLockTime)))
+			parts = append(parts, fmt.Sprintf("resolve_lock_time:%vs", time.Duration(resolveLockTime).Seconds()))
 		}
 		if commitDetails.LocalLatchTime > 0 {
-			parts = append(parts, fmt.Sprintf("local_latch_wait_time:%v", commitDetails.LocalLatchTime))
+			parts = append(parts, fmt.Sprintf("local_latch_wait_time:%vs", commitDetails.LocalLatchTime.Seconds()))
 		}
 		if commitDetails.WriteKeys > 0 {
 			parts = append(parts, fmt.Sprintf("write_keys:%d", commitDetails.WriteKeys))
