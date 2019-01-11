@@ -325,7 +325,7 @@ func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Errorf("Job %v type is %v, not drop table", job.ID, job.Type)
 	}
 
-	// check gc safe point
+	// Check gc safe point for getting snapshot infoSchema.
 	err = gcutil.ValidateSnapshot(e.ctx, job.StartTS)
 	if err != nil {
 		return errors.Trace(err)
