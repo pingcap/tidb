@@ -396,12 +396,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[QUERY] %vcost_time:%vs %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime.Seconds(), execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
 		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[SLOW_QUERY] %vcost_time:%vs %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime.Seconds(), execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
