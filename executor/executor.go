@@ -1277,7 +1277,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.AllowInvalidDate = vars.SQLMode&mysql.ModeAllowInvalidDates != 0
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.DeleteStmt:
@@ -1286,7 +1286,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.AllowInvalidDate = vars.SQLMode&mysql.ModeAllowInvalidDates != 0
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
@@ -1295,7 +1295,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.AllowInvalidDate = vars.SQLMode&mysql.ModeAllowInvalidDates != 0
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
@@ -1317,7 +1317,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// Return warning for truncate error in selection.
 		sc.TruncateAsWarning = true
 		sc.IgnoreZeroInDate = true
-		sc.AllowInvalidDate = vars.SQLMode&mysql.ModeAllowInvalidDates != 0
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		if opts := stmt.SelectStmtOpts; opts != nil {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
@@ -1326,7 +1326,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.ShowStmt:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
-		sc.AllowInvalidDate = vars.SQLMode&mysql.ModeAllowInvalidDates != 0
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
@@ -1334,7 +1334,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	default:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
-		sc.AllowInvalidDate = vars.SQLMode&mysql.ModeAllowInvalidDates != 0
+		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
 	vars.PreparedParams = vars.PreparedParams[:0]
 	if !vars.InRestrictedSQL {
