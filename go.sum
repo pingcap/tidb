@@ -22,6 +22,8 @@ github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142 h1:3jFq2xL4ZajGK
 github.com/coreos/go-systemd v0.0.0-20181031085051-9002847aa142/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f h1:lBNOc5arjvs8E5mO2tbpBpLoyyu8B6e44T7hJy6potg=
 github.com/coreos/pkg v0.0.0-20180928190104-399ea9e2e55f/go.mod h1:E3G3o1h8I7cfcXa63jLwjI0eiQQMgzzUDFVpN/nH/eA=
+github.com/crazycs520/parser v0.0.0-20190112125519-01bbcdca7f4f h1:jWMAlv+kw3dIB02ubt2HS/jHfptOwWyKLhBjvsGCjLY=
+github.com/crazycs520/parser v0.0.0-20190112125519-01bbcdca7f4f/go.mod h1:xLjI+gnWYexq011WPMEvCNS8rFM9qe1vdojIEzSKPuc=
 github.com/cznic/mathutil v0.0.0-20181021201202-eba54fb065b7 h1:y+DH9ARrWiiNBV+6waYP2IPcsRbxdU1qsnycPfShF4c=
 github.com/cznic/mathutil v0.0.0-20181021201202-eba54fb065b7/go.mod h1:e6NPNENfs9mPDVNRekM7lKScauxd5kXTr1Mfyig6TDM=
 github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65 h1:hxuZop6tSoOi0sxFzoGGYdRqNrPubyaIf9KoBG9tPiE=

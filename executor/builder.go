@@ -341,6 +341,8 @@ func (b *executorBuilder) buildRestoreTable(v *plannercore.RestoreTable) Executo
 	e := &RestoreTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		jobID:        v.JobID,
+		Table:        v.Table,
+		JobNum:       v.JobNum,
 	}
 	return e
 }

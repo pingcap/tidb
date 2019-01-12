@@ -2130,113 +2130,6 @@ LOOP:
 	s.mustExec(c, "drop table t1")
 }
 
-func (s *testDBSuite) TestRestoreTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_restore")
-	tk.MustExec("use test_restore")
-	tk.MustExec("create table t_recover (a int);")
-	defer func(originGC bool) {
-		if originGC {
-			ddl.EmulatorGCEnable()
-		} else {
-			ddl.EmulatorGCDisable()
-		}
-	}(ddl.IsEmulatorGCEnable())
-
-	// disable emulator GC.
-	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
-	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-
-	tk.MustExec("insert into t_recover values (1),(2),(3)")
-	tk.MustExec("drop table t_recover")
-
-	rs, err := tk.Exec("admin show ddl jobs")
-	c.Assert(err, IsNil)
-	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
-	row := rows[0]
-	c.Assert(row.GetString(1), Equals, "test_restore")
-	c.Assert(row.GetString(3), Equals, "drop table")
-	jobID := row.GetInt64(0)
-
-	// if gc safe point is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
-	// set gc safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-
-	// if gc enable is not exists in mysql.tidb
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
-
-	err = gcutil.EnableGC(tk.Se)
-	c.Assert(err, IsNil)
-
-	// recover job is before gc safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, variable.ErrSnapshotTooOld.GenWithStackByArgs(timeAfterDrop).Error())
-
-	// set gc safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-	// if there is a new table with the same name, should return failed.
-	tk.MustExec("create table t_recover (a int);")
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
-	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
-
-	// drop the new table with the same name, then restore table.
-	tk.MustExec("drop table t_recover")
-
-	// do restore table.
-	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
-
-	// check recover table meta and data record.
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
-	// check recover table autoID.
-	tk.MustExec("insert into t_recover values (4),(5),(6)")
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
-
-	// restore table by none exits job.
-	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
-	c.Assert(err, NotNil)
-
-	// Disable gc by manual first, then after recover table, the gc enable status should also be disabled.
-	err = gcutil.DisableGC(tk.Se)
-	c.Assert(err, IsNil)
-
-	tk.MustExec("delete from t_recover where a > 1")
-	tk.MustExec("drop table t_recover")
-	rs, err = tk.Exec("admin show ddl jobs")
-	c.Assert(err, IsNil)
-	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
-	row = rows[0]
-	c.Assert(row.GetString(1), Equals, "test_restore")
-	c.Assert(row.GetString(3), Equals, "drop table")
-	jobID = row.GetInt64(0)
-
-	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
-
-	// check recover table meta and data record.
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
-	// check recover table autoID.
-	tk.MustExec("insert into t_recover values (7),(8),(9)")
-	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
-
-	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
-	c.Assert(err, IsNil)
-	c.Assert(gcEnable, Equals, false)
-}
-
 func (s *testDBSuite) TestTransactionOnAddDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
@@ -2406,4 +2299,207 @@ func (s *testDBSuite) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	re.Check(testkit.Rows("1 2"))
 	s.tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
+}
+
+func (s *testDBSuite) TestRestoreTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_restore")
+	tk.MustExec("use test_restore")
+	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("create table t_recover (a int);")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// clear gc variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+
+	tk.MustExec("insert into t_recover values (1),(2),(3)")
+	tk.MustExec("drop table t_recover")
+
+	rs, err := tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	row := rows[0]
+	c.Assert(row.GetString(1), Equals, "test_restore")
+	c.Assert(row.GetString(3), Equals, "drop table")
+	jobID := row.GetInt64(0)
+
+	// if gc safe point is not exists in mysql.tidb
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
+	// set gc safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	// if gc enable is not exists in mysql.tidb
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+
+	err = gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	// recover job is before gc safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, variable.ErrSnapshotTooOld.GenWithStackByArgs(timeAfterDrop).Error())
+
+	// set gc safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// if there is a new table with the same name, should return failed.
+	tk.MustExec("create table t_recover (a int);")
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
+	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
+
+	// drop the new table with the same name, then restore table.
+	tk.MustExec("drop table t_recover")
+
+	// do restore table.
+	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
+
+	// check recover table meta and data record.
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	// check recover table autoID.
+	tk.MustExec("insert into t_recover values (4),(5),(6)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+
+	// restore table by none exits job.
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
+	c.Assert(err, NotNil)
+
+	// Disable gc by manual first, then after recover table, the gc enable status should also be disabled.
+	err = gcutil.DisableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("delete from t_recover where a > 1")
+	tk.MustExec("drop table t_recover")
+	rs, err = tk.Exec("admin show ddl jobs")
+	c.Assert(err, IsNil)
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, IsNil)
+	row = rows[0]
+	c.Assert(row.GetString(1), Equals, "test_restore")
+	c.Assert(row.GetString(3), Equals, "drop table")
+	jobID = row.GetInt64(0)
+
+	tk.MustExec(fmt.Sprintf("admin restore table by job %d", jobID))
+
+	// check recover table meta and data record.
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
+	// check recover table autoID.
+	tk.MustExec("insert into t_recover values (7),(8),(9)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(gcEnable, Equals, false)
+}
+
+func (s *testDBSuite) TestRestoreTableByTableName(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_restore")
+	tk.MustExec("use test_restore")
+	tk.MustExec("drop table if exists t_recover, t_recover2")
+	tk.MustExec("create table t_recover (a int);")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - time.Duration(48*60*60*time.Second)).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(time.Duration(48 * 60 * 60 * time.Second)).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// clear gc variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+
+	tk.MustExec("insert into t_recover values (1),(2),(3)")
+	tk.MustExec("drop table t_recover")
+
+	// if gc safe point is not exists in mysql.tidb
+	_, err := tk.Exec("admin restore table t_recover")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
+	// set gc safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	// if gc enable is not exists in mysql.tidb
+	_, err = tk.Exec("admin restore table t_recover")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+
+	err = gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	// recover job is before gc safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
+	_, err = tk.Exec("admin restore table t_recover")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, variable.ErrSnapshotTooOld.GenWithStackByArgs(timeAfterDrop).Error())
+
+	// set gc safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// if there is a new table with the same name, should return failed.
+	tk.MustExec("create table t_recover (a int);")
+	_, err = tk.Exec("admin restore table t_recover")
+	c.Assert(err.Error(), Equals, infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
+
+	// drop the new table with the same name, then restore table.
+	tk.MustExec("rename table t_recover to t_recover2")
+
+	// do restore table.
+	tk.MustExec("admin restore table t_recover")
+
+	// check recover table meta and data record.
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	// check recover table autoID.
+	tk.MustExec("insert into t_recover values (4),(5),(6)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+
+	// restore table by none exits job.
+	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
+	c.Assert(err, NotNil)
+
+	// Disable gc by manual first, then after recover table, the gc enable status should also be disabled.
+	err = gcutil.DisableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("delete from t_recover where a > 1")
+	tk.MustExec("drop table t_recover")
+
+	tk.MustExec("admin restore table t_recover")
+
+	// check recover table meta and data record.
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
+	// check recover table autoID.
+	tk.MustExec("insert into t_recover values (7),(8),(9)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(gcEnable, Equals, false)
 }

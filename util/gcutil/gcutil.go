@@ -57,22 +57,48 @@ func EnableGC(ctx sessionctx.Context) error {
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
 func ValidateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
-	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	safePointString, err := GetGCSafePoint(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(rows) != 1 {
-		return errors.New("can not get 'tikv_gc_safe_point'")
-	}
-	safePointString := rows[0].GetString(0)
 	safePointTime, err := util.CompatibleParseGCTime(safePointString)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	safePointTS := variable.GoTimeToTS(safePointTime)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if safePointTS > snapshotTS {
 		return variable.ErrSnapshotTooOld.GenWithStackByArgs(safePointString)
 	}
 	return nil
+}
+
+// ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
+func ValidateSnapshotWithGCSafePoint(snapshotTS uint64, safePointString string) error {
+	safePointTime, err := util.CompatibleParseGCTime(safePointString)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	gcSafePointTS := variable.GoTimeToTS(safePointTime)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if gcSafePointTS > snapshotTS {
+		return variable.ErrSnapshotTooOld.GenWithStackByArgs(safePointString)
+	}
+	return nil
+}
+
+func GetGCSafePoint(ctx sessionctx.Context) (string, error) {
+	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if len(rows) != 1 {
+		return "", errors.New("can not get 'tikv_gc_safe_point'")
+	}
+	return rows[0].GetString(0), nil
 }
