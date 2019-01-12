@@ -165,9 +165,13 @@ func (c *batchCommandsClient) batchRecvLoop() {
 
 		responses := resp.GetResponses()
 		for i, requestID := range resp.GetRequestIds() {
-			value, _ := c.batched.Load(requestID)
-			entry, _ := value.(*batchCommandsEntry)
+			value, ok := c.batched.Load(requestID)
+			if !ok {
+				panic("batchRecvLoop receives a unknown response")
+			}
+			entry := value.(*batchCommandsEntry)
 			if atomic.LoadInt32(&entry.canceled) == 0 {
+				// Put the response only if the request is not canceled.
 				entry.res <- responses[i]
 			}
 			c.batched.Delete(requestID)
@@ -436,7 +440,6 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		if err != nil {
 			log.Errorf("batch commands send error: %v", err)
 			batchCommandsClient.failPendingRequests(err)
-			continue
 		}
 	}
 }
