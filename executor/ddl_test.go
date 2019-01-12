@@ -182,7 +182,7 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create view v1 (c,d) as select a,b from t1")
 	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
-	tk.MustExec("create if not exists table t1 (a int ,b int)")
+	tk.MustExec("create table if not exists t1 (a int ,b int)")
 	_, err = tk.Exec("create or replace view t1 as select * from t1")
 	c.Assert(err.Error(), Equals, ddl.ErrTableIsNotView.GenWithStackByArgs("test", "v1").Error())
 }
