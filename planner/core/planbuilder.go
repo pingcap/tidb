@@ -137,6 +137,8 @@ type PlanBuilder struct {
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
+
+	windowSpecs map[string]ast.WindowSpec
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
