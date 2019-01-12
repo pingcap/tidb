@@ -101,26 +101,15 @@ type batchCommandsClient struct {
 	batched                sync.Map
 	idAlloc                uint64
 	tikvTransportLayerLoad *uint64
-	closed                 chan struct{}
 
+	// Indicates the batch client is closed explicitly or not.
+	closed int32
 	// Protect client when re-create the streaming.
 	clientLock sync.Mutex
 }
 
-func (c *batchCommandsClient) stop() {
-	select {
-	case c.closed <- struct{}{}:
-	default:
-	}
-}
-
-func (c *batchCommandsClient) stopped() bool {
-	select {
-	case <-c.closed:
-		return true
-	default:
-		return false
-	}
+func (c *batchCommandsClient) isStopped() bool {
+	return atomic.LoadInt32(&c.closed) != 0
 }
 
 func (c *batchCommandsClient) failPendingRequests(err error) {
@@ -139,11 +128,12 @@ func (c *batchCommandsClient) batchRecvLoop() {
 		// When `conn.Close()` is called, `client.Recv()` will returns an error.
 		resp, err := c.client.Recv()
 		if err != nil {
-			if c.stopped() {
+			if c.isStopped() {
 				return
 			}
 			log.Errorf("batchRecvLoop error when receive: %v", err)
 
+			// Hold the lock to forbid batchSendLoop useing the old client.
 			c.clientLock.Lock()
 			c.failPendingRequests(err) // fail all pending requests.
 			for {                      // try to re-create the streaming in the loop.
@@ -267,7 +257,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				batched:                sync.Map{},
 				idAlloc:                0,
 				tikvTransportLayerLoad: &a.tikvTransportLayerLoad,
-				closed:                 make(chan struct{}, 1),
+				closed:                 0,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 			go batchClient.batchRecvLoop()
@@ -289,7 +279,8 @@ func (a *connArray) Get() *grpc.ClientConn {
 func (a *connArray) Close() {
 	// Close all batchRecvLoop.
 	for _, c := range a.batchCommandsClients {
-		c.stop()
+		// After connections are closed, `batchRecvLoop`s will check the flag.
+		atomic.StoreInt32(&c.closed, 1)
 	}
 	close(a.batchCommandsCh)
 
