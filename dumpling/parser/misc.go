@@ -533,6 +533,8 @@ var tokenMap = map[string]int{
 	"YEAR":                     yearType,
 	"YEAR_MONTH":               yearMonth,
 	"ZEROFILL":                 zerofill,
+	"BINDING":                  binding,
+	"BINDINGS":                 bindings,
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details

@@ -423,6 +423,8 @@ import (
 	value		"VALUE"
 	variables	"VARIABLES"
 	view		"VIEW"
+	binding		"BINDING"
+	bindings	"BINDINGS"
 	warnings	"WARNINGS"
 	identSQLErrors	"ERRORS"
 	week		"WEEK"
@@ -573,6 +575,7 @@ import (
 	CreateUserStmt			"CREATE User statement"
 	CreateDatabaseStmt		"Create Database Statement"
 	CreateIndexStmt			"CREATE INDEX statement"
+	CreateBindingStmt		"CREATE BINDING  statement"
 	DoStmt				"Do statement"
 	DropDatabaseStmt		"DROP DATABASE statement"
 	DropIndexStmt			"DROP INDEX statement"
@@ -580,6 +583,7 @@ import (
 	DropTableStmt			"DROP TABLE statement"
 	DropUserStmt			"DROP USER"
 	DropViewStmt			"DROP VIEW statement"
+	DropBindingStmt		    	"DROP BINDING  statement"
 	DeallocateStmt			"Deallocate prepared statement"
 	DeleteFromStmt			"DELETE FROM statement"
 	EmptyStmt			"empty statement"
@@ -1084,7 +1088,7 @@ AlterTableSpec:
 			Tp: ast.AlterTableDropPartition,
 			Name: $3,
 		}
-	}	
+	}
 |	"TRUNCATE" "PARTITION" Identifier
 	{
 		$$ = &ast.AlterTableSpec{
@@ -2988,7 +2992,7 @@ UnReservedKeyword:
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MASTER" | "MAX_ROWS"
 | "MIN_ROWS" | "NATIONAL" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "RESPECT" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
-| "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
+| "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "BINDING" | "BINDINGS" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "NULLS" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
 | "MICROSECOND" | "MINUTE" | "PLUGINS" | "PRECEDING" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "SLOW" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED" | "RECOVER"
@@ -6102,6 +6106,13 @@ ShowTargetFilterable:
 			GlobalScope: $1.(bool),
 		}
 	}
+|	GlobalScope "BINDINGS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBindings,
+			GlobalScope: $1.(bool),
+		}
+	}
 |	"COLLATION"
 	{
 		$$ = &ast.ShowStmt{
@@ -6277,6 +6288,7 @@ Statement:
 |	CreateTableStmt
 |	CreateViewStmt
 |	CreateUserStmt
+|	CreateBindingStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
@@ -6284,6 +6296,7 @@ Statement:
 |	DropViewStmt
 |	DropUserStmt
 |	DropStatsStmt
+|	DropBindingStmt
 |	FlushStmt
 |	GrantStmt
 |	InsertIntoStmt
@@ -7283,6 +7296,55 @@ HashString:
 	stringLit
 	{
 		$$ = $1
+	}
+
+/*******************************************************************
+ *
+ *  Create Binding Statement
+ *
+ *  Example:
+ *      CREATE GLOBAL BINDING FOR select Col1,Col2 from table USING select Col1,Col2 from table use index(Col1)
+ *******************************************************************/
+CreateBindingStmt:
+	"CREATE" GlobalScope "BINDING" "FOR" SelectStmt "USING" SelectStmt
+    	{
+		startOffset := parser.startOffset(&yyS[yypt-2])
+        	endOffset := parser.startOffset(&yyS[yypt-1])
+        	selStmt := $5.(*ast.SelectStmt)
+        	selStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+
+		startOffset = parser.startOffset(&yyS[yypt])
+		hintedSelStmt := $7.(*ast.SelectStmt)
+		hintedSelStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.CreateBindingStmt {
+			OriginSel:  selStmt,
+			HintedSel:  hintedSelStmt,
+			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
+	}
+/*******************************************************************
+ *
+ *  Drop Binding Statement
+ *
+ *  Example:
+ *      DROP GLOBAL BINDING FOR select Col1,Col2 from table
+ *******************************************************************/
+DropBindingStmt:
+	"DROP" GlobalScope "BINDING" "FOR" SelectStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		selStmt := $5.(*ast.SelectStmt)
+		selStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.DropBindingStmt {
+			OriginSel:  selStmt,
+			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
 	}
 
 /*************************************************************************************
