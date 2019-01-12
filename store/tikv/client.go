@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	tidbutil "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	gcodes "google.golang.org/grpc/codes"
@@ -124,6 +125,14 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 }
 
 func (c *batchCommandsClient) batchRecvLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := tidbutil.GetStack()
+			log.Errorf("batchRecvLoop %v %s", r, buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
+		}
+	}()
+
 	for {
 		// When `conn.Close()` is called, `client.Recv()` will returns an error.
 		resp, err := c.client.Recv()
@@ -384,6 +393,14 @@ Loop1:
 }
 
 func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := tidbutil.GetStack()
+			log.Errorf("gcWorker %v %s", r, buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
+		}
+	}()
+
 	entries := make([]*batchCommandsEntry, 0, cfg.MaxBatchSize)
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, 0, cfg.MaxBatchSize)
 	requestIDs := make([]uint64, 0, cfg.MaxBatchSize)
