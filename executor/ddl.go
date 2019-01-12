@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
@@ -386,6 +387,14 @@ func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.D
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	schemaName := e.Table.Schema.L
+	if schemaName == "" {
+		schemaName = e.ctx.GetSessionVars().CurrentDB
+	}
+	if schemaName == "" {
+		return nil, nil, errors.Trace(core.ErrNoDB)
+	}
+	// TODO: only search recent `e.JobNum` ddl jobs.
 	for i := len(jobs) - 1; i > 0; i-- {
 		job = jobs[i]
 		if job.Type != model.ActionDropTable {
@@ -410,8 +419,16 @@ func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.D
 			)
 		}
 		if table.Meta().Name == e.Table.Name {
-			tblInfo = table.Meta()
-			break
+			schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
+			if !ok {
+				return nil, nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
+					fmt.Sprintf("(Schema ID %d)", job.SchemaID),
+				))
+			}
+			if schema.Name.L == schemaName {
+				tblInfo = table.Meta()
+				break
+			}
 		}
 	}
 	if tblInfo == nil {
