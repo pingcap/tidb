@@ -166,6 +166,9 @@ func (c *batchCommandsClient) batchRecvLoop() {
 		for i, requestID := range resp.GetRequestIds() {
 			value, ok := c.batched.Load(requestID)
 			if !ok {
+				// There shouldn't be any unknown responses because if the old entries
+				// are cleaned by `failPendingRequests`, the stream must be re-created
+				// so that old responses will be never received.
 				panic("batchRecvLoop receives a unknown response")
 			}
 			entry := value.(*batchCommandsEntry)
@@ -433,7 +436,6 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		for i := 0; i < length; i++ {
 			requestID := uint64(i) + maxBatchID - uint64(length)
 			requestIDs = append(requestIDs, requestID)
-			batchCommandsClient.batched.Store(requestID, entries[i])
 		}
 
 		request := &tikvpb.BatchCommandsRequest{
@@ -441,8 +443,12 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			RequestIds: requestIDs,
 		}
 
-		// Use the lock to protect the stream client won't be replaced by RecvLoop.
+		// Use the lock to protect the stream client won't be replaced by RecvLoop,
+		// and new added request won't be removed by `failPendingRequests`.
 		batchCommandsClient.clientLock.Lock()
+		for i, requestID := range request.RequestIds {
+			batchCommandsClient.batched.Store(requestID, entries[i])
+		}
 		err := batchCommandsClient.client.Send(request)
 		batchCommandsClient.clientLock.Unlock()
 		if err != nil {
