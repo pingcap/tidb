@@ -514,23 +514,42 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) retry(ctx context.Context, maxCnt uint) error {
-	connID := s.sessionVars.ConnectionID
-	if s.sessionVars.TxnCtx.ForUpdate {
-		return errForUpdateCantRetry.GenWithStackByArgs(connID)
+func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
+	if s.txn.doNotCommit == nil {
+		return nil
 	}
-	s.sessionVars.RetryInfo.Retrying = true
+	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
+	// because they are used to finish the aborted transaction.
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+		return nil
+	}
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
+		return nil
+	}
+	return errors.New("current transaction is aborted, commands ignored until end of transaction block")
+}
+
+func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	var retryCnt uint
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
-		s.txn.changeToInvalid()
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		if err != nil {
+			s.rollbackOnError(ctx)
+		}
+		s.txn.changeToInvalid()
 	}()
 
+	connID := s.sessionVars.ConnectionID
+	s.sessionVars.RetryInfo.Retrying = true
+	if s.sessionVars.TxnCtx.ForUpdate {
+		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		return err
+	}
+
 	nh := GetHistory(s)
-	var err error
 	var schemaVersion int64
 	sessVars := s.GetSessionVars()
 	orgStartTS := sessVars.TxnCtx.StartTS
@@ -825,11 +844,10 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	name = strings.ToLower(name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)
+		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(s, sql)
-
 	return errors.Trace(err)
 }
 
@@ -1450,8 +1468,6 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBHashAggFinalConcurrency + quoteCommaQuote +
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBConstraintCheckInPlace + quoteCommaQuote +
-	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
-	variable.TiDBDDLReorgBatchSize + quoteCommaQuote +
 	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBInitChunkSize + quoteCommaQuote +
