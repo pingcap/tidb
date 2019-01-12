@@ -1034,6 +1034,9 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	if err == nil && !s.OrReplace {
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
+	if !oldView.Meta().IsView() {
+		return ErrTableIsNotView.GenWithStackByArgs(ident.Schema, ident.Name)
+	}
 	var oldViewTblID int64
 	if oldView != nil {
 		oldViewTblID = oldView.Meta().ID

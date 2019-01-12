@@ -43,6 +43,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -86,6 +87,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
 	if err != nil && !orReplace {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	ver, err = updateSchemaVersion(t, job)
@@ -345,6 +347,7 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newSchemaID := job.SchemaID
 	err = checkTableNotExists(t, job, newSchemaID, tableName.L)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -443,7 +446,6 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	tables, err := t.ListTables(schemaID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
 			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 		}
 		return errors.Trace(err)
@@ -452,8 +454,6 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	// Check the table.
 	for _, tbl := range tables {
 		if tbl.Name.L == tableName {
-			// This table already exists and can't be created, we should cancel this job now.
-			job.State = model.JobStateCancelled
 			return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
 		}
 	}
