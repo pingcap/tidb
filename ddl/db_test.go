@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
@@ -2358,7 +2357,7 @@ func (s *testDBSuite) TestRestoreTable(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, variable.ErrSnapshotTooOld.GenWithStackByArgs(timeAfterDrop).Error())
+	c.Assert(strings.Contains(err.Error(), "snapshot is older than GC safe point"), Equals, true)
 
 	// set gc safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
@@ -2459,7 +2458,7 @@ func (s *testDBSuite) TestRestoreTableByTableName(c *C) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	_, err = tk.Exec("admin restore table t_recover")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, variable.ErrSnapshotTooOld.GenWithStackByArgs(timeAfterDrop).Error())
+	c.Assert(strings.Contains(err.Error(), "snapshot is older than GC safe point"), Equals, true)
 
 	// set gc safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))

@@ -16,6 +16,7 @@ package gcutil
 import (
 	"fmt"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -57,48 +58,38 @@ func EnableGC(ctx sessionctx.Context) error {
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
 func ValidateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
-	safePointString, err := GetGCSafePoint(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	safePointTime, err := util.CompatibleParseGCTime(safePointString)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	safePointTS := variable.GoTimeToTS(safePointTime)
+	safePointTS, err := GetGCSafePoint(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if safePointTS > snapshotTS {
-		return variable.ErrSnapshotTooOld.GenWithStackByArgs(safePointString)
+		return variable.ErrSnapshotTooOld.GenWithStackByArgs(model.TSConvert2Time(safePointTS).String())
 	}
 	return nil
 }
 
 // ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
-func ValidateSnapshotWithGCSafePoint(snapshotTS uint64, safePointString string) error {
-	safePointTime, err := util.CompatibleParseGCTime(safePointString)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	gcSafePointTS := variable.GoTimeToTS(safePointTime)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if gcSafePointTS > snapshotTS {
-		return variable.ErrSnapshotTooOld.GenWithStackByArgs(safePointString)
+func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
+	if safePointTS > snapshotTS {
+		return variable.ErrSnapshotTooOld.GenWithStackByArgs(model.TSConvert2Time(safePointTS).String())
 	}
 	return nil
 }
 
-func GetGCSafePoint(ctx sessionctx.Context) (string, error) {
+func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
 	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return "", errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if len(rows) != 1 {
-		return "", errors.New("can not get 'tikv_gc_safe_point'")
+		return 0, errors.New("can not get 'tikv_gc_safe_point'")
 	}
-	return rows[0].GetString(0), nil
+	safePointString := rows[0].GetString(0)
+	safePointTime, err := util.CompatibleParseGCTime(safePointString)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	ts := variable.GoTimeToTS(safePointTime)
+	return ts, nil
 }
