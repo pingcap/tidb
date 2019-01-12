@@ -2310,6 +2310,27 @@ func (s *testParserSuite) TestTrace(c *C) {
 	s.RunTest(c, table)
 }
 
+func (s *testParserSuite) TestBinding(c *C) {
+	table := []testCase{
+		{"create global binding for select * from t using select * from t use index(a)", true, ""},
+		{"create session binding for select * from t using select * from t use index(a)", true, ""},
+		{"create global binding for select * from t using select * from t use index(a)", true, ""},
+		{"create session binding for select * from t using select * from t use index(a)", true, ""},
+		{"show global bindings", true, ""},
+		{"show session bindings", true, ""},
+	}
+	s.RunTest(c, table)
+
+	p := New()
+	sms, _, err := p.Parse("create global binding for select * from t using select * from t use index(a)", "", "")
+	c.Assert(err, IsNil)
+	v, ok := sms[0].(*ast.CreateBindingStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(v.OriginSel.Text(), Equals, "select * from t")
+	c.Assert(v.HintedSel.Text(), Equals, "select * from t use index(a)")
+	c.Assert(v.GlobalScope, IsTrue)
+}
+
 func (s *testParserSuite) TestView(c *C) {
 	table := []testCase{
 		{"create view v as select * from t", true, ""},
