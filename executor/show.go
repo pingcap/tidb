@@ -584,7 +584,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
 	if tb.Meta().IsView() {
-		e.fetchShowCreateTable4View(tb.Meta(), &buf, sqlMode)
+		e.fetchShowCreateTable4View(tb.Meta(), &buf)
 		e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 		return nil
 	}
@@ -739,7 +739,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
+func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := e.ctx.GetSessionVars().SQLMode
+
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
 	fmt.Fprintf(buf, "DEFINER=%s@%s ", escape(model.NewCIStr(tb.View.Definer.Username), sqlMode), escape(model.NewCIStr(tb.View.Definer.Hostname), sqlMode))
 	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
