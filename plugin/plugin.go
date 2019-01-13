@@ -110,28 +110,28 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins, mode validate
 			}
 		}
 		if oldPlugin == nil {
-			return errors.Errorf("plugin %s isn't loaded so can not reload", p.Name)
+			return errUnsupportedReloadPlugin.GenWithStackByArgs(p.Name)
 		}
 		if len(p.SysVars) != len(oldPlugin.SysVars) {
-			return errors.Errorf("reload plugin with different sysVar is unsupported")
+			return errUnsupportedReloadPluginVar.GenWithStackByArgs("")
 		}
 		for varName, varVal := range p.SysVars {
 			if oldPlugin.SysVars[varName] == nil || *oldPlugin.SysVars[varName] != *varVal {
-				return errors.Errorf("reload plugin with different sysVar is unsupported %v", varVal)
+				return errUnsupportedReloadPluginVar.GenWithStackByArgs(varVal)
 			}
 		}
 	}
 	if p.RequireVersion != nil {
 		for component, reqVer := range p.RequireVersion {
 			if ver, ok := tiPlugins.versions[component]; !ok || ver < reqVer {
-				return errors.Errorf("plugin %s require %s be %v but got %v", p.Name, component, reqVer, ver)
+				return errRequireVersionCheckFail.GenWithStackByArgs(p.Name, component, reqVer, ver)
 			}
 		}
 	}
 	if p.SysVars != nil {
 		for varName := range p.SysVars {
 			if !strings.HasPrefix(varName, p.Name) {
-				return errors.Errorf("plugin %s's sysVar %s must be prefix with plugin name %s", p.Name, varName, p.Name)
+				return errInvalidPluginSysVarName.GenWithStackByArgs(p.Name, varName, p.Name)
 			}
 		}
 	}
@@ -171,7 +171,7 @@ func Init(ctx context.Context, cfg Config) (err error) {
 			if cfg.SkipWhenFail {
 				continue
 			}
-			err = errors.Errorf("plugin [%s] be duplicate declared in init parameters", pluginID)
+			err = errDuplicatePlugin.GenWithStackByArgs(pluginID)
 			return
 		}
 		// Load dl.
@@ -236,7 +236,7 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 	}
 	manifest, ok := manifestSym.(func() *Manifest)
 	if !ok {
-		err = errors.Errorf("can not read plugin %s's manifest", string(pluginID))
+		err = errInvalidPluginManifest.GenWithStackByArgs(string(pluginID))
 		return
 	}
 	pName, pVersion, err := pluginID.Decode()
@@ -246,11 +246,11 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 	}
 	plugin.Manifest = manifest()
 	if plugin.Name != pName {
-		err = errors.Errorf("plugin load with %s but got wrong name %s", string(pluginID), plugin.Name)
+		err = errInvalidPluginName.GenWithStackByArgs(string(pluginID), plugin.Name)
 		return
 	}
 	if strconv.Itoa(int(plugin.Version)) != pVersion {
-		err = errors.Errorf("plugin load with %s but got %s", string(pluginID), strconv.Itoa(int(plugin.Version)))
+		err = errInvalidPluginVersion.GenWithStackByArgs(string(pluginID))
 		return
 	}
 	return

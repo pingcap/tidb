@@ -16,8 +16,6 @@ package plugin
 import (
 	"strings"
 	"unsafe"
-
-	"github.com/pingcap/errors"
 )
 
 // DeclareAuditManifest declares manifest as AuditManifest.
@@ -47,7 +45,7 @@ type ID string
 func (n ID) Decode() (name string, version string, err error) {
 	splits := strings.Split(string(n), "-")
 	if len(splits) != 2 {
-		err = errors.Errorf("wrong plugin id: %s, valid plugin id is [name]-[version], both name and version should not contain '-'", string(n))
+		err = errInvalidPluginID.GenWithStackByArgs(string(n))
 		return
 	}
 	name = splits[0]
