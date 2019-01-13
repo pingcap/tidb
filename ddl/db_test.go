@@ -2300,7 +2300,7 @@ func (s *testDBSuite) TestAddColumn2(c *C) {
 	s.tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
 }
 
-func (s *testDBSuite) TestRestoreTable(c *C) {
+func (s *testDBSuite) TestRestoreTableByJobID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_restore")
 	tk.MustExec("use test_restore")

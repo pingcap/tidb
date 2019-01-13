@@ -68,7 +68,7 @@ func ValidateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 	return nil
 }
 
-// ValidateSnapshot checks that the newly set snapshot time is after GC safe point time.
+// ValidateSnapshotWithGCSafePoint checks that the newly set snapshot time is after GC safe point time.
 func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 	if safePointTS > snapshotTS {
 		return variable.ErrSnapshotTooOld.GenWithStackByArgs(model.TSConvert2Time(safePointTS).String())
@@ -76,6 +76,7 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 	return nil
 }
 
+// GetGCSafePoint loads gc safe point time from mysql.tidb.
 func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
 	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
