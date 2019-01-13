@@ -587,153 +587,153 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		e.fetchShowCreateTable4View(tb.Meta(), &buf, sqlMode)
 		e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 		return nil
-	} else {
-		fmt.Fprintf(&buf, "CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode))
-		var pkCol *table.Column
-		var hasAutoIncID bool
-		for i, col := range tb.Cols() {
-			fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
-			if col.IsGenerated() {
-				// It's a generated column.
-				fmt.Fprintf(&buf, " GENERATED ALWAYS AS (%s)", col.GeneratedExprString)
-				if col.GeneratedStored {
-					buf.WriteString(" STORED")
-				} else {
-					buf.WriteString(" VIRTUAL")
-				}
-			}
-			if mysql.HasAutoIncrementFlag(col.Flag) {
-				hasAutoIncID = true
-				buf.WriteString(" NOT NULL AUTO_INCREMENT")
+	}
+
+	fmt.Fprintf(&buf, "CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode))
+	var pkCol *table.Column
+	var hasAutoIncID bool
+	for i, col := range tb.Cols() {
+		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
+		if col.IsGenerated() {
+			// It's a generated column.
+			fmt.Fprintf(&buf, " GENERATED ALWAYS AS (%s)", col.GeneratedExprString)
+			if col.GeneratedStored {
+				buf.WriteString(" STORED")
 			} else {
-				if mysql.HasNotNullFlag(col.Flag) {
-					buf.WriteString(" NOT NULL")
-				}
-				if !mysql.HasNoDefaultValueFlag(col.Flag) {
-					defaultValue := col.GetDefaultValue()
-					switch defaultValue {
-					case nil:
-						if !mysql.HasNotNullFlag(col.Flag) {
-							if col.Tp == mysql.TypeTimestamp {
-								buf.WriteString(" NULL")
-							}
-							buf.WriteString(" DEFAULT NULL")
+				buf.WriteString(" VIRTUAL")
+			}
+		}
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			hasAutoIncID = true
+			buf.WriteString(" NOT NULL AUTO_INCREMENT")
+		} else {
+			if mysql.HasNotNullFlag(col.Flag) {
+				buf.WriteString(" NOT NULL")
+			}
+			if !mysql.HasNoDefaultValueFlag(col.Flag) {
+				defaultValue := col.GetDefaultValue()
+				switch defaultValue {
+				case nil:
+					if !mysql.HasNotNullFlag(col.Flag) {
+						if col.Tp == mysql.TypeTimestamp {
+							buf.WriteString(" NULL")
 						}
-					case "CURRENT_TIMESTAMP":
-						buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
-					default:
-						defaultValStr := fmt.Sprintf("%v", defaultValue)
-						if col.Tp == mysql.TypeBit {
-							defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
-							fmt.Fprintf(&buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
-						} else {
-							fmt.Fprintf(&buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
-						}
+						buf.WriteString(" DEFAULT NULL")
+					}
+				case "CURRENT_TIMESTAMP":
+					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
+				default:
+					defaultValStr := fmt.Sprintf("%v", defaultValue)
+					if col.Tp == mysql.TypeBit {
+						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+						fmt.Fprintf(&buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
+					} else {
+						fmt.Fprintf(&buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
 					}
 				}
-				if mysql.HasOnUpdateNowFlag(col.Flag) {
-					buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
-				}
 			}
-			if len(col.Comment) > 0 {
-				fmt.Fprintf(&buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
-			}
-			if i != len(tb.Cols())-1 {
-				buf.WriteString(",\n")
-			}
-			if tb.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-				pkCol = col
+			if mysql.HasOnUpdateNowFlag(col.Flag) {
+				buf.WriteString(" ON UPDATE CURRENT_TIMESTAMP")
 			}
 		}
-
-		if pkCol != nil {
-			// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
-			buf.WriteString(",\n")
-			fmt.Fprintf(&buf, "  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode))
+		if len(col.Comment) > 0 {
+			fmt.Fprintf(&buf, " COMMENT '%s'", format.OutputFormat(col.Comment))
 		}
-
-		if len(tb.Indices()) > 0 {
+		if i != len(tb.Cols())-1 {
 			buf.WriteString(",\n")
 		}
-
-		publicIndices := make([]table.Index, 0, len(tb.Indices()))
-		for _, idx := range tb.Indices() {
-			if idx.Meta().State == model.StatePublic {
-				publicIndices = append(publicIndices, idx)
-			}
+		if tb.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			pkCol = col
 		}
-		for i, idx := range publicIndices {
-			idxInfo := idx.Meta()
-			if idxInfo.Primary {
-				buf.WriteString("  PRIMARY KEY ")
-			} else if idxInfo.Unique {
-				fmt.Fprintf(&buf, "  UNIQUE KEY %s ", escape(idxInfo.Name, sqlMode))
-			} else {
-				fmt.Fprintf(&buf, "  KEY %s ", escape(idxInfo.Name, sqlMode))
-			}
+	}
 
-			cols := make([]string, 0, len(idxInfo.Columns))
-			for _, c := range idxInfo.Columns {
-				colInfo := escape(c.Name, sqlMode)
-				if c.Length != types.UnspecifiedLength {
-					colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
-				}
-				cols = append(cols, colInfo)
-			}
-			fmt.Fprintf(&buf, "(%s)", strings.Join(cols, ","))
-			if i != len(publicIndices)-1 {
-				buf.WriteString(",\n")
-			}
-		}
+	if pkCol != nil {
+		// If PKIsHanle, pk info is not in tb.Indices(). We should handle it here.
+		buf.WriteString(",\n")
+		fmt.Fprintf(&buf, "  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode))
+	}
 
-		buf.WriteString("\n")
+	if len(tb.Indices()) > 0 {
+		buf.WriteString(",\n")
+	}
 
-		buf.WriteString(") ENGINE=InnoDB")
-		charsetName := tb.Meta().Charset
-		if len(charsetName) == 0 {
-			charsetName = mysql.DefaultCharset
+	publicIndices := make([]table.Index, 0, len(tb.Indices()))
+	for _, idx := range tb.Indices() {
+		if idx.Meta().State == model.StatePublic {
+			publicIndices = append(publicIndices, idx)
 		}
-		collate := tb.Meta().Collate
-		// Set default collate if collate is not specified.
-		if len(collate) == 0 {
-			collate = getDefaultCollate(charsetName)
-		}
-		// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
-		// to make it work on MySQL server which has default collate utf8_general_ci.
-		if len(collate) == 0 {
-			// If we can not find default collate for the given charset,
-			// do not show the collate part.
-			fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", charsetName)
+	}
+	for i, idx := range publicIndices {
+		idxInfo := idx.Meta()
+		if idxInfo.Primary {
+			buf.WriteString("  PRIMARY KEY ")
+		} else if idxInfo.Unique {
+			fmt.Fprintf(&buf, "  UNIQUE KEY %s ", escape(idxInfo.Name, sqlMode))
 		} else {
-			fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
+			fmt.Fprintf(&buf, "  KEY %s ", escape(idxInfo.Name, sqlMode))
 		}
 
-		// Displayed if the compression typed is set.
-		if len(tb.Meta().Compression) != 0 {
-			fmt.Fprintf(&buf, " COMPRESSION='%s'", tb.Meta().Compression)
-		}
-
-		// add partition info here.
-		appendPartitionInfo(tb.Meta().Partition, &buf)
-
-		if hasAutoIncID {
-			autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
-			if err != nil {
-				return errors.Trace(err)
+		cols := make([]string, 0, len(idxInfo.Columns))
+		for _, c := range idxInfo.Columns {
+			colInfo := escape(c.Name, sqlMode)
+			if c.Length != types.UnspecifiedLength {
+				colInfo = fmt.Sprintf("%s(%s)", colInfo, strconv.Itoa(c.Length))
 			}
-			// It's campatible with MySQL.
-			if autoIncID > 1 {
-				fmt.Fprintf(&buf, " AUTO_INCREMENT=%d", autoIncID)
-			}
+			cols = append(cols, colInfo)
 		}
+		fmt.Fprintf(&buf, "(%s)", strings.Join(cols, ","))
+		if i != len(publicIndices)-1 {
+			buf.WriteString(",\n")
+		}
+	}
 
-		if tb.Meta().ShardRowIDBits > 0 {
-			fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits)
-		}
+	buf.WriteString("\n")
 
-		if len(tb.Meta().Comment) > 0 {
-			fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
+	buf.WriteString(") ENGINE=InnoDB")
+	charsetName := tb.Meta().Charset
+	if len(charsetName) == 0 {
+		charsetName = mysql.DefaultCharset
+	}
+	collate := tb.Meta().Collate
+	// Set default collate if collate is not specified.
+	if len(collate) == 0 {
+		collate = getDefaultCollate(charsetName)
+	}
+	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
+	// to make it work on MySQL server which has default collate utf8_general_ci.
+	if len(collate) == 0 {
+		// If we can not find default collate for the given charset,
+		// do not show the collate part.
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", charsetName)
+	} else {
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
+	}
+
+	// Displayed if the compression typed is set.
+	if len(tb.Meta().Compression) != 0 {
+		fmt.Fprintf(&buf, " COMPRESSION='%s'", tb.Meta().Compression)
+	}
+
+	// add partition info here.
+	appendPartitionInfo(tb.Meta().Partition, &buf)
+
+	if hasAutoIncID {
+		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
+		if err != nil {
+			return errors.Trace(err)
 		}
+		// It's campatible with MySQL.
+		if autoIncID > 1 {
+			fmt.Fprintf(&buf, " AUTO_INCREMENT=%d", autoIncID)
+		}
+	}
+
+	if tb.Meta().ShardRowIDBits > 0 {
+		fmt.Fprintf(&buf, "/*!90000 SHARD_ROW_ID_BITS=%d */", tb.Meta().ShardRowIDBits)
+	}
+
+	if len(tb.Meta().Comment) > 0 {
+		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 	}
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 	return nil
