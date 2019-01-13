@@ -739,7 +739,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buffer, sqlmode mysql.SQLMode) {
+func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
 	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
 	fmt.Fprintf(buf, "DEFINER=%s@%s ", escape(model.NewCIStr(tb.View.Definer.Username), sqlMode), escape(model.NewCIStr(tb.View.Definer.Hostname), sqlMode))
 	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
