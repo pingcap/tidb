@@ -103,9 +103,9 @@ func (o Op) String() string {
 }
 
 var opsLiteral = map[Op]string{
-	LogicAnd:   "&&",
-	LogicOr:    "||",
-	LogicXor:   "^",
+	LogicAnd:   " AND ",
+	LogicOr:    " OR ",
+	LogicXor:   " XOR ",
 	LeftShift:  "<<",
 	RightShift: ">>",
 	GE:         ">=",
