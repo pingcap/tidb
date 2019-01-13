@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -53,16 +53,19 @@ func (p *plugins) clone() *plugins {
 	for key, value := range p.versions {
 		np.versions[key] = value
 	}
+	for key, value := range p.dyingPlugins {
+		np.dyingPlugins[key] = value
+	}
 	return np
 }
 
 // add adds a plugin to loaded plugin collection.
-func (p plugins) add(plugin Plugin) {
+func (p plugins) add(plugin *Plugin) {
 	plugins, ok := p.plugins[plugin.Kind]
 	if !ok {
 		plugins = make([]Plugin, 0)
 	}
-	plugins = append(plugins, plugin)
+	plugins = append(plugins, *plugin)
 	p.plugins[plugin.Kind] = plugins
 	p.versions[plugin.Name] = plugin.Version
 }
@@ -149,19 +152,20 @@ func Init(ctx context.Context, cfg Config) (err error) {
 		dyingPlugins: make([]Plugin, 0),
 	}
 
-	// setup component version info for plugin running env.
+	// Setup component version info for plugin running env.
 	for component, version := range cfg.EnvVersion {
 		tiPlugins.versions[component] = version
 	}
 
-	// load plugin dl & manifest.
+	// Load plugin dl & manifest.
 	for _, pluginID := range cfg.Plugins {
 		var pName string
 		pName, _, err = ID(pluginID).Decode()
 		if err != nil {
+			err = errors.Trace(err)
 			return
 		}
-		// check duplicate.
+		// Check duplicate.
 		_, dup := tiPlugins.versions[pName]
 		if dup {
 			if cfg.SkipWhenFail {
@@ -170,7 +174,7 @@ func Init(ctx context.Context, cfg Config) (err error) {
 			err = errors.Errorf("plugin [%s] be duplicate declared in init parameters", pluginID)
 			return
 		}
-		// load dl.
+		// Load dl.
 		var plugin Plugin
 		plugin, err = loadOne(cfg.PluginDir, ID(pluginID))
 		if err != nil {
@@ -179,10 +183,10 @@ func Init(ctx context.Context, cfg Config) (err error) {
 			}
 			return
 		}
-		tiPlugins.add(plugin)
+		tiPlugins.add(&plugin)
 	}
 
-	// cross validate & load plugins.
+	// Cross validate & Load plugins.
 	for kind := range tiPlugins.plugins {
 		for i := range tiPlugins.plugins[kind] {
 			if err = tiPlugins.plugins[kind][i].validate(ctx, tiPlugins, initMode); err != nil {
@@ -302,7 +306,7 @@ func replace(ctx context.Context, cfg Config, name string, newPlugin Plugin) (re
 			newPlugins.dyingPlugins = append(newPlugins.dyingPlugins, *oldPlugin)
 			err = oldPlugin.OnShutdown(ctx, oldPlugin.Manifest)
 			if err != nil {
-				// when shutdown failure, the plugin is in stranger state, so make it as Dying.
+				// When shutdown failure, the plugin is in stranger state, so make it as Dying.
 				return
 			}
 		}

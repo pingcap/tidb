@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ type ID string
 func (n ID) Decode() (name string, version string, err error) {
 	splits := strings.Split(string(n), "-")
 	if len(splits) != 2 {
-		err = errors.Errorf("wrong plugin id: %s", string(n))
+		err = errors.Errorf("wrong plugin id: %s, valid plugin id is [name]-[version], both name and version should not contain '-'", string(n))
 		return
 	}
 	name = splits[0]
