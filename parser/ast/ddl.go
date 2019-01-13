@@ -921,7 +921,36 @@ type CreateIndexStmt struct {
 
 // Restore implements Node interface.
 func (n *CreateIndexStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("CREATE ")
+	if n.Unique {
+		ctx.WriteKeyWord("UNIQUE ")
+	}
+	ctx.WriteKeyWord("INDEX ")
+	ctx.WriteName(n.IndexName)
+	ctx.WriteKeyWord(" ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.Table")
+	}
+
+	ctx.WritePlain(" (")
+	for i, indexColName := range n.IndexColNames {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := indexColName.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateIndexStmt.IndexColNames: [%v]", i)
+		}
+	}
+	ctx.WritePlain(")")
+
+	if n.IndexOption.Tp != model.IndexTypeInvalid || n.IndexOption.KeyBlockSize > 0 || n.IndexOption.Comment != "" {
+		ctx.WritePlain(" ")
+		if err := n.IndexOption.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.IndexOption")
+		}
+	}
+
+	return nil
 }
 
 // Accept implements Node Accept interface.
