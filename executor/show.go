@@ -583,7 +583,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
-	if !tb.Meta().IsView() {
+	if tb.Meta().IsView() {
+		e.fetchShowCreateTable4View(tb.Meta(), &buf)
+	} else {
 		fmt.Fprintf(&buf, "CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode))
 		var pkCol *table.Column
 		var hasAutoIncID bool
@@ -730,21 +732,24 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		if len(tb.Meta().Comment) > 0 {
 			fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 		}
-	} else {
-		fmt.Fprintf(&buf, "CREATE ALGORITHM=%s ", tb.Meta().View.Algorithm.String())
-		fmt.Fprintf(&buf, "DEFINER=%s@%s ", escape(model.NewCIStr(tb.Meta().View.Definer.Username), sqlMode), escape(model.NewCIStr(tb.Meta().View.Definer.Hostname), sqlMode))
-		fmt.Fprintf(&buf, "SQL SECURITY %s ", tb.Meta().View.Security.String())
-		fmt.Fprintf(&buf, "VIEW %s (", escape(tb.Meta().Name, sqlMode))
-		for i, col := range tb.Meta().Columns {
-			fmt.Fprintf(&buf, "%s", escape(col.Name, sqlMode))
-			if i < len(tb.Meta().Columns)-1 {
-				fmt.Fprintf(&buf, ", ")
-			}
-		}
-		fmt.Fprintf(&buf, ") AS %s", tb.Meta().View.SelectStmt)
 	}
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 	return nil
+}
+
+func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := e.ctx.GetSessionVars().SQLMode
+	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
+	fmt.Fprintf(buf, "DEFINER=%s@%s ", escape(model.NewCIStr(tb.View.Definer.Username), sqlMode), escape(model.NewCIStr(tb.View.Definer.Hostname), sqlMode))
+	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
+	fmt.Fprintf(buf, "VIEW %s (", escape(tb.Name, sqlMode))
+	for i, col := range tb.Columns {
+		fmt.Fprintf(buf, "%s", escape(col.Name, sqlMode))
+		if i < len(tb.Columns)-1 {
+			fmt.Fprintf(buf, ", ")
+		}
+	}
+	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
