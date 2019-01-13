@@ -202,7 +202,8 @@ var (
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "batch_wait_duration",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 30),
-			Help:      "batch wait duration",
+			// Min bucket is [0, 1ns).
+			Buckets: prometheus.ExponentialBuckets(1, 2, 30),
+			Help:    "batch wait duration",
 		})
 )

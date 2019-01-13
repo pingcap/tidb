@@ -134,7 +134,7 @@ func (c *batchCommandsClient) batchRecvLoop() {
 	}()
 
 	for {
-		// When `conn.Close()` is called, `client.Recv()` will returns an error.
+		// When `conn.Close()` is called, `client.Recv()` will return an error.
 		resp, err := c.client.Recv()
 		if err != nil {
 			if c.isStopped() {
@@ -142,7 +142,7 @@ func (c *batchCommandsClient) batchRecvLoop() {
 			}
 			log.Errorf("batchRecvLoop error when receive: %v", err)
 
-			// Hold the lock to forbid batchSendLoop useing the old client.
+			// Hold the lock to forbid batchSendLoop using the old client.
 			c.clientLock.Lock()
 			c.failPendingRequests(err) // fail all pending requests.
 			for {                      // try to re-create the streaming in the loop.
@@ -354,12 +354,9 @@ func fetchMorePendingRequests(
 	entries *[]*batchCommandsEntry,
 	requests *[]*tikvpb.BatchCommandsRequest_Request,
 ) {
-	var waitStart, waitEnd time.Time
-	waitStart = time.Now()
-	waitEnd = waitStart
+	waitStart := time.Now()
 
 	after := time.After(maxWaitTime)
-Loop1:
 	// Try to collect `batchWaitSize` requests, or wait `maxWaitTime`.
 	for len(*entries) < batchWaitSize {
 		select {
@@ -369,30 +366,27 @@ Loop1:
 			}
 			*entries = append(*entries, entry)
 			*requests = append(*requests, entry.req)
-		case now := <-after:
-			waitEnd = now
-			break Loop1
+		case waitEnd := <-after:
+			metrics.TiKVBatchWaitDuration.Observe(float64(waitEnd.Sub(waitStart)))
+			return
 		}
 	}
 
-	if waitEnd == waitStart {
-	Loop2:
-		// Do an additional non-block try.
-		for len(*entries) < maxBatchSize {
-			select {
-			case entry := <-ch:
-				if entry == nil {
-					return
-				}
-				*entries = append(*entries, entry)
-				*requests = append(*requests, entry.req)
-			default:
-				waitEnd = time.Now()
-				break Loop2
+	// Do an additional non-block try.
+	for len(*entries) < maxBatchSize {
+		select {
+		case entry := <-ch:
+			if entry == nil {
+				return
 			}
+			*entries = append(*entries, entry)
+			*requests = append(*requests, entry.req)
+		default:
+			waitEnd := time.Now()
+			metrics.TiKVBatchWaitDuration.Observe(float64(waitEnd.Sub(waitStart)))
+			return
 		}
 	}
-	metrics.TiKVBatchWaitDuration.Observe(float64(waitEnd.Sub(waitStart)))
 }
 
 func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
@@ -523,6 +517,42 @@ func (c *rpcClient) closeConns() {
 	c.Unlock()
 }
 
+func sendBatchRequest(
+	addr string,
+	connArray *connArray,
+	ctx context.Context,
+	req *tikvpb.BatchCommandsRequest_Request,
+	timeout time.Duration,
+) (*tikvrpc.Response, error) {
+	entry := &batchCommandsEntry{
+		req:      req,
+		res:      make(chan *tikvpb.BatchCommandsResponse_Response, 1),
+		canceled: 0,
+		err:      nil,
+	}
+	ctx1, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	select {
+	case connArray.batchCommandsCh <- entry:
+	case <-ctx1.Done():
+		log.Warnf("SendRequest to %s is timeout", addr)
+		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
+	}
+
+	select {
+	case res, ok := <-entry.res:
+		if !ok {
+			return nil, errors.Trace(entry.err)
+		}
+		return tikvrpc.FromBatchCommandsResponse(res), nil
+	case <-ctx1.Done():
+		atomic.StoreInt32(&entry.canceled, 1)
+		log.Warnf("SendRequest to %s is canceled", addr)
+		return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
+	}
+}
+
 // SendRequest sends a Request to server and receives Response.
 func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	start := time.Now()
@@ -538,34 +568,8 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	}
 
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
-		if batchCommandsReq := req.ToBatchCommandsRequest(); batchCommandsReq != nil {
-			entry := &batchCommandsEntry{
-				req:      batchCommandsReq,
-				res:      make(chan *tikvpb.BatchCommandsResponse_Response, 1),
-				canceled: 0,
-				err:      nil,
-			}
-			ctx1, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
-
-			select {
-			case connArray.batchCommandsCh <- entry:
-			case <-ctx1.Done():
-				log.Warnf("SendRequest to %s is timeout", addr)
-				return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
-			}
-
-			select {
-			case res, ok := <-entry.res:
-				if !ok {
-					return nil, errors.Trace(entry.err)
-				}
-				return tikvrpc.FromBatchCommandsResponse(res), nil
-			case <-ctx1.Done():
-				atomic.StoreInt32(&entry.canceled, 1)
-				log.Warnf("SendRequest to %s is canceled", addr)
-				return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, "Canceled or timeout"))
-			}
+		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
+			return sendBatchRequest(addr, connArray, ctx, batchReq, timeout)
 		}
 	}
 
