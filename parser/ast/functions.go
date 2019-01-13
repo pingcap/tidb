@@ -16,6 +16,7 @@ package ast
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/pingcap/errors"
 	. "github.com/pingcap/parser/format"
@@ -340,15 +341,7 @@ func (n *FuncCallExpr) Restore(ctx *RestoreCtx) error {
 		}
 		ctx.WriteKeyWord(" USING ")
 		ctx.WriteKeyWord(n.Args[1].GetType().Charset)
-	case "adddate":
-		if err := n.Args[0].Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
-		}
-		ctx.WritePlain(", ")
-		if err := n.Args[1].Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
-		}
-	case "date_add":
+	case "adddate", "subdate", "date_add", "date_sub":
 		if err := n.Args[0].Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
 		}
@@ -412,6 +405,15 @@ func (n *FuncCallExpr) Restore(ctx *RestoreCtx) error {
 			if err := n.Args[0].Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
 			}
+		}
+	case "timestampdiff", "timestampadd":
+		ctx.WriteKeyWord(n.Args[0].(ValueExpr).GetString())
+		for i := 1; i < len(n.Args); {
+			ctx.WritePlain(", ")
+			if err := n.Args[i].Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr")
+			}
+			i++
 		}
 	default:
 		for i, argv := range n.Args {
@@ -644,12 +646,28 @@ func (n *AggregateFuncExpr) Restore(ctx *RestoreCtx) error {
 	if n.Distinct {
 		ctx.WriteKeyWord("DISTINCT ")
 	}
-	for i, argv := range n.Args {
-		if i != 0 {
-			ctx.WritePlain(", ")
+	switch strings.ToLower(n.F) {
+	case "group_concat":
+		for i := 0; i < len(n.Args)-1; i++ {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := n.Args[i].Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore AggregateFuncExpr.Args[%d]", i)
+			}
 		}
-		if err := argv.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore AggregateFuncExpr.Args %d", i)
+		ctx.WriteKeyWord(" SEPARATOR ")
+		if err := n.Args[len(n.Args)-1].Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AggregateFuncExpr.Args SEPARATOR")
+		}
+	default:
+		for i, argv := range n.Args {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			if err := argv.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore AggregateFuncExpr.Args[%d]", i)
+			}
 		}
 	}
 	ctx.WritePlain(")")

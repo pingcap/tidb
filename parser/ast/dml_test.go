@@ -183,9 +183,8 @@ func (tc *testDMLSuite) TestTableSourceRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"tbl", "`tbl`"},
 		{"tbl as t", "`tbl` AS `t`"},
-		// TODO: Once `Restore` of SelectStmt or UnionStmt is implemented, add the following test cases
-		// {"(select * from tbl) as t", "(SELECT * FROM `tbl`) AS `t`"},
-		// {"(select * from a union select * from b) as t", "(SELECT * FROM `a` UNION SELECT * FROM `b`) AS `t`"},
+		{"(select * from tbl) as t", "(SELECT * FROM `tbl`) AS `t`"},
+		{"(select * from a union select * from b) as t", "(SELECT * FROM `a` UNION SELECT * FROM `b`) AS `t`"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).From.TableRefs.Left
@@ -196,7 +195,7 @@ func (tc *testDMLSuite) TestTableSourceRestore(c *C) {
 func (tc *testDMLSuite) TestOnConditionRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"on t1.a=t2.a", "ON `t1`.`a`=`t2`.`a`"},
-		{"on t1.a=t2.a and t1.b=t2.b", "ON `t1`.`a`=`t2`.`a`&&`t1`.`b`=`t2`.`b`"},
+		{"on t1.a=t2.a and t1.b=t2.b", "ON `t1`.`a`=`t2`.`a` AND `t1`.`b`=`t2`.`b`"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).From.TableRefs.On

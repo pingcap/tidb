@@ -347,7 +347,12 @@ type SubqueryExpr struct {
 
 // Restore implements Node interface.
 func (n *SubqueryExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WritePlain("(")
+	if err := n.Query.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore SubqueryExpr.Query")
+	}
+	ctx.WritePlain(")")
+	return nil
 }
 
 // Format the ExprNode into a Writer.
@@ -388,7 +393,21 @@ type CompareSubqueryExpr struct {
 
 // Restore implements Node interface.
 func (n *CompareSubqueryExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if err := n.L.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CompareSubqueryExpr.L")
+	}
+	if err := n.Op.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CompareSubqueryExpr.Op")
+	}
+	if n.All {
+		ctx.WriteKeyWord("ALL ")
+	} else {
+		ctx.WriteKeyWord("ANY ")
+	}
+	if err := n.R.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CompareSubqueryExpr.R")
+	}
+	return nil
 }
 
 // Format the ExprNode into a Writer.
@@ -817,6 +836,12 @@ func (n *PatternLikeExpr) Restore(ctx *RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while restore PatternLikeExpr.Pattern")
 	}
 
+	escape := string(n.Escape)
+	if escape != "\\" {
+		ctx.WriteKeyWord(" ESCAPE ")
+		ctx.WriteString(escape)
+
+	}
 	return nil
 }
 
