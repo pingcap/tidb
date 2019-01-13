@@ -65,3 +65,13 @@ type AuthenticationManifest struct {
 	ValidateAuthenticationString func()
 	SetSalt                      func()
 }
+
+// SchemaManifest presents a sub-manifest that every schema plugins must provide.
+type SchemaManifest struct {
+	Manifest
+}
+
+// DaemonManifest presents a sub-manifest that every DaemonManifest plugins must provide.
+type DaemonManifest struct {
+	Manifest
+}

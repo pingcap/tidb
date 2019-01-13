@@ -19,8 +19,12 @@ type Kind uint8
 const (
 	// Audit indicates it is a Audit plugin.
 	Audit Kind = 1 + iota
-	// Authentication it plugin is a Authentication plugin.
+	// Authentication indicate it is a Authentication plugin.
 	Authentication
+	// Schema indicate a plugin that can change TiDB schema.
+	Schema
+	// Daemon indicate a plugin that can run as daemon task.
+	Daemon
 )
 
 func (k Kind) String() (str string) {
@@ -29,6 +33,10 @@ func (k Kind) String() (str string) {
 		str = "Audit"
 	case Authentication:
 		str = "Authentication"
+	case Schema:
+		str = "Schema"
+	case Daemon:
+		str = "Daemon"
 	}
 	return
 }

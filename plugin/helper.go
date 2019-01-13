@@ -30,6 +30,16 @@ func DeclareAuthenticationManifest(m *Manifest) *AuthenticationManifest {
 	return (*AuthenticationManifest)(unsafe.Pointer(m))
 }
 
+// DeclareSchemaManifest declares manifest as SchemaManifest.
+func DeclareSchemaManifest(m *Manifest) *SchemaManifest {
+	return (*SchemaManifest)(unsafe.Pointer(m))
+}
+
+// DeclareDaemonManifest declares manifest as DaemonManifest.
+func DeclareDaemonManifest(m *Manifest) *DaemonManifest {
+	return (*DaemonManifest)(unsafe.Pointer(m))
+}
+
 // ID present plugin identity.
 type ID string
 
