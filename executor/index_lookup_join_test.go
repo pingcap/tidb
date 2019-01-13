@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestIndexLookupJoinHang(c *C) {
+func (s *testSuite1) TestIndexLookupJoinHang(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table idxJoinOuter (a int unsigned)")
 	tk.MustExec("create table idxJoinInner (a int unsigned unique)")
@@ -38,7 +38,7 @@ func (s *testSuite) TestIndexLookupJoinHang(c *C) {
 	rs.Close()
 }
 
-func (s *testSuite) TestIndexJoinUnionScan(c *C) {
+func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t1(id int primary key, a int)")
 	tk.MustExec("create table t2(id int primary key, a int, b int, key idx_a(a))")
@@ -92,11 +92,11 @@ func (s *testSuite) TestIndexJoinUnionScan(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testSuite) TestBatchIndexJoinUnionScan(c *C) {
+func (s *testSuite1) TestBatchIndexJoinUnionScan(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t1(id int primary key, a int)")
 	tk.MustExec("create table t2(id int primary key, a int, key idx_a(a))")
-	tk.MustExec("set @@session.tidb_max_chunk_size=1")
+	tk.MustExec("set @@session.tidb_init_chunk_size=1")
 	tk.MustExec("set @@session.tidb_index_join_batch_size=1")
 	tk.MustExec("set @@session.tidb_index_lookup_join_concurrency=4")
 	tk.MustExec("begin")

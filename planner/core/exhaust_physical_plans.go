@@ -380,7 +380,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		return nil
 	}
 	if isUnionScan {
-		ds = us.Children()[0].(*DataSource)
+		// The child of union scan may be union all for partition table.
+		ds, isDataSource = us.Children()[0].(*DataSource)
+		if !isDataSource {
+			return nil
+		}
 	}
 	var tblPath *accessPath
 	for _, path := range ds.possibleAccessPaths {
@@ -783,6 +787,18 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	apply.SetSchema(la.schema)
 	return []PhysicalPlan{apply}
+}
+
+func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: p.ByItems, Enforced: true}
+	if !prop.IsPrefix(childProperty) {
+		return nil
+	}
+	window := PhysicalWindow{
+		WindowFuncDesc: p.WindowFuncDesc,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
+	window.SetSchema(p.Schema())
+	return []PhysicalPlan{window}
 }
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.

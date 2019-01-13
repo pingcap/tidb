@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -303,6 +304,9 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
+// mockCommitErrorOnce use to make sure gofail mockCommitError only mock commit error once.
+var mockCommitErrorOnce = true
+
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
@@ -314,6 +318,14 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.txn.IsReadOnly() {
 		return nil
 	}
+
+	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
+	// gofail: var mockCommitError bool
+	// if mockCommitError && mockCommitErrorOnce {
+	//	mockCommitErrorOnce = false
+	//	return kv.ErrRetryable
+	// }
+
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
@@ -413,11 +425,16 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	}
 
 	stmt := executor.ExecStmt{
-		Text:      "commit",
+		Text:      "commitTxn",
 		Ctx:       s,
 		StartTime: time.Now(),
 	}
+	var commitDetail *execdetails.CommitDetails
+	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
+	if commitDetail != nil {
+		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
+	}
 	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
 	label := metrics.LblOK
 	if err != nil {
@@ -497,23 +514,42 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) retry(ctx context.Context, maxCnt uint) error {
-	connID := s.sessionVars.ConnectionID
-	if s.sessionVars.TxnCtx.ForUpdate {
-		return errForUpdateCantRetry.GenWithStackByArgs(connID)
+func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
+	if s.txn.doNotCommit == nil {
+		return nil
 	}
-	s.sessionVars.RetryInfo.Retrying = true
+	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
+	// because they are used to finish the aborted transaction.
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+		return nil
+	}
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
+		return nil
+	}
+	return errors.New("current transaction is aborted, commands ignored until end of transaction block")
+}
+
+func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	var retryCnt uint
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
-		s.txn.changeToInvalid()
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		if err != nil {
+			s.rollbackOnError(ctx)
+		}
+		s.txn.changeToInvalid()
 	}()
 
+	connID := s.sessionVars.ConnectionID
+	s.sessionVars.RetryInfo.Retrying = true
+	if s.sessionVars.TxnCtx.ForUpdate {
+		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		return err
+	}
+
 	nh := GetHistory(s)
-	var err error
 	var schemaVersion int64
 	sessVars := s.GetSessionVars()
 	orgStartTS := sessVars.TxnCtx.StartTS
@@ -646,9 +682,13 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sctx sessionctx.Context, sql str
 	}
 	// Set snapshot.
 	if snapshot != 0 {
-		se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10))
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
+			return nil, nil, errors.Trace(err)
+		}
 		defer func() {
-			se.sessionVars.SetSystemVar(variable.TiDBSnapshot, "")
+			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+				log.Error(errors.ErrorStack(err))
+			}
 		}()
 	}
 	return execRestrictedSQL(ctx, se, sql)
@@ -745,7 +785,7 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
 	value, err := d.ToString()
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	return value, nil
 }
@@ -804,8 +844,9 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	name = strings.ToLower(name)
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)
+		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(s, sql)
 	return errors.Trace(err)
 }
@@ -878,7 +919,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	connID := s.sessionVars.ConnectionID
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
@@ -1181,7 +1222,8 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 	s, err := CreateSession(store)
 	if err == nil {
 		// initialize session variables for test.
-		s.GetSessionVars().MaxChunkSize = 2
+		s.GetSessionVars().InitChunkSize = 2
+		s.GetSessionVars().MaxChunkSize = 32
 	}
 	return s, errors.Trace(err)
 }
@@ -1220,9 +1262,15 @@ func loadSystemTZ(se *session) (string, error) {
 		return "", errLoad
 	}
 	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
-	defer rss[0].Close()
+	defer func() {
+		if err := rss[0].Close(); err != nil {
+			log.Error(errors.ErrorStack(err))
+		}
+	}()
 	chk := rss[0].NewChunk()
-	rss[0].Next(context.Background(), chk)
+	if err := rss[0].Next(context.Background(), chk); err != nil {
+		return "", errors.Trace(err)
+	}
 	return chk.GetRow(0).GetString(0), nil
 }
 
@@ -1349,7 +1397,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 24
+	currentBootstrapVersion = 25
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1420,10 +1468,9 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBHashAggFinalConcurrency + quoteCommaQuote +
 	variable.TiDBBackoffLockFast + quoteCommaQuote +
 	variable.TiDBConstraintCheckInPlace + quoteCommaQuote +
-	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
-	variable.TiDBDDLReorgBatchSize + quoteCommaQuote +
 	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
+	variable.TiDBInitChunkSize + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBEnableCascadesPlanner + quoteCommaQuote +
 	variable.TiDBRetryLimit + quoteCommaQuote +
@@ -1472,7 +1519,9 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	// when client set Capability Flags CLIENT_INTERACTIVE, init wait_timeout with interactive_timeout
 	if vars.ClientCapability&mysql.ClientInteractive > 0 {
 		if varVal, ok := vars.GetSystemVar(variable.InteractiveTimeout); ok {
-			vars.SetSystemVar(variable.WaitTimeout, varVal)
+			if err := vars.SetSystemVar(variable.WaitTimeout, varVal); err != nil {
+				return err
+			}
 		}
 	}
 

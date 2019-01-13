@@ -330,7 +330,12 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 
 	// Take prefix index into consideration.
 	if hasPrefix(lengths) {
-		fixPrefixColRange(ranges, lengths, newTp)
+		if fixPrefixColRange(ranges, lengths, newTp) {
+			ranges, err = unionRanges(sc, ranges)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 	}
 
 	return ranges, nil
@@ -397,20 +402,46 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
-func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) {
+// fixPrefixColRange checks whether the range of one column exceeds the length and needs to be cut.
+// It specially handles the last column of each range point. If the last one need to be cut, it will
+// change the exclude status of that point and return `true` to tell
+// that we need do a range merging since that interval may have intersection.
+// e.g. if the interval is (-inf -inf, a xxxxx), (a xxxxx, +inf +inf) and the length of the last column is 3,
+//      then we'll change it to (-inf -inf, a xxx], [a xxx, +inf +inf). You can see that this two interval intersect,
+//      so we need a merge operation.
+// Q: only checking the last column to decide whether the endpoint's exclude status needs to be reset is enough?
+// A: Yes, suppose that the interval is (-inf -inf, a xxxxx b) and only the second column needs to be cut.
+//    The result would be (-inf -inf, a xxx b) if the length of it is 3. Obviously we only need to care about the data
+//    whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
+//    value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
+//    So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
+func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) bool {
+	hasCut := false
 	for _, ran := range ranges {
-		for i := 0; i < len(ran.LowVal); i++ {
+		lowTail := len(ran.LowVal) - 1
+		for i := 0; i < lowTail; i++ {
 			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
 		}
-		ran.LowExclude = false
-		for i := 0; i < len(ran.HighVal); i++ {
+		lowCut := false
+		lowCut = fixRangeDatum(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
+		if lowCut {
+			ran.LowExclude = false
+		}
+		highTail := len(ran.HighVal) - 1
+		for i := 0; i < highTail; i++ {
 			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
 		}
-		ran.HighExclude = false
+		highCut := false
+		highCut = fixRangeDatum(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
+		if highCut {
+			ran.HighExclude = false
+		}
+		hasCut = lowCut || highCut
 	}
+	return hasCut
 }
 
-func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
+func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) bool {
 	// If this column is prefix and the prefix length is smaller than the range, cut it.
 	// In case of UTF8, prefix should be cut by characters rather than bytes
 	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
@@ -423,12 +454,15 @@ func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
 				truncateStr := string(rs[:length])
 				// truncate value and limit its length
 				v.SetString(truncateStr)
+				return true
 			}
 		} else if length != types.UnspecifiedLength && len(colValue) > length {
 			// truncate value and limit its length
 			v.SetBytes(colValue[:length])
+			return true
 		}
 	}
+	return false
 }
 
 // We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.

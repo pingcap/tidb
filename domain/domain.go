@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -393,7 +395,9 @@ func (do *Domain) infoSyncerKeeper() {
 		select {
 		case <-do.info.Done():
 			log.Info("[ddl] server info syncer need to restart")
-			do.info.Restart(context.Background())
+			if err := do.info.Restart(context.Background()); err != nil {
+				log.Error(err)
+			}
 			log.Info("[ddl] server info syncer restarted.")
 		case <-do.exit:
 			return
@@ -584,6 +588,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
+	perfschema.Init()
 	if ebd, ok := do.store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
@@ -952,6 +957,11 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 		if err != nil {
 			log.Warn("notify update privilege failed:", err)
 		}
+	}
+	// update locally
+	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, `FLUSH PRIVILEGES`)
+	if err != nil {
+		log.Errorf("Unable to update privileges: %s", err)
 	}
 }
 
