@@ -15,6 +15,7 @@ package plugin
 
 import (
 	"context"
+	"reflect"
 	"unsafe"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -46,12 +47,8 @@ type Manifest struct {
 // ExportManifest exports a manifest to TiDB as a known format.
 // it just casts sub-manifest to manifest.
 func ExportManifest(m interface{}) *Manifest {
-	return (*Manifest)((*(*iface)(unsafe.Pointer(&m))).Data)
-}
-
-// iface is a trick struct help ExportManifest works.
-type iface struct {
-	Type, Data unsafe.Pointer
+	v := reflect.ValueOf(m)
+	return (*Manifest)(unsafe.Pointer(v.Pointer()))
 }
 
 // AuditManifest presents a sub-manifest that every audit plugin must provide.
