@@ -3860,6 +3860,10 @@ func (s *testDBSuite) TestCheckTooBigFieldLength(c *C) {
 	s.tk.MustExec("drop table if exists tr_03;")
 	s.tk.MustExec("create table tr_03 (id int, name varchar(65534), purchased date ) default charset=latin1;")
 
+	s.tk.MustExec("drop table if exists tr_03;")
+	s.tk.MustExec("create table tr_03 (a varchar(16000) ) default charset utf8;")
+	s.tk.MustExec("alter table tr_03 convert to character set utf8mb4;")
+
 	s.tk.MustExec("drop table if exists tr_04;")
 	s.tk.MustExec("create table tr_04 (a varchar(20000) ) default charset utf8;")
 	s.testErrorCode(c, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
