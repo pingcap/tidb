@@ -239,7 +239,7 @@ func (s *testSuite3) TestInsertZeroYear(c *C) {
 func (s *testSuite3) TestAllowInvalidDates(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop table if exists t1, t2, t3, t4;`)
 	tk.MustExec(`create table t1(d date);`)
 	tk.MustExec(`create table t2(d datetime);`)
 	tk.MustExec(`create table t3(d date);`)
@@ -248,6 +248,10 @@ func (s *testSuite3) TestAllowInvalidDates(c *C) {
 	runWithMode := func(mode string) {
 		inputs := []string{"0000-00-00", "2019-00-00", "2019-01-00", "2019-00-01", "2019-02-31"}
 		results := testkit.Rows(`0 0 0`, `2019 0 0`, `2019 1 0`, `2019 0 1`, `2019 2 31`)
+		oldMode := tk.MustQuery(`select @@sql_mode`).Rows()[0][0]
+		defer func() {
+			tk.MustExec(fmt.Sprintf(`set sql_mode='%s'`, oldMode))
+		}()
 
 		tk.MustExec(`truncate t1;truncate t2;truncate t3;truncate t4;`)
 		tk.MustExec(fmt.Sprintf(`set sql_mode='%s';`, mode))
