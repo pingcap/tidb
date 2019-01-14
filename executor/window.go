@@ -171,6 +171,6 @@ func (e *WindowExec) copyChk(chk *chunk.Chunk) {
 	e.remainingRowsInChunk = childResult.NumRows()
 	columns := e.Schema().Columns[:len(e.Schema().Columns)-1]
 	for i, col := range columns {
-		chk.CopyColumns(childResult, i, col.Index)
+		chk.MakeRefTo(i, childResult, col.Index)
 	}
 }

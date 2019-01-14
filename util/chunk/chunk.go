@@ -138,6 +138,11 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
 }
 
+// MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
+func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
+	c.columns[dstColIdx] = src.columns[srcColIdx]
+}
+
 // SwapColumn swaps column "c.columns[colIdx]" with column
 // "other.columns[otherIdx]". If there exists columns refer to the column to be
 // swapped, we need to re-build the reference.
@@ -185,11 +190,6 @@ func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
 func (c *Chunk) SwapColumns(other *Chunk) {
 	c.columns, other.columns = other.columns, c.columns
 	c.numVirtualRows, other.numVirtualRows = other.numVirtualRows, c.numVirtualRows
-}
-
-// CopyColumns copies columns `other.columns[from]` to `c.columns[dst]`.
-func (c *Chunk) CopyColumns(other *Chunk, dst, from int) {
-	c.columns[dst] = other.columns[from]
 }
 
 // SetNumVirtualRows sets the virtual row number for a Chunk.
