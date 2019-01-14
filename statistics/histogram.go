@@ -541,6 +541,7 @@ func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) b
 func (hg *Histogram) SplitRange(sc *stmtctx.StatementContext, ranges []*ranger.Range, encoded bool) []*ranger.Range {
 	split := make([]*ranger.Range, 0, len(ranges))
 	for len(ranges) > 0 {
+		log.Warnf("histogram tp: %v, unsigned: %v", hg.Tp.Tp, mysql.HasUnsignedFlag(hg.Tp.Flag))
 		// Find the last bound that greater or equal to the LowVal.
 		idx := hg.Bounds.UpperBound(0, &ranges[0].LowVal[0])
 		if !ranges[0].LowExclude && idx > 0 {

@@ -173,8 +173,6 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 	if fb == nil || fb.Hist() == nil {
 		return tableRangesToKVRangesWithoutSplit(tid, ranges)
 	}
-	// EncodeInt don't need *statement.Context.
-	ranges = fb.Hist().SplitRange(nil, ranges, false)
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
