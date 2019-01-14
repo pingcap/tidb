@@ -160,6 +160,10 @@ func (q *topNSlowQueries) Append(info *SlowQueryInfo) {
 	}
 }
 
+func (q *topNSlowQueries) QueryAll() []*SlowQueryInfo {
+	return q.recent.data
+}
+
 func (q *topNSlowQueries) RemoveExpired(now time.Time) {
 	q.user.RemoveExpired(now, q.period)
 	q.internal.RemoveExpired(now, q.period)
