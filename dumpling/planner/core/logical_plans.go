@@ -450,7 +450,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	if corColInAccessConds {
 		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
 		if ok && !ds.stats.HistColl.Pseudo {
-			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+			path.countAfterAccess = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 		} else {
 			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
 		}
@@ -461,7 +461,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, _, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
