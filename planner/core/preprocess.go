@@ -488,10 +488,10 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
 		}
 	case mysql.TypeVarchar:
-		// Here logical move backend processing, need to get all levels of character set to set the character set of column.
-		// It's not easy to get the schema charset and table charset here.
-		// ColumnDefaultCharset --> TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
 		if len(tp.Charset) == 0 {
+			// It's not easy to get the schema charset and table charset here.
+			// The charset is determined by the order ColumnDefaultCharset --> TableDefaultCharset-->DatabaseDefaultCharset-->SystemDefaultCharset.
+			// return nil, to make the check in the ddl.CreateTable.
 			return nil
 		}
 		err := ddl.IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, tp.Charset)
