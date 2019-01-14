@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -87,12 +88,12 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	chk := rs.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := rs.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -101,16 +102,16 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
-	it = chunk.NewIterator4Chunk(chk)
+	req = rs.NewRecordBatch()
+	it = chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			c.Assert(chk.GetRow(0).GetString(1), Equals, "double")
+			c.Assert(req.GetRow(0).GetString(1), Equals, "double")
 		}
 	}
 
@@ -244,10 +245,10 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	chk := r.NewChunk()
-	err = r.Next(context.Background(), chk)
+	req := r.NewRecordBatch()
+	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	row := chk.GetRow(0)
+	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
 	r.Close()
@@ -510,24 +511,32 @@ func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
 func (s *testSuite3) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 1")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	_, err := tk.Exec("set tidb_ddl_reorg_worker_cnt = invalid_val")
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	_, err = tk.Exec("set tidb_ddl_reorg_worker_cnt = -1")
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
-	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	res := tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
 
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgWorkerCount)))
+	res.Check(testkit.Rows("100"))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
@@ -536,28 +545,39 @@ func (s *testSuite3) TestSetDDLReorgWorkerCnt(c *C) {
 func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.DefTiDBDDLReorgBatchSize))
 
-	tk.MustExec("set tidb_ddl_reorg_batch_size = 1")
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MinDDLReorgBatchSize))
-	tk.MustExec(fmt.Sprintf("set tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MaxDDLReorgBatchSize))
-	_, err := tk.Exec("set tidb_ddl_reorg_batch_size = invalid_val")
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
-	tk.MustExec("set tidb_ddl_reorg_batch_size = 100")
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
-	tk.MustExec("set tidb_ddl_reorg_batch_size = -1")
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
 
-	tk.MustExec("set tidb_ddl_reorg_batch_size = 100")
-	res := tk.MustQuery("select @@tidb_ddl_reorg_batch_size")
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
+	res := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("100"))
 
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgBatchSize)))
+	res.Check(testkit.Rows(fmt.Sprintf("%v", 100)))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
+
+	// If do not LoadDDLReorgVars, the local variable will be the last loaded value.
+	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
 }

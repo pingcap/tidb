@@ -705,6 +705,9 @@ func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]i
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) {
 	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	for _, tbl := range as.TableNames {
+		if tbl.TableInfo.IsView() {
+			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
+		}
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs, err := getPhysicalIDs(tbl.TableInfo, as.PartitionNames)
 		if err != nil {
@@ -1097,6 +1100,13 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
 	}
 	tableInfo := tn.TableInfo
+	if tableInfo.IsView() {
+		err := errors.Errorf("insert into view %s is not supported now.", tableInfo.Name.O)
+		if insert.IsReplace {
+			err = errors.Errorf("replace into view %s is not supported now.", tableInfo.Name.O)
+		}
+		return nil, err
+	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema := expression.TableInfo2SchemaWithDBName(b.ctx, tn.Schema, tableInfo)
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
@@ -1712,9 +1722,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPlugins:
-		names = []string{"Name", "Status", "Type", "Library", "License"}
+		names = []string{"Name", "Status", "Type", "Library", "License", "Version"}
 		ftypes = []byte{
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 		}
 	case ast.ShowProcessList:
 		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}

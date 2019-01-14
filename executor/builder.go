@@ -916,6 +916,9 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}
 	metrics.ExecutorCounter.WithLabelValues("HashJoinExec").Inc()
+	if e.ctx.GetSessionVars().EnableRadixJoin {
+		return &RadixHashJoinExec{HashJoinExec: e}
+	}
 	return e
 }
 
