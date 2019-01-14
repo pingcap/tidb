@@ -298,6 +298,7 @@ func (s *testSuite2) TestInsert(c *C) {
 	c.Assert(err.Error(), Equals, "insert into view v is not supported now.")
 	_, err = tk.Exec("replace into v values(1,2)")
 	c.Assert(err.Error(), Equals, "replace into view v is not supported now.")
+	tk.MustExec("drop view v")
 }
 
 func (s *testSuite2) TestInsertAutoInc(c *C) {
@@ -1333,6 +1334,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("create view v as select * from t")
 	_, err = tk.Exec("update v set a = '2000-11-11'")
 	c.Assert(err.Error(), Equals, "update view v is not supported now.")
+	tk.MustExec("drop view v")
 }
 
 func (s *testSuite2) TestPartitionedTableUpdate(c *C) {
@@ -1594,7 +1596,7 @@ func (s *testSuite) TestDelete(c *C) {
 	tk.MustExec("create view v as select * from delete_test")
 	_, err = tk.Exec("delete from v where name = 'aaa'")
 	c.Assert(err.Error(), Equals, "delete view v is not supported now.")
-
+	tk.MustExec("drop view v")
 }
 
 func (s *testSuite2) TestPartitionedTableDelete(c *C) {
