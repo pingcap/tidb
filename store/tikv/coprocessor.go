@@ -117,7 +117,7 @@ func (c *CopClient) validateRanges(ranges []kv.KeyRange) error {
 	for i := 1; i < len(ranges); i++ {
 		if bytes.Compare(ranges[i].StartKey, ranges[i-1].EndKey) < 0 {
 			startKeyLen := len(ranges[i].StartKey)
-			if startKeyLen+1 == len(ranges[i-1].EndKey) && bytes.Compare(ranges[i].StartKey, ranges[i-1].EndKey[:startKeyLen]) == 0 && ranges[i-1].EndKey[startKeyLen] == 0 {
+			if startKeyLen+1 == len(ranges[i-1].EndKey) && bytes.Equal(ranges[i].StartKey, ranges[i-1].EndKey[:startKeyLen]) && ranges[i-1].EndKey[startKeyLen] == 0 {
 				continue
 			}
 			return errors.Trace(errors.New("There's intersection between ranges sending to TiKV"))
