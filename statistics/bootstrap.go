@@ -67,14 +67,14 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		return nil, errors.Trace(err)
 	}
 	tables := statsCache{}
-	chk := rc[0].NewChunk()
-	iter := chunk.NewIterator4Chunk(chk)
+	req := rc[0].NewRecordBatch()
+	iter := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err := rc[0].Next(context.TODO(), chk)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		h.initStatsMeta4Chunk(is, tables, iter)
@@ -136,14 +136,14 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 	if err != nil {
 		return errors.Trace(err)
 	}
-	chk := rc[0].NewChunk()
-	iter := chunk.NewIterator4Chunk(chk)
+	req := rc[0].NewRecordBatch()
+	iter := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err := rc[0].Next(context.TODO(), chk)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		h.initStatsHistograms4Chunk(is, tables, iter)
@@ -208,14 +208,14 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	chk := rc[0].NewChunk()
-	iter := chunk.NewIterator4Chunk(chk)
+	req := rc[0].NewRecordBatch()
+	iter := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err := rc[0].Next(context.TODO(), chk)
+		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		initStatsBuckets4Chunk(h.mu.ctx, tables, iter)

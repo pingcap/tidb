@@ -71,7 +71,7 @@ func (e *DDLExec) toErr(err error) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.done {
 		return nil
 	}
@@ -311,7 +311,7 @@ func (e *RestoreTableExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Open interface.
-func (e *RestoreTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *RestoreTableExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
@@ -418,7 +418,7 @@ func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.D
 				fmt.Sprintf("(Table ID %d)", job.TableID),
 			)
 		}
-		if table.Meta().Name == e.Table.Name {
+		if table.Meta().Name.L == e.Table.Name.L {
 			schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
 			if !ok {
 				return nil, nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(

@@ -356,12 +356,12 @@ type tidbResultSet struct {
 	closed    bool
 }
 
-func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
-	return trs.recordSet.NewChunk()
+func (trs *tidbResultSet) NewRecordBatch() *chunk.RecordBatch {
+	return trs.recordSet.NewRecordBatch()
 }
 
-func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	return trs.recordSet.Next(ctx, chk)
+func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	return trs.recordSet.Next(ctx, req)
 }
 
 func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {
