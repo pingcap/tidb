@@ -439,12 +439,6 @@ func setGlobalVars() {
 		}
 	}
 
-	if cfg.TiKVClient.GrpcConnectionCount > 0 {
-		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
-	}
-	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
-	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
-
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
 
