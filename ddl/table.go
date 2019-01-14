@@ -104,7 +104,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			if err != nil {
 				// unexpected error, drop db may complete before drop table
 				// so we cancel this job here
-				if infoschema.ErrDatabaseNotExists.Equal(err) {
+				if meta.ErrDBNotExists.Equal(err) {
 					job.State = model.JobStateCancelled
 				}
 				return ver, errors.Trace(err)
