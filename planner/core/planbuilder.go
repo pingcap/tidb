@@ -137,6 +137,8 @@ type PlanBuilder struct {
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
+
+	windowSpecs map[string]ast.WindowSpec
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -248,6 +250,9 @@ func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
 func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	p := &Set{}
 	for _, vars := range v.Variables {
+		if vars.IsGlobal {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+		}
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
 			IsGlobal: vars.IsGlobal,

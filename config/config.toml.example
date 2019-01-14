@@ -231,13 +231,22 @@ grpc-keepalive-time = 10
 # and if no activity is seen even after that the connection is closed.
 grpc-keepalive-timeout = 3
 
-# max time for commit command, must be twice bigger than raft election timeout.
+# Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
 # The max time a Txn may use (in seconds) from its startTS to commitTS.
 # We use it to guarantee GC worker will not influence any active txn. Please make sure that this
 # value is less than gc_life_time - 10s.
 max-txn-time-use = 590
+
+# Max batch size in gRPC.
+max-batch-size = 128
+# Overload threshold of TiKV.
+overload-threshold = 200
+# Max batch wait time in nanosecond to avoid waiting too long. 0 means disable this feature.
+max-batch-wait-time = 0
+# Batch wait size, to avoid waiting too long.
+batch-wait-size = 8
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
