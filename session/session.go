@@ -760,17 +760,17 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 
 func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for {
-		err := rs.Next(ctx, chk)
-		if err != nil || chk.NumRows() == 0 {
+		err := rs.Next(ctx, req)
+		if err != nil || req.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
-		iter := chunk.NewIterator4Chunk(chk)
+		iter := chunk.NewIterator4Chunk(req.Chunk)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		chk = chunk.Renew(chk, se.sessionVars.MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, se.sessionVars.MaxChunkSize)
 	}
 }
 
@@ -1269,11 +1269,11 @@ func loadSystemTZ(se *session) (string, error) {
 			log.Error(errors.ErrorStack(err))
 		}
 	}()
-	chk := rss[0].NewChunk()
-	if err := rss[0].Next(context.Background(), chk); err != nil {
+	req := rss[0].NewRecordBatch()
+	if err := rss[0].Next(context.Background(), req); err != nil {
 		return "", errors.Trace(err)
 	}
-	return chk.GetRow(0).GetString(0), nil
+	return req.GetRow(0).GetString(0), nil
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
