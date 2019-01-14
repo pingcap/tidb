@@ -179,20 +179,20 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 	// Restore table divide into 2 steps:
 	// 1. Check gc enable status, to decided whether enable gc after restore table.
-	//     1. Why not disable gc before put the job to ddl job queue?
+	//     a. Why not disable gc before put the job to ddl job queue?
 	//        Think about concurrency problem. If a restore job-1 is doing and already disabled GC,
 	//        then, another restore table job-2 check gc enable will get disable before into the job queue.
 	//        then, after restore table job-2 finished, the gc will be disabled.
-	//     2. Why split into 2 steps? 1 step also can finish this job: check gc -> disable gc -> restore table -> finish job.
+	//     b. Why split into 2 steps? 1 step also can finish this job: check gc -> disable gc -> restore table -> finish job.
 	//        What if the transaction commit failed? then, the job will retry, but the gc already disabled when first running.
 	//        So, after this job retry succeed, the gc will be disabled.
 	// 2. Do restore table job.
-	//     1. Check whether gc enabled, if enabled, disable gc first.
-	//     2. Check gc safe point. If drop table time if after safe point time, then can do restore.
+	//     a. Check whether gc enabled, if enabled, disable gc first.
+	//     b. Check gc safe point. If drop table time if after safe point time, then can do restore.
 	//        otherwise, can't restore table, because the records of the table may already delete by gc.
-	//     3. Remove gc task of the table from gc_delete_range table.
-	//     4. Create table and rebase table auto ID.
-	//     5. Finish.
+	//     c. Remove gc task of the table from gc_delete_range table.
+	//     d. Create table and rebase table auto ID.
+	//     e. Finish.
 	switch tblInfo.State {
 	case model.StateNone:
 		// none -> write only
@@ -252,7 +252,7 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return ver, nil
 }
 
-// mockRestoreTableCommitErrOnce use to make sure `mockRestoreTableCommitErr` only mock error once.
+// mockRestoreTableCommitErrOnce uses to make sure `mockRestoreTableCommitErr` only mock error once.
 var mockRestoreTableCommitErrOnce = true
 
 func enableGC(w *worker) error {
