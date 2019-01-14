@@ -103,6 +103,37 @@ func (s *testSuite) TestSelectNormalChunkSize(c *C) {
 	c.Assert(response.Close(), IsNil)
 }
 
+
+func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
+	response, colTypes := s.createSelectNormal(1, 2, c)
+	planIDs := []string{"1", "2", "3"}
+	if len(response.copPlanIDs) != len(planIDs) {
+		c.Fatal("invalid copPlanIDs")
+	}
+	for i := range planIDs {
+		if response.copPlanIDs[i] != planIDs[i] {
+			c.Fatal("invalid copPlanIDs")
+		}
+	}
+
+	response.Fetch(context.TODO())
+
+	// Test Next.
+	chk := chunk.New(colTypes, 32, 32)
+	numAllRows := 0
+	for {
+		err := response.Next(context.TODO(), chk)
+		c.Assert(err, IsNil)
+		numAllRows += chk.NumRows()
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	c.Assert(numAllRows, Equals, 2)
+	err := response.Close()
+	c.Assert(err, IsNil)
+}
+
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
