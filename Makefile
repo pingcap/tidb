@@ -25,8 +25,8 @@ PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go" | grep -vE "vendor")
 
-GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs gofail enable)
-GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs gofail disable)
+GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs tools/bin/gofail enable)
+GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|_tools)" | xargs tools/bin/gofail disable)
 
 LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
@@ -113,11 +113,7 @@ test: checklist gotest explaintest
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
-gotest:
-	@rm -rf $GOPATH/bin/gofail
-	$(GO) get github.com/pingcap/gofail
-	@which gofail
-	@$(GOFAIL_ENABLE)
+gotest: gofail-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	@export log_level=error; \
@@ -132,23 +128,17 @@ else
 endif
 	@$(GOFAIL_DISABLE)
 
-race:
-	$(GO) get github.com/pingcap/gofail
-	@$(GOFAIL_ENABLE)
+race: gofail-enable
 	@export log_level=debug; \
 	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
-leak:
-	$(GO) get github.com/pingcap/gofail
-	@$(GOFAIL_ENABLE)
+leak: gofail-enable
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
-tikv_integration_test:
-	$(GO) get github.com/pingcap/gofail
-	@$(GOFAIL_ENABLE)
+tikv_integration_test: gofail-enable
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
@@ -192,38 +182,37 @@ importer:
 checklist:
 	cat checklist.md
 
-gofail-enable:
+gofail-enable: tools/bin/gofail
 # Converting gofail failpoints...
 	@$(GOFAIL_ENABLE)
 
-gofail-disable:
+gofail-disable: tools/bin/gofail
 # Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)
 
-tools/bin/megacheck:
+tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
-	$go build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
+	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
 
-tools/bin/revive:
+tools/bin/revive: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/revive github.com/mgechev/revive
 
-tools/bin/goword:
+tools/bin/goword: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
 
-tools/bin/gometalinter:
+tools/bin/gometalinter: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v2
 
-tools/bin/gosec:
+tools/bin/gosec: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
 
-tools/bin/errcheck:
+tools/bin/errcheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
 
 tools/bin/gofail: go.mod
 	$(GO) build -o $@ github.com/pingcap/gofail
-
