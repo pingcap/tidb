@@ -284,10 +284,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 				// Some builtin function like CURRENT_TIMESTAMP() will cause ParseTime error.
 				return hasDefaultValue, value, nil
 			}
-			res := t.Time.Year() + t.Time.Month() + t.Time.Day()
-			res += t.Time.Hour() + t.Time.Minute() + t.Time.Second()
-			res += t.Time.Microsecond()
-			if res == 0 {
+			if t.Time == types.ZeroTime {
 				return hasDefaultValue, value, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 			}
 		}
