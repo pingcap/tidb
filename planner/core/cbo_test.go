@@ -472,6 +472,11 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("insert into t4 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
 	testKit.MustExec("analyze table t4")
 
+	testKit.MustExec("create view v as select * from t")
+	_, err = testKit.Exec("analyze table v")
+	c.Assert(err.Error(), Equals, "analyze v is not supported now.")
+	testKit.MustExec("drop view v")
+
 	tests := []struct {
 		sql  string
 		best string
