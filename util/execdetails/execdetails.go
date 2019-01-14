@@ -205,14 +205,6 @@ func (e *CopRuntimeStats) Record(timeProcessedNs, numProducedRows, numIterations
 	e.numIterations += numIterations
 }
 
-func (e *CopRuntimeStats) String() string {
-	if e == nil {
-		return ""
-	}
-	// TODO(zhangyuanjia)
-	return ""
-}
-
 // Record records executor's execution.
 func (e *RuntimeStats) Record(d time.Duration, rowNum int) {
 	atomic.AddInt32(&e.loop, 1)

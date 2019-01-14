@@ -48,3 +48,17 @@ func TestString(t *testing.T) {
 		t.Errorf("got:\n%s\nexpected:\n", str)
 	}
 }
+
+func TestCopRuntimeStats(t *testing.T) {
+	stats := NewRuntimeStatsColl()
+	stats.GetCop("table_scan", "8.8.8.8").Record(1, 1, 1)
+	stats.GetCop("table_scan", "8.8.8.9").Record(2, 2, 2)
+	stats.GetCop("agg", "8.8.8.8").Record(3, 3, 3)
+	stats.GetCop("agg", "8.8.8.9").Record(4, 4, 4)
+	if stats.CopSummary("table_scan") != "max proc ns:2, total rows:3, total iters:3" {
+		t.Fatal("table_scan")
+	}
+	if stats.CopSummary("agg") != "max proc ns:4, total rows:7, total iters:7" {
+		t.Fatal("agg")
+	}
+}
