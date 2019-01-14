@@ -35,6 +35,9 @@ const (
 	LabelGCWorker = "gcworker"
 	LabelAnalyze  = "analyze"
 
+	LabelBatchRecvLoop = "batch-recv-loop"
+	LabelBatchSendLoop = "batch-send-loop"
+
 	opSucc   = "ok"
 	opFailed = "err"
 )
@@ -132,4 +135,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
 	prometheus.MustRegister(CPUUsagePercentageGauge)
+	prometheus.MustRegister(TiKVPendingBatchRequests)
+	prometheus.MustRegister(TiKVBatchWaitDuration)
 }
