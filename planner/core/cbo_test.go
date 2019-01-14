@@ -77,7 +77,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55)")
 	tk.MustExec("analyze table t1, t2")
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
-	c.Assert(len(rs.Rows()), Equals, 10)
+	c.Assert(len(rs.Rows()), Equals, 11)
 	for _, row := range rs.Rows() {
 		c.Assert(len(row), Equals, 5)
 		taskType := row[2].(string)
@@ -367,7 +367,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select sum(a) from t1 use index(idx) where a = 3 and b = 100000 group by a limit 1",
-			best: "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->StreamAgg->Limit",
+			best: "IndexLookUp(Index(t1.idx)[[3,3]], Table(t1)->Sel([eq(test.t1.b, 100000)]))->Projection->StreamAgg->Limit",
 		},
 	}
 	for _, tt := range tests {
@@ -471,6 +471,11 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	testKit.MustExec("create index b on t4 (b)")
 	testKit.MustExec("insert into t4 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
 	testKit.MustExec("analyze table t4")
+
+	testKit.MustExec("create view v as select * from t")
+	_, err = testKit.Exec("analyze table v")
+	c.Assert(err.Error(), Equals, "analyze v is not supported now.")
+	testKit.MustExec("drop view v")
 
 	tests := []struct {
 		sql  string
@@ -703,10 +708,10 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"  ├─TableReader_12 10.00 root data:TableScan_11",
 			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─MaxOneRow_13 1.00 root ",
-			"    └─Projection_14 0.80 root concat(cast(t1.a), \",\", cast(t1.b))",
-			"      └─IndexLookUp_21 0.80 root ",
+			"    └─Projection_14 0.00 root concat(cast(t1.a), \",\", cast(t1.b))",
+			"      └─IndexLookUp_21 0.00 root ",
 			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(t1.c, test.t.c)], keep order:false",
-			"        └─Selection_20 0.80 cop eq(t1.a, test.t.a)",
+			"        └─Selection_20 0.00 cop eq(t1.a, test.t.a)",
 			"          └─TableScan_19 1.00 cop table:t, keep order:false",
 		))
 }

@@ -57,6 +57,9 @@ func GetSysVar(name string) *SysVar {
 	return SysVars[name]
 }
 
+// PluginVarNames is global plugin var names set.
+var PluginVarNames []string
+
 // Variable error codes.
 const (
 	CodeUnknownStatusVar            terror.ErrCode = 1
@@ -315,7 +318,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "sort_buffer_size", "262144"},
 	{ScopeGlobal, "innodb_flush_neighbors", "1"},
 	{ScopeNone, "innodb_use_sys_malloc", "ON"},
-	{ScopeNone, "plugin_dir", "/usr/local/mysql/lib/plugin/"},
+	{ScopeSession, PluginLoad, ""},
+	{ScopeSession, PluginDir, "/data/deploy/plugin"},
 	{ScopeNone, "performance_schema_max_socket_classes", "10"},
 	{ScopeNone, "performance_schema_max_stage_classes", "150"},
 	{ScopeGlobal, "innodb_purge_batch_size", "300"},
@@ -644,6 +648,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	{ScopeGlobal | ScopeSession, TiDBInitChunkSize, strconv.Itoa(DefInitChunkSize)},
 	{ScopeGlobal | ScopeSession, TiDBEnableCascadesPlanner, "0"},
 	{ScopeSession, TIDBMemQuotaQuery, strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10)},
 	{ScopeSession, TIDBMemQuotaHashJoin, strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10)},
@@ -671,8 +676,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBConfig, ""},
-	{ScopeGlobal | ScopeSession, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
-	{ScopeGlobal | ScopeSession, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
+	{ScopeGlobal, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
+	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, boolToIntStr(DefTiDBUseRadixJoin)},
@@ -788,6 +793,10 @@ const (
 	ValidatePasswordNumberCount = "validate_password_number_count"
 	// ValidatePasswordLength is the name of 'validate_password_length' system variable.
 	ValidatePasswordLength = "validate_password_length"
+	// PluginDir is the name of 'plugin_dir' system variable.
+	PluginDir = "plugin_dir"
+	// PluginLoad is the name of 'plugin_load' system variable.
+	PluginLoad = "plugin_load"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

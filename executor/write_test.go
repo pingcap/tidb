@@ -237,6 +237,27 @@ func (s *testSuite2) TestInsert(c *C) {
 	tk.MustExec("insert into test values(2, 3)")
 	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2", "2 3"))
 
+	// issue 6360
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint unsigned);")
+	tk.MustExec(" set @orig_sql_mode = @@sql_mode; set @@sql_mode = 'strict_all_tables';")
+	_, err = tk.Exec("insert into t value (-1);")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t value (-1);")
+	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t select -1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t select cast(-1 as unsigned);")
+	tk.MustExec("insert into t value (-1.111);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t value ('-1.111');")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
+	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
+
 	// issue 6424
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6))")
@@ -271,6 +292,13 @@ func (s *testSuite2) TestInsert(c *C) {
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert into t (b) values(default(a))")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("create view v as select * from t")
+	_, err = tk.Exec("insert into v values(1,2)")
+	c.Assert(err.Error(), Equals, "insert into view v is not supported now.")
+	_, err = tk.Exec("replace into v values(1,2)")
+	c.Assert(err.Error(), Equals, "replace into view v is not supported now.")
+	tk.MustExec("drop view v")
 }
 
 func (s *testSuite2) TestInsertAutoInc(c *C) {
@@ -610,7 +638,7 @@ commit;`
 	create table m (id int primary key auto_increment, code int unique);
 	insert tmp (code) values (1);
 	insert tmp (code) values (1);
-	set tidb_max_chunk_size=1;
+	set tidb_init_chunk_size=1;
 	insert m (code) select code from tmp on duplicate key update code = values(code);`
 	tk.MustExec(testSQL)
 	testSQL = `select * from m;`
@@ -1302,6 +1330,11 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("update t set b = ''")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 <nil>"))
 	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
+
+	tk.MustExec("create view v as select * from t")
+	_, err = tk.Exec("update v set a = '2000-11-11'")
+	c.Assert(err.Error(), Equals, "update view v is not supported now.")
+	tk.MustExec("drop view v")
 }
 
 func (s *testSuite2) TestPartitionedTableUpdate(c *C) {
@@ -1559,6 +1592,11 @@ func (s *testSuite) TestDelete(c *C) {
 
 	tk.MustExec(`delete from delete_test ;`)
 	tk.CheckExecResult(1, 0)
+
+	tk.MustExec("create view v as select * from delete_test")
+	_, err = tk.Exec("delete from v where name = 'aaa'")
+	c.Assert(err.Error(), Equals, "delete view v is not supported now.")
+	tk.MustExec("drop view v")
 }
 
 func (s *testSuite2) TestPartitionedTableDelete(c *C) {
@@ -1914,6 +1952,26 @@ func (s *testSuite2) TestLoadDataIgnoreLines(c *C) {
 	tests := []testCase{
 		{nil, []byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 		{nil, []byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 0"},
+	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+}
+
+// related to issue 6360
+func (s *testSuite2) TestLoadDataOverflowBigintUnsigned(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	ctx := tk.Se.(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
+	tests := []testCase{
+		{nil, []byte("-1\n-18446744073709551615\n-18446744073709551616\n"), []string{"0", "0", "0"}, nil, "Records: 3  Deleted: 0  Skipped: 0  Warnings: 3"},
+		{nil, []byte("-9223372036854775809\n18446744073709551616\n"), []string{"0", "18446744073709551615"}, nil, "Records: 2  Deleted: 0  Skipped: 0  Warnings: 2"},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
@@ -2336,7 +2394,7 @@ func (s *testSuite2) TestRebaseIfNeeded(c *C) {
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
-	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
+	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2))
 	c.Assert(err, IsNil)
 	txn, err := s.ctx.Txn(true)
 	c.Assert(err, IsNil)

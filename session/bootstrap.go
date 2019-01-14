@@ -262,6 +262,7 @@ const (
 	version22 = 22
 	version23 = 23
 	version24 = 24
+	version25 = 25
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -303,12 +304,12 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	}
 	r := rs[0]
 	defer terror.Call(r.Close)
-	chk := r.NewChunk()
-	err = r.Next(ctx, chk)
-	if err != nil || chk.NumRows() == 0 {
+	req := r.NewRecordBatch()
+	err = r.Next(ctx, req)
+	if err != nil || req.NumRows() == 0 {
 		return "", true, errors.Trace(err)
 	}
-	row := chk.GetRow(0)
+	row := req.GetRow(0)
 	if row.IsNull(0) {
 		return "", true, nil
 	}
@@ -414,6 +415,10 @@ func upgrade(s Session) {
 
 	if ver < version24 {
 		upgradeToVer24(s)
+	}
+
+	if ver < version25 {
+		upgradeToVer25(s)
 	}
 
 	updateBootstrapVer(s)
@@ -536,10 +541,10 @@ func upgradeToVer12(s Session) {
 	r := rs[0]
 	sqls := make([]string, 0, 1)
 	defer terror.Call(r.Close)
-	chk := r.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
-	err = r.Next(ctx, chk)
-	for err == nil && chk.NumRows() != 0 {
+	req := r.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
+	err = r.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			user := row.GetString(0)
 			host := row.GetString(1)
@@ -550,7 +555,7 @@ func upgradeToVer12(s Session) {
 			updateSQL := fmt.Sprintf(`UPDATE HIGH_PRIORITY mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
 			sqls = append(sqls, updateSQL)
 		}
-		err = r.Next(ctx, chk)
+		err = r.Next(ctx, req)
 	}
 	terror.MustNil(err)
 
@@ -668,6 +673,13 @@ func writeSystemTZ(s Session) {
 // upgradeToVer24 initializes `System` timezone according to docs/design/2018-09-10-adding-tz-env.md
 func upgradeToVer24(s Session) {
 	writeSystemTZ(s)
+}
+
+// upgradeToVer25 updates tidb_max_chunk_size to new low bound value 32 if previous value is small than 32.
+func upgradeToVer25(s Session) {
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = '%[4]d' WHERE VARIABLE_NAME = '%[3]s' AND VARIABLE_VALUE < %[4]d",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBMaxChunkSize, variable.DefInitChunkSize)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

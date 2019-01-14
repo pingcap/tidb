@@ -142,8 +142,8 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		rs, err = stmt.Exec(ctx)
 		c.Assert(err, IsNil)
-		chk := rs.NewChunk()
-		err = rs.Next(ctx, chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(ctx, req)
 		c.Assert(err, IsNil)
 		c.Assert(rs.Close(), IsNil)
 
@@ -218,7 +218,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.MustExec("create table prepare1 (a decimal(1))")
 		tk.MustExec("insert into prepare1 values(1);")
 		_, err = tk.Exec("prepare stmt FROM @sql1")
-		c.Assert(err.Error(), Equals, "line 1 column 4 near \"\" (total length 4)")
+		c.Assert(err.Error(), Equals, "line 1 column 4 near \"NULL\" (total length 4)")
 		tk.MustExec("SET @sql = 'update prepare1 set a=5 where a=?';")
 		_, err = tk.Exec("prepare stmt FROM @sql")
 		c.Assert(err, IsNil)
@@ -231,6 +231,16 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		exec := &executor.ExecuteExec{}
 		exec.Next(ctx, nil)
 		exec.Close()
+
+		// issue 8065
+		stmtID, _, _, err = tk.Se.PrepareStmt("select ? from dual")
+		c.Assert(err, IsNil)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
+		c.Assert(err, IsNil)
+		stmtID, _, _, err = tk.Se.PrepareStmt("update prepare1 set a = ? where a = ?")
+		c.Assert(err, IsNil)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1, 1)
+		c.Assert(err, IsNil)
 	}
 }
 

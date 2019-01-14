@@ -17,7 +17,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
@@ -42,8 +42,8 @@ type SetExecutor struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *SetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
@@ -194,8 +194,7 @@ func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 		return errors.New("can not get 'tikv_gc_safe_point'")
 	}
 	safePointString := rows[0].GetString(0)
-	const gcTimeFormat = "20060102-15:04:05 -0700 MST"
-	safePointTime, err := time.Parse(gcTimeFormat, safePointString)
+	safePointTime, err := util.CompatibleParseGCTime(safePointString)
 	if err != nil {
 		return errors.Trace(err)
 	}

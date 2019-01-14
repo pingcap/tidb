@@ -93,6 +93,9 @@ var aesModes = map[string]*aesModeAttr{
 	"aes-128-cbc": {"cbc", 16, true},
 	"aes-192-cbc": {"cbc", 24, true},
 	"aes-256-cbc": {"cbc", 32, true},
+	"aes-128-ofb": {"ofb", 16, true},
+	"aes-192-ofb": {"ofb", 24, true},
+	"aes-256-ofb": {"ofb", 32, true},
 	"aes-128-cfb": {"cfb", 16, true},
 	"aes-192-cfb": {"cfb", 24, true},
 	"aes-256-cfb": {"cfb", 32, true},
@@ -212,6 +215,8 @@ func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	switch b.modeName {
 	case "cbc":
 		plainText, err = encrypt.AESDecryptWithCBC([]byte(cryptStr), key, []byte(iv))
+	case "ofb":
+		plainText, err = encrypt.AESDecryptWithOFB([]byte(cryptStr), key, []byte(iv))
 	case "cfb":
 		plainText, err = encrypt.AESDecryptWithCFB([]byte(cryptStr), key, []byte(iv))
 	default:
@@ -337,6 +342,8 @@ func (b *builtinAesEncryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	switch b.modeName {
 	case "cbc":
 		cipherText, err = encrypt.AESEncryptWithCBC([]byte(str), key, []byte(iv))
+	case "ofb":
+		cipherText, err = encrypt.AESEncryptWithOFB([]byte(str), key, []byte(iv))
 	case "cfb":
 		cipherText, err = encrypt.AESEncryptWithCFB([]byte(str), key, []byte(iv))
 	default:

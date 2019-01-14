@@ -469,6 +469,10 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result = tk.MustQuery("select @@autocommit;")
 	result.Check(testkit.Rows("ON"))
 	tk.MustExec("set @@global.autocommit=1")
+
+	_, err = tk.Exec("set global time_zone = 'timezone'")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
 }
 
 func (s *testSessionSuite) TestGetSysVariables(c *C) {
@@ -1124,10 +1128,10 @@ func (s *testSessionSuite) TestResultType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	rs, err := tk.Exec(`select cast(null as char(30))`)
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.GetRow(0).IsNull(0), IsTrue)
+	c.Assert(req.GetRow(0).IsNull(0), IsTrue)
 	c.Assert(rs.Fields()[0].Column.FieldType.Tp, Equals, mysql.TypeVarString)
 }
 
@@ -1867,30 +1871,31 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 10)
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.MustExec("set tidb_max_chunk_size = 2")
+	tk.MustExec("set tidb_init_chunk_size = 2")
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
 	}()
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	var count int
 	var numChunks int
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		numRows := chk.NumRows()
+		numRows := req.NumRows()
 		if numRows == 0 {
 			break
 		}
 		for i := 0; i < numRows; i++ {
-			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			c.Assert(req.GetRow(i).GetInt64(0), Equals, int64(count))
 			count++
 		}
 		numChunks++
 	}
 	c.Assert(count, Equals, 100)
-	c.Assert(numChunks, Equals, 50)
+	// FIXME: revert this result to new group value after distsql can handle initChunkSize.
+	c.Assert(numChunks, Equals, 1)
 	rs.Close()
 }
 
@@ -1909,15 +1914,15 @@ func (s *testSchemaSuite) TestInsertExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		chk := rs.NewChunk()
-		err = rs.Next(context.TODO(), chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
-			row := chk.GetRow(rowIdx)
+		for rowIdx := 0; rowIdx < req.NumRows(); rowIdx++ {
+			row := req.GetRow(rowIdx)
 			c.Assert(row.GetInt64(0), Equals, int64(idx))
 			idx++
 		}
@@ -1943,15 +1948,15 @@ func (s *testSchemaSuite) TestUpdateExecChunk(c *C) {
 	c.Assert(err, IsNil)
 	var idx int
 	for {
-		chk := rs.NewChunk()
-		err = rs.Next(context.TODO(), chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
-		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
-			row := chk.GetRow(rowIdx)
+		for rowIdx := 0; rowIdx < req.NumRows(); rowIdx++ {
+			row := req.GetRow(rowIdx)
 			c.Assert(row.GetInt64(0), Equals, int64(idx+100))
 			idx++
 		}
@@ -1978,12 +1983,12 @@ func (s *testSchemaSuite) TestDeleteExecChunk(c *C) {
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
 
-	chk := rs.NewChunk()
-	err = rs.Next(context.TODO(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 1)
+	c.Assert(req.NumRows(), Equals, 1)
 
-	row := chk.GetRow(0)
+	row := req.GetRow(0)
 	c.Assert(row.GetInt64(0), Equals, int64(99))
 	rs.Close()
 }
@@ -2010,16 +2015,16 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 
 	var idx int
 	for {
-		chk := rs.NewChunk()
-		err = rs.Next(context.TODO(), chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
 
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
-		for i := 0; i < chk.NumRows(); i++ {
-			row := chk.GetRow(i)
+		for i := 0; i < req.NumRows(); i++ {
+			row := req.GetRow(i)
 			c.Assert(row.GetInt64(0), Equals, int64(idx+50))
 			idx++
 		}
@@ -2030,10 +2035,10 @@ func (s *testSchemaSuite) TestDeleteMultiTableExecChunk(c *C) {
 	rs, err = tk.Exec("select * from chk2")
 	c.Assert(err, IsNil)
 
-	chk := rs.NewChunk()
-	err = rs.Next(context.TODO(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.TODO(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows(), Equals, 0)
+	c.Assert(req.NumRows(), Equals, 0)
 	rs.Close()
 }
 
@@ -2053,18 +2058,18 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 	tk.Se.GetSessionVars().IndexLookupSize = 10
 	rs, err := tk.Exec("select * from chk order by k")
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	var count int
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		numRows := chk.NumRows()
+		numRows := req.NumRows()
 		if numRows == 0 {
 			break
 		}
 		for i := 0; i < numRows; i++ {
-			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
-			c.Assert(chk.GetRow(i).GetInt64(1), Equals, int64(count))
+			c.Assert(req.GetRow(i).GetInt64(0), Equals, int64(count))
+			c.Assert(req.GetRow(i).GetInt64(1), Equals, int64(count))
 			count++
 		}
 	}
@@ -2073,17 +2078,17 @@ func (s *testSchemaSuite) TestIndexLookUpReaderChunk(c *C) {
 
 	rs, err = tk.Exec("select k from chk where c < 90 order by k")
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
+	req = rs.NewRecordBatch()
 	count = 0
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		c.Assert(err, IsNil)
-		numRows := chk.NumRows()
+		numRows := req.NumRows()
 		if numRows == 0 {
 			break
 		}
 		for i := 0; i < numRows; i++ {
-			c.Assert(chk.GetRow(i).GetInt64(0), Equals, int64(count))
+			c.Assert(req.GetRow(i).GetInt64(0), Equals, int64(count))
 			count++
 		}
 	}
@@ -2452,6 +2457,17 @@ func (s *testSessionSuite) TestUpdatePrivilege(c *C) {
 	// In fact, the privlege check for t1 should be update, and for t2 should be select.
 	_, err = tk1.Exec("update t1,t2 set t1.id = t2.id;")
 	c.Assert(err, IsNil)
+
+	// Fix issue 8911
+	tk.MustExec("create database weperk")
+	tk.MustExec("use weperk")
+	tk.MustExec("create table tb_wehub_server (id int, active_count int, used_count int)")
+	tk.MustExec("create user 'weperk'")
+	tk.MustExec("grant all privileges on weperk.* to 'weperk'@'%'")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "weperk", Hostname: "%"},
+		[]byte(""), []byte("")), IsTrue)
+	tk1.MustExec("use weperk")
+	tk1.MustExec("update tb_wehub_server a set a.active_count=a.active_count+1,a.used_count=a.used_count+1 where id=1")
 }
 
 func (s *testSessionSuite) TestTxnGoString(c *C) {

@@ -65,7 +65,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// TestLeakCheckCnt is the check count in the pacakge of executor.
+// TestLeakCheckCnt is the check count in the package of executor.
 // In this package CustomParallelSuiteFlag is true, so we need to increase check count.
 const TestLeakCheckCnt = 1000
 
@@ -85,6 +85,7 @@ var _ = Suite(&testSuite1{})
 var _ = Suite(&testSuite2{})
 var _ = Suite(&testSuite3{})
 var _ = Suite(&testBypassSuite{})
+var _ = Suite(&testUpdateSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -148,20 +149,20 @@ func (s *testSuite) TestAdmin(c *C) {
 	// cancel DDL jobs test
 	r, err := tk.Exec("admin cancel ddl jobs 1")
 	c.Assert(err, IsNil, Commentf("err %v", err))
-	chk := r.NewChunk()
-	err = r.Next(ctx, chk)
+	req := r.NewRecordBatch()
+	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
-	row := chk.GetRow(0)
+	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 2)
 	c.Assert(row.GetString(0), Equals, "1")
 	c.Assert(row.GetString(1), Equals, "error: [admin:4]DDL Job:1 not found")
 
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
-	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	req = r.NewRecordBatch()
+	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
-	row = chk.GetRow(0)
+	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 4)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -173,20 +174,20 @@ func (s *testSuite) TestAdmin(c *C) {
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
 	c.Assert(row.GetString(2), Equals, "")
-	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	req = r.NewRecordBatch()
+	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsTrue)
+	c.Assert(req.NumRows() == 0, IsTrue)
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
 	// show DDL jobs test
 	r, err = tk.Exec("admin show ddl jobs")
 	c.Assert(err, IsNil)
-	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	req = r.NewRecordBatch()
+	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
-	row = chk.GetRow(0)
+	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 10)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
@@ -199,10 +200,10 @@ func (s *testSuite) TestAdmin(c *C) {
 
 	r, err = tk.Exec("admin show ddl jobs 20")
 	c.Assert(err, IsNil)
-	chk = r.NewChunk()
-	err = r.Next(ctx, chk)
+	req = r.NewRecordBatch()
+	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
-	row = chk.GetRow(0)
+	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 10)
 	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
@@ -341,6 +342,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		c.Assert(ctx.NewTxn(context.Background()), IsNil)
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
@@ -848,10 +850,10 @@ func (s *testSuite) TestIssue2612(c *C) {
 	tk.MustExec(`insert into t values ('2016-02-13 15:32:24',  '2016-02-11 17:23:22');`)
 	rs, err := tk.Exec(`select timediff(finish_at, create_at) from t;`)
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
+	c.Assert(req.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
 	rs.Close()
 }
 
@@ -1082,7 +1084,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec(`insert into t1 select * from t1;`)
 	tk.MustExec(`insert into t1 select * from t1;`)
 	tk.MustExec(`insert into t2 values(1, 1);`)
-	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
 	tk.MustQuery(`select count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("128"))
 	tk.MustQuery(`select tmp.a, count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("1 128"))
 
@@ -1095,7 +1097,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("insert into t1 value(1,2),(1,1),(2,2),(2,2),(3,2),(3,2)")
-	tk.MustExec("set @@tidb_max_chunk_size=2;")
+	tk.MustExec("set @@tidb_init_chunk_size=2;")
 	tk.MustQuery("select count(*) from (select a as c, a as d from t1 union all select a, b from t1) t;").Check(testkit.Rows("12"))
 
 	// #issue 8189 and #issue 8199
@@ -1536,7 +1538,7 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)`)
+	tk.MustExec(`CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored, e int as (c*2))`)
 
 	result := tk.MustQuery(`SELECT generation_expression FROM information_schema.columns WHERE table_name = 'test_gc_read' AND column_name = 'd'`)
 	result.Check(testkit.Rows("`a` * `b`"))
@@ -1544,91 +1546,101 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	// Insert only column a and b, leave c and d be calculated from them.
 	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (0,null),(1,2),(3,4)`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
-	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`))
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 2 3 2 6`, `3 4 7 12 14`))
 
 	tk.MustExec(`INSERT INTO test_gc_read SET a = 5, b = 10`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
-	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 10 15 50`))
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 2 3 2 6`, `3 4 7 12 14`, `5 10 15 50 30`))
 
 	tk.MustExec(`REPLACE INTO test_gc_read (a, b) VALUES (5, 6)`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
-	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 6 11 30`))
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 2 3 2 6`, `3 4 7 12 14`, `5 6 11 30 22`))
 
 	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE b = 9`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
-	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `5 9 14 45`))
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 2 3 2 6`, `3 4 7 12 14`, `5 9 14 45 28`))
 
 	// Test select only-generated-column-without-dependences.
 	result = tk.MustQuery(`SELECT c, d FROM test_gc_read`)
 	result.Check(testkit.Rows(`<nil> <nil>`, `3 2`, `7 12`, `14 45`))
 
+	// Test select only virtual generated column that refers to other virtual generated columns.
+	result = tk.MustQuery(`SELECT e FROM test_gc_read`)
+	result.Check(testkit.Rows(`<nil>`, `6`, `14`, `28`))
+
 	// Test order of on duplicate key update list.
 	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (5, 8) ON DUPLICATE KEY UPDATE a = 6, b = a`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
-	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `6 6 12 36`))
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 2 3 2 6`, `3 4 7 12 14`, `6 6 12 36 24`))
 
 	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (6, 8) ON DUPLICATE KEY UPDATE b = 8, a = b`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
-	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 2 3 2 6`, `3 4 7 12 14`, `8 8 16 64 32`))
 
 	// Test where-conditions on virtual/stored generated columns.
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 7`)
-	result.Check(testkit.Rows(`3 4 7 12`))
+	result.Check(testkit.Rows(`3 4 7 12 14`))
 
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 64`)
-	result.Check(testkit.Rows(`8 8 16 64`))
+	result.Check(testkit.Rows(`8 8 16 64 32`))
+
+	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE e = 6`)
+	result.Check(testkit.Rows(`1 2 3 2 6`))
 
 	// Test update where-conditions on virtual/generated columns.
 	tk.MustExec(`UPDATE test_gc_read SET a = a + 100 WHERE c = 7`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 107`)
-	result.Check(testkit.Rows(`103 4 107 412`))
+	result.Check(testkit.Rows(`103 4 107 412 214`))
 
 	// Test update where-conditions on virtual/generated columns.
 	tk.MustExec(`UPDATE test_gc_read m SET m.a = m.a + 100 WHERE c = 107`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE c = 207`)
-	result.Check(testkit.Rows(`203 4 207 812`))
+	result.Check(testkit.Rows(`203 4 207 812 414`))
 
 	tk.MustExec(`UPDATE test_gc_read SET a = a - 200 WHERE d = 812`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 12`)
-	result.Check(testkit.Rows(`3 4 7 12`))
+	result.Check(testkit.Rows(`3 4 7 12 14`))
 
 	tk.MustExec(`INSERT INTO test_gc_read set a = 4, b = d + 1`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
-	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`,
-		`4 <nil> <nil> <nil>`, `8 8 16 64`))
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 2 3 2 6`, `3 4 7 12 14`,
+		`4 <nil> <nil> <nil> <nil>`, `8 8 16 64 32`))
 	tk.MustExec(`DELETE FROM test_gc_read where a = 4`)
 
 	// Test on-conditions on virtual/stored generated columns.
-	tk.MustExec(`CREATE TABLE test_gc_help(a int primary key, b int, c int, d int)`)
-	tk.MustExec(`INSERT INTO test_gc_help(a, b, c, d) SELECT * FROM test_gc_read`)
+	tk.MustExec(`CREATE TABLE test_gc_help(a int primary key, b int, c int, d int, e int)`)
+	tk.MustExec(`INSERT INTO test_gc_help(a, b, c, d, e) SELECT * FROM test_gc_read`)
 
 	result = tk.MustQuery(`SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.c = t2.c ORDER BY t1.a`)
-	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+	result.Check(testkit.Rows(`1 2 3 2 6`, `3 4 7 12 14`, `8 8 16 64 32`))
 
 	result = tk.MustQuery(`SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.d = t2.d ORDER BY t1.a`)
-	result.Check(testkit.Rows(`1 2 3 2`, `3 4 7 12`, `8 8 16 64`))
+	result.Check(testkit.Rows(`1 2 3 2 6`, `3 4 7 12 14`, `8 8 16 64 32`))
+
+	result = tk.MustQuery(`SELECT t1.* FROM test_gc_read t1 JOIN test_gc_help t2 ON t1.e = t2.e ORDER BY t1.a`)
+	result.Check(testkit.Rows(`1 2 3 2 6`, `3 4 7 12 14`, `8 8 16 64 32`))
 
 	// Test generated column in subqueries.
 	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.a not in (SELECT t.a FROM test_gc_read t where t.c > 5)`)
-	result.Sort().Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`))
+	result.Sort().Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 2 3 2 6`))
 
 	result = tk.MustQuery(`SELECT * FROM test_gc_read t WHERE t.c in (SELECT t.c FROM test_gc_read t where t.c > 5)`)
-	result.Sort().Check(testkit.Rows(`3 4 7 12`, `8 8 16 64`))
+	result.Sort().Check(testkit.Rows(`3 4 7 12 14`, `8 8 16 64 32`))
 
 	result = tk.MustQuery(`SELECT tt.b FROM test_gc_read tt WHERE tt.a = (SELECT max(t.a) FROM test_gc_read t WHERE t.c = tt.c) ORDER BY b`)
 	result.Check(testkit.Rows(`2`, `4`, `8`))
 
 	// Test aggregation on virtual/stored generated columns.
-	result = tk.MustQuery(`SELECT c, sum(a) aa, max(d) dd FROM test_gc_read GROUP BY c ORDER BY aa`)
-	result.Check(testkit.Rows(`<nil> 0 <nil>`, `3 1 2`, `7 3 12`, `16 8 64`))
+	result = tk.MustQuery(`SELECT c, sum(a) aa, max(d) dd, sum(e) ee FROM test_gc_read GROUP BY c ORDER BY aa`)
+	result.Check(testkit.Rows(`<nil> 0 <nil> <nil>`, `3 1 2 6`, `7 3 12 14`, `16 8 64 32`))
 
-	result = tk.MustQuery(`SELECT a, sum(c), sum(d) FROM test_gc_read GROUP BY a ORDER BY a`)
-	result.Check(testkit.Rows(`0 <nil> <nil>`, `1 3 2`, `3 7 12`, `8 16 64`))
+	result = tk.MustQuery(`SELECT a, sum(c), sum(d), sum(e) FROM test_gc_read GROUP BY a ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 3 2 6`, `3 7 12 14`, `8 16 64 32`))
 
 	// Test multi-update on generated columns.
 	tk.MustExec(`UPDATE test_gc_read m, test_gc_read n SET m.a = m.a + 10, n.a = n.a + 10`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
-	result.Check(testkit.Rows(`10 <nil> <nil> <nil>`, `11 2 13 22`, `13 4 17 52`, `18 8 26 144`))
+	result.Check(testkit.Rows(`10 <nil> <nil> <nil> <nil>`, `11 2 13 22 26`, `13 4 17 52 34`, `18 8 26 144 52`))
 
 	// Test different types between generation expression and generated column.
 	tk.MustExec(`CREATE TABLE test_gc_read_cast(a VARCHAR(255), b VARCHAR(255), c INT AS (JSON_EXTRACT(a, b)), d INT AS (JSON_EXTRACT(a, b)) STORED)`)
@@ -1646,8 +1658,21 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT b FROM test_gc_read_cast_2`)
 	result.Check(testkit.Rows(`{"key": "测"}`))
 
+	tk.MustExec(`CREATE TABLE test_gc_read_cast_3( a JSON, b JSON AS (a->>'$.a'), c INT AS (b * 3.14) )`)
+	tk.MustExec(`INSERT INTO test_gc_read_cast_3(a) VALUES ('{"a": "5"}')`)
+	result = tk.MustQuery(`SELECT c FROM test_gc_read_cast_3`)
+	result.Check(testkit.Rows(`16`))
+
 	_, err := tk.Exec(`INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "invalid"}', '$.a')`)
 	c.Assert(err, NotNil)
+
+	// Test read generated columns after drop some irrelevant column
+	tk.MustExec(`DROP TABLE IF EXISTS test_gc_read_m`)
+	tk.MustExec(`CREATE TABLE test_gc_read_m (a int primary key, b int, c int as (a+1), d int as (c*2))`)
+	tk.MustExec(`INSERT INTO test_gc_read_m(a) values (1), (2)`)
+	tk.MustExec(`ALTER TABLE test_gc_read_m DROP b`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read_m`)
+	result.Check(testkit.Rows(`1 2 4`, `2 3 6`))
 
 	// Test not null generated columns.
 	tk.MustExec(`CREATE TABLE test_gc_read_1(a int primary key, b int, c int as (a+b) not null, d int as (a*b) stored)`)
@@ -1998,7 +2023,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
-	safePointValue := "20060102-15:04:05 -0700 MST"
+	safePointValue := "20060102-15:04:05 -0700"
 	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
 	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
@@ -2298,10 +2323,9 @@ func (s *testSuite) TestIssue4024(c *C) {
 }
 
 const (
-	checkRequestOff          = 0
-	checkRequestPriority     = 1
-	checkRequestSyncLog      = 3
-	checkDDLAddIndexPriority = 4
+	checkRequestOff = iota
+	checkRequestSyncLog
+	checkDDLAddIndexPriority
 )
 
 type checkRequestClient struct {
@@ -2328,14 +2352,7 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
 	c.mu.RUnlock()
-	if checkFlags == checkRequestPriority {
-		switch req.Type {
-		case tikvrpc.CmdCop:
-			if c.getCheckPriority() != req.Priority {
-				return nil, errors.New("fail to set priority")
-			}
-		}
-	} else if checkFlags == checkRequestSyncLog {
+	if checkFlags == checkRequestSyncLog {
 		switch req.Type {
 		case tikvrpc.CmdPrewrite, tikvrpc.CmdCommit:
 			c.mu.RLock()
@@ -2479,69 +2496,6 @@ func (s *testSuite1) TestAlterTableComment(c *C) {
 	result.Check(testkit.Rows("table t comment"))
 }
 
-func (s *testSuite1) TestCoprocessorPriority(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int primary key)")
-	tk.MustExec("create table t1 (id int, v int, unique index i_id (id))")
-	defer tk.MustExec("drop table t")
-	defer tk.MustExec("drop table t1")
-	tk.MustExec("insert into t values (1)")
-
-	// Insert some data to make sure plan build IndexLookup for t1.
-	for i := 0; i < 10; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
-	}
-
-	cli := s.cli
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestPriority
-	cli.mu.Unlock()
-
-	cli.setCheckPriority(pb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
-
-	cli.setCheckPriority(pb.CommandPri_Normal)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("update t set id = 3")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t select * from t limit 2")
-	tk.MustExec("delete from t")
-
-	// Insert some data to make sure plan build IndexLookup for t.
-	tk.MustExec("insert into t values (1), (2)")
-
-	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
-	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
-	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
-
-	cli.setCheckPriority(pb.CommandPri_High)
-	tk.MustQuery("select id from t where id = 1")
-	tk.MustQuery("select * from t1 where id = 1")
-
-	cli.setCheckPriority(pb.CommandPri_Low)
-	tk.MustQuery("select count(*) from t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (3)")
-
-	// TODO: Those are not point get, but they should be high priority.
-	// cli.priority = pb.CommandPri_High
-	// tk.MustExec("delete from t where id = 2")
-	// tk.MustExec("update t set id = 2 where id = 1")
-
-	// Test priority specified by SQL statement.
-	cli.setCheckPriority(pb.CommandPri_High)
-	tk.MustQuery("select HIGH_PRIORITY * from t")
-
-	cli.setCheckPriority(pb.CommandPri_Low)
-	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
-}
-
 func (s *testSuite) TestTimezonePushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2655,10 +2609,10 @@ func (s *testSuite) TestBit(c *C) {
 	c.Assert(err, NotNil)
 	r, err := tk.Exec("select * from t where c1 = 2")
 	c.Assert(err, IsNil)
-	chk := r.NewChunk()
-	err = r.Next(context.Background(), chk)
+	req := r.NewRecordBatch()
+	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(types.BinaryLiteral(chk.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
+	c.Assert(types.BinaryLiteral(req.GetRow(0).GetBytes(0)), DeepEquals, types.NewBinaryLiteralFromUint(2, -1))
 	r.Close()
 
 	tk.MustExec("drop table if exists t")
@@ -2861,9 +2815,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	recordVal1 := types.MakeDatums(int64(1), int64(10), int64(11))
 	recordVal2 := types.MakeDatums(int64(2), int64(20), int64(21))
 	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
-	_, err = tb.AddRecord(s.ctx, recordVal1, false)
+	_, err = tb.AddRecord(s.ctx, recordVal1)
 	c.Assert(err, IsNil)
-	_, err = tb.AddRecord(s.ctx, recordVal2, false)
+	_, err = tb.AddRecord(s.ctx, recordVal2)
 	c.Assert(err, IsNil)
 	txn, err := s.ctx.Txn(true)
 	c.Assert(err, IsNil)
@@ -3022,7 +2976,7 @@ func (s *testSuite) TestLimit(c *C) {
 		"4 4",
 		"5 5",
 	))
-	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
 	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
 		"3 3",
 	))
@@ -3280,11 +3234,11 @@ func (s *testSuite3) TestMaxOneRow(c *C) {
 	tk.MustExec(`create table t2(a double, b double);`)
 	tk.MustExec(`insert into t1 values(1, 1), (2, 2), (3, 3);`)
 	tk.MustExec(`insert into t2 values(0, 0);`)
-	tk.MustExec(`set @@tidb_max_chunk_size=1;`)
+	tk.MustExec(`set @@tidb_init_chunk_size=1;`)
 	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
 	c.Assert(err, IsNil)
 
-	err = rs.Next(context.TODO(), rs.NewChunk())
+	err = rs.Next(context.TODO(), rs.NewRecordBatch())
 	c.Assert(err.Error(), Equals, "subquery returns more than 1 row")
 
 	err = rs.Close()
@@ -3404,6 +3358,41 @@ func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 	))
 }
 
+func (s *testSuite) TestSelectView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table view_t (a int,b int)")
+	tk.MustExec("insert into view_t values(1,2)")
+	tk.MustExec("create view view1 as select * from view_t")
+	tk.MustExec("create view view2(c,d) as select * from view_t")
+	tk.MustExec("create view view3(c,d) as select a,b from view_t")
+	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("create table view_t(c int,d int)")
+	_, err := tk.Exec("select * from view1")
+	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view1").Error())
+	_, err = tk.Exec("select * from view2")
+	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view2").Error())
+	_, err = tk.Exec("select * from view3")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'field list'")
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("create table view_t(a int,b int,c int)")
+	tk.MustExec("insert into view_t values(1,2,3)")
+	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustExec("alter table view_t drop column a")
+	tk.MustExec("alter table view_t add column a int after b")
+	tk.MustExec("update view_t set a=1;")
+	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("drop view view1,view2,view3;")
+}
+
 type testSuite2 struct {
 	cluster   *mocktikv.Cluster
 	mvccStore mocktikv.MVCCStore
@@ -3446,10 +3435,14 @@ func (s *testSuite2) TearDownSuite(c *C) {
 func (s *testSuite2) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
+	r := tk.MustQuery("show full tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
 	}
 }
 
@@ -3500,4 +3493,44 @@ func (s *testSuite3) TearDownTest(c *C) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
+}
+
+func (s *testSuite) TestStrToDateBuiltin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select str_to_date('18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('a18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('69/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2069-10-22"))
+	tk.MustQuery(`select str_to_date('70/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("1970-10-22"))
+	tk.MustQuery(`select str_to_date('8/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2008-10-22"))
+	tk.MustQuery(`select str_to_date('8/10/22','%Y/%m/%d') from dual`).Check(testkit.Rows("2008-10-22"))
+	tk.MustQuery(`select str_to_date('18/10/22','%Y/%m/%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('a18/10/22','%Y/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('69/10/22','%Y/%m/%d') from dual`).Check(testkit.Rows("2069-10-22"))
+	tk.MustQuery(`select str_to_date('70/10/22','%Y/%m/%d') from dual`).Check(testkit.Rows("1970-10-22"))
+	tk.MustQuery(`select str_to_date('018/10/22','%Y/%m/%d') from dual`).Check(testkit.Rows("0018-10-22"))
+	tk.MustQuery(`select str_to_date('2018/10/22','%Y/%m/%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('018/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('18/10/22','%y0/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('18/10/22','%Y0/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('18a/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('18a/10/22','%Y/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('20188/10/22','%Y/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('2018510522','%Y5%m5%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('2018^10^22','%Y^%m^%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('2018@10@22','%Y@%m@%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('2018%10%22','%Y%%m%%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('2018(10(22','%Y(%m(%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('2018\10\22','%Y\%m\%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('2018=10=22','%Y=%m=%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('2018+10+22','%Y+%m+%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('2018_10_22','%Y_%m_%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('69510522','%y5%m5%d') from dual`).Check(testkit.Rows("2069-10-22"))
+	tk.MustQuery(`select str_to_date('69^10^22','%y^%m^%d') from dual`).Check(testkit.Rows("2069-10-22"))
+	tk.MustQuery(`select str_to_date('18@10@22','%y@%m@%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('18%10%22','%y%%m%%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('18(10(22','%y(%m(%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('18\10\22','%y\%m\%d') from dual`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`select str_to_date('18+10+22','%y+%m+%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('18=10=22','%y=%m=%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`select str_to_date('18_10_22','%y_%m_%d') from dual`).Check(testkit.Rows("2018-10-22"))
 }

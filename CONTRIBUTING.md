@@ -15,7 +15,7 @@ A Contributor refers to the person who contributes to the following projects:
 
 ## How to become a TiDB Contributor?
 
-If a PR (Pull Request) submitted to the TiDB / TiKV / TiSpark / PD / Docs／Docs-cn projects by you is approved and merged, then you become a TiDB Contributor. 
+If a PR (Pull Request) submitted to the TiDB/TiKV/TiSpark/PD/Docs/Docs-cn projects by you is approved and merged, then you become a TiDB Contributor.
 
 You are also encouraged to participate in the projects in the following ways:
 - Actively answer technical questions asked by community users.

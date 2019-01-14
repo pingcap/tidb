@@ -69,7 +69,7 @@ func (s *testIntegrationSuite) TearDownTest(c *C) {
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
 	testleak.BeforeTest()
-	s.lease = 200 * time.Millisecond
+	s.lease = 50 * time.Millisecond
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)

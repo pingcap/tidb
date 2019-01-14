@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Note: All the tests in this file will be executed sequentially.
+
 package executor_test
 
 import (
@@ -28,19 +30,24 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	gofail "github.com/pingcap/gofail/runtime"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -127,8 +134,8 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err1, IsNil)
 		rs := rss[0]
-		chk := rs.NewChunk()
-		err = rs.Next(ctx, chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(ctx, req)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
@@ -139,8 +146,8 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err, NotNil)
 	rs.Close()
 }
@@ -179,7 +186,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -326,7 +333,11 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(testSQL)
 	testSQL = "show create database show_test_DB;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_test_DB|CREATE DATABASE `show_test_DB` /* !40100 DEFAULT CHARACTER SET utf8mb4 */",
+		"show_test_DB|CREATE DATABASE `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	testSQL = "show create database if not exists show_test_DB;"
+	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+		"show_test_DB|CREATE DATABASE /*!32312 IF NOT EXISTS*/ `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
 	tk.MustExec("use show_test_DB")
@@ -631,8 +642,8 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
@@ -640,6 +651,49 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	time.Sleep(time.Millisecond * 10)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
+}
+
+func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	// desc select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b
+	// HashAgg_8              | 2.40  | root | group by:t.b, funcs:sum(t.a)
+	// └─Projection_9         | 3.00  | root | cast(test.t.a), test.t.b
+	//   └─TableReader_11     | 3.00  | root | data:TableScan_10
+	//     └─TableScan_10     | 3.00  | cop  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/executor/parallelHashAggError")
+	ctx := context.Background()
+	rss, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
+	c.Assert(err.Error(), Equals, "HashAggExec.parallelExec error")
+}
+
+func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError")
+	ctx := context.Background()
+	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
+	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")
 }
 
 func checkGoroutineExists(keyword string) bool {
@@ -715,4 +769,123 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 		placeholders = append(placeholders, "(?)")
 	}
 	return "insert into t values " + strings.Join(placeholders, ","), params
+}
+
+func (s *seqTestSuite) TestCartesianProduct(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int)")
+	plannercore.AllowCartesianProduct = false
+	err := tk.ExecToErr("select * from t t1, t t2")
+	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	err = tk.ExecToErr("select * from t t1 left join t t2 on 1")
+	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	err = tk.ExecToErr("select * from t t1 right join t t2 on 1")
+	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	plannercore.AllowCartesianProduct = true
+}
+
+type checkPrioClient struct {
+	tikv.Client
+	priority pb.CommandPri
+}
+
+func (c *checkPrioClient) setCheckPriority(priority pb.CommandPri) {
+	atomic.StoreInt32((*int32)(&c.priority), int32(priority))
+}
+
+func (c *checkPrioClient) getCheckPriority() pb.CommandPri {
+	return (pb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
+}
+
+func (c *checkPrioClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
+	switch req.Type {
+	case tikvrpc.CmdCop:
+		if c.getCheckPriority() != req.Priority {
+			return nil, errors.New("fail to set priority")
+		}
+	}
+	return resp, err
+}
+
+type seqTestSuite1 struct {
+	store kv.Storage
+	dom   *domain.Domain
+	cli   *checkPrioClient
+}
+
+func (s *seqTestSuite1) SetUpSuite(c *C) {
+	cli := &checkPrioClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+	s.cli = cli
+
+	var err error
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithHijackClient(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *seqTestSuite1) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key)")
+	tk.MustExec("create table t1 (id int, v int, unique index i_id (id))")
+	defer tk.MustExec("drop table t")
+	defer tk.MustExec("drop table t1")
+	tk.MustExec("insert into t values (1)")
+
+	// Insert some data to make sure plan build IndexLookup for t1.
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
+
+	cli := s.cli
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
+
+	cli.setCheckPriority(pb.CommandPri_Normal)
+	tk.MustQuery("select count(*) from t")
+	tk.MustExec("update t set id = 3")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t select * from t limit 2")
+	tk.MustExec("delete from t")
+
+	// Insert some data to make sure plan build IndexLookup for t.
+	tk.MustExec("insert into t values (1), (2)")
+
+	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
+	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
+	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustQuery("select id from t where id = 1")
+	tk.MustQuery("select * from t1 where id = 1")
+	tk.MustExec("delete from t where id = 2")
+	tk.MustExec("update t set id = 2 where id = 1")
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustQuery("select count(*) from t")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (3)")
+
+	// Test priority specified by SQL statement.
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustQuery("select HIGH_PRIORITY * from t")
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 }
