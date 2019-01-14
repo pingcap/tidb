@@ -3337,24 +3337,6 @@ func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 	tk.MustQuery("select b from th order by a").Check(testkit.Rows("-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"))
 	tk.MustQuery(" select * from th where a=-2;").Check(testkit.Rows("-2 -2"))
 	tk.MustQuery(" select * from th where a=5;").Check(testkit.Rows("5 5"))
-	// Test for select prune partitions.
-	result := tk.MustQuery("desc select * from th where a=-2;")
-	result.Check(testkit.Rows(
-		"TableReader_8 10.00 root data:Selection_7",
-		"└─Selection_7 10.00 cop eq(test.th.a, -2)",
-		"  └─TableScan_6 10000.00 cop table:th, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-	// Test select union all partition.
-	result = tk.MustQuery("desc select * from th;")
-	result.Check(testkit.Rows(
-		"Union_8 30000.00 root ",
-		"├─TableReader_10 10000.00 root data:TableScan_9",
-		"│ └─TableScan_9 10000.00 cop table:th, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"├─TableReader_12 10000.00 root data:TableScan_11",
-		"│ └─TableScan_11 10000.00 cop table:th, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─TableReader_14 10000.00 root data:TableScan_13",
-		"  └─TableScan_13 10000.00 cop table:th, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
 }
 
 func (s *testSuite3) TestSelectPartition(c *C) {
@@ -3386,16 +3368,6 @@ func (s *testSuite3) TestSelectPartition(c *C) {
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
 	_, err = tk.Exec("select b from tr partition (r1,r4)")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'r4' in table 'tr'")
-
-	result := tk.MustQuery("desc select * from th partition (p2,p1)")
-	result.Check(testkit.Rows(
-		"Union_7 20000.00 root ",
-		"├─TableReader_9 10000.00 root data:TableScan_8",
-		"│ └─TableScan_8 10000.00 cop table:th, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─TableReader_11 10000.00 root data:TableScan_10",
-		"  └─TableScan_10 10000.00 cop table:th, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo",
-	)) // test explain.
-
 }
 
 func (s *testSuite) TestSelectView(c *C) {

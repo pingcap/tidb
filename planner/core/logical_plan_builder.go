@@ -1995,13 +1995,11 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
-		// check partition
-		if len(tn.PartitionNames) != 0 {
-			for _, name := range tn.PartitionNames {
-				_, err = tables.FindPartitionByName(tableInfo, name.L)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
+		// check partition by name.
+		for _, name := range tn.PartitionNames {
+			_, err = tables.FindPartitionByName(tableInfo, name.L)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 	} else if len(tn.PartitionNames) != 0 {

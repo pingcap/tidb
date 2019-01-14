@@ -152,9 +152,9 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 }
 
 // findByName checks whether object name exists in list.
-func findByName(list []model.CIStr, name string) bool {
-	for _, s := range list {
-		if s.L == name {
+func findByName(partitionNames []model.CIStr, partitionName string) bool {
+	for _, s := range partitionNames {
+		if s.L == partitionName {
 			return true
 		}
 	}
