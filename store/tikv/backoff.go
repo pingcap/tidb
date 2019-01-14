@@ -185,8 +185,12 @@ type Backoffer struct {
 	vars       *kv.Variables
 }
 
+// The contextKey type is unexported to prevent collisions with context keys defined in
+// other packages.
+type contextKey string
+
 // txnStartKey is a key for transaction start_ts info in context.Context.
-const txnStartKey = "_txn_start_key"
+const txnStartKey contextKey = "_txn_start_key"
 
 // NewBackoffer creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
