@@ -588,12 +588,16 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	if len(p.EqualConditions) == 0 {
-		return nil, false
-	}
 	plans := make([]PhysicalPlan, 0, 2)
 	rightOuter := (p.preferJoinType & preferLeftAsIndexInner) > 0
 	leftOuter := (p.preferJoinType & preferRightAsIndexInner) > 0
+	if len(p.EqualConditions) == 0 {
+		if leftOuter || rightOuter {
+			warning := ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
+		return nil, false
+	}
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(prop, 0)
