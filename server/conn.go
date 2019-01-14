@@ -1124,11 +1124,11 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // serverStatus, a flag bit represents server information
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
 	data := make([]byte, 4, 1024)
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	gotColumnInfo := false
 	for {
 		// Here server.tidbResultSet implements Next method.
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1142,16 +1142,16 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 			gotColumnInfo = true
 		}
-		rowCount := chk.NumRows()
+		rowCount := req.NumRows()
 		if rowCount == 0 {
 			break
 		}
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), chk.GetRow(i))
+				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), chk.GetRow(i))
+				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1172,22 +1172,22 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	fetchedRows := rs.GetFetchedRows()
 
 	// if fetchedRows is not enough, getting data from recordSet.
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for len(fetchedRows) < fetchSize {
 		// Here server.tidbResultSet implements Next method.
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowCount := chk.NumRows()
+		rowCount := req.NumRows()
 		if rowCount == 0 {
 			break
 		}
 		// filling fetchedRows with chunk
 		for i := 0; i < rowCount; i++ {
-			fetchedRows = append(fetchedRows, chk.GetRow(i))
+			fetchedRows = append(fetchedRows, req.GetRow(i))
 		}
-		chk = chunk.Renew(chk, cc.ctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,

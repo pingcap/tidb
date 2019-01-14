@@ -51,7 +51,7 @@ const (
 )
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)

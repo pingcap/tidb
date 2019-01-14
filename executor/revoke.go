@@ -51,7 +51,7 @@ type RevokeExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *RevokeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *RevokeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.done {
 		return nil
 	}
