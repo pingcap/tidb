@@ -45,7 +45,9 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	c.Assert(err, IsNil)
 	_, err = f.WriteString(`[performance]
 [tikv-client]
-commit-timeout="41s"`)
+commit-timeout="41s"
+max-batch-size=128
+`)
 	c.Assert(err, IsNil)
 	c.Assert(f.Sync(), IsNil)
 
@@ -55,6 +57,7 @@ commit-timeout="41s"`)
 	c.Assert(conf.Binlog.Enable, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
+	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
 
