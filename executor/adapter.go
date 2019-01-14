@@ -95,18 +95,18 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
-	err := a.executor.Next(ctx, chk)
+	err := a.executor.Next(ctx, req)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
 	}
-	numRows := chk.NumRows()
+	numRows := req.NumRows()
 	if numRows == 0 {
 		if a.stmt != nil {
 			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
@@ -119,9 +119,9 @@ func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// NewChunk create a new chunk using NewChunk function in chunk package.
-func (a *recordSet) NewChunk() *chunk.Chunk {
-	return a.executor.newFirstChunk()
+// NewRecordBatch create a recordBatch base on top-level executor's newFirstChunk().
+func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
+	return chunk.NewRecordBatch(a.executor.newFirstChunk())
 }
 
 func (a *recordSet) Close() error {
@@ -295,7 +295,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.LogSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.Next(ctx, e.newFirstChunk())
+	err = e.Next(ctx, chunk.NewRecordBatch(e.newFirstChunk()))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -396,12 +396,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[QUERY] %vcost_time:%vs %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime.Seconds(), execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
 		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[SLOW_QUERY] %vcost_time:%vs %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime.Seconds(), execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())

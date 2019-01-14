@@ -305,10 +305,23 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		}
 		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.ctx, col.Index, col.RetType))
 		return inNode, true
+	case *ast.WindowFuncExpr:
+		return er.handleWindowFunction(v)
 	default:
 		er.asScalar = true
 	}
 	return inNode, false
+}
+
+func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.Node, bool) {
+	windowPlan, err := er.b.buildWindowFunction(er.p, v, er.aggrMap)
+	if err != nil {
+		er.err = err
+		return v, false
+	}
+	er.ctxStack = append(er.ctxStack, windowPlan.GetWindowResultColumn())
+	er.p = windowPlan
+	return v, true
 }
 
 func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) (ast.Node, bool) {
@@ -753,7 +766,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	}
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
-		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
+		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr:
 	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
@@ -784,6 +797,13 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if er.err != nil {
 			return retNode, false
 		}
+
+		// check the decimal precision of "CAST(AS TIME)".
+		er.err = er.checkTimePrecision(v.Tp)
+		if er.err != nil {
+			return retNode, false
+		}
+
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.ctx, arg, v.Tp)
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
@@ -812,6 +832,13 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		return retNode, false
 	}
 	return originInNode, true
+}
+
+func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
+	if ft.EvalType() == types.ETDuration && ft.Decimal > types.MaxFsp {
+		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
+	}
+	return nil
 }
 
 func (er *expressionRewriter) useCache() bool {
@@ -852,7 +879,13 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			return
 		}
 	}
-	if v.IsGlobal {
+	sysVar := variable.SysVars[name]
+	if sysVar == nil {
+		er.err = variable.UnknownSystemVar.GenWithStackByArgs(name)
+		return
+	}
+	// Variable is @@gobal.variable_name or variable is only global scope variable.
+	if v.IsGlobal || sysVar.Scope == variable.ScopeGlobal {
 		val, err = variable.GetGlobalSystemVar(sessionVars, name)
 	} else {
 		val, err = variable.GetSessionSystemVar(sessionVars, name)

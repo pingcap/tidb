@@ -118,13 +118,13 @@ func (ut *benchDB) mustExec(sql string) {
 	if len(rss) > 0 {
 		ctx := context.Background()
 		rs := rss[0]
-		chk := rs.NewChunk()
+		req := rs.NewRecordBatch()
 		for {
-			err := rs.Next(ctx, chk)
+			err := rs.Next(ctx, req)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if chk.NumRows() == 0 {
+			if req.NumRows() == 0 {
 				break
 			}
 		}

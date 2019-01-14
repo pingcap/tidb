@@ -67,7 +67,7 @@ func (e *DDLExec) toErr(err error) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.done {
 		return nil
 	}
@@ -93,7 +93,7 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	case *ast.DropDatabaseStmt:
 		err = e.executeDropDatabase(x)
 	case *ast.DropTableStmt:
-		err = e.executeDropTable(x)
+		err = e.executeDropTableOrView(x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.AlterTableStmt:
@@ -222,7 +222,7 @@ func isSystemTable(schema, table string) bool {
 	return false
 }
 
-func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
+func (e *DDLExec) executeDropTableOrView(s *ast.DropTableStmt) error {
 	var notExistTables []string
 	for _, tn := range s.Tables {
 		fullti := ast.Ident{Schema: tn.Schema, Name: tn.Name}
@@ -256,7 +256,11 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			}
 		}
 
-		err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
+		if s.IsView {
+			err = domain.GetDomain(e.ctx).DDL().DropView(e.ctx, fullti)
+		} else {
+			err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
+		}
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 		} else if err != nil {

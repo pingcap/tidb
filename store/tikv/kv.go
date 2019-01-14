@@ -317,7 +317,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 		if err == nil {
 			return startTS, nil
 		}
-		err = bo.Backoff(boPDRPC, errors.Errorf("get timestamp failed: %v", err))
+		err = bo.Backoff(BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}

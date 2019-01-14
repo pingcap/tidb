@@ -160,9 +160,11 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 	runTestMultiStatements(c)
 }
 
-func (ts *TidbTestSuite) TestSocket(c *C) {
+func (ts *TidbTestSuite) TestSocketForwarding(c *C) {
 	cfg := config.NewConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
+	cfg.Port = 3999
+	os.Remove(cfg.Socket)
 	cfg.Status.ReportStatus = false
 
 	server, err := NewServer(cfg, ts.tidbdrv)
@@ -178,6 +180,30 @@ func (ts *TidbTestSuite) TestSocket(c *C) {
 		config.DBName = "test"
 		config.Strict = true
 	}, "SocketRegression")
+}
+
+func (ts *TidbTestSuite) TestSocket(c *C) {
+	cfg := config.NewConfig()
+	cfg.Socket = "/tmp/tidbtest.sock"
+	cfg.Port = 0
+	os.Remove(cfg.Socket)
+	cfg.Host = ""
+	cfg.Status.ReportStatus = false
+
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+	defer server.Close()
+
+	runTestRegression(c, func(config *mysql.Config) {
+		config.User = "root"
+		config.Net = "unix"
+		config.Addr = "/tmp/tidbtest.sock"
+		config.DBName = "test"
+		config.Strict = true
+	}, "SocketRegression")
+
 }
 
 // generateCert generates a private key and a certificate in PEM format based on parameters.
@@ -415,14 +441,14 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show create table t1")
 	c.Assert(err, IsNil)
-	chk := rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	req := rs[0].NewRecordBatch()
+	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
-	c.Assert(int(cols[1].ColumnLength), Equals, len(chk.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(req.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter)
 
 	// for issue#5246
 	rs, err = qctx.Execute(ctx, "select y, z from t1")
@@ -445,8 +471,8 @@ func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show tables")
 	c.Assert(err, IsNil)
-	chk := rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	req := rs[0].NewRecordBatch()
+	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)

@@ -358,5 +358,13 @@ func initInfoSchemaDB() {
 
 // IsMemoryDB checks if the db is in memory.
 func IsMemoryDB(dbName string) bool {
-	return dbName == "information_schema" || dbName == "performance_schema"
+	if dbName == "information_schema" {
+		return true
+	}
+	for _, driver := range drivers {
+		if driver.DBInfo.Name.L == dbName {
+			return true
+		}
+	}
+	return false
 }
