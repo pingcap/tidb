@@ -459,7 +459,7 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 	var rowCount float64
 	pkHist, ok := ds.statisticTable.Columns[pk.ID]
 	if ok && !ds.statisticTable.Pseudo {
-		rowCount = pkHist.AvgCountPerValue(ds.statisticTable.Count)
+		rowCount = pkHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 	} else {
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
@@ -506,7 +506,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	var rowCount float64
 	idxHist, ok := ds.statisticTable.Indices[idx.ID]
 	if ok && !ds.statisticTable.Pseudo {
-		rowCount = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+		rowCount = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 	} else {
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}

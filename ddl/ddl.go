@@ -83,7 +83,6 @@ var (
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
 	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
 
-	errUnknownPartition = terror.ClassDDL.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex     = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn     = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
