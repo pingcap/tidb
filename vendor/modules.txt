@@ -1,0 +1,178 @@
+# github.com/BurntSushi/toml v0.3.0
+github.com/BurntSushi/toml
+# github.com/apache/thrift v0.0.0-20161221203622-b2a4d4ae21c7
+github.com/apache/thrift/lib/go/thrift
+# github.com/beorn7/perks v0.0.0-20160229213445-3ac7bf7a47d1
+github.com/beorn7/perks/quantile
+# github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470
+github.com/blacktear23/go-proxyprotocol
+# github.com/codahale/hdrhistogram v0.0.0-20160425231609-f8ad88b59a58
+github.com/codahale/hdrhistogram
+# github.com/coreos/etcd v3.2.18+incompatible
+github.com/coreos/etcd/clientv3
+github.com/coreos/etcd/clientv3/concurrency
+github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes
+github.com/coreos/etcd/mvcc/mvccpb
+github.com/coreos/etcd/auth/authpb
+github.com/coreos/etcd/etcdserver/etcdserverpb
+github.com/coreos/etcd/pkg/types
+# github.com/cznic/golex v0.0.0-20160422121650-da5a7153a510
+github.com/cznic/golex/lex
+# github.com/cznic/mathutil v0.0.0-20160613104831-78ad7f262603
+github.com/cznic/mathutil
+# github.com/cznic/parser v0.0.0-20160622100904-31edd927e5b1
+github.com/cznic/parser/yacc
+# github.com/cznic/sortutil v0.0.0-20150617083342-4c7342852e65
+github.com/cznic/sortutil
+# github.com/cznic/strutil v0.0.0-20150430124730-1eb03e3cc9d3
+github.com/cznic/strutil
+# github.com/cznic/y v0.0.0-20160420101755-9fdf92d4aac0
+github.com/cznic/y
+# github.com/go-sql-driver/mysql v0.0.0-20170715192408-3955978caca4
+github.com/go-sql-driver/mysql
+# github.com/golang/protobuf v1.2.0
+github.com/golang/protobuf/proto
+github.com/golang/protobuf/ptypes
+github.com/golang/protobuf/protoc-gen-go/descriptor
+github.com/golang/protobuf/ptypes/any
+github.com/golang/protobuf/ptypes/duration
+github.com/golang/protobuf/ptypes/timestamp
+# github.com/golang/snappy v0.0.0-20150730031844-723cc1e459b8
+github.com/golang/snappy
+# github.com/google/btree v0.0.0-20161217183710-316fb6d3f031
+github.com/google/btree
+# github.com/gorilla/context v0.0.0-20160226214623-1ea25387ff6f
+github.com/gorilla/context
+# github.com/gorilla/mux v0.0.0-20170228224354-599cba5e7b61
+github.com/gorilla/mux
+# github.com/grpc-ecosystem/go-grpc-middleware v0.0.0-20171020063731-82921fcf811d
+github.com/grpc-ecosystem/go-grpc-middleware
+github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing
+github.com/grpc-ecosystem/go-grpc-middleware/tags
+github.com/grpc-ecosystem/go-grpc-middleware/util/metautils
+# github.com/grpc-ecosystem/go-grpc-prometheus v0.0.0-20160910222444-6b7015e65d36
+github.com/grpc-ecosystem/go-grpc-prometheus
+# github.com/juju/errors v0.0.0-20160212040040-b2c7a7da5b29
+github.com/juju/errors
+# github.com/matttproud/golang_protobuf_extensions v1.0.1
+github.com/matttproud/golang_protobuf_extensions/pbutil
+# github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
+github.com/ngaut/pools
+# github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
+github.com/ngaut/sync2
+# github.com/opentracing/opentracing-go v1.0.2
+github.com/opentracing/opentracing-go
+github.com/opentracing/opentracing-go/log
+github.com/opentracing/opentracing-go/ext
+# github.com/pingcap/check v0.0.0-20171206051426-1c287c953996
+github.com/pingcap/check
+# github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
+github.com/pingcap/gofail/runtime
+# github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
+github.com/pingcap/goleveldb/leveldb
+github.com/pingcap/goleveldb/leveldb/comparer
+github.com/pingcap/goleveldb/leveldb/iterator
+github.com/pingcap/goleveldb/leveldb/memdb
+github.com/pingcap/goleveldb/leveldb/util
+github.com/pingcap/goleveldb/leveldb/opt
+github.com/pingcap/goleveldb/leveldb/storage
+github.com/pingcap/goleveldb/leveldb/cache
+github.com/pingcap/goleveldb/leveldb/errors
+github.com/pingcap/goleveldb/leveldb/filter
+github.com/pingcap/goleveldb/leveldb/journal
+github.com/pingcap/goleveldb/leveldb/table
+# github.com/pingcap/kvproto v0.0.0-20181113115049-2b379bf42507
+github.com/pingcap/kvproto/pkg/kvrpcpb
+github.com/pingcap/kvproto/pkg/metapb
+github.com/pingcap/kvproto/pkg/coprocessor
+github.com/pingcap/kvproto/pkg/errorpb
+github.com/pingcap/kvproto/pkg/tikvpb
+github.com/pingcap/kvproto/pkg/pdpb
+github.com/pingcap/kvproto/pkg/raft_serverpb
+github.com/pingcap/kvproto/pkg/eraftpb
+# github.com/pingcap/pd v2.0.10+incompatible
+github.com/pingcap/pd/pd-client
+# github.com/pingcap/tipb v0.0.0-20180327062906-2d5073e5521a
+github.com/pingcap/tipb/go-tipb
+github.com/pingcap/tipb/go-binlog
+github.com/pingcap/tipb/sharedbytes
+# github.com/prometheus/client_golang v0.8.0
+github.com/prometheus/client_golang/prometheus
+github.com/prometheus/client_golang/prometheus/push
+# github.com/prometheus/client_model v0.0.0-20150212101744-fa8ad6fec335
+github.com/prometheus/client_model/go
+# github.com/prometheus/common v0.0.0-20160623151427-4402f4e5ea79
+github.com/prometheus/common/expfmt
+github.com/prometheus/common/model
+github.com/prometheus/common/internal/bitbucket.org/ww/goautoneg
+# github.com/prometheus/procfs v0.0.0-20160411190841-abf152e5f3e9
+github.com/prometheus/procfs
+# github.com/sirupsen/logrus v0.0.0-20170323161349-3bcb09397d6d
+github.com/sirupsen/logrus
+# github.com/spaolacci/murmur3 v0.0.0-20150829172844-0d12bf811670
+github.com/spaolacci/murmur3
+# github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273
+github.com/twinj/uuid
+# github.com/uber/jaeger-client-go v2.8.0+incompatible
+github.com/uber/jaeger-client-go/config
+github.com/uber/jaeger-client-go
+github.com/uber/jaeger-client-go/rpcmetrics
+github.com/uber/jaeger-client-go/internal/spanlog
+github.com/uber/jaeger-client-go/log
+github.com/uber/jaeger-client-go/thrift-gen/jaeger
+github.com/uber/jaeger-client-go/thrift-gen/sampling
+github.com/uber/jaeger-client-go/thrift-gen/zipkincore
+github.com/uber/jaeger-client-go/utils
+github.com/uber/jaeger-client-go/thrift-gen/agent
+# github.com/uber/jaeger-lib v1.1.0
+github.com/uber/jaeger-lib/metrics
+# golang.org/x/net v0.0.0-20170406210907-d1e1b351919c
+golang.org/x/net/context
+golang.org/x/net/http2
+golang.org/x/net/trace
+golang.org/x/net/http2/hpack
+golang.org/x/net/idna
+golang.org/x/net/lex/httplex
+golang.org/x/net/internal/timeseries
+# golang.org/x/sys v0.0.0-20180909124046-d0be0721c37e
+golang.org/x/sys/unix
+# golang.org/x/text v0.0.0-20170530162606-4ee4af566555
+golang.org/x/text/transform
+golang.org/x/text/encoding
+golang.org/x/text/encoding/charmap
+golang.org/x/text/encoding/japanese
+golang.org/x/text/encoding/korean
+golang.org/x/text/encoding/simplifiedchinese
+golang.org/x/text/encoding/traditionalchinese
+golang.org/x/text/encoding/unicode
+golang.org/x/text/encoding/internal/identifier
+golang.org/x/text/encoding/internal
+golang.org/x/text/internal/utf8internal
+golang.org/x/text/runes
+golang.org/x/text/secure/bidirule
+golang.org/x/text/unicode/norm
+golang.org/x/text/unicode/bidi
+# google.golang.org/genproto v0.0.0-20170815003206-6b7d9516179c
+google.golang.org/genproto/googleapis/api/annotations
+google.golang.org/genproto/googleapis/rpc/status
+# google.golang.org/grpc v1.7.5
+google.golang.org/grpc
+google.golang.org/grpc/keepalive
+google.golang.org/grpc/credentials
+google.golang.org/grpc/metadata
+google.golang.org/grpc/codes
+google.golang.org/grpc/grpclog
+google.golang.org/grpc/health/grpc_health_v1
+google.golang.org/grpc/status
+google.golang.org/grpc/balancer
+google.golang.org/grpc/connectivity
+google.golang.org/grpc/grpclb/grpc_lb_v1/messages
+google.golang.org/grpc/internal
+google.golang.org/grpc/naming
+google.golang.org/grpc/peer
+google.golang.org/grpc/resolver
+google.golang.org/grpc/stats
+google.golang.org/grpc/tap
+google.golang.org/grpc/transport
+# gopkg.in/natefinch/lumberjack.v2 v2.0.0-20161104145732-dd45e6a67c53
+gopkg.in/natefinch/lumberjack.v2
