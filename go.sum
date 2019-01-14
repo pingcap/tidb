@@ -6,6 +6,8 @@ github.com/beorn7/perks v0.0.0-20160229213445-3ac7bf7a47d1 h1:OnJHjoVbY69GG4gclp
 github.com/beorn7/perks v0.0.0-20160229213445-3ac7bf7a47d1/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=
 github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470 h1:AAFU1eDJHimRQvJGBBnhO0Cm4oe7V2GG3CLtiQk/6wg=
 github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470/go.mod h1:VKt7CNAQxpFpSDz3sXyj9hY/GbVsQCr0sB3w59nE7lU=
+github.com/bobotu/parser v0.0.0-20190118022514-3c1c12e6a756 h1:utTf9C0tbBZKkFWWINh7VjGcdt9EmO1VQvFMxrTg360=
+github.com/bobotu/parser v0.0.0-20190118022514-3c1c12e6a756/go.mod h1:rtt+tpWlmShJj1sAXi+9oAScwFAWwM8HnLfNOSPqEig=
 github.com/cockroachdb/cmux v0.0.0-20170110192607-30d10be49292 h1:dzj1/xcivGjNPwwifh/dWTczkwcuqsXXFHY1X/TZMtw=
 github.com/cockroachdb/cmux v0.0.0-20170110192607-30d10be49292/go.mod h1:qRiX68mZX1lGBkTWyp3CLcenw9I94W2dLeRvMzcn9N4=
 github.com/codahale/hdrhistogram v0.0.0-20160425231609-f8ad88b59a58 h1:hHWif/4GirK3P5uvCyyj941XSVIQDzuJhbEguCICdPE=
@@ -92,8 +94,6 @@ github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030 h1:XJLuW0lsP7vAt
 github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929 h1:NAq95+VGsS2G7SjzZ5LP9iUlCMNAs13QUzbNY3G90v8=
 github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
-github.com/pingcap/parser v0.0.0-20190107034620-db064135d7b0 h1:t/xlCk9karOvR8xrq7da4FAGLo3IHhbDeSTcA6taiUc=
-github.com/pingcap/parser v0.0.0-20190107034620-db064135d7b0/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20190116142258-00e692951ce1 h1:fis1l2hPX1piYENHn5B9sMmpbUURp8l2IJJpKHP1aUk=
 github.com/pingcap/parser v0.0.0-20190116142258-00e692951ce1/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
@@ -120,8 +120,6 @@ github.com/spaolacci/murmur3 v0.0.0-20150829172844-0d12bf811670 h1:hKP4ACPoBBCnB
 github.com/spaolacci/murmur3 v0.0.0-20150829172844-0d12bf811670/go.mod h1:JwIasOWyU6f++ZhiEuf87xNszmSA2myDM2Kzu9HwQUA=
 github.com/stretchr/testify v1.2.2 h1:bSDNvY7ZPG5RlJ8otE/7V6gMiyenm9RtJ7IUVIAoJ1w=
 github.com/stretchr/testify v1.2.2/go.mod h1:a8OnRcib4nhh0OaRAV+Yts87kKdq0PP7pXfy6kDkUVs=
-github.com/tiancaiamao/parser v0.0.0-20190116115114-e2ff6aa2040c h1:Jca3Kh29wy4T8etEUU+/SWbYoQHFqDJIzS0kIjuoCXU=
-github.com/tiancaiamao/parser v0.0.0-20190116115114-e2ff6aa2040c/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
 github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273 h1:YqFyfcgqxQqjpRr0SEG0Z555J/3kPqDL/xmRyeAaX/0=
 github.com/twinj/uuid v0.0.0-20150629100731-70cac2bcd273/go.mod h1:mMgcE1RHFUFqe5AfiwlINXisXfDGro23fWdPUfOMjRY=
 github.com/uber/jaeger-client-go v2.8.0+incompatible h1:7DGH8Hqk6PirD+GE+bvCf0cLnspLuae7N1NcwMeQcyg=
