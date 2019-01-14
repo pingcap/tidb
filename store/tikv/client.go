@@ -394,7 +394,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := tidbutil.GetStack()
-			log.Errorf("gcWorker %v %s", r, buf)
+			log.Errorf("batchSendLoop %v %s", r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
 		}
 	}()
