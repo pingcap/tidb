@@ -63,6 +63,7 @@ type StatementContext struct {
 	PadCharToFullLength    bool
 	BatchCheck             bool
 	InNullRejectCheck      bool
+	AllowInvalidDate       bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
