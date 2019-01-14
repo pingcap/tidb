@@ -227,6 +227,27 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into test values(2, 3)")
 	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2", "2 3"))
 
+	// issue 6360
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint unsigned);")
+	tk.MustExec(" set @orig_sql_mode = @@sql_mode; set @@sql_mode = 'strict_all_tables';")
+	_, err = tk.Exec("insert into t value (-1);")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t value (-1);")
+	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t select -1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t select cast(-1 as unsigned);")
+	tk.MustExec("insert into t value (-1.111);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t value ('-1.111');")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
+	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
+
 	// issue 6424
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6))")
@@ -1693,6 +1714,26 @@ func (s *testSuite) TestLoadDataIgnoreLines(c *C) {
 	tests := []testCase{
 		{nil, []byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, nil},
 		{nil, []byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, nil},
+	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+}
+
+// related to issue 6360
+func (s *testSuite) TestLoadDataOverflowBigintUnsigned(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	ctx := tk.Se.(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
+	tests := []testCase{
+		{nil, []byte("-1\n-18446744073709551615\n-18446744073709551616\n"), []string{"0", "0", "0"}, nil},
+		{nil, []byte("-9223372036854775809\n18446744073709551616\n"), []string{"0", "18446744073709551615"}, nil},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"

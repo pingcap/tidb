@@ -122,7 +122,7 @@ func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
 	if sc.InInsertStmt {
 		flags |= model.FlagInInsertStmt
-	} else if sc.InUpdateOrDeleteStmt {
+	} else if sc.InUpdateStmt || sc.InDeleteStmt {
 		flags |= model.FlagInUpdateOrDeleteStmt
 	} else if sc.InSelectStmt {
 		flags |= model.FlagInSelectStmt
