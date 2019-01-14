@@ -73,6 +73,21 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	}, nil
 }
 
+// SelectWithRuntimeStats sends a DAG request, returns SelectResult.
+// The different from Select is SelectWithRuntimeStats will set copPlanIDs in selectResult,
+// which can help selectResult collects runtime stats.
+func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (SelectResult, error) {
+	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
+	if err != nil {
+		return sr, err
+	}
+	if selectResult, ok := sr.(*selectResult); ok {
+		selectResult.copPlanIDs = copPlanIDs
+	}
+	return sr, err
+}
+
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables,
 	isRestrict bool) (SelectResult, error) {

@@ -68,6 +68,10 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+
+	// copPlanIDs contains all copTasks' planID,
+	// which helps to collect copTasks' runtime stats.
+	copPlanIDs []string
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -157,6 +161,7 @@ func (r *selectResult) getSelectResp() error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
+		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress)
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
@@ -164,6 +169,21 @@ func (r *selectResult) getSelectResp() error {
 			continue
 		}
 		return nil
+	}
+}
+
+func (r *selectResult) updateCopRuntimeStats(callee string) {
+	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+		return
+	}
+
+	for i, detail := range r.selectResp.GetExecutionSummaries() {
+		planID := r.copPlanIDs[i]
+		stats := r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCop(planID, callee)
+		if detail != nil && detail.TimeProcessedNs != nil &&
+			detail.NumProducedRows != nil && detail.NumIterations != nil {
+			stats.Record(*detail.TimeProcessedNs, *detail.NumProducedRows, *detail.NumIterations)
+		}
 	}
 }
 

@@ -532,7 +532,7 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 		if runtimeStatsColl.Exists(p.ExplainID()) {
 			row = append(row, runtimeStatsColl.Get(p.ExplainID()).String())
 		} else {
-			row = append(row, "") //TODO: wait collect more executor info from tikv
+			row = append(row, runtimeStatsColl.CopSummary(p.ExplainID()))
 		}
 	}
 	e.Rows = append(e.Rows, row)

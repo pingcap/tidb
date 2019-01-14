@@ -26,6 +26,7 @@ const CommitDetailCtxKey = "commitDetail"
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
+	CalleeAddress string
 	ProcessTime   time.Duration
 	WaitTime      time.Duration
 	BackoffTime   time.Duration
@@ -112,6 +113,10 @@ func (d ExecDetails) String() string {
 type RuntimeStatsColl struct {
 	mu    sync.Mutex
 	stats map[string]*RuntimeStats
+	// Usually, CopTasks are executed on TiKV cluster consist of multiple instance,
+	// So coprocessors' addresses must be taken into account.
+	// Then the first key is executor's planID and the second is coprocessor's address.
+	copStats map[string]map[string]*CopRuntimeStats
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -124,9 +129,20 @@ type RuntimeStats struct {
 	rows int64
 }
 
+// CopRuntimeStats collects info of one executor executed on TiKV.
+type CopRuntimeStats struct {
+	// Total time cost in this executor. Includes self time cost and children time cost.
+	timeProcessedNs uint64
+	// How many rows this executor produced totally.
+	numProducedRows uint64
+	// How many times executor's `next()` is called.
+	numIterations uint64
+}
+
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{stats: make(map[string]*RuntimeStats)}
+	return &RuntimeStatsColl{stats: make(map[string]*RuntimeStats),
+		copStats: make(map[string]map[string]*CopRuntimeStats)}
 }
 
 // Get gets execStat for a executor.
@@ -141,12 +157,60 @@ func (e *RuntimeStatsColl) Get(planID string) *RuntimeStats {
 	return runtimeStats
 }
 
+func (e *RuntimeStatsColl) GetCop(planID, address string) *CopRuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	stats, ok := e.copStats[planID]
+	if !ok {
+		stats = make(map[string]*CopRuntimeStats, 5)
+		e.copStats[planID] = stats
+	}
+	stat, ok := stats[address]
+	if !ok {
+		stat = new(CopRuntimeStats)
+		stats[address] = stat
+	}
+	return stat
+}
+
+func (e *RuntimeStatsColl) CopSummary(planID string) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	stats, ok := e.copStats[planID]
+	if !ok {
+		return ""
+	}
+	var maxProcesses, totalRows, totalIters uint64
+	for _, stat := range stats {
+		if stat.timeProcessedNs > maxProcesses {
+			maxProcesses = stat.timeProcessedNs
+		}
+		totalRows += stat.numProducedRows
+		totalIters += stat.numIterations
+	}
+	return fmt.Sprintf("max proc ns:%v, total rows:%v, total iters:%v", maxProcesses, totalRows, totalIters)
+}
+
 // Exists checks if the planID exists in the stats collection.
 func (e *RuntimeStatsColl) Exists(planID string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, exists := e.stats[planID]
 	return exists
+}
+
+func (e *CopRuntimeStats) Record(timeProcessedNs, numProducedRows, numIterations uint64) {
+	e.timeProcessedNs += timeProcessedNs
+	e.numProducedRows += numProducedRows
+	e.numIterations += numIterations
+}
+
+func (e *CopRuntimeStats) String() string {
+	if e == nil {
+		return ""
+	}
+	// TODO(zhangyuanjia)
+	return ""
 }
 
 // Record records executor's execution.
