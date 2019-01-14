@@ -545,6 +545,12 @@ AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 AAAAAAAAAAAA5gm5Mg==
 '/*!*/;`, true, ""},
+
+		// for partition table dml
+		{"select * from t1 partition (p1)", true, ""},
+		{"select * from t1 partition (p1,p2)", true, ""},
+		{"select * from t1 partition (`p1`, p2, p3)", true, ""},
+		{`select * from t1 partition ()`, false, ""},
 	}
 	s.RunTest(c, table)
 }
@@ -2614,6 +2620,27 @@ func (s *testParserSuite) TestTablePartition(c *C) {
 	c.Assert(err, IsNil)
 	createTable := stmt.(*ast.CreateTableStmt)
 	c.Assert(createTable.Partition.Definitions[0].Comment, Equals, "check")
+}
+
+func (s *testParserSuite) TestTablePartitionNameList(c *C) {
+	table := []testCase{
+		{`select * from t partition (p0,p1)`, true, ""},
+	}
+
+	parser := New()
+	for _, tt := range table {
+		stmt, _, err := parser.Parse(tt.src, "", "")
+		c.Assert(err, IsNil)
+
+		sel := stmt[0].(*ast.SelectStmt)
+		source, ok := sel.From.TableRefs.Left.(*ast.TableSource)
+		c.Assert(ok, IsTrue)
+		tableName, ok := source.Source.(*ast.TableName)
+		c.Assert(ok, IsTrue)
+		c.Assert(len(tableName.PartitionNames), Equals, 2)
+		c.Assert(tableName.PartitionNames[0], Equals, model.CIStr{"p0", "p0"})
+		c.Assert(tableName.PartitionNames[1], Equals, model.CIStr{"p1", "p1"})
+	}
 }
 
 func (s *testParserSuite) TestNotExistsSubquery(c *C) {
