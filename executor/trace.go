@@ -48,8 +48,8 @@ type TraceExec struct {
 }
 
 // Next executes real query and collects span later.
-func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *TraceExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.exhausted {
 		return nil
 	}
@@ -92,7 +92,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		trace := traces[0]
 		sortTraceByStartTime(trace)
-		dfsTree(trace, "", false, chk)
+		dfsTree(trace, "", false, req.Chunk)
 		e.exhausted = true
 		return nil
 	}
@@ -106,28 +106,28 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	// Split json data into rows to avoid the max packet size limitation.
 	const maxRowLen = 4096
 	for len(data) > maxRowLen {
-		chk.AppendString(0, string(data[:maxRowLen]))
+		req.AppendString(0, string(data[:maxRowLen]))
 		data = data[maxRowLen:]
 	}
-	chk.AppendString(0, string(data))
+	req.AppendString(0, string(data))
 	e.exhausted = true
 	return nil
 }
 
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 
 	for {
-		err := rs.Next(ctx, chk)
-		if err != nil || chk.NumRows() == 0 {
+		err := rs.Next(ctx, req)
+		if err != nil || req.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
-		iter := chunk.NewIterator4Chunk(chk)
+		iter := chunk.NewIterator4Chunk(req.Chunk)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 

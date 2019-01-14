@@ -88,12 +88,12 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	chk := rs.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := rs.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -102,16 +102,16 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
-	it = chunk.NewIterator4Chunk(chk)
+	req = rs.NewRecordBatch()
+	it = chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			c.Assert(chk.GetRow(0).GetString(1), Equals, "double")
+			c.Assert(req.GetRow(0).GetString(1), Equals, "double")
 		}
 	}
 
@@ -252,10 +252,10 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	chk := r.NewChunk()
-	err = r.Next(context.Background(), chk)
+	req := r.NewRecordBatch()
+	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	row := chk.GetRow(0)
+	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
 	r.Close()
@@ -303,7 +303,7 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("alter table mc modify column c2 text")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text CHARSET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 }
 
