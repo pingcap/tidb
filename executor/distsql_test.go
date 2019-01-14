@@ -68,10 +68,10 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Send coprocessor request when the table split.
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
+	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
 
 	// Split one region.
@@ -83,17 +83,17 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	// Check again.
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req = rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
+	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
 
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req = rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"
