@@ -34,6 +34,8 @@ import (
 
 // TiDB system variable names that only in session scope.
 const (
+	TiDBDDLSlowOprThreshold = "ddl_slow_threshold"
+
 	// tidb_snapshot is used for reading history data, the default value is empty string.
 	// The value can be a datetime string like '2017-11-11 20:20:20' or a tso string. When this variable is set, the session reads history data of that time.
 	TiDBSnapshot = "tidb_snapshot"
@@ -278,6 +280,7 @@ const (
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
+	DefTiDBDDLSlowOprThreshold       = 300
 )
 
 // Process global variables.
@@ -287,9 +290,10 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
 	// Export for testing.
-	MaxDDLReorgBatchSize int32  = 10240
-	MinDDLReorgBatchSize int32  = 32
-	DDLSlowOprThreshold  uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	ForcePriority               = int32(DefTiDBForcePriority)
-	ServerHostname, _           = os.Hostname()
+	MaxDDLReorgBatchSize int32 = 10240
+	MinDDLReorgBatchSize int32 = 32
+	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	DDLSlowOprThreshold uint32 = DefTiDBDDLSlowOprThreshold
+	ForcePriority              = int32(DefTiDBForcePriority)
+	ServerHostname, _          = os.Hostname()
 )
