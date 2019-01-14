@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1276,6 +1278,21 @@ func loadSystemTZ(se *session) (string, error) {
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
+	cfg := config.GetGlobalConfig()
+	if len(cfg.Plugin.Load) > 0 {
+		err := plugin.Init(context.Background(), plugin.Config{
+			Plugins:        strings.Split(cfg.Plugin.Load, ","),
+			PluginDir:      cfg.Plugin.Dir,
+			GlobalSysVar:   &variable.SysVars,
+			PluginVarNames: &variable.PluginVarNames,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	initLoadCommonGlobalVarsSQL()
+
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -1446,39 +1463,59 @@ func finishBootstrap(store kv.Storage) {
 }
 
 const quoteCommaQuote = "', '"
-const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" +
-	variable.AutocommitVar + quoteCommaQuote +
-	variable.SQLModeVar + quoteCommaQuote +
-	variable.MaxAllowedPacket + quoteCommaQuote +
-	variable.TimeZone + quoteCommaQuote +
-	variable.BlockEncryptionMode + quoteCommaQuote +
-	variable.WaitTimeout + quoteCommaQuote +
-	variable.InteractiveTimeout + quoteCommaQuote +
-	variable.MaxPreparedStmtCount + quoteCommaQuote +
+
+var builtinGlobalVariable = []string{
+	variable.AutocommitVar,
+	variable.SQLModeVar,
+	variable.MaxAllowedPacket,
+	variable.TimeZone,
+	variable.BlockEncryptionMode,
+	variable.WaitTimeout,
+	variable.InteractiveTimeout,
+	variable.MaxPreparedStmtCount,
 	/* TiDB specific global variables: */
-	variable.TiDBSkipUTF8Check + quoteCommaQuote +
-	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +
-	variable.TiDBIndexLookupSize + quoteCommaQuote +
-	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
-	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
-	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
-	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
-	variable.TiDBProjectionConcurrency + quoteCommaQuote +
-	variable.TiDBHashAggPartialConcurrency + quoteCommaQuote +
-	variable.TiDBHashAggFinalConcurrency + quoteCommaQuote +
-	variable.TiDBBackoffLockFast + quoteCommaQuote +
-	variable.TiDBConstraintCheckInPlace + quoteCommaQuote +
-	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
-	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
-	variable.TiDBInitChunkSize + quoteCommaQuote +
-	variable.TiDBMaxChunkSize + quoteCommaQuote +
-	variable.TiDBEnableCascadesPlanner + quoteCommaQuote +
-	variable.TiDBRetryLimit + quoteCommaQuote +
-	variable.TiDBDisableTxnAutoRetry + quoteCommaQuote +
-	variable.TiDBEnableWindowFunction + "')"
+	variable.TiDBSkipUTF8Check,
+	variable.TiDBIndexJoinBatchSize,
+	variable.TiDBIndexLookupSize,
+	variable.TiDBIndexLookupConcurrency,
+	variable.TiDBIndexLookupJoinConcurrency,
+	variable.TiDBIndexSerialScanConcurrency,
+	variable.TiDBHashJoinConcurrency,
+	variable.TiDBProjectionConcurrency,
+	variable.TiDBHashAggPartialConcurrency,
+	variable.TiDBHashAggFinalConcurrency,
+	variable.TiDBBackoffLockFast,
+	variable.TiDBConstraintCheckInPlace,
+	variable.TiDBDDLReorgWorkerCount,
+	variable.TiDBDDLReorgBatchSize,
+	variable.TiDBOptInSubqToJoinAndAgg,
+	variable.TiDBDistSQLScanConcurrency,
+	variable.TiDBInitChunkSize,
+	variable.TiDBMaxChunkSize,
+	variable.TiDBEnableCascadesPlanner,
+	variable.TiDBRetryLimit,
+	variable.TiDBDisableTxnAutoRetry,
+	variable.TiDBEnableWindowFunction,
+}
+
+var (
+	loadCommonGlobalVarsSQLOnce sync.Once
+	loadCommonGlobalVarsSQL     string
+)
+
+func initLoadCommonGlobalVarsSQL() {
+	loadCommonGlobalVarsSQLOnce.Do(func() {
+		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
+		if len(variable.PluginVarNames) > 0 {
+			vars = append(vars, variable.PluginVarNames...)
+		}
+		loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(vars, quoteCommaQuote) + "')"
+	})
+}
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
+	initLoadCommonGlobalVarsSQL()
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
 		return nil
