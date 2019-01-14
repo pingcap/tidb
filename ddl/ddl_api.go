@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
@@ -1662,7 +1663,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	var pid int64
-	pid, err = findPartitionByName(meta, spec.Name)
+	pid, err = tables.FindPartitionByName(meta, spec.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}

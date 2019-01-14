@@ -202,7 +202,7 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 		}
 		defaultBucketCount = t.bucketCount
 		bkts = mergeBuckets(bkts, t.isNewBuckets, float64(totalCount))
-		result := buildNewHistogram(&Histogram{tp: types.NewFieldType(mysql.TypeLong)}, bkts).ToString(0)
+		result := buildNewHistogram(&Histogram{Tp: types.NewFieldType(mysql.TypeLong)}, bkts).ToString(0)
 		c.Assert(result, Equals, t.result)
 	}
 }
@@ -228,7 +228,7 @@ func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
 	}
 	c.Assert(q.Equal(rq), IsTrue)
 
-	hist.tp = types.NewFieldType(mysql.TypeBlob)
+	hist.Tp = types.NewFieldType(mysql.TypeBlob)
 	q = &QueryFeedback{hist: hist}
 	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(3), 1, 0})
 	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(1), 1, 0})

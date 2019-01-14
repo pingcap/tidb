@@ -27,19 +27,21 @@ import (
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
 const selectionFactor = 0.8
 
-// exprSet is used for calculating selectivity.
-type exprSet struct {
-	tp int
+// StatsNode is used for calculating selectivity.
+type StatsNode struct {
+	Tp int
 	ID int64
 	// mask is a bit pattern whose ith bit will indicate whether the ith expression is covered by this index/column.
 	mask int64
-	// ranges contains all the ranges we got.
-	ranges []*ranger.Range
+	// Ranges contains all the Ranges we got.
+	Ranges []*ranger.Range
+	// Selectivity indicates the Selectivity of this column/index.
+	Selectivity float64
 	// numCols is the number of columns contained in the index or column(which is always 1).
 	numCols int
 }
 
-// The type of the exprSet.
+// The type of the StatsNode.
 const (
 	indexType = iota
 	pkType
@@ -142,18 +144,18 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // TODO: support expressions that the top layer is a DNF.
 // Currently the time complexity is o(n^2).
-func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Expression) (float64, error) {
+func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Expression) (float64, []*StatsNode, error) {
 	// If table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.Count == 0 || len(exprs) == 0 {
-		return 1, nil
+		return 1, nil, nil
 	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
-		return pseudoSelectivity(coll, exprs), nil
+		return pseudoSelectivity(coll, exprs), nil, nil
 	}
 	ret := 1.0
-	var sets []*exprSet
+	var nodes []*StatsNode
 	sc := ctx.GetSessionVars().StmtCtx
 
 	remainedExprs := make([]expression.Expression, 0, len(exprs))
@@ -186,12 +188,24 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		if col != nil {
 			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, nil, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: colType, ID: id, mask: maskCovered, ranges: ranges, numCols: 1})
+			nodes = append(nodes, &StatsNode{Tp: colType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
 			if colInfo.isHandle {
-				sets[len(sets)-1].tp = pkType
+				nodes[len(nodes)-1].Tp = pkType
+				var cnt float64
+				cnt, err = coll.GetRowCountByIntColumnRanges(sc, id, ranges)
+				if err != nil {
+					return 0, nil, errors.Trace(err)
+				}
+				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
+				continue
 			}
+			cnt, err := coll.GetRowCountByColumnRanges(sc, id, ranges)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.Count)
 		}
 	}
 	for id, idxInfo := range coll.Indices {
@@ -203,38 +217,35 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			}
 			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, nil, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: indexType, ID: id, mask: maskCovered, ranges: ranges, numCols: len(idxInfo.Info.Columns)})
+			cnt, err := coll.GetRowCountByIndexRanges(sc, id, ranges)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			selectivity := cnt / float64(coll.Count)
+			nodes = append(nodes, &StatsNode{
+				Tp:          indexType,
+				ID:          id,
+				mask:        maskCovered,
+				Ranges:      ranges,
+				numCols:     len(idxInfo.Info.Columns),
+				Selectivity: selectivity,
+			})
 		}
 	}
-	sets = getUsableSetsByGreedy(sets)
+	usedSets := getUsableSetsByGreedy(nodes)
 	// Initialize the mask with the full set.
 	mask := (int64(1) << uint(len(remainedExprs))) - 1
-	for _, set := range sets {
-		mask ^= set.mask
-		var (
-			rowCount float64
-			err      error
-		)
-		switch set.tp {
-		case pkType:
-			rowCount, err = coll.GetRowCountByIntColumnRanges(sc, set.ID, set.ranges)
-		case colType:
-			rowCount, err = coll.GetRowCountByColumnRanges(sc, set.ID, set.ranges)
-		case indexType:
-			rowCount, err = coll.GetRowCountByIndexRanges(sc, set.ID, set.ranges)
-		}
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		ret *= rowCount / float64(coll.Count)
+	for _, set := range usedSets {
+		mask &^= set.mask
+		ret *= set.Selectivity
 	}
 	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
 	if mask > 0 {
 		ret *= selectionFactor
 	}
-	return ret, nil
+	return ret, nodes, nil
 }
 
 func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
@@ -265,14 +276,18 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 }
 
 // getUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
-func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
+func getUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
+	marked := make([]bool, len(nodes))
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID, bestCount, bestTp, bestNumCols := -1, 0, colType, 0
-		for i, set := range sets {
-			set.mask &= mask
-			bits := popCount(set.mask)
+		bestID, bestCount, bestTp, bestNumCols, bestMask := -1, 0, colType, 0, int64(0)
+		for i, set := range nodes {
+			if marked[i] {
+				continue
+			}
+			curMask := set.mask & mask
+			bits := popCount(curMask)
 			// This set cannot cover any thing, just skip it.
 			if bits == 0 {
 				continue
@@ -281,20 +296,19 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 			// (1): The stats type, always prefer the primary key or index.
 			// (2): The number of expression that it covers, the more the better.
 			// (3): The number of columns that it contains, the less the better.
-			if (bestTp == colType && set.tp != colType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
-				bestID, bestCount, bestTp, bestNumCols = i, bits, set.tp, set.numCols
+			if (bestTp == colType && set.Tp != colType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
+				bestID, bestCount, bestTp, bestNumCols, bestMask = i, bits, set.Tp, set.numCols, curMask
 			}
 		}
 		if bestCount == 0 {
 			break
 		}
 
-		// update the mask, remove the bit that sets[bestID].mask has.
-		mask &^= sets[bestID].mask
+		// update the mask, remove the bit that nodes[bestID].mask has.
+		mask &^= bestMask
 
-		newBlocks = append(newBlocks, sets[bestID])
-		// remove the chosen one
-		sets = append(sets[:bestID], sets[bestID+1:]...)
+		newBlocks = append(newBlocks, nodes[bestID])
+		marked[bestID] = true
 	}
 	return
 }
