@@ -15,11 +15,13 @@ package tikv
 
 import (
 	"context"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 type testCoprocessorSuite struct {
@@ -314,4 +316,37 @@ func (s *testCoprocessorSuite) testSplit(c *C, ranges *copRanges, checkLeft bool
 			s.checkEqual(c, right, expect.mid, false)
 		}
 	}
+}
+
+func BenchmarkCopClientValidateRanges(b *testing.B) {
+	ranges := make([]kv.KeyRange, 0, 5)
+	ranges = append(ranges, kv.KeyRange{
+		StartKey: tablecodec.EncodeRowKey(1, nil),
+		EndKey:   tablecodec.EncodeRowKey(2, nil),
+	})
+	ranges = append(ranges, kv.KeyRange{
+		StartKey: tablecodec.EncodeRowKey(3, nil),
+		EndKey:   tablecodec.EncodeRowKey(4, nil),
+	})
+	ranges = append(ranges, kv.KeyRange{
+		StartKey: append(tablecodec.EncodeRowKey(4, nil), 0),
+		EndKey:   tablecodec.EncodeRowKey(5, nil),
+	})
+	ranges = append(ranges, kv.KeyRange{
+		StartKey: append(tablecodec.EncodeRowKey(5, nil), 0),
+		EndKey:   tablecodec.EncodeRowKey(6, nil),
+	})
+	ranges = append(ranges, kv.KeyRange{
+		StartKey: tablecodec.EncodeRowKey(7, nil),
+		EndKey:   tablecodec.EncodeRowKey(8, nil),
+	})
+	c := CopClient{}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err := c.validateRanges(ranges)
+		if err != nil {
+			b.Fail()
+		}
+	}
+	b.StopTimer()
 }
