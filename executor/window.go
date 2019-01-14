@@ -47,7 +47,7 @@ func (e *WindowExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *WindowExec) Next(ctx context.Context, chk *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("windowExec.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -58,13 +58,13 @@ func (e *WindowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	chk.Reset()
 	if e.meetNewGroup && e.remainingRowsInGroup > 0 {
-		err := e.appendResult2Chunk(chk)
+		err := e.appendResult2Chunk(chk.Chunk)
 		if err != nil {
 			return err
 		}
 	}
 	for !e.executed && (chk.NumRows() == 0 || e.remainingRowsInChunk > 0) {
-		err := e.consumeOneGroup(ctx, chk)
+		err := e.consumeOneGroup(ctx, chk.Chunk)
 		if err != nil {
 			e.executed = true
 			return errors.Trace(err)
@@ -127,7 +127,7 @@ func (e *WindowExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk
 	}
 
 	childResult := e.children[0].newFirstChunk()
-	err = e.children[0].Next(ctx, childResult)
+	err = e.children[0].Next(ctx, &chunk.RecordBatch{Chunk: childResult})
 	if err != nil {
 		return errors.Trace(err)
 	}
