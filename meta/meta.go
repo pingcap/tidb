@@ -297,7 +297,7 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
-// and rebase the table autoID.
+// and rebases the table autoID.
 func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoID int64) error {
 	err := m.CreateTable(dbID, tableInfo)
 	if err != nil {
