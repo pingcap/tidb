@@ -340,6 +340,27 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 		"2 1",
 		"2 2",
 	))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(1,2)")
+	tk.MustExec("create table s(a int, b int)")
+	tk.MustExec("insert into s values(1,1)")
+	tk.MustQuery("explain select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
+		"Projection_7 10000.00 root 6_aux_0",
+		"└─MergeJoin_8 10000.00 root left outer semi join, left key:test.t.a, right key:test.s.a, other cond:ge(test.s.b, test.t.b)",
+		"  ├─Sort_12 10000.00 root test.t.a:asc",
+		"  │ └─TableReader_11 10000.00 root data:TableScan_10",
+		"  │   └─TableScan_10 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─Sort_16 10000.00 root test.s.a:asc",
+		"    └─TableReader_15 10000.00 root data:TableScan_14",
+		"      └─TableScan_14 10000.00 cop table:s, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t").Check(testkit.Rows(
+		"1",
+		"0",
+	))
 }
 
 func (s *testSuite1) Test3WaysMergeJoin(c *C) {
