@@ -368,5 +368,3 @@ func IsMemoryDB(dbName string) bool {
 	}
 	return false
 }
-
-
