@@ -124,7 +124,7 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 	})
 }
 
-func (c *batchCommandsClient) batchRecvLoop() {
+func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := tidbutil.GetStack()
@@ -180,7 +180,8 @@ func (c *batchCommandsClient) batchRecvLoop() {
 		}
 
 		tikvTransportLayerLoad := resp.GetTransportLayerLoad()
-		if tikvTransportLayerLoad > 0.0 {
+		if tikvTransportLayerLoad > 0.0 && cfg.MaxBatchWaitTime > 0 {
+			// We need to consider TiKV load only if batch-wait strategy is enabled.
 			atomic.StoreUint64(c.tikvTransportLayerLoad, tikvTransportLayerLoad)
 		}
 	}
@@ -272,7 +273,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				closed:                 0,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
-			go batchClient.batchRecvLoop()
+			go batchClient.batchRecvLoop(cfg.TiKVClient)
 		}
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
@@ -356,8 +357,8 @@ func fetchMorePendingRequests(
 ) {
 	waitStart := time.Now()
 
-	after := time.After(maxWaitTime)
 	// Try to collect `batchWaitSize` requests, or wait `maxWaitTime`.
+	after := time.NewTimer(maxWaitTime)
 	for len(*entries) < batchWaitSize {
 		select {
 		case entry := <-ch:
@@ -366,11 +367,12 @@ func fetchMorePendingRequests(
 			}
 			*entries = append(*entries, entry)
 			*requests = append(*requests, entry.req)
-		case waitEnd := <-after:
+		case waitEnd := <-after.C:
 			metrics.TiKVBatchWaitDuration.Observe(float64(waitEnd.Sub(waitStart)))
 			return
 		}
 	}
+	after.Stop()
 
 	// Do an additional non-block try.
 	for len(*entries) < maxBatchSize {
@@ -382,8 +384,7 @@ func fetchMorePendingRequests(
 			*entries = append(*entries, entry)
 			*requests = append(*requests, entry.req)
 		default:
-			waitEnd := time.Now()
-			metrics.TiKVBatchWaitDuration.Observe(float64(waitEnd.Sub(waitStart)))
+			metrics.TiKVBatchWaitDuration.Observe(float64(time.Since(waitStart)))
 			return
 		}
 	}
@@ -518,9 +519,9 @@ func (c *rpcClient) closeConns() {
 }
 
 func sendBatchRequest(
+	ctx context.Context,
 	addr string,
 	connArray *connArray,
-	ctx context.Context,
 	req *tikvpb.BatchCommandsRequest_Request,
 	timeout time.Duration,
 ) (*tikvrpc.Response, error) {
@@ -569,7 +570,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
-			return sendBatchRequest(addr, connArray, ctx, batchReq, timeout)
+			return sendBatchRequest(ctx, addr, connArray, batchReq, timeout)
 		}
 	}
 
