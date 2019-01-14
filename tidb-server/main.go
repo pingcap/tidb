@@ -400,6 +400,16 @@ func validateConfig() {
 		log.Errorf("txn-local-latches.capacity can not be 0")
 		os.Exit(-1)
 	}
+
+	// For tikvclient.
+	if cfg.TiKVClient.GrpcConnectionCount == 0 {
+		log.Errorf("grpc-connection-count should be greater than 0")
+		os.Exit(-1)
+	}
+	if cfg.TiKVClient.MaxTxnTimeUse == 0 {
+		log.Errorf("max-txn-time-use should be greater than 0")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
