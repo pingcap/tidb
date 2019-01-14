@@ -3338,24 +3338,37 @@ func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 	tk.MustQuery("select b from th order by a").Check(testkit.Rows("-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"))
 	tk.MustQuery(" select * from th where a=-2;").Check(testkit.Rows("-2 -2"))
 	tk.MustQuery(" select * from th where a=5;").Check(testkit.Rows("5 5"))
-	// Test for select prune partitions.
-	result := tk.MustQuery("desc select * from th where a=-2;")
-	result.Check(testkit.Rows(
-		"TableReader_8 10.00 root data:Selection_7",
-		"└─Selection_7 10.00 cop eq(test.th.a, -2)",
-		"  └─TableScan_6 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
-	// Test select union all partition.
-	result = tk.MustQuery("desc select * from th;")
-	result.Check(testkit.Rows(
-		"Union_8 30000.00 root ",
-		"├─TableReader_10 10000.00 root data:TableScan_9",
-		"│ └─TableScan_9 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"├─TableReader_12 10000.00 root data:TableScan_11",
-		"│ └─TableScan_11 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
-		"└─TableReader_14 10000.00 root data:TableScan_13",
-		"  └─TableScan_13 10000.00 cop table:th, partition:, range:[-inf,+inf], keep order:false, stats:pseudo",
-	))
+}
+
+func (s *testSuite3) TestSelectPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists th, tr`)
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
+	tk.MustExec(`create table tr (a int, b int)
+							partition by range (a) (
+							partition r0 values less than (4),
+							partition r1 values less than (7),
+							partition r3 values less than maxvalue)`)
+	defer tk.MustExec(`drop table if exists th, tr`)
+	tk.MustExec(`insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);`)
+	tk.MustExec("insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);")
+	tk.MustExec(`insert into tr values (-3,-3),(3,3),(4,4),(7,7),(8,8);`)
+	// select 1 partition.
+	tk.MustQuery("select b from th partition (p0) order by a").Check(testkit.Rows("-6", "-3", "0", "3", "6"))
+	tk.MustQuery("select b from tr partition (r0) order by a").Check(testkit.Rows("-3", "3"))
+	tk.MustQuery("select b from th partition (p0,P0) order by a").Check(testkit.Rows("-6", "-3", "0", "3", "6"))
+	tk.MustQuery("select b from tr partition (r0,R0,r0) order by a").Check(testkit.Rows("-3", "3"))
+	// select multi partition.
+	tk.MustQuery("select b from th partition (P2,p0) order by a").Check(testkit.Rows("-8", "-6", "-5", "-3", "-2", "0", "2", "3", "5", "6", "8"))
+	tk.MustQuery("select b from tr partition (r1,R3) order by a").Check(testkit.Rows("4", "7", "8"))
+
+	// test select unknown partition error
+	_, err := tk.Exec("select b from th partition (p0,p4)")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
+	_, err = tk.Exec("select b from tr partition (r1,r4)")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'r4' in table 'tr'")
 }
 
 func (s *testSuite) TestSelectView(c *C) {
