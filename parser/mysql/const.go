@@ -511,6 +511,11 @@ func (m SQLMode) HasNoAutoCreateUserMode() bool {
 	return m&ModeNoAutoCreateUser == ModeNoAutoCreateUser
 }
 
+// HasAllowInvalidDatesMode detects if 'ALLOW_INVALID_DATES' mode is set in SQLMode
+func (m SQLMode) HasAllowInvalidDatesMode() bool {
+	return m&ModeAllowInvalidDates == ModeAllowInvalidDates
+}
+
 // consts for sql modes.
 const (
 	ModeNone        SQLMode = 0
@@ -546,6 +551,7 @@ const (
 	ModeHighNotPrecedence
 	ModeNoEngineSubstitution
 	ModePadCharToFullLength
+	ModeAllowInvalidDates
 )
 
 // FormatSQLModeStr re-format 'SQL_MODE' variable.
@@ -623,6 +629,7 @@ var Str2SQLMode = map[string]SQLMode{
 	"HIGH_NOT_PRECEDENCE":        ModeHighNotPrecedence,
 	"NO_ENGINE_SUBSTITUTION":     ModeNoEngineSubstitution,
 	"PAD_CHAR_TO_FULL_LENGTH":    ModePadCharToFullLength,
+	"ALLOW_INVALID_DATES":        ModeAllowInvalidDates,
 }
 
 // CombinationSQLMode is the special modes that provided as shorthand for combinations of mode values.
