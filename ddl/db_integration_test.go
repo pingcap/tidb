@@ -376,8 +376,7 @@ func (s *testIntegrationSuite) TestMySQLErrorCode(c *C) {
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	s.testErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
-	_, err := tk.Exec("alter table test_error_code_succ add index idx (c1)")
-	c.Assert(err, IsNil)
+	tk.MustExec("alter table test_error_code_succ add index idx (c1)")
 	sql = "alter table test_error_code_succ add index idx (c1)"
 	s.testErrorCode(c, tk, sql, tmysql.ErrDupKeyName)
 	// drop index
