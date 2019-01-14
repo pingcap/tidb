@@ -278,7 +278,16 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && ctx.GetSessionVars().SQLMode.HasStrictMode() && (col.Tp == mysql.TypeTimestamp ||
 		col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeDate) {
 		if vv, ok := value.(string); ok {
-			if vv == types.ZeroDatetimeStr || vv == types.ZeroDateStr {
+			t, err := types.ParseTime(nil, vv, col.Tp, 6)
+			if err != nil {
+				// Ignores ParseTime error, because ParseTime error has been dealt in getDefaultValue
+				// Some builtin function like CURRENT_TIMESTAMP() will cause ParseTime error.
+				return hasDefaultValue, value, nil
+			}
+			res := t.Time.Year() + t.Time.Month() + t.Time.Day()
+			res += t.Time.Hour() + t.Time.Minute() + t.Time.Second()
+			res += t.Time.Microsecond()
+			if res == 0 {
 				return hasDefaultValue, value, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 			}
 		}
