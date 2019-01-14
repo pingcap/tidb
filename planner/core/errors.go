@@ -66,7 +66,7 @@ const (
 	codeWindowFrameEndIllegal           = mysql.ErrWindowFrameEndIllegal
 	codeWindowFrameIllegal              = mysql.ErrWindowFrameIllegal
 	codeWindowRangeFrameOrderType       = mysql.ErrWindowRangeFrameOrderType
-	codeWindowRangeFrameTEMPORALType    = mysql.ErrWindowRangeFrameTEMPORALType
+	codeWindowRangeFrameTemporalType    = mysql.ErrWindowRangeFrameTemporalType
 	codeWindowRangeFrameNumericType     = mysql.ErrWindowRangeFrameNumericType
 	codeWindowRangeBoundNotConstant     = mysql.ErrWindowRangeBoundNotConstant
 	codeWindowRowsIntervalUse           = mysql.ErrWindowRowsIntervalUse
@@ -122,7 +122,7 @@ var (
 	ErrWindowFrameEndIllegal           = terror.ClassOptimizer.New(codeWindowFrameEndIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameEndIllegal])
 	ErrWindowFrameIllegal              = terror.ClassOptimizer.New(codeWindowFrameIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameIllegal])
 	ErrWindowRangeFrameOrderType       = terror.ClassOptimizer.New(codeWindowRangeFrameOrderType, mysql.MySQLErrName[mysql.ErrWindowRangeFrameOrderType])
-	ErrWindowRangeFrameTEMPORALType    = terror.ClassOptimizer.New(codeWindowRangeFrameTEMPORALType, mysql.MySQLErrName[mysql.ErrWindowRangeFrameTEMPORALType])
+	ErrWindowRangeFrameTemporalType    = terror.ClassOptimizer.New(codeWindowRangeFrameTemporalType, mysql.MySQLErrName[mysql.ErrWindowRangeFrameTemporalType])
 	ErrWindowRangeFrameNumericType     = terror.ClassOptimizer.New(codeWindowRangeFrameNumericType, mysql.MySQLErrName[mysql.ErrWindowRangeFrameNumericType])
 	ErrWindowRangeBoundNotConstant     = terror.ClassOptimizer.New(codeWindowRangeBoundNotConstant, mysql.MySQLErrName[mysql.ErrWindowRangeBoundNotConstant])
 	ErrWindowRowsIntervalUse           = terror.ClassOptimizer.New(codeWindowRowsIntervalUse, mysql.MySQLErrName[mysql.ErrWindowRowsIntervalUse])
@@ -168,7 +168,7 @@ func init() {
 		codeWindowFrameEndIllegal:           mysql.ErrWindowFrameEndIllegal,
 		codeWindowFrameIllegal:              mysql.ErrWindowFrameIllegal,
 		codeWindowRangeFrameOrderType:       mysql.ErrWindowRangeFrameOrderType,
-		codeWindowRangeFrameTEMPORALType:    mysql.ErrWindowRangeFrameTEMPORALType,
+		codeWindowRangeFrameTemporalType:    mysql.ErrWindowRangeFrameTemporalType,
 		codeWindowRangeFrameNumericType:     mysql.ErrWindowRangeFrameNumericType,
 		codeWindowRangeBoundNotConstant:     mysql.ErrWindowRangeBoundNotConstant,
 		codeWindowRowsIntervalUse:           mysql.ErrWindowRowsIntervalUse,

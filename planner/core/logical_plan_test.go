@@ -1998,7 +1998,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over(groups 1 preceding) from t",
-			result: "[planner:1235]This version of MySQL doesn't yet support 'GROUPS'",
+			result: "[planner:1235]This version of TiDB doesn't yet support 'GROUPS'",
 		},
 		{
 			sql:    "select sum(a) over(rows between unbounded following and 1 preceding) from t",

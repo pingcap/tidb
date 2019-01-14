@@ -2735,7 +2735,7 @@ func (b *PlanBuilder) buildFrameBound(spec *ast.WindowSpec, orderByItems []prope
 	}
 	// Non-interval bound only support order by numeric types.
 	if isTemporal {
-		return nil, ErrWindowRangeFrameTEMPORALType.GenWithStackByArgs(spec.Name)
+		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
 	}
 	num, isNull, isExpectedType := getUintFromNode(b.ctx, boundClause.Expr)
 	if isNull || !isExpectedType {
