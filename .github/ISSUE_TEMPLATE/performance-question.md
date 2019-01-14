@@ -13,7 +13,7 @@ about: Performance question about TiDB which is not caused by bug.
 - Are you comparing TiDB with some other database? What's the difference between TiDB and compared one?
 
 - If it's a specific SQL query, could you please
-    - let us know whether you get your result after analyzing the table involved in the query.
+    - let us know whether you analyzed the tables involved in the query or not. And how long it is after you ran the last `ANALYZE`.
     - tell us whether this SQL always runs slowly, or just occasionally.
     - provide the `EXPLAIN ANALYZE` result of this query if you can wait until this SQL's execution finishes and your TiDB version is no lower than 2.1, or you can just provide the `EXPLAIN` result.
     - provide the plain text of the SQL and table schema so we can test it locally. It'll be more better if you can provide the dumped statistics information.
@@ -22,3 +22,6 @@ about: Performance question about TiDB which is not caused by bug.
     - provide the `EXPLAIN` result of the compared database. For mysql, `EXPLAIN format=json`'s result will be more helpful.
     - other information that you think it's useful to distinguish the property of this SQL.
 
+- If it's not about a specific SQL query, e.g. the benchmark result you got by yourself is not expected. Could you please
+    - show us your cluster's topology architecture
+    - a simple description of you workload
