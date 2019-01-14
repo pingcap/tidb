@@ -82,6 +82,7 @@ const (
 	ClassJSON
 	ClassTiKV
 	ClassSession
+	ClassPlugin
 	// Add more as needed.
 )
 
@@ -109,6 +110,7 @@ var errClz2Str = map[ErrClass]string{
 	ClassJSON:       "json",
 	ClassTiKV:       "tikv",
 	ClassSession:    "session",
+	ClassPlugin:     "plugin",
 }
 
 // String implements fmt.Stringer interface.
