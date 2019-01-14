@@ -128,13 +128,13 @@ func (e *IndexLookUpHashJoin) Next(ctx context.Context, chk *chunk.Chunk) error 
 func (e *IndexLookUpHashJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
+		e.cancelFunc = nil
 	}
-	e.cancelFunc = nil
 	if e.joinResultCh != nil {
 		for range e.joinResultCh {
 		}
+		e.joinResultCh = nil
 	}
-	e.joinResultCh = nil
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
 		for range e.joinChkResourceCh[i] {
