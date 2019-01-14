@@ -102,8 +102,9 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if oldTbInfoID > 0 && orReplace {
 			err = t.DropTableOrView(schemaID, oldTbInfoID, true)
 			if err != nil {
+				// unexpected error, drop db may complete before drop table
+				// so we cancel this job here
 				if infoschema.ErrDatabaseNotExists.Equal(err) {
-					// unexpected error, drop db may complete before drop table
 					job.State = model.JobStateCancelled
 				}
 				return ver, errors.Trace(err)
