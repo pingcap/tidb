@@ -67,7 +67,7 @@ func (e *DDLExec) toErr(err error) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.done {
 		return nil
 	}
