@@ -367,6 +367,5 @@ func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
 		return errors.Trace(err)
 	}
 	e.outerTable.row = e.outerTable.iter.Begin()
-	e.outerTable.hasMatch = false
 	return nil
 }
