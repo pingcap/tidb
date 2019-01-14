@@ -101,7 +101,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		}
 		// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
 		if len(ds.partitionNames) != 0 {
-			if !findByName(ds.partitionNames, partitionDefs[i].Name.L) {
+			if !s.findByName(ds.partitionNames, partitionDefs[i].Name.L) {
 				continue
 			}
 		}
@@ -152,7 +152,7 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 }
 
 // findByName checks whether object name exists in list.
-func findByName(partitionNames []model.CIStr, partitionName string) bool {
+func (s *partitionProcessor) findByName(partitionNames []model.CIStr, partitionName string) bool {
 	for _, s := range partitionNames {
 		if s.L == partitionName {
 			return true
