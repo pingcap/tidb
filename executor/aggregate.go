@@ -518,20 +518,20 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 }
 
 // Next implements the Executor Next interface.
-func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *HashAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("hashagg.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	if e.isUnparallelExec {
-		return errors.Trace(e.unparallelExec(ctx, chk))
+		return errors.Trace(e.unparallelExec(ctx, req.Chunk))
 	}
-	return errors.Trace(e.parallelExec(ctx, chk))
+	return errors.Trace(e.parallelExec(ctx, req.Chunk))
 }
 
 func (e *HashAggExec) fetchChildData(ctx context.Context) {
@@ -559,7 +559,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 			}
 			chk = input.chk
 		}
-		err = e.children[0].Next(ctx, chk)
+		err = e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
 			return
@@ -684,7 +684,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childResult)
 	for {
-		err := e.children[0].Next(ctx, e.childResult)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -795,18 +795,18 @@ func (e *StreamAggExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("streamAgg.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
 	}
-	chk.Reset()
-	for !e.executed && chk.NumRows() < e.maxChunkSize {
-		err := e.consumeOneGroup(ctx, chk)
+	req.Reset()
+	for !e.executed && req.NumRows() < e.maxChunkSize {
+		err := e.consumeOneGroup(ctx, req.Chunk)
 		if err != nil {
 			e.executed = true
 			return errors.Trace(err)
@@ -871,7 +871,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return errors.Trace(err)
 	}
 
-	err = e.children[0].Next(ctx, e.childResult)
+	err = e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
 	if err != nil {
 		return errors.Trace(err)
 	}
