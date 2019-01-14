@@ -128,8 +128,10 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := tidbutil.GetStack()
-			log.Errorf("batchRecvLoop %v %s", r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
+			log.Errorf("batchRecvLoop %v %s", r, buf)
+			log.Infof("Restart batchRecvLoop")
+			go c.batchRecvLoop(cfg)
 		}
 	}()
 
@@ -394,8 +396,10 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := tidbutil.GetStack()
-			log.Errorf("batchSendLoop %v %s", r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchSendLoop).Inc()
+			log.Errorf("batchSendLoop %v %s", r, buf)
+			log.Infof("Restart batchSendLoop")
+			go a.batchSendLoop(cfg)
 		}
 	}()
 
