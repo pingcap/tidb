@@ -485,8 +485,13 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin show slow top all 9", true, ""},
 		{"admin show slow recent 11", true, ""},
 		{"admin restore table by job 11", true, ""},
-		{"admin restore table by job 11,12,13", true, ""},
+		{"admin restore table by job 11,12,13", false, ""},
 		{"admin restore table by job", false, ""},
+		{"admin restore table t1", true, ""},
+		{"admin restore table t1,t2", false, ""},
+		{"admin restore table ", false, ""},
+		{"admin restore table t1 100", true, ""},
+		{"admin restore table t1 abc", false, ""},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
