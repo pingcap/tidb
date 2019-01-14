@@ -1498,18 +1498,24 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableWindowFunction,
 }
 
-var loadCommonGlobalVarsSQL string
+var (
+	loadCommonGlobalVarsSQLOnce sync.Once
+	loadCommonGlobalVarsSQL     string
+)
 
 func initLoadCommonGlobalVarsSQL() {
-	vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
-	if len(variable.PluginVarNames) > 0 {
-		vars = append(vars, variable.PluginVarNames...)
-	}
-	loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(vars, quoteCommaQuote) + "')"
+	loadCommonGlobalVarsSQLOnce.Do(func() {
+		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
+		if len(variable.PluginVarNames) > 0 {
+			vars = append(vars, variable.PluginVarNames...)
+		}
+		loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(vars, quoteCommaQuote) + "')"
+	})
 }
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
+	initLoadCommonGlobalVarsSQL()
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
 		return nil
