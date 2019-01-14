@@ -3363,7 +3363,7 @@ func (s *testSuite3) TestSelectPartition(c *C) {
 	tk.MustQuery("select b from th partition (P2,p0) order by a").Check(testkit.Rows("-8", "-6", "-5", "-3", "-2", "0", "2", "3", "5", "6", "8"))
 	tk.MustQuery("select b from tr partition (r1,R3) order by a").Check(testkit.Rows("4", "7", "8"))
 
-	// test select unknow partition error
+	// test select unknown partition error
 	_, err := tk.Exec("select b from th partition (p0,p4)")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
 	_, err = tk.Exec("select b from tr partition (r1,r4)")
