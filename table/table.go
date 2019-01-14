@@ -81,6 +81,9 @@ var (
 	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
 	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
 	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
+
+	// ErrUnknownPartition returns unknown partition error.
+	ErrUnknownPartition = terror.ClassTable.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -204,6 +207,8 @@ const (
 	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
 	// It may happen when inserting some data outside of all table partitions.
 	codeTrgInvalidCreationCtx = 1604
+
+	codeUnknownPartition = mysql.ErrUnknownPartition
 )
 
 // Slice is used for table sorting.
@@ -225,6 +230,7 @@ func init() {
 		codeNoDefaultValue:        mysql.ErrNoDefaultForField,
 		codeTruncateWrongValue:    mysql.ErrTruncatedWrongValueForField,
 		codeTrgInvalidCreationCtx: mysql.ErrTrgInvalidCreationCtx,
+		codeUnknownPartition:      mysql.ErrUnknownPartition,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }
