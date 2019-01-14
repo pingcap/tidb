@@ -60,8 +60,8 @@ type CheckIndexRangeExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	handleIdx := e.schema.Len() - 1
 	for {
 		err := e.result.Next(ctx, e.srcChunk)
@@ -76,12 +76,12 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 			handle := row.GetInt64(handleIdx)
 			for _, hr := range e.handleRanges {
 				if handle >= hr.Begin && handle < hr.End {
-					chk.AppendRow(row)
+					req.AppendRow(row)
 					break
 				}
 			}
 		}
-		if chk.NumRows() > 0 {
+		if req.NumRows() > 0 {
 			return nil
 		}
 	}
@@ -444,8 +444,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 }
 
 // Next implements the Executor Next interface.
-func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
@@ -455,8 +455,8 @@ func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	chk.AppendInt64(0, totalAddedCnt)
-	chk.AppendInt64(1, totalScanCnt)
+	req.AppendInt64(0, totalAddedCnt)
+	req.AppendInt64(1, totalScanCnt)
 	e.done = true
 	return nil
 }
@@ -580,8 +580,8 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 }
 
 // Next implements the Executor Next interface.
-func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
@@ -614,7 +614,7 @@ func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 	e.done = true
-	chk.AppendUint64(0, e.removeCnt)
+	req.AppendUint64(0, e.removeCnt)
 	return nil
 }
 
