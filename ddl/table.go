@@ -86,8 +86,11 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
-	if err != nil && !orReplace {
-		job.State = model.JobStateCancelled
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || !orReplace {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 		return ver, errors.Trace(err)
 	}
 	ver, err = updateSchemaVersion(t, job)
@@ -102,11 +105,6 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if oldTbInfoID > 0 && orReplace {
 			err = t.DropTableOrView(schemaID, oldTbInfoID, true)
 			if err != nil {
-				// unexpected error, drop db may complete before drop table
-				// so we cancel this job here
-				if meta.ErrDBNotExists.Equal(err) {
-					job.State = model.JobStateCancelled
-				}
 				return ver, errors.Trace(err)
 			}
 		}
