@@ -119,9 +119,9 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	return nil
 }
 
-// NewChunk create a new chunk using NewChunk function in chunk package.
-func (a *recordSet) NewChunk() *chunk.Chunk {
-	return a.executor.newFirstChunk()
+// NewRecordBatch create a recordBatch base on top-level executor's newFirstChunk().
+func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
+	return chunk.NewRecordBatch(a.executor.newFirstChunk())
 }
 
 func (a *recordSet) Close() error {

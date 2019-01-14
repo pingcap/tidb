@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	. "github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -73,11 +72,11 @@ func (s *testSQLSuite) TestFailBusyServerCop(c *C) {
 			defer terror.Call(rs[0].Close)
 		}
 		c.Assert(err, IsNil)
-		chk := rs[0].NewChunk()
-		err = rs[0].Next(context.Background(), chunk.NewRecordBatch(chk))
+		req := rs[0].NewRecordBatch()
+		err = rs[0].Next(context.Background(), req)
 		c.Assert(err, IsNil)
-		c.Assert(chk.NumRows() == 0, IsFalse)
-		c.Assert(chk.GetRow(0).GetString(0), Equals, "True")
+		c.Assert(req.NumRows() == 0, IsFalse)
+		c.Assert(req.GetRow(0).GetString(0), Equals, "True")
 	}()
 
 	wg.Wait()
@@ -108,13 +107,13 @@ func (s *testSQLSuite) TestCoprocessorStreamRecvTimeout(c *C) {
 	res, err := tk.Se.Execute(ctx, "select * from t")
 	c.Assert(err, IsNil)
 
-	chk := res[0].NewChunk()
+	req := res[0].NewRecordBatch()
 	for {
-		err := res[0].Next(ctx, chunk.NewRecordBatch(chk))
+		err := res[0].Next(ctx, req)
 		c.Assert(err, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
-		chk.Reset()
+		req.Reset()
 	}
 }

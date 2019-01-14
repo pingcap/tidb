@@ -277,16 +277,16 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for {
-		err = rs.Next(context.TODO(), chunk.NewRecordBatch(chk))
+		err = rs.Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			return nil
 		}
-		it := chunk.NewIterator4Chunk(chk)
+		it := chunk.NewIterator4Chunk(req.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			err = decodeTableRow(row, fs)
 			if err != nil {
@@ -296,7 +296,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
 		// The result will reference memory in the chunk, so the chunk must not be reused
 		// here, otherwise some werid bug will happen!
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 

@@ -19,7 +19,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -760,8 +759,8 @@ func (s *testSuite2) TestJoinLeak(c *C) {
 	tk.MustExec("commit")
 	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	chk := result.NewChunk()
-	err = result.Next(context.Background(), chunk.NewRecordBatch(chk))
+	req := result.NewRecordBatch()
+	err = result.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond)
 	result.Close()

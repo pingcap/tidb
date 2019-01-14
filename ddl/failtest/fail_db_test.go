@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -112,11 +111,11 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err := s.se.Execute(context.Background(), "select count(*) from t")
 	c.Assert(err, IsNil)
-	chk := rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), chunk.NewRecordBatch(chk))
+	req := rs[0].NewRecordBatch()
+	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	row := chk.GetRow(0)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
@@ -145,11 +144,11 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err = s.se.Execute(context.Background(), "select count(*) from tx")
 	c.Assert(err, IsNil)
-	chk = rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), chunk.NewRecordBatch(chk))
+	req = rs[0].NewRecordBatch()
+	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	row = chk.GetRow(0)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)

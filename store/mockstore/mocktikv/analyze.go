@@ -224,12 +224,12 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.RecordBatch) e
 	return nil
 }
 
-func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
+func (e *analyzeColumnsExec) NewRecordBatch() *chunk.RecordBatch {
 	fields := make([]*types.FieldType, 0, len(e.fields))
 	for _, field := range e.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunkWithCapacity(fields, 1)
+	return chunk.NewRecordBatch(chunk.NewChunkWithCapacity(fields, 1))
 }
 
 // Close implements the sqlexec.RecordSet Close interface.

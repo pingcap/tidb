@@ -116,18 +116,18 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 
 func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 
 	for {
-		err := rs.Next(ctx, chunk.NewRecordBatch(chk))
-		if err != nil || chk.NumRows() == 0 {
+		err := rs.Next(ctx, req)
+		if err != nil || req.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
-		iter := chunk.NewIterator4Chunk(chk)
+		iter := chunk.NewIterator4Chunk(req.Chunk)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 

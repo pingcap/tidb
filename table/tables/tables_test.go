@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -170,10 +169,10 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	chk := rs[0].NewChunk()
-	err = rs[0].Next(ctx, chunk.NewRecordBatch(chk))
+	req := rs[0].NewRecordBatch()
+	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
+	c.Assert(req.NumRows() == 0, IsFalse)
 	c.Assert(rs[0].Close(), IsNil)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
@@ -184,11 +183,11 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	chk = rs[0].NewChunk()
-	err = rs[0].Next(ctx, chunk.NewRecordBatch(chk))
+	req = rs[0].NewRecordBatch()
+	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	row := chk.GetRow(0)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row := req.GetRow(0)
 	c.Assert(types.BinaryLiteral(row.GetBytes(5)), DeepEquals, types.NewBinaryLiteralFromUint(6, -1))
 	c.Assert(rs[0].Close(), IsNil)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
@@ -200,11 +199,11 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	chk = rs[0].NewChunk()
-	err = rs[0].Next(ctx, chunk.NewRecordBatch(chk))
+	req = rs[0].NewRecordBatch()
+	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	c.Assert(chk.GetRow(0).GetFloat64(0), DeepEquals, float64(2))
+	c.Assert(req.NumRows() == 0, IsFalse)
+	c.Assert(req.GetRow(0).GetFloat64(0), DeepEquals, float64(2))
 	c.Assert(rs[0].Close(), IsNil)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
