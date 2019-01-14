@@ -85,6 +85,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
+	case *ast.AdminStmt:
+		return in, node.Tp == ast.AdminRestoreTable
 	default:
 		p.parentIsJoin = false
 	}
