@@ -23,9 +23,16 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+const (
+	selectVariableValueSQL = `SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name='%s'`
+	insertVariableValueSQL = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+                              ON DUPLICATE KEY
+			                  UPDATE variable_value = '%[2]s', comment = '%[3]s'`
+)
+
 // CheckGCEnable is use to check whether gc is enable.
 func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
-	sql := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, "tikv_gc_enable")
+	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_enable")
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -38,20 +45,14 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 
 // DisableGC will disable gc enable variable.
 func DisableGC(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		"tikv_gc_enable", "false", "Current GC enable status")
+	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "false", "Current GC enable status")
 	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
 
 // EnableGC will enable gc enable variable.
 func EnableGC(ctx sessionctx.Context) error {
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
-		"tikv_gc_enable", "true", "Current GC enable status")
+	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "true", "Current GC enable status")
 	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
@@ -78,7 +79,7 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 
 // GetGCSafePoint loads gc safe point time from mysql.tidb.
 func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
-	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
+	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_safe_point")
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return 0, errors.Trace(err)
