@@ -410,6 +410,16 @@ func validateConfig() {
 		log.Errorf("txn-local-latches.capacity can not be 0")
 		os.Exit(-1)
 	}
+
+	// For tikvclient.
+	if cfg.TiKVClient.GrpcConnectionCount == 0 {
+		log.Errorf("grpc-connection-count should be greater than 0")
+		os.Exit(-1)
+	}
+	if cfg.TiKVClient.MaxTxnTimeUse == 0 {
+		log.Errorf("max-txn-time-use should be greater than 0")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
@@ -448,12 +458,6 @@ func setGlobalVars() {
 			plannercore.PreparedPlanCacheMaxMemory = total
 		}
 	}
-
-	if cfg.TiKVClient.GrpcConnectionCount > 0 {
-		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
-	}
-	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
-	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
