@@ -974,7 +974,10 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			}
 			p.Conditions = append(p.Conditions, expr)
 		}
-		p.ResolveIndices()
+		err := p.ResolveIndices()
+		if err != nil {
+			return nil, err
+		}
 	}
 	return p, nil
 }
@@ -1195,8 +1198,8 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		return nil, errors.Trace(err)
 	}
 
-	insertPlan.ResolveIndices()
-	return insertPlan, nil
+	err = insertPlan.ResolveIndices()
+	return insertPlan, err
 }
 
 func (p *Insert) validateOnDup(onDup []*ast.Assignment, colMap map[string]*table.Column, tblInfo *model.TableInfo) (map[string]struct{}, []*expression.Column, error) {
