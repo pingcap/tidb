@@ -316,7 +316,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 // If you want to include the startKey or exclude the endKey, append a '\0' to the key. For example, to scan
 // (endKey, startKey], you can write:
 // `ReverseScan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
-// Doesn't supports Scan from "". That's because when it tries to LocateEndKey(""), it only got nil.
+// It doesn't support Scanning from "", because locating the last Region is not yet implemented.
 func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() {
