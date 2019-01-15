@@ -27,7 +27,20 @@ type perfSchemaTable struct {
 	cols []*table.Column
 }
 
+var pluginTable = make(map[string]func(autoid.Allocator, *model.TableInfo) (table.Table, error))
+
+// RegisterTable registers a new table into TiDB.
+func RegisterTable(tableName, sql string,
+	tableFromMeta func(autoid.Allocator, *model.TableInfo) (table.Table, error)) {
+	perfSchemaTables = append(perfSchemaTables, sql)
+	pluginTable[tableName] = tableFromMeta
+}
+
 func tableFromMeta(alloc autoid.Allocator, meta *model.TableInfo) (table.Table, error) {
+	if f, ok := pluginTable[meta.Name.L]; ok {
+		ret, err := f(alloc, meta)
+		return ret, err
+	}
 	return createPerfSchemaTable(meta), nil
 }
 

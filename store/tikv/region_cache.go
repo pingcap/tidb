@@ -369,7 +369,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Reg
 	searchPrev := false
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(boPDRPC, backoffErr)
+			err := bo.Backoff(BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -414,7 +414,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 	var backoffErr error
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(boPDRPC, backoffErr)
+			err := bo.Backoff(BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -487,7 +487,7 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 				return "", errors.Trace(err)
 			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", id, err)
-			if err = bo.Backoff(boPDRPC, err); err != nil {
+			if err = bo.Backoff(BoPDRPC, err); err != nil {
 				return "", errors.Trace(err)
 			}
 			continue
