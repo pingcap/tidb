@@ -938,6 +938,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 	case ast.ShowWarnings, ast.ShowErrors:
 		p.SetSchema(buildShowWarningsSchema())
 	default:
+		isView := false
 		switch showTp {
 		case ast.ShowTables, ast.ShowTableStatus:
 			if p.DBName == "" {
@@ -945,8 +946,11 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			}
 		case ast.ShowCreateTable:
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", nil)
+			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+				isView = table.Meta().IsView()
+			}
 		}
-		p.SetSchema(buildShowSchema(show))
+		p.SetSchema(buildShowSchema(show, isView))
 	}
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
@@ -972,7 +976,10 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			}
 			p.Conditions = append(p.Conditions, expr)
 		}
-		p.ResolveIndices()
+		err := p.ResolveIndices()
+		if err != nil {
+			return nil, err
+		}
 	}
 	return p, nil
 }
@@ -1193,8 +1200,8 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		return nil, errors.Trace(err)
 	}
 
-	insertPlan.ResolveIndices()
-	return insertPlan, nil
+	err = insertPlan.ResolveIndices()
+	return insertPlan, err
 }
 
 func (p *Insert) validateOnDup(onDup []*ast.Assignment, colMap map[string]*table.Column, tblInfo *model.TableInfo) (map[string]struct{}, []*expression.Column, error) {
@@ -1669,7 +1676,7 @@ func buildShowWarningsSchema() *expression.Schema {
 }
 
 // buildShowSchema builds column info for ShowStmt including column name and type.
-func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
+func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
@@ -1706,7 +1713,11 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowCreateTable:
-		names = []string{"Table", "Create Table"}
+		if !isView {
+			names = []string{"Table", "Create Table"}
+		} else {
+			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
+		}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
