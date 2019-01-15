@@ -157,8 +157,8 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
-	t.plan().ResolveIndices()
-	return t.plan(), nil
+	err = t.plan().ResolveIndices()
+	return t.plan(), err
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {

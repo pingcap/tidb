@@ -164,6 +164,13 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		}
 		return errors.Trace(st.doNotCommit)
 	}
+
+	// mockCommitError8942 is used for PR #8942.
+	// gofail: var mockCommitError8942 bool
+	// if mockCommitError8942 {
+	//	return kv.ErrRetryable
+	// }
+
 	return errors.Trace(st.Transaction.Commit(ctx))
 }
 

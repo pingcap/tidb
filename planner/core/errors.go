@@ -62,6 +62,7 @@ const (
 	codeWindowNoRedefineOrderBy         = mysql.ErrWindowNoRedefineOrderBy
 	codeWindowDuplicateName             = mysql.ErrWindowDuplicateName
 	codeErrTooBigPrecision              = mysql.ErrTooBigPrecision
+	codePartitionClauseOnNonpartitioned = mysql.ErrPartitionClauseOnNonpartitioned
 	codeWindowFrameStartIllegal         = mysql.ErrWindowFrameStartIllegal
 	codeWindowFrameEndIllegal           = mysql.ErrWindowFrameEndIllegal
 	codeWindowFrameIllegal              = mysql.ErrWindowFrameIllegal
@@ -117,6 +118,7 @@ var (
 	ErrWindowNoInherentFrame           = terror.ClassOptimizer.New(codeWindowNoInherentFrame, mysql.MySQLErrName[mysql.ErrWindowNoInherentFrame])
 	ErrWindowNoRedefineOrderBy         = terror.ClassOptimizer.New(codeWindowNoRedefineOrderBy, mysql.MySQLErrName[mysql.ErrWindowNoRedefineOrderBy])
 	ErrWindowDuplicateName             = terror.ClassOptimizer.New(codeWindowDuplicateName, mysql.MySQLErrName[mysql.ErrWindowDuplicateName])
+	ErrPartitionClauseOnNonpartitioned = terror.ClassOptimizer.New(codePartitionClauseOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionClauseOnNonpartitioned])
 	errTooBigPrecision                 = terror.ClassExpression.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
 	ErrWindowFrameStartIllegal         = terror.ClassOptimizer.New(codeWindowFrameStartIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameStartIllegal])
 	ErrWindowFrameEndIllegal           = terror.ClassOptimizer.New(codeWindowFrameEndIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameEndIllegal])
@@ -163,6 +165,7 @@ func init() {
 		codeWindowNoInherentFrame:           mysql.ErrWindowNoInherentFrame,
 		codeWindowNoRedefineOrderBy:         mysql.ErrWindowNoRedefineOrderBy,
 		codeWindowDuplicateName:             mysql.ErrWindowDuplicateName,
+		codePartitionClauseOnNonpartitioned: mysql.ErrPartitionClauseOnNonpartitioned,
 		codeErrTooBigPrecision:              mysql.ErrTooBigPrecision,
 		codeWindowFrameStartIllegal:         mysql.ErrWindowFrameStartIllegal,
 		codeWindowFrameEndIllegal:           mysql.ErrWindowFrameEndIllegal,

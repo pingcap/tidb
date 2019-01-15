@@ -67,13 +67,13 @@ type Config struct {
 	Security            Security          `toml:"security" json:"security"`
 	Status              Status            `toml:"status" json:"status"`
 	Performance         Performance       `toml:"performance" json:"performance"`
-	XProtocol           XProtocol         `toml:"xprotocol" json:"xprotocol"`
 	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 }
 
 // Log is the log section of config.
@@ -162,14 +162,6 @@ type Performance struct {
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 }
 
-// XProtocol is the XProtocol section of the config.
-type XProtocol struct {
-	XServer bool   `toml:"xserver" json:"xserver"`
-	XHost   string `toml:"xhost" json:"xhost"`
-	XPort   uint   `toml:"xport" json:"xport"`
-	XSocket string `toml:"xsocket" json:"xsocket"`
-}
-
 // PlanCache is the PlanCache section of the config.
 type PlanCache struct {
 	Enabled  bool `toml:"enabled" json:"enabled"`
@@ -240,8 +232,18 @@ type TiKVClient struct {
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+
 	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
 	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
+
+	// MaxBatchSize is the max batch size when calling batch commands API.
+	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
+	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
+	OverloadThreshold uint `toml:"overload-threshold" json:"overload-threshold"`
+	// MaxBatchWaitTime in nanosecond is the max wait time for batch.
+	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
+	// BatchWaitSize is the max wait size for batch.
+	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
 }
 
 // Binlog is the config for binlog.
@@ -253,6 +255,12 @@ type Binlog struct {
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+}
+
+// Plugin is the config for plugin
+type Plugin struct {
+	Dir  string `toml:"dir" json:"dir"`
+	Load string `toml:"load" json:"load"`
 }
 
 var defaultConf = Config{
@@ -302,10 +310,6 @@ var defaultConf = Config{
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
 	},
-	XProtocol: XProtocol{
-		XHost: "",
-		XPort: 0,
-	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
@@ -328,7 +332,13 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
-		MaxTxnTimeUse:        590,
+
+		MaxTxnTimeUse: 590,
+
+		MaxBatchSize:      128,
+		OverloadThreshold: 200,
+		MaxBatchWaitTime:  0,
+		BatchWaitSize:     8,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

@@ -562,7 +562,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	q := &QueryFeedback{}
 	for _, row := range rows {
-		err1 := decodeFeedback(row.GetBytes(3), q, cms, mysql.HasUnsignedFlag(hist.tp.Flag))
+		err1 := decodeFeedback(row.GetBytes(3), q, cms, mysql.HasUnsignedFlag(hist.Tp.Flag))
 		if err1 != nil {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
