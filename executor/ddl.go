@@ -328,6 +328,18 @@ func (e *RestoreTableExec) Next(ctx context.Context, req *chunk.RecordBatch) err
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Check schema exist.
+	schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", job.SchemaID),
+		))
+	}
+	// Check not exist table with same name.
+	if ok := dom.InfoSchema().TableExists(schema.Name, tblInfo.Name); ok {
+		return infoschema.ErrTableExists.GenWithStackByArgs(tblInfo.Name)
+	}
+
 	// Get table original autoID before table drop.
 	m, err := dom.GetSnapshotMeta(job.StartTS)
 	if err != nil {
