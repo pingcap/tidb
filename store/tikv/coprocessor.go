@@ -120,7 +120,7 @@ func (c *CopClient) validateRanges(ranges []kv.KeyRange) error {
 			if startKeyLen+1 == len(ranges[i-1].EndKey) && bytes.Equal(ranges[i].StartKey, ranges[i-1].EndKey[:startKeyLen]) && ranges[i-1].EndKey[startKeyLen] == 0 {
 				continue
 			}
-			return errors.Trace(errors.New("There's intersection between ranges sending to TiKV"))
+			return errors.New("There's intersection between ranges sending to TiKV")
 		}
 	}
 	return nil
