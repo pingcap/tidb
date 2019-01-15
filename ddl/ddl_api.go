@@ -670,7 +670,6 @@ func checkColumnFieldLength(schema *model.DBInfo, colDefs []*ast.ColumnDef, tbIn
 			if len(tbInfo.Charset) != 0 {
 				setCharset = tbInfo.Charset
 			}
-
 			err := IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, setCharset)
 			if err != nil {
 				return errors.Trace(err)
@@ -2200,8 +2199,9 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 
 	for _, col := range tb.Meta().Cols() {
 		if col.Tp == mysql.TypeVarchar {
-			err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset)
-			return errors.Trace(err)
+			if err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	job := &model.Job{
