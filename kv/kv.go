@@ -70,7 +70,7 @@ var (
 	// TxnEntryCountLimit  is limit of number of entries in the MemBuffer.
 	TxnEntryCountLimit uint64 = config.DefTxnEntryCountLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
-	TxnTotalSizeLimit = 100 * 1024 * 1024
+	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.

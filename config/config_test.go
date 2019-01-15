@@ -37,6 +37,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.IgnoreError = true
 	conf.Performance.RetryLimit = 20
 	conf.Performance.TxnEntryCountLimit = 1000
+	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 
 	configFile := "config.toml"
@@ -48,6 +49,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	_, err = f.WriteString(`[performance]
 retry-limit=10
 txn-entry-count-limit=2000
+txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"`)
 	c.Assert(err, IsNil)
@@ -61,6 +63,7 @@ commit-timeout="41s"`)
 	// Test that the value will be overwritten by the config file.
 	c.Assert(conf.Performance.RetryLimit, Equals, uint(10))
 	c.Assert(conf.Performance.TxnEntryCountLimit, Equals, uint64(2000))
+	c.Assert(conf.Performance.TxnTotalSizeLimit, Equals, uint64(2000))
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
 	c.Assert(f.Close(), IsNil)

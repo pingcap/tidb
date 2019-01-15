@@ -144,8 +144,12 @@ query-feedback-limit = 1024
 pseudo-estimate-ratio = 0.7
 
 # The limitation of the number for the entries in one transaction.
-# If using TiKV as the storage, the entry represents key.
+# If using TiKV as the storage, the entry represents a key/value pair.
 txn-entry-count-limit = 300000
+
+# The limitation of the size in byte for the entries in one transaction.
+# If using TiKV as the storage, the entry represents a key/value pair.
+txn-total-size-limit = 104857600
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
