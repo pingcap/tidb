@@ -944,7 +944,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			}
 		case ast.ShowCreateTable:
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", nil)
-			if table, _ := b.is.TableByName(show.Table.Schema, show.Table.Name); table != nil {
+			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 				isView = table.Meta().IsView()
 			}
 		}
