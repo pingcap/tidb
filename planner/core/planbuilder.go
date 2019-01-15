@@ -1701,7 +1701,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		if !isView {
 			names = []string{"Table", "Create Table"}
 		} else {
-			names = []string{"Table", "Create View", "character_set_client", "collation_connection"}
+			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 		}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
