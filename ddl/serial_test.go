@@ -151,7 +151,7 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
-	// clear gc variables first.
+	// clear GC variables first.
 	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
@@ -166,14 +166,14 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	c.Assert(row.GetString(3), Equals, "drop table")
 	jobID := row.GetInt64(0)
 
-	// if gc safe point is not exists in mysql.tidb
+	// if GC safe point is not exists in mysql.tidb
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
-	// set gc safe point
+	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	// if gc enable is not exists in mysql.tidb
+	// if GC enable is not exists in mysql.tidb
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
@@ -181,13 +181,13 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
 
-	// recover job is before gc safe point
+	// recover job is before GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", jobID))
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "snapshot is older than GC safe point"), Equals, true)
 
-	// set gc safe point
+	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	// if there is a new table with the same name, should return failed.
 	tk.MustExec("create table t_recover (a int);")
@@ -210,7 +210,7 @@ func (s *testSerialSuite) TestRestoreTableByJobID(c *C) {
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
 	c.Assert(err, NotNil)
 
-	// Disable gc by manual first, then after recover table, the gc enable status should also be disabled.
+	// Disable GC by manual first, then after recover table, the GC enable status should also be disabled.
 	err = gcutil.DisableGC(tk.Se)
 	c.Assert(err, IsNil)
 
@@ -261,20 +261,20 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
-	// clear gc variables first.
+	// clear GC variables first.
 	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
 
-	// if gc safe point is not exists in mysql.tidb
+	// if GC safe point is not exists in mysql.tidb
 	_, err := tk.Exec("admin restore table t_recover")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "can not get 'tikv_gc_safe_point'")
-	// set gc safe point
+	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	// if gc enable is not exists in mysql.tidb
+	// if GC enable is not exists in mysql.tidb
 	_, err = tk.Exec("admin restore table t_recover")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
@@ -282,13 +282,13 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
 
-	// recover job is before gc safe point
+	// recover job is before GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	_, err = tk.Exec("admin restore table t_recover")
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "snapshot is older than GC safe point"), Equals, true)
 
-	// set gc safe point
+	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 	// if there is a new table with the same name, should return failed.
 	tk.MustExec("create table t_recover (a int);")
@@ -313,7 +313,7 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
 	c.Assert(err, NotNil)
 
-	// Disable gc by manual first, then after recover table, the gc enable status should also be disabled.
+	// Disable GC by manual first, then after recover table, the GC enable status should also be disabled.
 	err = gcutil.DisableGC(tk.Se)
 	c.Assert(err, IsNil)
 
@@ -390,7 +390,7 @@ func (s *testSerialSuite) TestRestoreTableByJobIDFail(c *C) {
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
 	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
 
-	// make sure enable gc after restore table.
+	// make sure enable GC after restore table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(enable, Equals, true)
@@ -450,7 +450,7 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/mockCommitError")
 	gofail.Disable("github.com/pingcap/tidb/ddl/mockRestoreTableCommitErr")
 
-	// make sure enable gc after restore table.
+	// make sure enable GC after restore table.
 	enable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(enable, Equals, true)

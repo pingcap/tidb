@@ -165,7 +165,7 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 
-	// check gc and safe point
+	// check GC and safe point
 	gcEnable, err := checkGCEnable(w)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -178,25 +178,25 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 
 	// Restore table divide into 2 steps:
-	// 1. Check gc enable status, to decided whether enable gc after restore table.
-	//     a. Why not disable gc before put the job to DDL job queue?
+	// 1. Check GC enable status, to decided whether enable GC after restore table.
+	//     a. Why not disable GC before put the job to DDL job queue?
 	//        Think about concurrency problem. If a restore job-1 is doing and already disabled GC,
-	//        then, another restore table job-2 check gc enable will get disable before into the job queue.
-	//        then, after restore table job-2 finished, the gc will be disabled.
-	//     b. Why split into 2 steps? 1 step also can finish this job: check gc -> disable gc -> restore table -> finish job.
-	//        What if the transaction commit failed? then, the job will retry, but the gc already disabled when first running.
-	//        So, after this job retry succeed, the gc will be disabled.
+	//        then, another restore table job-2 check GC enable will get disable before into the job queue.
+	//        then, after restore table job-2 finished, the GC will be disabled.
+	//     b. Why split into 2 steps? 1 step also can finish this job: check GC -> disable GC -> restore table -> finish job.
+	//        What if the transaction commit failed? then, the job will retry, but the GC already disabled when first running.
+	//        So, after this job retry succeed, the GC will be disabled.
 	// 2. Do restore table job.
-	//     a. Check whether gc enabled, if enabled, disable gc first.
-	//     b. Check gc safe point. If drop table time if after safe point time, then can do restore.
+	//     a. Check whether GC enabled, if enabled, disable GC first.
+	//     b. Check GC safe point. If drop table time if after safe point time, then can do restore.
 	//        otherwise, can't restore table, because the records of the table may already delete by gc.
-	//     c. Remove gc task of the table from gc_delete_range table.
+	//     c. Remove GC task of the table from gc_delete_range table.
 	//     d. Create table and rebase table auto ID.
 	//     e. Finish.
 	switch tblInfo.State {
 	case model.StateNone:
 		// none -> write only
-		// check gc enable and update flag.
+		// check GC enable and update flag.
 		if gcEnable {
 			job.Args[len(job.Args)-1] = restoreTableCheckFlagEnableGC
 		} else {
@@ -216,7 +216,7 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
 			}
 		}
-		// check gc safe point
+		// check GC safe point
 		err = checkSafePoint(w, snapshotTS)
 		if err != nil {
 			job.State = model.JobStateCancelled

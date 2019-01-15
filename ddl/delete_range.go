@@ -153,7 +153,7 @@ func EmulatorGCDisable() {
 	atomic.StoreInt32(&emulatorGCEnable, 0)
 }
 
-// IsEmulatorGCEnable indicates whether emulator gc enabled. It exports for testing.
+// IsEmulatorGCEnable indicates whether emulator GC enabled. It exports for testing.
 func IsEmulatorGCEnable() bool {
 	return atomic.LoadInt32(&emulatorGCEnable) == 1
 }

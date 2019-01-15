@@ -31,7 +31,7 @@ const (
 			                  UPDATE variable_value = '%[2]s', comment = '%[3]s'`
 )
 
-// CheckGCEnable is use to check whether gc is enable.
+// CheckGCEnable is use to check whether GC is enable.
 func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_enable")
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
@@ -44,14 +44,14 @@ func CheckGCEnable(ctx sessionctx.Context) (enable bool, err error) {
 	return rows[0].GetString(0) == "true", nil
 }
 
-// DisableGC will disable gc enable variable.
+// DisableGC will disable GC enable variable.
 func DisableGC(ctx sessionctx.Context) error {
 	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "false", "Current GC enable status")
 	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	return errors.Trace(err)
 }
 
-// EnableGC will enable gc enable variable.
+// EnableGC will enable GC enable variable.
 func EnableGC(ctx sessionctx.Context) error {
 	sql := fmt.Sprintf(insertVariableValueSQL, "tikv_gc_enable", "true", "Current GC enable status")
 	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
@@ -78,7 +78,7 @@ func ValidateSnapshotWithGCSafePoint(snapshotTS, safePointTS uint64) error {
 	return nil
 }
 
-// GetGCSafePoint loads gc safe point time from mysql.tidb.
+// GetGCSafePoint loads GC safe point time from mysql.tidb.
 func GetGCSafePoint(ctx sessionctx.Context) (uint64, error) {
 	sql := fmt.Sprintf(selectVariableValueSQL, "tikv_gc_safe_point")
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)

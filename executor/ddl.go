@@ -354,7 +354,7 @@ func getRestoreTableByJobID(e *RestoreTableExec, t *meta.Meta, dom *domain.Domai
 		return nil, nil, errors.Errorf("Job %v type is %v, not drop table", job.ID, job.Type)
 	}
 
-	// Check gc safe point for getting snapshot infoSchema.
+	// Check GC safe point for getting snapshot infoSchema.
 	err = gcutil.ValidateSnapshot(e.ctx, job.StartTS)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -400,7 +400,7 @@ func getRestoreTableByTableName(e *RestoreTableExec, t *meta.Meta, dom *domain.D
 		if job.Type != model.ActionDropTable {
 			continue
 		}
-		// Check gc safe point for getting snapshot infoSchema.
+		// Check GC safe point for getting snapshot infoSchema.
 		err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
