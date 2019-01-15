@@ -1065,6 +1065,19 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 }
 
 func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
+	is := d.GetInformationSchema(ctx)
+	// Check schema exist.
+	schema, ok := is.SchemaByID(schemaID)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", schemaID),
+		))
+	}
+	// Check not exist table with same name.
+	if ok := is.TableExists(schema.Name, tbInfo.Name); ok {
+		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
+	}
+
 	tbInfo.State = model.StateNone
 	job := &model.Job{
 		SchemaID:   schemaID,
