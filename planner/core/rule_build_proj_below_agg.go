@@ -16,12 +16,9 @@ package core
 import (
 	"fmt"
 
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/types"
 )
 
 // buildProjBelowAgg builds a ProjOperator below AggOperator.
@@ -53,7 +50,9 @@ func doBuildProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDe
 	// If the mode is FinalMode, we do not need to wrap cast upon the args,
 	// since the types of the args are already the expected.
 	if len(aggFuncs) > 0 && aggFuncs[0].Mode != aggregation.FinalMode {
-		wrapCastForAggArgs(aggPlan.context(), aggFuncs)
+		for _, agg := range aggFuncs {
+			agg.WrapCastForAggArgs(aggPlan.context())
+		}
 	}
 
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
@@ -117,52 +116,4 @@ func doBuildProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDe
 
 	aggPlan.SetChildren(proj)
 	return aggPlan
-}
-
-// wrapCastForAggArgs wraps the args of an aggregate function with a cast function.
-func wrapCastForAggArgs(ctx sessionctx.Context, funcs []*aggregation.AggFuncDesc) {
-	for _, f := range funcs {
-		// We do not need to wrap cast upon these functions,
-		// since the EvalXXX method called by the arg is determined by the corresponding arg type.
-		if f.Name == ast.AggFuncCount || f.Name == ast.AggFuncMin || f.Name == ast.AggFuncMax || f.Name == ast.AggFuncFirstRow {
-			continue
-		}
-		var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression
-		switch retTp := f.RetTp; retTp.EvalType() {
-		case types.ETInt:
-			castFunc = expression.WrapWithCastAsInt
-		case types.ETReal:
-			castFunc = expression.WrapWithCastAsReal
-		case types.ETString:
-			castFunc = expression.WrapWithCastAsString
-		case types.ETDecimal:
-			castFunc = expression.WrapWithCastAsDecimal
-		default:
-			panic("should never happen in executorBuilder.wrapCastForAggArgs")
-		}
-		for i := range f.Args {
-			f.Args[i] = castFunc(ctx, f.Args[i])
-			if f.Name != ast.AggFuncAvg && f.Name != ast.AggFuncSum {
-				continue
-			}
-			// After wrapping cast on the argument, flen etc. may not the same
-			// as the type of the aggregation function. The following part set
-			// the type of the argument exactly as the type of the aggregation
-			// function.
-			// Note: If the `Tp` of argument is the same as the `Tp` of the
-			// aggregation function, it will not wrap cast function on it
-			// internally. The reason of the special handling for `Column` is
-			// that the `RetType` of `Column` refers to the `infoschema`, so we
-			// need to set a new variable for it to avoid modifying the
-			// definition in `infoschema`.
-			if col, ok := f.Args[i].(*expression.Column); ok {
-				col.RetType = types.NewFieldType(col.RetType.Tp)
-			}
-			// originTp is used when the the `Tp` of column is TypeFloat32 while
-			// the type of the aggregation function is TypeFloat64.
-			originTp := f.Args[i].GetType().Tp
-			*(f.Args[i].GetType()) = *(f.RetTp)
-			f.Args[i].GetType().Tp = originTp
-		}
-	}
 }

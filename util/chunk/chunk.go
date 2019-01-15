@@ -138,6 +138,11 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
 }
 
+// MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
+func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
+	c.columns[dstColIdx] = src.columns[srcColIdx]
+}
+
 // SwapColumn swaps column "c.columns[colIdx]" with column
 // "other.columns[otherIdx]". If there exists columns refer to the column to be
 // swapped, we need to re-build the reference.
