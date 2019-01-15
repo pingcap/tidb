@@ -23,9 +23,11 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestT(t *testing.T) {
@@ -128,10 +130,15 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
 	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
 
+	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
 	// Test that they can recover from panic correctly.
 	dom.updateStatsWorker(ctx, nil)
 	dom.autoAnalyzeWorker(nil)
+	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
+	pb := &dto.Metric{}
+	counter.Write(pb)
+	c.Assert(pb.GetCounter().GetValue(), Equals, float64(2))
 
 	err = store.Close()
 	c.Assert(err, IsNil)
