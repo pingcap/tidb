@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,12 +11,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package xserver
+package chunk
 
-// Config contains configuration options.
-type Config struct {
-	Addr       string `json:"addr" toml:"addr"`
-	Socket     string `json:"socket" toml:"socket"`
-	SkipAuth   bool   `json:"skip-auth" toml:"skip-auth"`
-	TokenLimit uint   `json:"token-limit" toml:"token-limit"`
+// RecordBatch is input parameter of Executor.Next` method.
+type RecordBatch struct {
+	*Chunk
+}
+
+// NewRecordBatch is used to construct a RecordBatch.
+func NewRecordBatch(chk *Chunk) *RecordBatch {
+	return &RecordBatch{chk}
 }

@@ -61,6 +61,7 @@ const (
 	codeWindowNoRedefineOrderBy         = mysql.ErrWindowNoRedefineOrderBy
 	codeWindowDuplicateName             = mysql.ErrWindowDuplicateName
 	codeErrTooBigPrecision              = mysql.ErrTooBigPrecision
+	codePartitionClauseOnNonpartitioned = mysql.ErrPartitionClauseOnNonpartitioned
 )
 
 // error definitions.
@@ -107,6 +108,7 @@ var (
 	ErrWindowNoInherentFrame           = terror.ClassOptimizer.New(codeWindowNoInherentFrame, mysql.MySQLErrName[mysql.ErrWindowNoInherentFrame])
 	ErrWindowNoRedefineOrderBy         = terror.ClassOptimizer.New(codeWindowNoRedefineOrderBy, mysql.MySQLErrName[mysql.ErrWindowNoRedefineOrderBy])
 	ErrWindowDuplicateName             = terror.ClassOptimizer.New(codeWindowDuplicateName, mysql.MySQLErrName[mysql.ErrWindowDuplicateName])
+	ErrPartitionClauseOnNonpartitioned = terror.ClassOptimizer.New(codePartitionClauseOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionClauseOnNonpartitioned])
 	errTooBigPrecision                 = terror.ClassExpression.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
 )
 
@@ -144,6 +146,7 @@ func init() {
 		codeWindowNoInherentFrame:           mysql.ErrWindowNoInherentFrame,
 		codeWindowNoRedefineOrderBy:         mysql.ErrWindowNoRedefineOrderBy,
 		codeWindowDuplicateName:             mysql.ErrWindowDuplicateName,
+		codePartitionClauseOnNonpartitioned: mysql.ErrPartitionClauseOnNonpartitioned,
 		codeErrTooBigPrecision:              mysql.ErrTooBigPrecision,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap

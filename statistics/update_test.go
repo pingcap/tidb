@@ -701,7 +701,7 @@ func (s *testStatsSuite) TestSplitRange(c *C) {
 				HighExclude: t.exclude[i+1],
 			})
 		}
-		ranges = h.SplitRange(ranges)
+		ranges = h.SplitRange(nil, ranges, false)
 		var ranStrs []string
 		for _, ran := range ranges {
 			ranStrs = append(ranStrs, ran.String())
@@ -782,7 +782,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	feedback := h.GetQueryFeedback()
 	c.Assert(len(feedback), Equals, 0)
 
-	// Test only collect for max number of ranges.
+	// Test only collect for max number of Ranges.
 	statistics.MaxNumberOfRanges = 0
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)

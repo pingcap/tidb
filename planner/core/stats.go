@@ -75,7 +75,7 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo) (*proper
 	return profile, nil
 }
 
-func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.StatsInfo {
+func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.StatsInfo, *statistics.HistColl) {
 	profile := &property.StatsInfo{
 		RowCount:       float64(ds.statisticTable.Count),
 		Cardinality:    make([]float64, len(ds.Columns)),
@@ -92,12 +92,16 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.Stat
 		}
 	}
 	ds.stats = profile
-	selectivity, err := profile.HistColl.Selectivity(ds.ctx, conds)
+	selectivity, nodes, err := profile.HistColl.Selectivity(ds.ctx, conds)
 	if err != nil {
 		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 		selectivity = selectionFactor
 	}
-	return profile.Scale(selectivity)
+	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && ds.stats.HistColl != nil {
+		finalHist := ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
+		return profile, finalHist
+	}
+	return profile.Scale(selectivity), nil
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
@@ -106,7 +110,8 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
-	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
+	var finalHist *statistics.HistColl
+	ds.stats, finalHist = ds.getStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
@@ -131,6 +136,9 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo) (*property.S
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 			break
 		}
+	}
+	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
+		ds.stats.HistColl = finalHist
 	}
 	return ds.stats, nil
 }
@@ -362,7 +370,7 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 	}
 
 	// TODO: support calculate index histogram.
-	newHistColl := statistics.HistColl{
+	newHistColl := &statistics.HistColl{
 		Count:   int64(count),
 		Columns: newColID2Hist,
 	}

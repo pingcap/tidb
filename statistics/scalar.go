@@ -152,10 +152,10 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 
 func (hg *Histogram) calcRangeFraction(index int, lInner, rInner chunk.Row) float64 {
 	left, right := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
-	switch hg.tp.Tp {
+	switch hg.Tp.Tp {
 	// TODO: support more types.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		if mysql.HasUnsignedFlag(hg.tp.Flag) {
+		if mysql.HasUnsignedFlag(hg.Tp.Flag) {
 			return calcRangeFraction(float64(left.GetUint64(0)), float64(right.GetUint64(0))+1, float64(lInner.GetUint64(0)), float64(rInner.GetUint64(0))+1)
 		}
 		return calcRangeFraction(float64(left.GetInt64(0)), float64(right.GetInt64(0))+1, float64(lInner.GetInt64(0)), float64(rInner.GetInt64(0))+1)
