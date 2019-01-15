@@ -259,14 +259,18 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (sf *ScalarFunction) ResolveIndices(schema *Schema) Expression {
+func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
 	newSf := sf.Clone()
-	newSf.resolveIndices(schema)
-	return newSf
+	err := newSf.resolveIndices(schema)
+	return newSf, err
 }
 
-func (sf *ScalarFunction) resolveIndices(schema *Schema) {
+func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 	for _, arg := range sf.GetArgs() {
-		arg.resolveIndices(schema)
+		err := arg.resolveIndices(schema)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
