@@ -233,7 +233,7 @@ func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 	if mysql.HasZerofillFlag(ft.Flag) {
 		ctx.WriteKeyWord(" ZEROFILL")
 	}
-	if mysql.HasBinaryFlag(ft.Flag) && ft.Tp != mysql.TypeString {
+	if mysql.HasBinaryFlag(ft.Flag) && ft.Charset != charset.CharsetBin {
 		ctx.WriteKeyWord(" BINARY")
 	}
 
