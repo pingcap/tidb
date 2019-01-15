@@ -303,6 +303,43 @@ func (p *PhysicalSort) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalWindow) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	for i := 0; i < len(p.Schema().Columns)-1; i++ {
+		col := p.Schema().Columns[i]
+		newCol, err := col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.Schema().Columns[i] = newCol.(*expression.Column)
+	}
+	for i, item := range p.PartitionBy {
+		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PartitionBy[i].Col = newCol.(*expression.Column)
+	}
+	for i, item := range p.OrderBy {
+		newCol, err := item.Col.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.OrderBy[i].Col = newCol.(*expression.Column)
+	}
+	for i, arg := range p.WindowFuncDesc.Args {
+		p.WindowFuncDesc.Args[i], err = arg.ResolveIndices(p.children[0].Schema())
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalTopN) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
