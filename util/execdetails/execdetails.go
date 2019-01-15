@@ -113,7 +113,7 @@ func (d ExecDetails) String() string {
 type RuntimeStatsColl struct {
 	mu    sync.Mutex
 	stats map[string]*RuntimeStats
-	// Usually, CopTasks are executed on TiKV cluster consist of multiple instance,
+	// Usually, CopTasks are executed on TiKV cluster consist of multiple instances,
 	// So coprocessors' addresses must be taken into account.
 	// Then the first key is executor's planID and the second is coprocessor's address.
 	copStats map[string]map[string]*CopRuntimeStats
@@ -162,7 +162,7 @@ func (e *RuntimeStatsColl) GetCop(planID, address string) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	stats, ok := e.copStats[planID]
 	if !ok {
-		stats = make(map[string]*CopRuntimeStats, 5)
+		stats = make(map[string]*CopRuntimeStats, 8)
 		e.copStats[planID] = stats
 	}
 	stat, ok := stats[address]

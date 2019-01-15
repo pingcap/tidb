@@ -64,7 +64,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	return resp, err
 }
 
-// SendReqCtx sends a request to tikv server and return response and RPCCtx.
+// SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
 func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
 
 	// gofail: var tikvStoreSendReqResult string

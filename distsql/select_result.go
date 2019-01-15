@@ -69,8 +69,8 @@ type selectResult struct {
 	partialCount int64 // number of partial results.
 	sqlType      string
 
-	// copPlanIDs contains all copTasks' planID,
-	// which helps to collect copTasks' runtime stats.
+	// copPlanIDs contains all copTasks' planIDs,
+	// which help to collect copTasks' runtime stats.
 	copPlanIDs []string
 }
 
@@ -173,15 +173,15 @@ func (r *selectResult) getSelectResp() error {
 }
 
 func (r *selectResult) updateCopRuntimeStats(callee string) {
-	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+	if callee == "" || len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
 		return
 	}
 
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
-		planID := r.copPlanIDs[i]
-		stats := r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCop(planID, callee)
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
+			planID := r.copPlanIDs[i]
+			stats := r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCop(planID, callee)
 			stats.Record(*detail.TimeProcessedNs, *detail.NumProducedRows, *detail.NumIterations)
 		}
 	}

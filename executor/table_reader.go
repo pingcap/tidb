@@ -146,11 +146,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return nil, errors.Trace(err)
 	}
 
-	planIDs := make([]string, 0, len(e.plans))
-	for _, p := range e.plans {
-		planIDs = append(planIDs, p.ExplainID())
-	}
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, planIDs)
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
