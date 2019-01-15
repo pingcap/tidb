@@ -145,11 +145,13 @@ func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expre
 		return false, nil
 	}
 
+	// Calculates the column range to prune.
 	if partCol == nil {
+		// If partition column is nil, we can't calculate range, so we can't prune
+		// partition by range.
 		return false, nil
 	}
 
-	// Calculate the column range to prune.
 	// TODO: Remove prune by calculating range. Current constraint propagate doesn't
 	// handle the null condition, while calculate range can prune something like:
 	// "select * from t where t is null"

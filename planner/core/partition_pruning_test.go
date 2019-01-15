@@ -16,6 +16,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/mock"
@@ -44,17 +45,19 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 	// SELECT * FROM t1 WHERE recdate > '2018-03-08 00:00:00';
 
 	ctx := mock.NewContext()
-	partitionExpr, err := expression.ParseSimpleExprWithTableInfo(ctx, "to_days(d) < to_days('2007-03-08') and to_days(d) >= to_days('2007-03-07')", tblInfo)
+	columns := expression.ColumnInfos2ColumnsWithDBName(ctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Columns)
+	schema := expression.NewSchema(columns...)
+	partitionExpr, err := expression.ParseSimpleExprsWithSchema(ctx, "to_days(d) < to_days('2007-03-08') and to_days(d) >= to_days('2007-03-07')", schema)
 	c.Assert(err, IsNil)
-	queryExpr, err := expression.ParseSimpleExprWithTableInfo(ctx, "d < '2000-03-08 00:00:00'", tblInfo)
+	queryExpr, err := expression.ParseSimpleExprsWithSchema(ctx, "d < '2000-03-08 00:00:00'", schema)
 	c.Assert(err, IsNil)
-	succ, err := s.canBePruned(ctx, nil, partitionExpr, []expression.Expression{queryExpr})
+	succ, err := s.canBePruned(ctx, nil, partitionExpr[0], queryExpr)
 	c.Assert(err, IsNil)
 	c.Assert(succ, IsTrue)
 
-	queryExpr, err = expression.ParseSimpleExprWithTableInfo(ctx, "d > '2018-03-08 00:00:00'", tblInfo)
+	queryExpr, err = expression.ParseSimpleExprsWithSchema(ctx, "d > '2018-03-08 00:00:00'", schema)
 	c.Assert(err, IsNil)
-	succ, err = s.canBePruned(ctx, nil, partitionExpr, []expression.Expression{queryExpr})
+	succ, err = s.canBePruned(ctx, nil, partitionExpr[0], queryExpr)
 	c.Assert(err, IsNil)
 	c.Assert(succ, IsTrue)
 }

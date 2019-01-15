@@ -252,19 +252,7 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	}
 
 	// Make sure col1 and col2 is the same column.
-	// Can't use col1.Equal(sctx, col2) here, because they are not generated in one
-	// expression and their UniqueID are not the same.
-	if col1.ColName.L != col2.ColName.L {
-		return
-	}
-	if col1.OrigColName.L != "" &&
-		col2.OrigColName.L != "" &&
-		col1.OrigColName.L != col2.OrigColName.L {
-		return
-	}
-	if col1.OrigTblName.L != "" &&
-		col2.OrigTblName.L != "" &&
-		col1.OrigColName.L != col2.OrigColName.L {
+	if !col1.Equal(ctx, col2) {
 		return
 	}
 
