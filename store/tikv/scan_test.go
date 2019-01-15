@@ -91,11 +91,13 @@ func (s *testScanSuite) TestScan(c *C) {
 		c.Assert(err, IsNil)
 
 		if rowNum > 123 {
-			s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 123)))
+			err = s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 123)))
+			c.Assert(err, IsNil)
 		}
 
 		if rowNum > 456 {
-			s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 456)))
+			err = s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 456)))
+			c.Assert(err, IsNil)
 		}
 
 		txn2 := s.beginTxn(c)
