@@ -497,6 +497,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
 		buf.WriteString(fmt.Sprintf("  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc()))
+		if col.Charset != "binary" {
+			fmt.Fprintf(&buf, " CHARSET %s COLLATE %s", col.Charset, col.Collate)
+		}
 		if col.IsGenerated() {
 			// It's a generated column.
 			buf.WriteString(fmt.Sprintf(" GENERATED ALWAYS AS (%s)", col.GeneratedExprString))
