@@ -108,6 +108,8 @@ func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
 	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time date NOT NULL DEFAULT '0000-00-00')", mysql.ErrInvalidDefault)
 	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
 	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default '0000-00-00 00');", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default 0);", mysql.ErrInvalidDefault)
 }
 
 func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
