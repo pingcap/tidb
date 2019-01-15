@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -66,8 +67,8 @@ type ShowExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.GrowAndReset(e.maxChunkSize)
+func (e *ShowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
 		e.result = e.newFirstChunk()
 		err := e.fetchAll()
@@ -90,8 +91,8 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= e.result.NumRows() {
 		return nil
 	}
-	numCurBatch := mathutil.Min(chk.Capacity(), e.result.NumRows()-e.cursor)
-	chk.Append(e.result, e.cursor, e.cursor+numCurBatch)
+	numCurBatch := mathutil.Min(req.Capacity(), e.result.NumRows()-e.cursor)
+	req.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil
 }
@@ -583,11 +584,20 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
+	if tb.Meta().IsView() {
+		e.fetchShowCreateTable4View(tb.Meta(), &buf)
+		e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
+		return nil
+	}
+
 	fmt.Fprintf(&buf, "CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode))
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
+		if col.Charset != "binary" {
+			fmt.Fprintf(&buf, " CHARSET %s COLLATE %s", col.Charset, col.Collate)
+		}
 		if col.IsGenerated() {
 			// It's a generated column.
 			fmt.Fprintf(&buf, " GENERATED ALWAYS AS (%s)", col.GeneratedExprString)
@@ -729,9 +739,24 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if len(tb.Meta().Comment) > 0 {
 		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 	}
-
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 	return nil
+}
+
+func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := e.ctx.GetSessionVars().SQLMode
+
+	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
+	fmt.Fprintf(buf, "DEFINER=%s@%s ", escape(model.NewCIStr(tb.View.Definer.Username), sqlMode), escape(model.NewCIStr(tb.View.Definer.Hostname), sqlMode))
+	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
+	fmt.Fprintf(buf, "VIEW %s (", escape(tb.Name, sqlMode))
+	for i, col := range tb.Columns {
+		fmt.Fprintf(buf, "%s", escape(col.Name, sqlMode))
+		if i < len(tb.Columns)-1 {
+			fmt.Fprintf(buf, ", ")
+		}
+	}
+	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
@@ -875,6 +900,12 @@ func (e *ShowExec) fetchShowProcedureStatus() error {
 }
 
 func (e *ShowExec) fetchShowPlugins() error {
+	tiPlugins := plugin.GetAll()
+	for _, ps := range tiPlugins {
+		for _, p := range ps {
+			e.appendRow([]interface{}{p.Name, p.State.String(), p.Kind.String(), p.Path, p.License, strconv.Itoa(int(p.Version))})
+		}
+	}
 	return nil
 }
 

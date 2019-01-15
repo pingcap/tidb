@@ -332,3 +332,29 @@ desc select sysdate(), sleep(1), sysdate();
 id	count	task	operator info
 Projection_3	1.00	root	sysdate(), sleep(1), sysdate()
 └─TableDual_4	1.00	root	rows:1
+drop table if exists th;
+set @@session.tidb_enable_table_partition = '1';
+create table th (a int, b int) partition by hash(a) partitions 3;
+insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
+insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
+desc select * from th where a=-2;
+id	count	task	operator info
+TableReader_8	10.00	root	data:Selection_7
+└─Selection_7	10.00	cop	eq(test.th.a, -2)
+  └─TableScan_6	10000.00	cop	table:th, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select * from th;
+id	count	task	operator info
+Union_8	30000.00	root	
+├─TableReader_10	10000.00	root	data:TableScan_9
+│ └─TableScan_9	10000.00	cop	table:th, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo
+├─TableReader_12	10000.00	root	data:TableScan_11
+│ └─TableScan_11	10000.00	cop	table:th, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_14	10000.00	root	data:TableScan_13
+  └─TableScan_13	10000.00	cop	table:th, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select * from th partition (p2,p1);
+id	count	task	operator info
+Union_7	20000.00	root	
+├─TableReader_9	10000.00	root	data:TableScan_8
+│ └─TableScan_8	10000.00	cop	table:th, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_11	10000.00	root	data:TableScan_10
+  └─TableScan_10	10000.00	cop	table:th, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo

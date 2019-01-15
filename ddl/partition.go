@@ -92,6 +92,7 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, d *ddl, s *ast.Create
 			return errors.Trace(err)
 		}
 		defs[i].ID = pid
+		defs[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
 	}
 	pi.Definitions = defs
 	return nil
@@ -318,18 +319,6 @@ func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 	return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs(partName))
 }
 
-func findPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
-	// TODO: MySQL behavior for hash partition is weird, "create table .. partition by hash partition 4",
-	// it use p0, p1, p2, p3 as partition names automatically.
-	parName = strings.ToLower(parName)
-	for _, def := range meta.Partition.Definitions {
-		if strings.EqualFold(def.Name.L, parName) {
-			return def.ID, nil
-		}
-	}
-	return -1, errors.Trace(errUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
-}
-
 // removePartitionInfo each ddl job deletes a partition.
 func removePartitionInfo(tblInfo *model.TableInfo, partName string) int64 {
 	oldDefs := tblInfo.Partition.Definitions
@@ -408,7 +397,7 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 	}
 	if !find {
-		return ver, errUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
+		return ver, table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)

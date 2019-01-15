@@ -84,10 +84,10 @@ var partPtr4NullKey = partRowPtr{math.MaxUint32, math.MaxUint32}
 // it into sub-relations
 // step 4. probe the corresponded sub-hash-table for every sub-outer-relation in
 // multiple join workers
-func (e *RadixHashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *RadixHashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
 	}
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
