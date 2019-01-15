@@ -1255,7 +1255,7 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		Date    string
 		Format  string
 		Success bool
-		Expect  time.Time
+		Expect  types.Time
 	}{
 		{"10/28/2011 9:46:29 pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
 		{"10/28/2011 9:46:29 Pm", "%m/%d/%Y %l:%i:%s %p", true, time.Date(2011, 10, 28, 21, 46, 29, 0, time.Local)},
@@ -1264,6 +1264,9 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		{"2016 11 22 16 50 22", `%Y%m%d%H%i%s`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
 		{"16-50-22 2016 11 22", `%H-%i-%s%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 0, time.Local)},
 		{"16-50 2016 11 22", `%H-%i-%s%Y%m%d`, false, time.Time{}},
+		{"16-50-22-01 2016 11 22", `%H-%i-%s-%f%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 1, time.Local)},
+		{"16-50-22-123 2016 11 22", `%H-%i-%s-%f%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 123, time.Local)},
+		{"16-50-22-123456 2016 11 22", `%H-%i-%s-%f%Y%m%d`, true, time.Date(2016, 11, 22, 16, 50, 22, 123456, time.Local)},
 		{"15-01-2001 1:59:58.999", "%d-%m-%Y %I:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 999000000, time.Local)},
 		{"15-01-2001 1:59:58.1", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 100000000, time.Local)},
 		{"15-01-2001 1:59:58.", "%d-%m-%Y %H:%i:%s.%f", true, time.Date(2001, 1, 15, 1, 59, 58, 000000000, time.Local)},
@@ -1288,8 +1291,7 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		}
 		c.Assert(result.Kind(), Equals, types.KindMysqlTime)
 		value := result.GetMysqlTime()
-		t1, _ := value.Time.GoTime(time.Local)
-		c.Assert(t1, Equals, test.Expect)
+		c.Assert(value, Equals, test.Expect)
 	}
 }
 

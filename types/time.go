@@ -2458,6 +2458,9 @@ func isAMOrPM(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 // digitRegex: it was used to scan a variable-length monthly day or month in the string. Ex:  "01" or "1" or "30"
 var oneOrTwoDigitRegex = regexp.MustCompile("^[0-9]{1,2}")
 
+// digitRegex: it was used to scan a variable-length microSeconds in the string. Ex:  "1" or "01" or "001" or "0001" or "10001" or "100100"
+var oneToSixDigitRegex = regexp.MustCompile("^[0-9]{1,6}")
+
 // twoDigitRegex: it was just for two digit number string. Ex: "01" or "12"
 var twoDigitRegex = regexp.MustCompile("^[1-9][0-9]?")
 
