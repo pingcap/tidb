@@ -727,6 +727,13 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		if er.err != nil {
 			return retNode, false
 		}
+
+		// check the decimal precision of "CAST(AS TIME)".
+		er.err = er.checkTimePrecision(v.Tp)
+		if er.err != nil {
+			return retNode, false
+		}
+
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.ctx, arg, v.Tp)
 	case *ast.PatternLikeExpr:
 		er.likeToScalarFunc(v)
@@ -753,6 +760,13 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		return retNode, false
 	}
 	return originInNode, true
+}
+
+func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
+	if ft.EvalType() == types.ETDuration && ft.Decimal > types.MaxFsp {
+		return errTooBigPrecision.GenByArgs(ft.Decimal, "CAST", types.MaxFsp)
+	}
+	return nil
 }
 
 func (er *expressionRewriter) useCache() bool {
@@ -803,7 +817,13 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	var val string
 	var err error
-	if v.IsGlobal {
+	sysVar := variable.SysVars[name]
+	if sysVar == nil {
+		er.err = variable.UnknownSystemVar.GenByArgs(name)
+		return
+	}
+	// Variable is @@gobal.variable_name or variable is only global scope variable.
+	if v.IsGlobal || sysVar.Scope == variable.ScopeGlobal {
 		val, err = variable.GetGlobalSystemVar(sessionVars, name)
 	} else {
 		val, err = variable.GetSessionSystemVar(sessionVars, name)
