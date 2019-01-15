@@ -2357,8 +2357,8 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	updt.ResolveIndices()
-	return updt, nil
+	err = updt.ResolveIndices()
+	return updt, err
 }
 
 func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
