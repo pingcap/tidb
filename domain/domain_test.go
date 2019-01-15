@@ -128,6 +128,11 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
 	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
 
+	// Since the stats lease is 0 now, so create a new ticker will panic.
+	// Test that they can recover from panic correctly.
+	dom.updateStatsWorker(ctx, nil)
+	dom.autoAnalyzeWorker(nil)
+
 	err = store.Close()
 	c.Assert(err, IsNil)
 }
