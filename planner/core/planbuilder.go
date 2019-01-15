@@ -1722,9 +1722,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPlugins:
-		names = []string{"Name", "Status", "Type", "Library", "License"}
+		names = []string{"Name", "Status", "Type", "Library", "License", "Version"}
 		ftypes = []byte{
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 		}
 	case ast.ShowProcessList:
 		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
