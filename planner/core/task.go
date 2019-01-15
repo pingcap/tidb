@@ -47,6 +47,9 @@ type copTask struct {
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.
 	keepOrder bool
+	// In double read case, it may output one more column for handle(row id).
+	// We need to prune it, so we add a project do this.
+	doubleReadNeedProj bool
 }
 
 func (t *copTask) invalid() bool {
@@ -210,7 +213,15 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	if t.indexPlan != nil && t.tablePlan != nil {
 		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.Init(ctx)
 		p.stats = t.tablePlan.statsInfo()
-		newTask.p = p
+		if t.doubleReadNeedProj {
+			schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, nil)
+			proj.SetSchema(schema)
+			proj.SetChildren(p)
+			newTask.p = proj
+		} else {
+			newTask.p = p
+		}
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx)
 		p.stats = t.indexPlan.statsInfo()
