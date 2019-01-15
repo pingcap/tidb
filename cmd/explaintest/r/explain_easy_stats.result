@@ -45,15 +45,15 @@ IndexReader_9	0.00	root	index:IndexScan_8
 └─IndexScan_8	0.00	cop	table:t1, index:c2, range:[1,1], keep order:false
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
-Projection_6	2481.25	root	test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c1, test.t2.c2
-└─MergeJoin_7	2481.25	root	left outer join, left key:test.t1.c2, right key:test.t2.c1
-  ├─IndexLookUp_17	1998.00	root	
-  │ ├─Selection_16	1998.00	cop	gt(test.t1.c1, 1)
-  │ │ └─IndexScan_14	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:true
-  │ └─TableScan_15	1998.00	cop	table:t1, keep order:false
-  └─IndexLookUp_21	1985.00	root	
-    ├─IndexScan_19	1985.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true
-    └─TableScan_20	1985.00	cop	table:t2, keep order:false
+MergeJoin_7	2481.25	root	left outer join, left key:test.t1.c2, right key:test.t2.c1
+├─IndexLookUp_17	1998.00	root	
+│ ├─Selection_16	1998.00	cop	gt(test.t1.c1, 1)
+│ │ └─IndexScan_14	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:true
+│ └─TableScan_15	1998.00	cop	table:t1, keep order:false
+└─Projection_23	1985.00	root	test.t2.c1, test.t2.c2
+  └─IndexLookUp_22	1985.00	root	
+    ├─IndexScan_20	1985.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true
+    └─TableScan_21	1985.00	cop	table:t2, keep order:false
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
 Point_Get_1	1.00	root	table:t1, handle:1
@@ -110,10 +110,11 @@ Projection_12	1999.00	root	eq(test.t1.c2, test.t2.c2)
   ├─TableReader_16	1999.00	root	data:TableScan_15
   │ └─TableScan_15	1999.00	cop	table:t1, range:[-inf,+inf], keep order:false
   └─Limit_21	1.00	root	offset:0, count:1
-    └─IndexLookUp_43	1.00	root	
-      ├─Limit_42	1.00	cop	offset:0, count:1
-      │ └─IndexScan_40	1.25	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
-      └─TableScan_41	1.00	cop	table:t2, keep order:false
+    └─Projection_44	1.00	root	test.t2.c1, test.t2.c2
+      └─IndexLookUp_43	1.00	root	
+        ├─Limit_42	1.00	cop	offset:0, count:1
+        │ └─IndexScan_40	1.25	cop	table:t2, index:c1, range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true
+        └─TableScan_41	1.00	cop	table:t2, keep order:false
 explain select * from t1 order by c1 desc limit 1;
 id	count	task	operator info
 Limit_10	1.00	root	offset:0, count:1
