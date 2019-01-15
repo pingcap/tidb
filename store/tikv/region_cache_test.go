@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"testing"
 	"time"
 
@@ -59,14 +60,23 @@ func (s *testRegionCacheSuite) checkCache(c *C, len int) {
 	c.Assert(s.cache.mu.regions, HasLen, len)
 	c.Assert(s.cache.mu.sorted.Len(), Equals, len)
 	for _, r := range s.cache.mu.regions {
-		c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey()))
+		c.Assert(r.region, DeepEquals, s.cache.searchCachedRegion(r.region.StartKey(), false))
 	}
 }
 
 func (s *testRegionCacheSuite) getRegion(c *C, key []byte) *Region {
 	_, err := s.cache.LocateKey(s.bo, key)
 	c.Assert(err, IsNil)
-	return s.cache.searchCachedRegion(key)
+	r := s.cache.searchCachedRegion(key, false)
+	c.Assert(r, NotNil)
+	return r
+}
+func (s *testRegionCacheSuite) getRegionWithEndKey(c *C, key []byte) *Region {
+	_, err := s.cache.LocateEndKey(s.bo, key)
+	c.Assert(err, IsNil)
+	r := s.cache.searchCachedRegion(key, true)
+	c.Assert(r, NotNil)
+	return r
 }
 
 func (s *testRegionCacheSuite) getAddr(c *C, key []byte) string {
@@ -87,7 +97,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
 	s.checkCache(c, 1)
 	s.cache.mu.regions[r.VerID()].lastAccess = 0
-	r = s.cache.searchCachedRegion([]byte("a"))
+	r = s.cache.searchCachedRegion([]byte("a"), true)
 	c.Assert(r, IsNil)
 }
 
@@ -126,6 +136,11 @@ func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store2))
+
+	r = s.getRegionWithEndKey(c, []byte("z"))
+	c.Assert(r, NotNil)
+	c.Assert(r.GetID(), Equals, s.region1)
+	c.Assert(s.getAddr(c, []byte("z")), Equals, s.storeAddr(s.store2))
 }
 
 func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
@@ -201,6 +216,10 @@ func (s *testRegionCacheSuite) TestSplit(c *C) {
 	c.Assert(r.GetID(), Equals, region2)
 	c.Assert(s.getAddr(c, []byte("x")), Equals, s.storeAddr(s.store1))
 	s.checkCache(c, 1)
+
+	r = s.getRegionWithEndKey(c, []byte("m"))
+	c.Assert(r.GetID(), Equals, s.region1)
+	s.checkCache(c, 2)
 }
 
 func (s *testRegionCacheSuite) TestMerge(c *C) {
@@ -276,7 +295,7 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
 	// Both region2 and store should be dropped from cache.
 	c.Assert(s.cache.storeMu.stores, HasLen, 0)
-	c.Assert(s.cache.searchCachedRegion([]byte("x")), IsNil)
+	c.Assert(s.cache.searchCachedRegion([]byte("x"), true), IsNil)
 	s.checkCache(c, 0)
 }
 
@@ -367,6 +386,43 @@ func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
 	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("m"))
 	c.Assert(err, IsNil)
 	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
+}
+
+func createSampleRegion(startKey, endKey []byte) *Region {
+	return &Region{
+		meta: &metapb.Region{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+	}
+}
+
+func (s *testRegionCacheSuite) TestContains(c *C) {
+	c.Assert(createSampleRegion(nil, nil).Contains([]byte{}), IsTrue)
+	c.Assert(createSampleRegion(nil, nil).Contains([]byte{10}), IsTrue)
+	c.Assert(createSampleRegion([]byte{10}, nil).Contains([]byte{}), IsFalse)
+	c.Assert(createSampleRegion([]byte{10}, nil).Contains([]byte{9}), IsFalse)
+	c.Assert(createSampleRegion([]byte{10}, nil).Contains([]byte{10}), IsTrue)
+	c.Assert(createSampleRegion(nil, []byte{10}).Contains([]byte{}), IsTrue)
+	c.Assert(createSampleRegion(nil, []byte{10}).Contains([]byte{9}), IsTrue)
+	c.Assert(createSampleRegion(nil, []byte{10}).Contains([]byte{10}), IsFalse)
+	c.Assert(createSampleRegion([]byte{10}, []byte{20}).Contains([]byte{}), IsFalse)
+	c.Assert(createSampleRegion([]byte{10}, []byte{20}).Contains([]byte{15}), IsTrue)
+	c.Assert(createSampleRegion([]byte{10}, []byte{20}).Contains([]byte{30}), IsFalse)
+}
+
+func (s *testRegionCacheSuite) TestContainsByEnd(c *C) {
+	c.Assert(createSampleRegion(nil, nil).ContainsByEnd([]byte{}), IsFalse)
+	c.Assert(createSampleRegion(nil, nil).ContainsByEnd([]byte{10}), IsTrue)
+	c.Assert(createSampleRegion([]byte{10}, nil).ContainsByEnd([]byte{}), IsFalse)
+	c.Assert(createSampleRegion([]byte{10}, nil).ContainsByEnd([]byte{10}), IsFalse)
+	c.Assert(createSampleRegion([]byte{10}, nil).ContainsByEnd([]byte{11}), IsTrue)
+	c.Assert(createSampleRegion(nil, []byte{10}).ContainsByEnd([]byte{}), IsFalse)
+	c.Assert(createSampleRegion(nil, []byte{10}).ContainsByEnd([]byte{10}), IsTrue)
+	c.Assert(createSampleRegion(nil, []byte{10}).ContainsByEnd([]byte{11}), IsFalse)
+	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{}), IsFalse)
+	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{15}), IsTrue)
+	c.Assert(createSampleRegion([]byte{10}, []byte{20}).ContainsByEnd([]byte{30}), IsFalse)
 }
 
 func BenchmarkOnRequestFail(b *testing.B) {
