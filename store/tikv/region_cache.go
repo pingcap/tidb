@@ -659,7 +659,7 @@ func (r *Region) Contains(key []byte) bool {
 // startKey < key <= endKey.
 func (r *Region) ContainsByEnd(key []byte) bool {
 	return bytes.Compare(r.meta.GetStartKey(), key) < 0 &&
-		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetStartKey()) == 0)
+		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetEndKey()) == 0)
 }
 
 // Store contains a tikv server's address.
