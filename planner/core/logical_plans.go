@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -42,6 +43,7 @@ var (
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
 	_ LogicalPlan = &LogicalLimit{}
+	_ LogicalPlan = &LogicalWindow{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -310,6 +312,7 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	isPartition     bool
 	physicalTableID int64
+	partitionNames  []model.CIStr
 }
 
 // accessPath tells how we access one index or just access table.
@@ -448,7 +451,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	if corColInAccessConds {
 		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
 		if ok && !ds.stats.HistColl.Pseudo {
-			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+			path.countAfterAccess = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 		} else {
 			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
 		}
@@ -459,7 +462,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, _, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
@@ -616,4 +619,18 @@ type LogicalLock struct {
 	baseLogicalPlan
 
 	Lock ast.SelectLockType
+}
+
+// LogicalWindow represents a logical window function plan.
+type LogicalWindow struct {
+	logicalSchemaProducer
+
+	WindowFuncDesc *aggregation.WindowFuncDesc
+	ByItems        []property.Item // ByItems is composed of `PARTITION BY` and `ORDER BY` items.
+	// TODO: add frame clause
+}
+
+// GetWindowResultColumn returns the column storing the result of the window function.
+func (p *LogicalWindow) GetWindowResultColumn() *expression.Column {
+	return p.schema.Columns[p.schema.Len()-1]
 }
