@@ -276,12 +276,14 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			err = w.deleteRange(job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
-		case model.ActionRestoreTable:
-			err = finishRestoreTable(w, t, job)
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
+	}
+	switch job.Type {
+	case model.ActionRestoreTable:
+		err = finishRestoreTable(w, t, job)
+	}
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	_, err = t.DeQueueDDLJob()

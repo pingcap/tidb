@@ -179,7 +179,7 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 	// Restore table divide into 2 steps:
 	// 1. Check gc enable status, to decided whether enable gc after restore table.
-	//     a. Why not disable gc before put the job to ddl job queue?
+	//     a. Why not disable gc before put the job to DDL job queue?
 	//        Think about concurrency problem. If a restore job-1 is doing and already disabled GC,
 	//        then, another restore table job-2 check gc enable will get disable before into the job queue.
 	//        then, after restore table job-2 finished, the gc will be disabled.
@@ -248,6 +248,8 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	default:
+		return ver, ErrInvalidTableState.GenWithStack("invalid restore table state %v", tblInfo.State)
 	}
 	return ver, nil
 }

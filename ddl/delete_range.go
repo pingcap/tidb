@@ -40,13 +40,13 @@ const (
 )
 
 // enableEmulatorGC means whether to enable emulator GC. The default is enable.
-// In some unit test, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
+// In some unit tests, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
 var emulatorGCEnable = int32(1)
 
 type delRangeManager interface {
 	// addDelRangeJob add a DDL job into gc_delete_range table.
 	addDelRangeJob(job *model.Job) error
-	// removeFromGCDeleteRange remove delete table job from gc_delete_range table by jobID and tableID.
+	// removeFromGCDeleteRange removes the deleting table job from gc_delete_range table by jobID and tableID.
 	// It's use for recover the table that was mistakenly deleted.
 	removeFromGCDeleteRange(jobID, tableID int64) error
 	start()

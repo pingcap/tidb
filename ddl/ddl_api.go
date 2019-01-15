@@ -1087,6 +1087,7 @@ func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, restoreTableCheckFlagNone},
 	}
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
 

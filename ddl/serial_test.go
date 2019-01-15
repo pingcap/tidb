@@ -306,6 +306,8 @@ func (s *testSerialSuite) TestRestoreTableByTableName(c *C) {
 	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	// check rebase auto id.
+	tk.MustQuery("select a,_tidb_rowid from t_recover;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
 
 	// restore table by none exits job.
 	_, err = tk.Exec(fmt.Sprintf("admin restore table by job %d", 10000000))
@@ -400,7 +402,7 @@ func (s *testSerialSuite) TestRestoreTableByJobIDFail(c *C) {
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
 
-func (s *testSerialSuite) TestRestoreTableFailByTableName(c *C) {
+func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_restore")
 	tk.MustExec("use test_restore")
