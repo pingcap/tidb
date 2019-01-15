@@ -670,6 +670,7 @@ func checkColumnFieldLength(schema *model.DBInfo, colDefs []*ast.ColumnDef, tbIn
 			if len(tbInfo.Charset) != 0 {
 				setCharset = tbInfo.Charset
 			}
+
 			err := IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, setCharset)
 			if err != nil {
 				return errors.Trace(err)
