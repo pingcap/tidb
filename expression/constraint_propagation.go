@@ -251,11 +251,10 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 		}
 	}
 
-	// Make sure col1 and col2 is the same column.
+	// Make sure col1 and col2 are the same column.
 	if !col1.Equal(ctx, col2) {
 		return
 	}
-
 	v, isNull, err := compareConstant(ctx, negOP(OP2), fc1, con2)
 	if err != nil {
 		log.Warn(err)
