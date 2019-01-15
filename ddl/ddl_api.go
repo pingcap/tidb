@@ -1063,6 +1063,16 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo, s.OrReplace},
 	}
+	if v, ok := ctx.GetSessionVars().GetSystemVar("character_set_client"); ok {
+		tbInfo.Charset = v
+	}
+	if v, ok := ctx.GetSessionVars().GetSystemVar("collation_connection"); ok {
+		tbInfo.Collate = v
+	}
+	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = d.doDDLJob(ctx, job)
 
 	return d.callHookOnChanged(err)
