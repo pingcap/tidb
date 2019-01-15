@@ -157,6 +157,7 @@ func (e *RuntimeStatsColl) Get(planID string) *RuntimeStats {
 	return runtimeStats
 }
 
+// GetCop gets a CopRuntimeStats by planID and address.
 func (e *RuntimeStatsColl) GetCop(planID, address string) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -173,6 +174,7 @@ func (e *RuntimeStatsColl) GetCop(planID, address string) *CopRuntimeStats {
 	return stat
 }
 
+// CopSummary gets a summary of the cop task's execution information.
 func (e *RuntimeStatsColl) CopSummary(planID string) string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -199,6 +201,7 @@ func (e *RuntimeStatsColl) Exists(planID string) bool {
 	return exists
 }
 
+// Record records executor's information.
 func (e *CopRuntimeStats) Record(timeProcessedNs, numProducedRows, numIterations uint64) {
 	e.timeProcessedNs += timeProcessedNs
 	e.numProducedRows += numProducedRows
