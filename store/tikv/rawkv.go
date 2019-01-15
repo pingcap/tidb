@@ -313,7 +313,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 // ReverseScan queries continuous kv pairs in range [endKey, startKey), up to limit pairs.
 // Direction is different from Scan, upper to lower.
 // If endKey is empty, it means unbounded.
-// If you want to exclude the startKey or include the endKey, append a '\0' to the key. For example, to scan
+// If you want to include the startKey or exclude the endKey, append a '\0' to the key. For example, to scan
 // (endKey, startKey], you can write:
 // `ReverseScan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
 func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
