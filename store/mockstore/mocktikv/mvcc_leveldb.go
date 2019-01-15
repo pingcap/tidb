@@ -981,6 +981,7 @@ func (mvcc *MVCCLevelDB) RawScan(startKey, endKey []byte, limit int) []Pair {
 
 // RawReverseScan implements the RawKV interface.
 // Scan the range of [endKey, startKey)
+// Doesn't supports Scan from "". That's because when it tries to LocateEndKey(""), it only got nil.
 func (mvcc *MVCCLevelDB) RawReverseScan(startKey, endKey []byte, limit int) []Pair {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()

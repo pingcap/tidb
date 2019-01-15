@@ -273,7 +273,6 @@ func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
 // If you want to exclude the startKey or include the endKey, append a '\0' to the key. For example, to scan
 // (startKey, endKey], you can write:
 // `Scan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
-// Scanning from the last element is not supported.
 func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_scan").Observe(time.Since(start).Seconds()) }()
@@ -317,6 +316,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 // If you want to include the startKey or exclude the endKey, append a '\0' to the key. For example, to scan
 // (endKey, startKey], you can write:
 // `ReverseScan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
+// Doesn't supports Scan from "". That's because when it tries to LocateEndKey(""), it only got nil.
 func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() {
