@@ -47,6 +47,7 @@ const (
 	codeNonUpdatableTable            = mysql.ErrNonUpdatableTable
 	codeInternal                     = mysql.ErrInternal
 	codeTablenameNotAllowedHere      = mysql.ErrTablenameNotAllowedHere
+	codeErrTooBigPrecision           = mysql.ErrTooBigPrecision
 )
 
 // error definitions.
@@ -79,6 +80,7 @@ var (
 	ErrDupFieldName                 = terror.ClassOptimizer.New(codeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
 	ErrNonUpdatableTable            = terror.ClassOptimizer.New(codeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
 	ErrInternal                     = terror.ClassOptimizer.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
+	errTooBigPrecision              = terror.ClassExpression.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
 )
 
 func init() {
@@ -103,6 +105,7 @@ func init() {
 		codeDupFieldName:                 mysql.ErrDupFieldName,
 		codeNonUpdatableTable:            mysql.ErrUnknownTable,
 		codeInternal:                     mysql.ErrInternal,
+		codeErrTooBigPrecision:           mysql.ErrTooBigPrecision,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }
