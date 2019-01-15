@@ -855,6 +855,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 }
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+	defer recoverInDomain("updateStatsWorker", false)
 	lease := do.statsLease
 	deltaUpdateDuration := lease * 20
 	loadTicker := time.NewTicker(lease)
@@ -879,7 +880,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	}
 	defer func() {
 		do.SetStatsUpdating(false)
-		recoverInDomain("updateStatsWorker", false)
 		do.wg.Done()
 	}()
 	for {
@@ -936,11 +936,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 }
 
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
+	defer recoverInDomain("autoAnalyzeWorker", false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
-	defer analyzeTicker.Stop()
 	defer func() {
-		recoverInDomain("autoAnalyzeWorker", false)
+		analyzeTicker.Stop()
 		do.wg.Done()
 	}()
 	for {
