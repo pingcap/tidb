@@ -2210,8 +2210,9 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 
 	for _, col := range tb.Meta().Cols() {
 		if col.Tp == mysql.TypeVarchar {
-			err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset)
-			return errors.Trace(err)
+			if err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	job := &model.Job{
