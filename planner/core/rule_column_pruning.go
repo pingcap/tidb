@@ -70,6 +70,12 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
+	// Prune TblID2Handle since that handle column may be pruned.
+	for k, cols := range p.schema.TblID2Handle {
+		if p.schema.ColumnIndex(cols[0]) == -1 {
+			delete(p.schema.TblID2Handle, k)
+		}
+	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
 	child.PruneColumns(selfUsedCols)
