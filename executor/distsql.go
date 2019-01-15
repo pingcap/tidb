@@ -302,7 +302,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	copPlanIDs := make([]string, 0, len(e.plans))
+	for _, p := range e.plans {
+		copPlanIDs = append(copPlanIDs, p.ExplainID())
+	}
+	e.result, err = distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, copPlanIDs)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -427,7 +431,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.Select(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback)
+	copPlanIDs := make([]string, 0, len(e.idxPlans))
+	for _, p := range e.idxPlans {
+		copPlanIDs = append(copPlanIDs, p.ExplainID())
+	}
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, copPlanIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
