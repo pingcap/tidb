@@ -528,6 +528,104 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.mustExec("delete from test")
 	})
 
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test irregular csv file.
+	_, err = fp.WriteString(
+		`,\N,NULL,,` + "\n" +
+			"00,0,000000,,\n" +
+			`2003-03-03, 20030303,030303,\N` + "\n")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a date, b date, c date not null, d date)")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ','`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a sql.NullString
+			b sql.NullString
+			d sql.NullString
+			c sql.NullString
+		)
+		rows := dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c, &d)
+		dbt.Check(err, IsNil)
+		dbt.Check(a.String, Equals, "0000-00-00")
+		dbt.Check(b.String, Equals, "")
+		dbt.Check(c.String, Equals, "0000-00-00")
+		dbt.Check(d.String, Equals, "0000-00-00")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c, &d)
+		dbt.Check(a.String, Equals, "0000-00-00")
+		dbt.Check(b.String, Equals, "0000-00-00")
+		dbt.Check(c.String, Equals, "0000-00-00")
+		dbt.Check(d.String, Equals, "0000-00-00")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c, &d)
+		dbt.Check(a.String, Equals, "2003-03-03")
+		dbt.Check(b.String, Equals, "2003-03-03")
+		dbt.Check(c.String, Equals, "2003-03-03")
+		dbt.Check(d.String, Equals, "")
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		dbt.mustExec("delete from test")
+	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test double enclosed.
+	_, err = fp.WriteString(
+		`"field1","field2"` + "\n" +
+			`"a""b","cd""ef"` + "\n" +
+			`"a"b",c"d"e` + "\n")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a varchar(20), b varchar(20))")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a sql.NullString
+			b sql.NullString
+		)
+		rows := dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a.String, Equals, "field1")
+		dbt.Check(b.String, Equals, "field2")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b)
+		dbt.Check(a.String, Equals, `a"b`)
+		dbt.Check(b.String, Equals, `cd"ef`)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b)
+		dbt.Check(a.String, Equals, `a"b`)
+		dbt.Check(b.String, Equals, `c"d"e`)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		dbt.mustExec("delete from test")
+	})
+
 	// unsupport ClientLocalFiles capability
 	server.capability ^= tmysql.ClientLocalFiles
 	runTestsOnNewDB(c, func(config *mysql.Config) {
