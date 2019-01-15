@@ -357,3 +357,15 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 	tbl := t.GetPartition(to)
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
 }
+
+// FindPartitionByName finds partition in table meta by name.
+func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
+	// Hash partition table use p0, p1, p2, p3 as partition names automatically.
+	parName = strings.ToLower(parName)
+	for _, def := range meta.Partition.Definitions {
+		if strings.EqualFold(def.Name.L, parName) {
+			return def.ID, nil
+		}
+	}
+	return -1, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
+}

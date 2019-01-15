@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/systimemon"
-	"github.com/pingcap/tidb/x-server"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
@@ -127,7 +126,6 @@ var (
 	storage  kv.Storage
 	dom      *domain.Domain
 	svr      *server.Server
-	xsvr     *xserver.Server
 	graceful bool
 )
 
@@ -394,10 +392,6 @@ func validateConfig() {
 		log.Errorf("log max-size should not be larger than %d MB", config.MaxLogFileSize)
 		os.Exit(-1)
 	}
-	if cfg.XProtocol.XServer {
-		log.Error("X Server is not available")
-		os.Exit(-1)
-	}
 	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
 
 	// lower_case_table_names is allowed to be 0, 1, 2
@@ -408,6 +402,16 @@ func validateConfig() {
 
 	if cfg.TxnLocalLatches.Enabled && cfg.TxnLocalLatches.Capacity == 0 {
 		log.Errorf("txn-local-latches.capacity can not be 0")
+		os.Exit(-1)
+	}
+
+	// For tikvclient.
+	if cfg.TiKVClient.GrpcConnectionCount == 0 {
+		log.Errorf("grpc-connection-count should be greater than 0")
+		os.Exit(-1)
+	}
+	if cfg.TiKVClient.MaxTxnTimeUse == 0 {
+		log.Errorf("max-txn-time-use should be greater than 0")
 		os.Exit(-1)
 	}
 }
@@ -449,12 +453,6 @@ func setGlobalVars() {
 		}
 	}
 
-	if cfg.TiKVClient.GrpcConnectionCount > 0 {
-		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
-	}
-	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
-	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
-
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
 
@@ -478,23 +476,11 @@ func createServer() {
 	svr, err = server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
-	if cfg.XProtocol.XServer {
-		xcfg := &xserver.Config{
-			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
-			Socket:     cfg.XProtocol.XSocket,
-			TokenLimit: cfg.TokenLimit,
-		}
-		xsvr, err = xserver.NewServer(xcfg)
-		terror.MustNil(err, closeDomainAndStorage)
-	}
 }
 
 func serverShutdown(isgraceful bool) {
 	if isgraceful {
 		graceful = true
-	}
-	if xsvr != nil {
-		xsvr.Close() // Should close xserver before server.
 	}
 	svr.Close()
 }
@@ -540,10 +526,6 @@ func setupTracing() {
 func runServer() {
 	err := svr.Run()
 	terror.MustNil(err)
-	if cfg.XProtocol.XServer {
-		err := xsvr.Run()
-		terror.MustNil(err)
-	}
 }
 
 func closeDomainAndStorage() {

@@ -1161,11 +1161,6 @@ func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLo
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	joinSchema := expression.MergeSchema(leftChild.Schema(), rightChild.Schema())
-	// TODO: remove this. Do this in Apply's ResolveIndices.
-	for i, cond := range v.EqualConditions {
-		v.EqualConditions[i] = cond.ResolveIndices(joinSchema).(*expression.ScalarFunction)
-	}
 	otherConditions := append(expression.ScalarFuncs2Exprs(v.EqualConditions), v.OtherConditions...)
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
