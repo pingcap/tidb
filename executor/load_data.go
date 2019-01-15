@@ -335,7 +335,7 @@ func (w *fieldWriter) Init(enclosedChar byte, fieldTermChar byte, readBuf *[]byt
 	w.term = term
 }
 
-func (w *fieldWriter) rollback() {
+func (w *fieldWriter) putback() {
 	w.pos--
 }
 
@@ -383,7 +383,7 @@ func (w *fieldWriter) outputField(enclosed bool) field {
 }
 
 func (w *fieldWriter) GetField() (bool, field) {
-	// the bool return value implies whether is at the end of line.
+	// The first return value implies whether fieldWriter read the last character of line.
 	if w.isLineStart {
 		_, ch := w.getChar()
 		if ch == w.enclosedChar {
@@ -391,7 +391,7 @@ func (w *fieldWriter) GetField() (bool, field) {
 			w.isFieldStart, w.isLineStart = false, false
 			w.OutputBuf = append(w.OutputBuf, ch)
 		} else {
-			w.rollback()
+			w.putback()
 		}
 	}
 	for {
@@ -425,14 +425,16 @@ func (w *fieldWriter) GetField() (bool, field) {
 				w.OutputBuf = append(w.OutputBuf, ch)
 				continue
 			} else if ch == w.fieldTermChar {
+				// If the next char is fieldTermChar, look ahead.
 				if w.isTerminator() {
 					ret := w.outputField(true)
 					return false, ret
 				}
 				w.OutputBuf = append(w.OutputBuf, ch)
 			} else {
+				// If there is no terminator behind enclosedChar, put the char back.
 				w.OutputBuf = append(w.OutputBuf, w.enclosedChar)
-				w.rollback()
+				w.putback()
 			}
 		} else if ch == '\\' {
 			// TODO: escape only support '\'
@@ -442,7 +444,7 @@ func (w *fieldWriter) GetField() (bool, field) {
 				if ch == w.enclosedChar {
 					w.OutputBuf = append(w.OutputBuf, ch)
 				} else {
-					w.rollback()
+					w.putback()
 				}
 			}
 		} else {
