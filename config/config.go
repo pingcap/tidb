@@ -67,13 +67,13 @@ type Config struct {
 	Security            Security          `toml:"security" json:"security"`
 	Status              Status            `toml:"status" json:"status"`
 	Performance         Performance       `toml:"performance" json:"performance"`
-	XProtocol           XProtocol         `toml:"xprotocol" json:"xprotocol"`
 	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 }
 
 // Log is the log section of config.
@@ -160,14 +160,6 @@ type Performance struct {
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
-}
-
-// XProtocol is the XProtocol section of the config.
-type XProtocol struct {
-	XServer bool   `toml:"xserver" json:"xserver"`
-	XHost   string `toml:"xhost" json:"xhost"`
-	XPort   uint   `toml:"xport" json:"xport"`
-	XSocket string `toml:"xsocket" json:"xsocket"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -265,6 +257,12 @@ type Binlog struct {
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 }
 
+// Plugin is the config for plugin
+type Plugin struct {
+	Dir  string `toml:"dir" json:"dir"`
+	Load string `toml:"load" json:"load"`
+}
+
 var defaultConf = Config{
 	Host:             "0.0.0.0",
 	AdvertiseAddress: "",
@@ -311,10 +309,6 @@ var defaultConf = Config{
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
-	},
-	XProtocol: XProtocol{
-		XHost: "",
-		XPort: 0,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

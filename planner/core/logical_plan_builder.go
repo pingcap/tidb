@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1994,6 +1995,15 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
+		// check partition by name.
+		for _, name := range tn.PartitionNames {
+			_, err = tables.FindPartitionByName(tableInfo, name.L)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	} else if len(tn.PartitionNames) != 0 {
+		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
 	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
@@ -2027,6 +2037,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 		indexHints:          tn.IndexHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
+		partitionNames:      tn.PartitionNames,
 	}.Init(b.ctx)
 
 	var handleCol *expression.Column
@@ -2310,6 +2321,9 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
+		if t.TableInfo.IsView() {
+			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
+		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
 
@@ -2343,8 +2357,8 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	updt.ResolveIndices()
-	return updt, nil
+	err = updt.ResolveIndices()
+	return updt, err
 }
 
 func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
@@ -2579,11 +2593,17 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 				// check sql like: `delete b from (select * from t) as a, t`
 				return nil, ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
 			}
+			if tn.TableInfo.IsView() {
+				return nil, errors.Errorf("delete view %s is not supported now.", tn.Name.O)
+			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "", nil)
 		}
 	} else {
 		// Delete from a, b, c, d.
 		for _, v := range tableList {
+			if v.TableInfo.IsView() {
+				return nil, errors.Errorf("delete view %s is not supported now.", v.Name.O)
+			}
 			dbName := v.Schema.L
 			if dbName == "" {
 				dbName = b.ctx.GetSessionVars().CurrentDB

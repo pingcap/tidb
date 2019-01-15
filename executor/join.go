@@ -212,7 +212,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			}
 		}
 		outerResult := outerResource.chk
-		err := e.outerExec.Next(ctx, outerResult)
+		err := e.outerExec.Next(ctx, chunk.NewRecordBatch(outerResult))
 		if err != nil {
 			e.joinResultCh <- &hashjoinWorkerResult{
 				err: errors.Trace(err),
@@ -270,7 +270,7 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context) error {
 			return nil
 		}
 		chk := e.children[e.innerIdx].newFirstChunk()
-		err = e.innerExec.Next(ctx, chk)
+		err = e.innerExec.Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil || chk.NumRows() == 0 {
 			return err
 		}
@@ -487,10 +487,10 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 // hash join constructs the result following these steps:
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
-func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *HashJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
 	}
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
@@ -498,7 +498,7 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		e.fetchOuterAndProbeHashTable(ctx)
 		e.prepared = true
 	}
-	chk.Reset()
+	req.Reset()
 	if e.joinResultCh == nil {
 		return nil
 	}
@@ -510,7 +510,7 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		e.finished.Store(true)
 		return errors.Trace(result.err)
 	}
-	chk.SwapColumns(result.chk)
+	req.SwapColumns(result.chk)
 	result.src <- result.chk
 	return nil
 }
@@ -629,7 +629,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
-			err := e.outerExec.Next(ctx, e.outerChunk)
+			err := e.outerExec.Next(ctx, chunk.NewRecordBatch(e.outerChunk))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -666,7 +666,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	e.innerList.Reset()
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
-		err := e.innerExec.Next(ctx, e.innerChunk)
+		err := e.innerExec.Next(ctx, chunk.NewRecordBatch(e.innerChunk))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -687,18 +687,18 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 }
 
 // Next implements the Executor interface.
-func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	for {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
 			if e.outerRow != nil && !e.hasMatch {
-				e.joiner.onMissMatch(*e.outerRow, chk)
+				e.joiner.onMissMatch(*e.outerRow, req.Chunk)
 			}
-			e.outerRow, err = e.fetchSelectedOuterRow(ctx, chk)
+			e.outerRow, err = e.fetchSelectedOuterRow(ctx, req.Chunk)
 			if e.outerRow == nil || err != nil {
 				return errors.Trace(err)
 			}
@@ -715,10 +715,10 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 			e.innerIter.Begin()
 		}
 
-		matched, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, chk)
+		matched, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, req.Chunk)
 		e.hasMatch = e.hasMatch || matched
 
-		if err != nil || chk.NumRows() == e.maxChunkSize {
+		if err != nil || req.NumRows() == e.maxChunkSize {
 			return errors.Trace(err)
 		}
 	}
