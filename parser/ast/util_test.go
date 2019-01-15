@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/parser"
 	. "github.com/pingcap/parser/ast"
 	. "github.com/pingcap/parser/format"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 )
 
 var _ = Suite(&testCacheableSuite{})
@@ -66,6 +66,12 @@ type nodeTextCleaner struct {
 func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 	in.SetText("")
 	switch node := in.(type) {
+	case *Constraint:
+		if node.Option != nil {
+			if node.Option.KeyBlockSize == 0x0 && node.Option.Tp == 0 && node.Option.Comment == "" {
+				node.Option = nil
+			}
+		}
 	case *FuncCallExpr:
 		node.FnName.O = strings.ToLower(node.FnName.O)
 		switch node.FnName.L {
