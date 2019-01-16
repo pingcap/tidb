@@ -173,28 +173,6 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 	return newKeys
 }
 
-// Change EqualConditions order, by offsets array
-// offsets array is generate by prop check
-func getNewEqualConditionsByOffsets(oldEqualCond []*expression.ScalarFunction, offsets []int) []*expression.ScalarFunction {
-	newEqualCond := make([]*expression.ScalarFunction, 0, len(oldEqualCond))
-	for _, offset := range offsets {
-		newEqualCond = append(newEqualCond, oldEqualCond[offset])
-	}
-	for pos, condition := range oldEqualCond {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
-		if !isExist {
-			newEqualCond = append(newEqualCond, condition)
-		}
-	}
-	return newEqualCond
-}
-
 func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
 	// Check whether SMJ can satisfy the required property
 	offsets := make([]int, 0, len(p.LeftJoinKeys))

@@ -550,6 +550,14 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ShowSlow{ShowSlow: as.ShowSlow}
 		p.SetSchema(buildShowSlowSchema())
 		ret = p
+	case ast.AdminRestoreTable:
+		if len(as.JobIDs) > 0 {
+			ret = &RestoreTable{JobID: as.JobIDs[0]}
+		} else if len(as.Tables) > 0 {
+			ret = &RestoreTable{Table: as.Tables[0], JobNum: as.JobNumber}
+		} else {
+			return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
+		}
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -799,9 +807,11 @@ func buildShowNextRowID() *expression.Schema {
 func buildShowDDLFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "OWNER_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "OWNER_ADDRESS", mysql.TypeVarchar, 32))
 	schema.Append(buildColumn("", "RUNNING_JOBS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumn("", "SELF_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
 
 	return schema
 }

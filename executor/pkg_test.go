@@ -187,9 +187,9 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 		}
 		totalRowCnt += part.NumRows()
 		iter := chunk.NewIterator4Chunk(part)
-		hasNull, keyBuf := false, make([]byte, 0, 64)
+		keyBuf := make([]byte, 0, 64)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			hasNull, keyBuf, err = hashJoinExec.getJoinKeyFromChkRow(false, row, keyBuf)
+			hasNull, keyBuf, err := hashJoinExec.getJoinKeyFromChkRow(false, row, keyBuf)
 			c.Assert(err, IsNil)
 			c.Assert(hasNull, IsFalse)
 			joinHash := murmur3.Sum32(keyBuf)
