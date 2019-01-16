@@ -3857,3 +3857,20 @@ func (s *testIntegrationSuite) TestCastAsTime(c *C) {
 	err = tk.ExecToErr(`select cast(col5 as time(31)) from t where col1 is null;`)
 	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
 }
+
+func (s *testIntegrationSuite) TestCoalesce(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustQuery(`select coalesce(cast(1 as json), cast(2 as json));`).Check(testkit.Rows(
+		`1`,
+	))
+	tk.MustQuery(`select coalesce(NULL, cast(2 as json));`).Check(testkit.Rows(
+		`2`,
+	))
+	tk.MustQuery(`select coalesce(cast(1 as json), NULL);`).Check(testkit.Rows(
+		`1`,
+	))
+	tk.MustQuery(`select coalesce(NULL, NULL);`).Check(testkit.Rows(
+		`<nil>`,
+	))
+}
