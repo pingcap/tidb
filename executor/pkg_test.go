@@ -32,14 +32,14 @@ type MockExec struct {
 	curRowIdx int
 }
 
-func (m *MockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (m *MockExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	colTypes := m.retTypes()
-	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < chk.Capacity(); m.curRowIdx++ {
+	for ; m.curRowIdx < len(m.Rows) && req.NumRows() < req.Capacity(); m.curRowIdx++ {
 		curRow := m.Rows[m.curRowIdx]
 		for i := 0; i < curRow.Len(); i++ {
 			curDatum := curRow.ToRow().GetDatum(i, colTypes[i])
-			chk.AppendDatum(i, &curDatum)
+			req.AppendDatum(i, &curDatum)
 		}
 	}
 	return nil
@@ -103,7 +103,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	joinChk := join.newFirstChunk()
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
-		err := join.Next(ctx, joinChk)
+		err := join.Next(ctx, chunk.NewRecordBatch(joinChk))
 		c.Check(err, IsNil)
 		if joinChk.NumRows() == 0 {
 			break
@@ -129,7 +129,7 @@ func prepareOneColChildExec(sctx sessionctx.Context, rowCount int) Executor {
 	return exec
 }
 
-func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *HashJoinExec {
+func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *RadixHashJoinExec {
 	childExec0 := prepareOneColChildExec(sctx, rowCount)
 	childExec1 := prepareOneColChildExec(sctx, rowCount)
 
@@ -148,7 +148,7 @@ func buildExec4RadixHashJoin(sctx sessionctx.Context, rowCount int) *HashJoinExe
 		innerExec:      childExec0,
 		outerExec:      childExec1,
 	}
-	return hashJoinExec
+	return &RadixHashJoinExec{HashJoinExec: hashJoinExec}
 }
 
 func (s *pkgTestSuite) TestRadixPartition(c *C) {
@@ -279,7 +279,7 @@ func (s *pkgTestSuite) TestParallelBuildHashTable4RadixJoin(c *C) {
 	err := hashJoinExec.Open(ctx)
 	c.Assert(err, IsNil)
 
-	hashJoinExec.fetchInnerAndBuildHashTable(ctx)
+	hashJoinExec.partitionInnerAndBuildHashTables(ctx)
 	innerParts := hashJoinExec.innerParts
 	c.Assert(len(hashJoinExec.hashTables), Equals, len(innerParts))
 	for i := 0; i < len(innerParts); i++ {

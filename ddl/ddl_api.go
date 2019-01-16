@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
@@ -657,6 +658,42 @@ func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
+// checkColumnFieldLength check the maximum length limit for different character set varchar type columns.
+func checkColumnFieldLength(schema *model.DBInfo, colDefs []*ast.ColumnDef, tbInfo *model.TableInfo) error {
+	for _, colDef := range colDefs {
+		if colDef.Tp.Tp == mysql.TypeVarchar {
+			var setCharset string
+			setCharset = mysql.DefaultCharset
+			if len(schema.Charset) != 0 {
+				setCharset = schema.Charset
+			}
+			if len(tbInfo.Charset) != 0 {
+				setCharset = tbInfo.Charset
+			}
+
+			err := IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, setCharset)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+// IsTooBigFieldLength check if the varchar type column exceeds the maximum length limit.
+func IsTooBigFieldLength(colDefTpFlen int, colDefName, setCharset string) error {
+	desc, err := charset.GetCharsetDesc(setCharset)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	maxFlen := mysql.MaxFieldVarCharLength
+	maxFlen /= desc.Maxlen
+	if colDefTpFlen != types.UnspecifiedLength && colDefTpFlen > maxFlen {
+		return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDefName, maxFlen)
+	}
+	return nil
+}
+
 // checkColumnAttributes check attributes for single column.
 func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	switch tp.Tp {
@@ -1006,6 +1043,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err = checkColumnFieldLength(schema, s.Cols, tbInfo); err != nil {
+		return errors.Trace(err)
+	}
+
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
 		if tbInfo.AutoIncID > 1 {
@@ -1062,6 +1103,16 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo, s.OrReplace},
+	}
+	if v, ok := ctx.GetSessionVars().GetSystemVar("character_set_client"); ok {
+		tbInfo.Charset = v
+	}
+	if v, ok := ctx.GetSessionVars().GetSystemVar("collation_connection"); ok {
+		tbInfo.Collate = v
+	}
+	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	err = d.doDDLJob(ctx, job)
 
@@ -1612,7 +1663,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	var pid int64
-	pid, err = findPartitionByName(meta, spec.Name)
+	pid, err = tables.FindPartitionByName(meta, spec.Name)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1972,6 +2023,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		// `modifyColumnTp` indicates that there is a type modification.
 		modifyColumnTp = mysql.TypeNull
 	}
+
+	if err = checkColumnFieldLength(schema, spec.NewColumns, t.Meta()); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
 		return nil, errors.Trace(err)
@@ -2152,6 +2208,13 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		return errors.Trace(err)
 	}
 
+	for _, col := range tb.Meta().Cols() {
+		if col.Tp == mysql.TypeVarchar {
+			if err = IsTooBigFieldLength(col.Flen, col.Name.O, toCharset); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
