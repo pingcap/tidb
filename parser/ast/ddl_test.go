@@ -45,6 +45,7 @@ func (ts *testDDLSuite) TestDDLVisitorCover(c *C) {
 		{&AlterTableStmt{Table: &TableName{}, Specs: []*AlterTableSpec{alterTableSpec}}, 0, 0},
 		{&CreateIndexStmt{Table: &TableName{}}, 0, 0},
 		{&CreateTableStmt{Table: &TableName{}, ReferTable: &TableName{}}, 0, 0},
+		{&CreateViewStmt{ViewName: &TableName{}, Select: &SelectStmt{}}, 0, 0},
 		{&AlterTableSpec{}, 0, 0},
 		{&ColumnDef{Name: &ColumnName{}, Options: []*ColumnOption{{Expr: ce}}}, 1, 1},
 		{&ColumnOption{Expr: ce}, 1, 1},
