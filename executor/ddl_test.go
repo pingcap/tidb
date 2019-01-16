@@ -577,7 +577,4 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
-
-	// If do not LoadDDLReorgVars, the local variable will be the last loaded value.
-	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
 }

@@ -255,6 +255,15 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 	return snapHandle.Get(), nil
 }
 
+// GetSnapshotMeta gets a new snapshot meta at startTS.
+func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
+	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return meta.NewSnapshotMeta(snapshot), nil
+}
+
 // DDL gets DDL from domain.
 func (do *Domain) DDL() ddl.DDL {
 	return do.ddl

@@ -296,6 +296,17 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
+// CreateTableAndSetAutoID creates a table with tableInfo in database,
+// and rebases the table autoID.
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoID int64) error {
+	err := m.CreateTable(dbID, tableInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoID)
+	return errors.Trace(err)
+}
+
 // DropDatabase drops whole database.
 func (m *Meta) DropDatabase(dbID int64) error {
 	// Check if db exists.
