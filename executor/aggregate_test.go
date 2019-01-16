@@ -445,8 +445,7 @@ func (s *testSuite1) TestOnlyFullGroupBy(c *C) {
 	// test AggregateFunc
 	tk.MustQuery("select max(a) from t group by d")
 	// test incompatible with sql_mode = ONLY_FULL_GROUP_BY
-	var err error
-	err = tk.ExecToErr("select * from t group by d")
+	err := tk.ExecToErr("select * from t group by d")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	err = tk.ExecToErr("select b-c from t group by b+c")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))

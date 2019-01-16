@@ -49,7 +49,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -295,11 +295,9 @@ func parseOldHandshakeResponseBody(packet *handshakeResponse41, data []byte, off
 		}
 		if len(data[offset:]) > 0 {
 			packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-			offset += len(packet.Auth) + 1
 		}
 	} else {
 		packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-		offset += len(packet.Auth) + 1
 	}
 
 	return nil
@@ -546,7 +544,7 @@ func (cc *clientConn) Run() {
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
-		if atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) == false {
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) {
 			return
 		}
 
@@ -559,7 +557,7 @@ func (cc *clientConn) Run() {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					idleTime := time.Now().Sub(start)
+					idleTime := time.Since(start)
 					log.Infof("con:%d read packet timeout, close this connection, idle: %v, wait_timeout: %v", cc.connectionID, idleTime, waitTimeout)
 				} else {
 					errStack := errors.ErrorStack(err)
@@ -572,7 +570,7 @@ func (cc *clientConn) Run() {
 			return
 		}
 
-		if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) == false {
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
 			return
 		}
 
@@ -1267,7 +1265,7 @@ func (cc *clientConn) handleChangeUser(data []byte) error {
 	}
 	pass := data[:passLen]
 	data = data[passLen:]
-	dbName, data := parseNullTermString(data)
+	dbName, _ := parseNullTermString(data)
 	cc.dbname = hack.String(dbName)
 	err := cc.ctx.Close()
 	if err != nil {

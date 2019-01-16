@@ -117,7 +117,6 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	sc := new(stmtctx.StatementContext)
 	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NullCount, Equals, int64(2))
 	c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].NDV, Equals, int64(0))
 
@@ -131,7 +130,7 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	sc = new(stmtctx.StatementContext)
+	sc := new(stmtctx.StatementContext)
 	count, err := statsTbl.ColumnEqualRowCount(sc, types.NewIntDatum(0), tableInfo.Columns[3].ID)
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, float64(2))
@@ -161,7 +160,6 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	sc = new(stmtctx.StatementContext)
 	c.Check(statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.Count), Equals, 3.0)
 
 	testKit.MustExec("create index i on t(c2, c1)")
