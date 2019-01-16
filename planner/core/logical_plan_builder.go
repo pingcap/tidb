@@ -2702,7 +2702,10 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 	return proj, propertyItems[:lenPartition], propertyItems[lenPartition:], newArgList, nil
 }
 
-func (b *PlanBuilder) buildFrameBound(spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
+// buildWindowFunctionFrameBound builds the bounds of window function frames.
+// For type `Rows`, the bound expr must be an unsigned integer.
+// For type `Range`, the bound expr must be temporal or numeric types.
+func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
 	if bound.UnBounded || boundClause.Type == ast.CurrentRow {
@@ -2772,6 +2775,8 @@ func (b *PlanBuilder) buildFrameBound(spec *ast.WindowSpec, orderByItems []prope
 	return bound, nil
 }
 
+// buildWindowFunctionFrame builds the window function frames.
+// See https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
 func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItems []property.Item) (*WindowFrame, error) {
 	frameClause := spec.Frame
 	if frameClause == nil {
@@ -2786,7 +2791,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 		return nil, ErrWindowFrameStartIllegal.GenWithStackByArgs(spec.Name)
 	}
 	var err error
-	frame.Start, err = b.buildFrameBound(spec, orderByItems, &start)
+	frame.Start, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &start)
 	if err != nil {
 		return nil, err
 	}
@@ -2795,7 +2800,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 	if end.Type == ast.Preceding && end.UnBounded {
 		return nil, ErrWindowFrameEndIllegal.GenWithStackByArgs(spec.Name)
 	}
-	frame.End, err = b.buildFrameBound(spec, orderByItems, &end)
+	frame.End, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &end)
 	return frame, err
 }
 
