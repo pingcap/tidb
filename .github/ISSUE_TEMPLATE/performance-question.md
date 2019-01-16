@@ -6,7 +6,8 @@ about: Performance question about TiDB which is not caused by bug.
 
 ## Performance Question
 
-- What version of TiDB are you using (`tidb-server -V` or run `select tidb_version();` on TiDB)?
+- What version of TiDB are you using?
+<!-- You can try `tidb-server -V` or run `select tidb_version();` on TiDB to get this information -->
 
 - What's the difference between the performance you expect and the performance you observe?
 
