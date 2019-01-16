@@ -67,6 +67,16 @@ func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, e
 	}, nil
 }
 
+// NewRawKVClientWithClients creates a client with custom pd/rpc client
+func NewRawKVClientWithClients(clusterID uint64, regionCache *RegionCache, pdClient pd.Client, rpcClient Client) *RawKVClient {
+	return &RawKVClient{
+		clusterID:   clusterID,
+		regionCache: regionCache,
+		pdClient:    pdClient,
+		rpcClient:   rpcClient,
+	}
+}
+
 // Close closes the client.
 func (c *RawKVClient) Close() error {
 	c.pdClient.Close()

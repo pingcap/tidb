@@ -110,3 +110,16 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 
 	return tikv.NewTestTiKVStore(client, pdClient, opt.clientHijack, opt.pdClientHijack, opt.txnLocalLatches)
 }
+
+// NewRawKVClient creates a mocked tikv raw client with mvccStore
+func NewRawKVClient(mvccStore mocktikv.MVCCStore) *tikv.RawKVClient {
+	cluster := mocktikv.NewCluster()
+	pdClient := mocktikv.NewPDClient(cluster)
+
+	return tikv.NewRawKVClientWithClients(
+		0,
+		tikv.NewRegionCache(pdClient),
+		pdClient,
+		mocktikv.NewRPCClient(cluster, mvccStore),
+	)
+}
