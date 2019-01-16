@@ -295,7 +295,7 @@ func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 }
 
 // executeRestoreTable represents a recover table executor.
-// It is built from "admin restore table by job" statement,
+// It is built from "restore table" statement,
 // is used to recover the table that deleted by mistake.
 func (e *DDLExec) executeRestoreTable(s *ast.RestoreTableStmt) error {
 	txn, err := e.ctx.Txn(true)
