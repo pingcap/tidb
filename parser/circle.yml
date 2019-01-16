@@ -19,3 +19,12 @@ jobs:
       - run:
           name: "Build & Test"
           command: make test
+      - run:
+          name: "Integration Test"
+          command: |
+            cd /go/src/github.com/pingcap/
+            git clone git@github.com:pingcap/tidb.git
+            cd tidb
+            rm go.sum
+            GO111MODULE=on go mod edit -replace github.com/pingcap/parser=github.com/${CIRCLE_PR_USERNAME:-$CIRCLE_PROJECT_USERNAME}/${CIRCLE_PR_REPONAME:-$CIRCLE_PROJECT_REPONAME}@$CIRCLE_BRANCH
+            make test
