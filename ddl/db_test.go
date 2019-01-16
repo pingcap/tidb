@@ -711,6 +711,13 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 			      partition p4 values less than maxvalue)`)
 	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by hash (c1) partitions 4;`)
+	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by range columns (c1) (
+			      partition p0 values less than (3440),
+			      partition p1 values less than (61440),
+			      partition p2 values less than (122880),
+			      partition p3 values less than (204800),
+			      partition p4 values less than maxvalue)`)
 }
 
 func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL string) {

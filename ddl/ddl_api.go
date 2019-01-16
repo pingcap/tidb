@@ -988,7 +988,11 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if pi != nil {
 		switch pi.Type {
 		case model.PartitionTypeRange:
-			err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
+			if len(pi.Columns) == 0 {
+				err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
+			} else {
+				err = checkPartitionByRangeColumn(ctx, tbInfo, pi, s)
+			}
 		case model.PartitionTypeHash:
 			err = checkPartitionByHash(pi)
 		}
@@ -1165,11 +1169,6 @@ func checkPartitionByHash(pi *model.PartitionInfo) error {
 }
 
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
-	// Range columns partition only implements the parser, so it will not be checked.
-	if s.Partition.ColumnNames != nil {
-		return nil
-	}
-
 	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
 		return errors.Trace(err)
 	}
@@ -1190,6 +1189,19 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt) error {
+	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
+		return err
+	}
+
+	// TODO: Check CreatePartitionValue.
+	// if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+	// 	return errors.Trace(err)
+	// }
+
+	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))
 }
 
 func checkCharsetAndCollation(cs string, co string) error {
@@ -2621,13 +2633,18 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 	for _, def := range spec.PartDefinitions {
 		for _, expr := range def.LessThan {
 			tp := expr.GetType().Tp
-			if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
-				expr.Format(buf)
-				if strings.EqualFold(buf.String(), "MAXVALUE") {
-					continue
+			if len(part.Columns) == 0 {
+				// Partition by range.
+				if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
+					expr.Format(buf)
+					if strings.EqualFold(buf.String(), "MAXVALUE") {
+						continue
+					}
+					buf.Reset()
+					return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(buf.String(), "partition function")
 				}
-				buf.Reset()
-				return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(buf.String(), "partition function")
+			} else {
+				// Partition by range column.
 			}
 		}
 		pid, err1 := d.genGlobalID()

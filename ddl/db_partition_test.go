@@ -257,6 +257,42 @@ func (s *testIntegrationSuite) TestCreateTableWithHashPartition(c *C) {
 	partition by hash( year(hired) ) partitions 4;`)
 }
 
+func (s *testIntegrationSuite) TestCreateTableWithRangeColumnPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists log_message_1;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec(`
+create table log_message_1 (
+    add_time datetime not null default '2000-01-01 00:00:00',
+    log_level int unsigned not null default '0',
+    log_host varchar(32) not null,
+    service_name varchar(32) not null,
+    message varchar(2000)
+) partition by range columns(add_time)(
+    partition p201403 values less than ('2014-04-01'),
+    partition p201404 values less than ('2014-05-01'),
+    partition p201405 values less than ('2014-06-01'),
+    partition p201406 values less than ('2014-07-01'),
+    partition p201407 values less than ('2014-08-01'),
+    partition p201408 values less than ('2014-09-01'),
+    partition p201409 values less than ('2014-10-01'),
+    partition p201410 values less than ('2014-11-01')
+)`)
+	tk.MustExec("drop table if exists log_message_1;")
+	tk.MustExec(`
+	create table log_message_1 (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date not null default '9999-12-31',
+		job_code int,
+		store_id int
+	)
+	partition by hash( year(hired) ) partitions 4;`)
+}
+
 func (s *testIntegrationSuite) TestCreateTableWithKeyPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
