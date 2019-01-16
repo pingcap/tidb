@@ -109,8 +109,13 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 		return errors.Trace(err)
 	}
 
-	sql = fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	return RemoveFromGCDeleteRange(ctx, dr.JobID, dr.ElementID)
+}
+
+// RemoveFromGCDeleteRange is exported for ddl pkg to use.
+func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
+	sql := fmt.Sprintf(completeDeleteRangeSQL, jobID, elementID)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 
