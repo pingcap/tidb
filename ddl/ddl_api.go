@@ -276,7 +276,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 		return hasDefaultValue, value, errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
 	}
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
-		ctx.GetSessionVars().SQLMode.HasStrictMode() && (types.IsTypeTime(col.Tp)) {
+		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
 		if vv, ok := value.(string); ok {
 			t, err := types.ParseTime(nil, vv, col.Tp, 6)
 			if err != nil {
