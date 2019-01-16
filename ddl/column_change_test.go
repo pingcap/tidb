@@ -97,8 +97,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		prevState = job.SchemaState
-		var err error
-		err = hookCtx.NewTxn(context.Background())
+		err := hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -164,8 +163,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		prevState = job.SchemaState
-		var err error
-		err = hookCtx.NewTxn(context.Background())
+		err := hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -367,10 +365,13 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 
 func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]interface{}) error {
 	var gotRows [][]interface{}
-	t.IterRecords(ctx, t.FirstKey(), cols, func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), cols, func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))
 		return true, nil
 	})
+	if err != nil {
+		return err
+	}
 	got := fmt.Sprintf("%v", gotRows)
 	expect := fmt.Sprintf("%v", rows)
 	if got != expect {

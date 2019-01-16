@@ -19,7 +19,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -81,7 +81,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if !e.fetched {
@@ -312,7 +312,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if !e.fetched {
