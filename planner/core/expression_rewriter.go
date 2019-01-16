@@ -457,7 +457,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 
 	if all {
 		// All of the inner record set should not contain null value. So for t.id < all(select s.id from s), it
-		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) = 0, true, null).
+		// should be rewrote to t.id < min(s.id) and if(sum(s.id is null) != 0, null, true).
 		innerNullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), innerHasNull, expression.Null, expression.One)
 		cond = expression.ComposeCNFCondition(er.ctx, cond, innerNullChecker)
 		// If the subquery is empty, it should always return true.
@@ -466,7 +466,8 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		outerNullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), outerIsNull, expression.Null, expression.Zero)
 		cond = expression.ComposeDNFCondition(er.ctx, cond, emptyChecker, outerNullChecker)
 	} else {
-		// For "any" expression, if the subquery has null and the cond return false, the result should be NULL.
+		// For "any" expression, if the subquery has null and the cond returns false, the result should be NULL.
+		// Specifically, `t.id < any (select s.id from s)` would be rewrote to `t.id < max(s.id) or if(sum(s.id is null) != 0, null, false)`
 		innerNullChecker := expression.NewFunctionInternal(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), innerHasNull, expression.Null, expression.Zero)
 		cond = expression.ComposeDNFCondition(er.ctx, cond, innerNullChecker)
 		// If the subquery is empty, it should always return false.
