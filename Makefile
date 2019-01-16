@@ -156,8 +156,10 @@ endif
 server:
 ifeq ($(TARGET), "")
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
+	@GO111MODULE=on go mod vendor
 else
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+	@GO111MODULE=on go mod vendor
 endif
 
 server_check:

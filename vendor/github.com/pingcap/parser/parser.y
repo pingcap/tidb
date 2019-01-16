@@ -5136,6 +5136,12 @@ TableOptimizerHints:
 	{
 		$$ = $2
 	}
+|	hintBegin error hintEnd
+	{
+		yyerrok()
+		parser.lastErrorAsWarn()
+		$$ = nil
+	}
 
 HintTableList:
 	Identifier
