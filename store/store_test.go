@@ -246,7 +246,8 @@ func (s *testKVSuite) TestDelete(c *C) {
 	mustDel(c, txn)
 
 	mustNotGet(c, txn)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	// Try get
 	txn, err = s.s.Begin()
@@ -256,20 +257,23 @@ func (s *testKVSuite) TestDelete(c *C) {
 
 	// Insert again
 	insertData(c, txn)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	// Delete all
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
 	mustDel(c, txn)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
 	mustNotGet(c, txn)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestDelete2(c *C) {
@@ -280,7 +284,8 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0004"), val)
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0003"), val)
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000002_0004"), val)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	// Delete all
 	txn, err = s.s.Begin()
@@ -294,13 +299,15 @@ func (s *testKVSuite) TestDelete2(c *C) {
 		err = it.Next()
 		c.Assert(err, IsNil)
 	}
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	it, _ = txn.Iter([]byte("DATA_test_tbl_department_record__000000000"), nil)
 	c.Assert(it.Valid(), IsFalse)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 }
 
 func (s *testKVSuite) TestSetNil(c *C) {
@@ -315,7 +322,8 @@ func (s *testKVSuite) TestBasicSeek(c *C) {
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	txn.Set([]byte("1"), []byte("1"))
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())
@@ -333,7 +341,8 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 		b := []byte(strconv.Itoa(i))
 		txn.Set(b, b)
 	}
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())

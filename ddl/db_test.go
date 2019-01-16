@@ -2089,8 +2089,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
-		var err error
-		err = hookCtx.NewTxn(context.Background())
+		err := hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -2297,6 +2296,7 @@ func (s *testDBSuite) TestAddColumn2(c *C) {
 	err = s.tk.Se.StmtCommit()
 	c.Assert(err, IsNil)
 	err = s.tk.Se.CommitTxn(ctx)
+	c.Assert(err, IsNil)
 
 	s.tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 2 1"))
 
