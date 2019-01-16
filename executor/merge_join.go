@@ -330,6 +330,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 				e.joiner.onMissMatch(e.outerTable.row, chk)
 			}
 			e.outerTable.row = e.outerTable.iter.Next()
+			e.outerTable.hasMatch = false
 			e.innerIter4Row.Begin()
 		}
 
