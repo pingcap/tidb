@@ -164,7 +164,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
 
-	tb, err = is.TableByName(dbName, noexist)
+	_, err = is.TableByName(dbName, noexist)
 	c.Assert(err, NotNil)
 
 	tbs := is.SchemaTables(dbName)
