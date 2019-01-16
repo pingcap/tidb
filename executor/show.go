@@ -425,19 +425,19 @@ func (e *ShowExec) fetchShowIndex() error {
 				subPart = col.Length
 			}
 			e.appendRow([]interface{}{
-				tb.Meta().Name.O,       // Table
-				nonUniq,                // Non_unique
-				idx.Meta().Name.O,      // Key_name
-				i + 1,                  // Seq_in_index
-				col.Name.O,             // Column_name
-				"A",                    // Collation
-				0,                      // Cardinality
-				subPart,                // Sub_part
-				nil,                    // Packed
-				"YES",                  // Null
+				tb.Meta().Name.O,  // Table
+				nonUniq,           // Non_unique
+				idx.Meta().Name.O, // Key_name
+				i + 1,             // Seq_in_index
+				col.Name.O,        // Column_name
+				"A",               // Collation
+				0,                 // Cardinality
+				subPart,           // Sub_part
+				nil,               // Packed
+				"YES",             // Null
 				idx.Meta().Tp.String(), // Index_type
-				"",                     // Comment
-				idx.Meta().Comment,     // Index_comment
+				"",                 // Comment
+				idx.Meta().Comment, // Index_comment
 			})
 		}
 	}
