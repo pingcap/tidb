@@ -366,8 +366,8 @@ Projection_9	10000.00	root	and(or(or(gt(col_count, 1), ne(t1.a, col_firstrow)), 
 └─HashLeftJoin_10	10000.00	root	inner join, inner:StreamAgg_17
   ├─TableReader_13	10000.00	root	data:TableScan_12
   │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─StreamAgg_17	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(col_3)
-    └─Projection_27	10000.00	root	t2.a, t2.a, cast(isnull(t2.a)), isnull(t2.a)
+  └─StreamAgg_17	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
+    └─Projection_27	10000.00	root	t2.a, t2.a, cast(isnull(t2.a))
       └─TableReader_24	10000.00	root	data:TableScan_23
         └─TableScan_23	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select a = all (select a from t t2) from t t1;
@@ -376,7 +376,7 @@ Projection_9	10000.00	root	or(and(and(le(col_count, 1), eq(t1.a, col_firstrow)),
 └─HashLeftJoin_10	10000.00	root	inner join, inner:StreamAgg_17
   ├─TableReader_13	10000.00	root	data:TableScan_12
   │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─StreamAgg_17	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(col_3)
-    └─Projection_27	10000.00	root	t2.a, t2.a, cast(isnull(t2.a)), isnull(t2.a)
+  └─StreamAgg_17	1.00	root	funcs:firstrow(col_0), count(distinct col_1), sum(col_2), count(1)
+    └─Projection_27	10000.00	root	t2.a, t2.a, cast(isnull(t2.a))
       └─TableReader_24	10000.00	root	data:TableScan_23
         └─TableScan_23	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
