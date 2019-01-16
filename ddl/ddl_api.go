@@ -275,8 +275,8 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 		// In strict SQL mode or default value is not an empty string.
 		return hasDefaultValue, value, errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
 	}
-	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && ctx.GetSessionVars().SQLMode.HasStrictMode() && (col.Tp == mysql.TypeTimestamp ||
-		col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeDate) {
+	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
+		ctx.GetSessionVars().SQLMode.HasStrictMode() && (types.IsTypeTime(col.Tp)) {
 		if vv, ok := value.(string); ok {
 			t, err := types.ParseTime(nil, vv, col.Tp, 6)
 			if err != nil {
