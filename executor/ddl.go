@@ -311,7 +311,30 @@ func (e *RestoreTableExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Open interface.
-func (e *RestoreTableExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (e *RestoreTableExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
+	// Should commit the previous transaction and create a new transaction.
+	if err = e.ctx.NewTxn(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
+
+	err = e.executeRestoreTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	dom := domain.GetDomain(e.ctx)
+	// Update InfoSchema in TxnCtx, so it will pass schema check.
+	is := dom.InfoSchema()
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	txnCtx.InfoSchema = is
+	txnCtx.SchemaVersion = is.SchemaMetaVersion()
+	// DDL will force commit old transaction, after DDL, in transaction status should be false.
+	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
+	return nil
+}
+
+func (e *RestoreTableExec) executeRestoreTable() error {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
