@@ -132,7 +132,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		c.Assert(data, HasLen, 3)
 		c.Assert(data[0].GetInt64(), Equals, i)
 		c.Assert(data[1].GetInt64(), Equals, 10*i)
@@ -140,6 +140,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 		i++
 		return true, nil
 	})
+	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(num))
 
 	c.Assert(table.FindCol(t.Cols(), "c4"), IsNil)
@@ -835,7 +836,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()

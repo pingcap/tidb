@@ -24,11 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -264,7 +264,7 @@ func hasRootPrivilege() bool {
 }
 
 func flagBoolean(name string, defaultVal bool, usage string) *bool {
-	if defaultVal == false {
+	if !defaultVal {
 		// Fix #4125, golang do not print default false value in usage, so we append it.
 		usage = fmt.Sprintf("%s (default false)", usage)
 		return flag.Bool(name, defaultVal, usage)
@@ -384,7 +384,7 @@ func validateConfig() {
 		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
 		os.Exit(-1)
 	}
-	if cfg.Store == "mocktikv" && cfg.RunDDL == false {
+	if cfg.Store == "mocktikv" && !cfg.RunDDL {
 		log.Errorf("can't disable DDL on mocktikv")
 		os.Exit(-1)
 	}
@@ -470,8 +470,7 @@ func printInfo() {
 }
 
 func createServer() {
-	var driver server.IDriver
-	driver = server.NewTiDBDriver(storage)
+	driver := server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.

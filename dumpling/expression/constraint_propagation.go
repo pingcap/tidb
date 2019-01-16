@@ -112,7 +112,6 @@ func (s constraintSolver) fixPoint(ctx sessionctx.Context, exprs *exprSet) {
 			break
 		}
 	}
-	return
 }
 
 // iterOnce picks two expressions from the set, try to propagate new conditions from them.
@@ -165,7 +164,7 @@ func ruleColumnEQConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	if col != nil {
 		expr := ColumnSubstitute(exprs.data[j], NewSchema(col), []Expression{cons})
 		stmtctx := ctx.GetSessionVars().StmtCtx
-		if bytes.Compare(expr.HashCode(stmtctx), exprs.data[j].HashCode(stmtctx)) != 0 {
+		if !bytes.Equal(expr.HashCode(stmtctx), exprs.data[j].HashCode(stmtctx)) {
 			exprs.Append(expr)
 			exprs.tombstone[j] = true
 		}
@@ -261,7 +260,6 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	if !isNull && v > 0 {
 		exprs.SetConstFalse()
 	}
-	return
 }
 
 // opsiteOP the opsite direction of a compare operation, used in ruleColumnOPConst.

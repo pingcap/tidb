@@ -196,7 +196,7 @@ func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 	var idx int
 	for idx = 0; idx < len(latch.waiting); idx++ {
 		waiting := latch.waiting[idx]
-		if bytes.Compare(waiting.keys[waiting.acquiredCount], key) == 0 {
+		if bytes.Equal(waiting.keys[waiting.acquiredCount], key) {
 			break
 		}
 	}
@@ -292,7 +292,7 @@ func (latches *Latches) recycle(currentTS uint64) {
 
 func findNode(list *node, key []byte) *node {
 	for n := list; n != nil; n = n.next {
-		if bytes.Compare(n.key, key) == 0 {
+		if bytes.Equal(n.key, key) {
 			return n
 		}
 	}
