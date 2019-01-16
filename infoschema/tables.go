@@ -895,11 +895,11 @@ func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Da
 				table.Name.O,                    // TABLE_NAME
 				table.View.SelectStmt,           // VIEW_DEFINITION
 				table.View.CheckOption.String(), // CHECK_OPTION
-				"NO", // IS_UPDATABLE
-				table.View.Definer.String(),  // DEFINER
-				table.View.Security.String(), // SECURITY_TYPE
-				charset,   // CHARACTER_SET_CLIENT
-				collation, // COLLATION_CONNECTION
+				"NO",                            // IS_UPDATABLE
+				table.View.Definer.String(),     // DEFINER
+				table.View.Security.String(),    // SECURITY_TYPE
+				charset,                         // CHARACTER_SET_CLIENT
+				collation,                       // COLLATION_CONNECTION
 			)
 			rows = append(rows, record)
 		}
@@ -1240,24 +1240,24 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 func dataForPseudoProfiling() [][]types.Datum {
 	var rows [][]types.Datum
 	row := types.MakeDatums(
-		0,  // QUERY_ID
-		0,  // SEQ
-		"", // STATE
+		0,                      // QUERY_ID
+		0,                      // SEQ
+		"",                     // STATE
 		types.NewDecFromInt(0), // DURATION
 		types.NewDecFromInt(0), // CPU_USER
 		types.NewDecFromInt(0), // CPU_SYSTEM
-		0,  // CONTEXT_VOLUNTARY
-		0,  // CONTEXT_INVOLUNTARY
-		0,  // BLOCK_OPS_IN
-		0,  // BLOCK_OPS_OUT
-		0,  // MESSAGES_SENT
-		0,  // MESSAGES_RECEIVED
-		0,  // PAGE_FAULTS_MAJOR
-		0,  // PAGE_FAULTS_MINOR
-		0,  // SWAPS
-		"", // SOURCE_FUNCTION
-		"", // SOURCE_FILE
-		0,  // SOURCE_LINE
+		0,                      // CONTEXT_VOLUNTARY
+		0,                      // CONTEXT_INVOLUNTARY
+		0,                      // BLOCK_OPS_IN
+		0,                      // BLOCK_OPS_OUT
+		0,                      // MESSAGES_SENT
+		0,                      // MESSAGES_RECEIVED
+		0,                      // PAGE_FAULTS_MAJOR
+		0,                      // PAGE_FAULTS_MINOR
+		0,                      // SWAPS
+		"",                     // SOURCE_FUNCTION
+		"",                     // SOURCE_FILE
+		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)
 	return rows
