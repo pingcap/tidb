@@ -252,6 +252,7 @@ func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 // checkColumnDefaultValue checks the default value of the column.
 // In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
 // In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
+// In NO_ZERO_DATE SQL mode, TIMESTAMP/DATE/DATETIME type can't have zero date like '0000-00-00' or '0000-00-00 00:00:00'.
 func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, interface{}, error) {
 	hasDefaultValue := true
 	if value != nil && (col.Tp == mysql.TypeJSON ||
@@ -273,6 +274,20 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 		}
 		// In strict SQL mode or default value is not an empty string.
 		return hasDefaultValue, value, errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
+	}
+	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
+		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
+		if vv, ok := value.(string); ok {
+			t, err := types.ParseTime(nil, vv, col.Tp, 6)
+			if err != nil {
+				// Ignores ParseTime error, because ParseTime error has been dealt in getDefaultValue
+				// Some builtin function like CURRENT_TIMESTAMP() will cause ParseTime error.
+				return hasDefaultValue, value, nil
+			}
+			if t.Time == types.ZeroTime {
+				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+			}
+		}
 	}
 	return hasDefaultValue, value, nil
 }

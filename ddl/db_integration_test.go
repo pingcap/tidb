@@ -98,6 +98,20 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
+func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	defer tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+
+	tk.MustExec("use test;")
+	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION';")
+	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time date NOT NULL DEFAULT '0000-00-00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default '0000-00-00 00');", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default 0);", mysql.ErrInvalidDefault)
+}
+
 func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
