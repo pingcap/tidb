@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -38,9 +39,16 @@ const (
 	delBackLog   = 128
 )
 
+// enableEmulatorGC means whether to enable emulator GC. The default is enable.
+// In some unit tests, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
+var emulatorGCEnable = int32(1)
+
 type delRangeManager interface {
 	// addDelRangeJob add a DDL job into gc_delete_range table.
 	addDelRangeJob(job *model.Job) error
+	// removeFromGCDeleteRange removes the deleting table job from gc_delete_range table by jobID and tableID.
+	// It's use for recover the table that was mistakenly deleted.
+	removeFromGCDeleteRange(jobID, tableID int64) error
 	start()
 	clear()
 }
@@ -90,6 +98,17 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 	return nil
 }
 
+// removeFromGCDeleteRange implements delRangeManager interface.
+func (dr *delRange) removeFromGCDeleteRange(jobID, tableID int64) error {
+	ctx, err := dr.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer dr.sessPool.put(ctx)
+	err = util.RemoveFromGCDeleteRange(ctx, jobID, tableID)
+	return errors.Trace(err)
+}
+
 // start implements delRangeManager interface.
 func (dr *delRange) start() {
 	if !dr.storeSupport {
@@ -117,9 +136,26 @@ func (dr *delRange) startEmulator() {
 		case <-dr.quitCh:
 			return
 		}
-		err := dr.doDelRangeWork()
-		terror.Log(errors.Trace(err))
+		if IsEmulatorGCEnable() {
+			err := dr.doDelRangeWork()
+			terror.Log(errors.Trace(err))
+		}
 	}
+}
+
+// EmulatorGCEnable enables emulator gc. It exports for testing.
+func EmulatorGCEnable() {
+	atomic.StoreInt32(&emulatorGCEnable, 1)
+}
+
+// EmulatorGCDisable disables emulator gc. It exports for testing.
+func EmulatorGCDisable() {
+	atomic.StoreInt32(&emulatorGCEnable, 0)
+}
+
+// IsEmulatorGCEnable indicates whether emulator GC enabled. It exports for testing.
+func IsEmulatorGCEnable() bool {
+	return atomic.LoadInt32(&emulatorGCEnable) == 1
 }
 
 func (dr *delRange) doDelRangeWork() error {

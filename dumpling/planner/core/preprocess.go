@@ -84,6 +84,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
+	case *ast.AdminStmt:
+		// The specified table in admin restore syntax maybe already been dropped.
+		// So skip check table name here, otherwise, admin restore table [table_name] syntax will return
+		// table not exists error. But admin restore is use to restore the dropped table. So skip children here.
+		return in, node.Tp == ast.AdminRestoreTable
 	default:
 		p.parentIsJoin = false
 	}
