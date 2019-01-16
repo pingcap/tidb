@@ -2672,12 +2672,11 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 	duration := time.Duration(dur)
 	goTime = goTime.Add(duration)
-	// when we execute select date_add('2018-01-31',interval 1 month) in mysql we got 2018-02-28
-	// but in tidb we got 2018-03-03
-	// dig it and we found it's caused by golang api time.DateDate(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time ,
-	// it says October 32 converts to November 1
-	// it conflits with mysql
-	// https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
+	// When we execute select date_add('2018-01-31',interval 1 month) in mysql we got 2018-02-28
+	// but in tidb we got 2018-03-03.
+	// Dig it and we found it's caused by golang api time.DateDate(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time ,
+	// it says October 32 converts to November 1 ,it conflits with mysql.
+	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
 	df := getFixDays(int(year), int(month), int(day), goTime)
 	if df != 0 {
 		goTime = goTime.AddDate(int(year), int(month), df)
