@@ -205,8 +205,6 @@ var (
 
 	// ErrTableIsNotView returns for table is not base table.
 	ErrTableIsNotView = terror.ClassDDL.New(codeErrWrongObject, "'%s.%s' is not VIEW")
-	// ErrInvalidDefaultValue returns invalid default value
-	ErrInvalidDefaultValue = terror.ClassDDL.New(codeInvalidDefaultValue, mysql.MySQLErrName[mysql.ErrInvalidDefault])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -708,7 +706,6 @@ func init() {
 		codeDependentByGeneratedColumn:             mysql.ErrDependentByGeneratedColumn,
 		codeJSONUsedAsKey:                          mysql.ErrJSONUsedAsKey,
 		codeBlobCantHaveDefault:                    mysql.ErrBlobCantHaveDefault,
-		codeInvalidDefaultValue:                    mysql.ErrInvalidDefault,
 		codeWrongColumnName:                        mysql.ErrWrongColumnName,
 		codeWrongKeyColumn:                         mysql.ErrWrongKeyColumn,
 		codeWrongNameForIndex:                      mysql.ErrWrongNameForIndex,

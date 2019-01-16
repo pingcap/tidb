@@ -285,7 +285,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 				return hasDefaultValue, value, nil
 			}
 			if t.Time == types.ZeroTime {
-				return hasDefaultValue, value, ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 			}
 		}
 	}
