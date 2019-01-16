@@ -59,16 +59,17 @@ func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
 
 func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 	args := expr.GetArgs()
-	foldedArg0, _ := foldConstant(args[0])
+	foldedArg0, isDeferred := foldConstant(args[0])
 	if constArg, isConst := foldedArg0.(*Constant); isConst {
-		_, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), chunk.Row{})
+		dt, err := constArg.Eval(chunk.Row{})
 		if err != nil {
 			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
-			return expr, false
+			return constArg, isDeferred
 		}
-		if isNull0 == true {
+		if dt.IsNull() {
 			return foldConstant(args[1])
 		}
+		return constArg, isDeferred
 	}
 	isDeferredConst := false
 	expr.GetArgs()[1], isDeferredConst = foldConstant(args[1])
