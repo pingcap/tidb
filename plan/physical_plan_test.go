@@ -1267,7 +1267,7 @@ func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
 	c.Assert(err, IsNil)
 	p, err := plan.Optimize(se, stmt, s.is)
 	c.Assert(err, IsNil)
-	c.Assert(core.ToString(p), Equals, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}")
+	c.Assert(plan.ToString(p), Equals, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}")
 	warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 	lastWarn := warnings[len(warnings)-1]
 	err = plan.ErrInternal.GenByArgs("TIDB_INLJ hint is inapplicable without column equal ON condition")
