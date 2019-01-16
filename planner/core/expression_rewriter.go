@@ -447,7 +447,8 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	plan4Agg.schema.Append(colSum)
 	innerHasNull := expression.NewFunctionInternal(er.ctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.Zero)
 
-	funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{innerIsNull}, false)
+	// Build `count(1)` aggregation to check if subquery is empty.
+	funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{expression.One}, false)
 	colCount := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_cnt"),
 		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
