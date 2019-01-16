@@ -1113,9 +1113,19 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
-	if is.TableExists(ident.Schema, ident.Name) {
+	oldView, err := is.TableByName(ident.Schema, ident.Name)
+	if err == nil && !s.OrReplace {
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
+
+	var oldViewTblID int64
+	if oldView != nil {
+		if !oldView.Meta().IsView() {
+			return ErrTableIsNotView.GenWithStackByArgs(ident.Schema, ident.Name)
+		}
+		oldViewTblID = oldView.Meta().ID
+	}
+
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return err
 	}
@@ -1144,7 +1154,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		TableID:    tbInfo.ID,
 		Type:       model.ActionCreateView,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo, s.OrReplace},
+		Args:       []interface{}{tbInfo, s.OrReplace, oldViewTblID},
 	}
 	if v, ok := ctx.GetSessionVars().GetSystemVar("character_set_client"); ok {
 		tbInfo.Charset = v
