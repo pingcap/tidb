@@ -475,11 +475,11 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 
 		// don't support lines terminated is ""
-		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
 		dbt.Assert(err, NotNil)
 
 		// infile doesn't exist
-		rs, err = dbt.db.Exec("load data local infile '/tmp/nonexistence.csv' into table test")
+		_, err = dbt.db.Exec("load data local infile '/tmp/nonexistence.csv' into table test")
 		dbt.Assert(err, NotNil)
 	})
 

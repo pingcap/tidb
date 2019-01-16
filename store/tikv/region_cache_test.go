@@ -193,7 +193,7 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	c.Assert(r.GetID(), Equals, s.region1)
 	addr := s.getAddr(c, []byte("a"))
 	c.Assert(addr, Equals, "")
-	r = s.getRegion(c, []byte("a"))
+	s.getRegion(c, []byte("a"))
 	// pd-server should return the new leader.
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(store3))
 }
@@ -270,7 +270,7 @@ func (s *testRegionCacheSuite) TestRequestFail(c *C) {
 	ctx, _ = s.cache.GetRPCContext(s.bo, region.VerID())
 	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
 	c.Assert(len(s.cache.mu.regions), Equals, 0)
-	region = s.getRegion(c, []byte("a"))
+	s.getRegion(c, []byte("a"))
 	c.Assert(s.cache.mu.regions, HasLen, 1)
 }
 

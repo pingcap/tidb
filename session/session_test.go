@@ -46,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	"github.com/pingcap/tipb/go-binlog"
+	binlog "github.com/pingcap/tipb/go-binlog"
 	"google.golang.org/grpc"
 )
 
@@ -1503,7 +1503,7 @@ func (s *testSessionSuite) TestUnique(c *C) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into test(id, val) values(20, 6);")
 	tk.MustExec("commit;")
-	_, err = tk1.Exec("commit")
+	tk1.Exec("commit")
 	tk1.MustExec("insert into test(id, val) values(5, 5);")
 
 	tk.MustExec("drop table test;")
@@ -1515,7 +1515,7 @@ func (s *testSessionSuite) TestUnique(c *C) {
 		);`)
 	tk.MustExec("insert into test(id, val1, val2) values(1, 1, 1);")
 	tk.MustExec("insert into test(id, val1, val2) values(2, 2, 2);")
-	_, err = tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
+	tk.Exec("update test set val1 = 3, val2 = 2 where id = 1;")
 	tk.MustExec("insert into test(id, val1, val2) values(3, 3, 3);")
 }
 
@@ -1824,7 +1824,7 @@ func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
 
 	run := false
 	hook := func() {
-		if run == false {
+		if !run {
 			tk.MustExec("update t set b = 3 where a = 1")
 			run = true
 		}
