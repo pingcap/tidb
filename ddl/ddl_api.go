@@ -252,6 +252,7 @@ func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 // checkColumnDefaultValue checks the default value of the column.
 // In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
 // In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
+// In NO_ZERO_DATE SQL mode, TIMESTAMP/DATE/DATETIME type can't have zero date like '0000-00-00' or '0000-00-00 00:00:00'.
 func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, interface{}, error) {
 	hasDefaultValue := true
 	if value != nil && (col.Tp == mysql.TypeJSON ||
@@ -273,6 +274,20 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 		}
 		// In strict SQL mode or default value is not an empty string.
 		return hasDefaultValue, value, errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
+	}
+	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
+		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
+		if vv, ok := value.(string); ok {
+			t, err := types.ParseTime(nil, vv, col.Tp, 6)
+			if err != nil {
+				// Ignores ParseTime error, because ParseTime error has been dealt in getDefaultValue
+				// Some builtin function like CURRENT_TIMESTAMP() will cause ParseTime error.
+				return hasDefaultValue, value, nil
+			}
+			if t.Time == types.ZeroTime {
+				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+			}
+		}
 	}
 	return hasDefaultValue, value, nil
 }
@@ -1060,6 +1075,33 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if infoschema.ErrTableExists.Equal(err) && s.IfNotExists {
 		return nil
 	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
+	is := d.GetInformationSchema(ctx)
+	// Check schema exist.
+	schema, ok := is.SchemaByID(schemaID)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", schemaID),
+		))
+	}
+	// Check not exist table with same name.
+	if ok := is.TableExists(schema.Name, tbInfo.Name); ok {
+		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
+	}
+
+	tbInfo.State = model.StateNone
+	job := &model.Job{
+		SchemaID:   schemaID,
+		TableID:    tbInfo.ID,
+		Type:       model.ActionRestoreTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo, autoID, dropJobID, snapshotTS, restoreTableCheckFlagNone},
+	}
+	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

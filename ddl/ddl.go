@@ -202,6 +202,7 @@ var (
 	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
 	// ErrViewWrongList returns create view must include all columns in the select clause
 	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
+
 	// ErrTableIsNotView returns for table is not base table.
 	ErrTableIsNotView = terror.ClassDDL.New(codeErrWrongObject, "'%s.%s' is not VIEW")
 )
@@ -214,6 +215,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
+	RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
@@ -636,6 +638,7 @@ const (
 	codeBadField                               = 1054
 	codeTooLongIdent                           = 1059
 	codeDupKeyName                             = 1061
+	codeInvalidDefaultValue                    = 1067
 	codeTooLongKey                             = 1071
 	codeKeyColumnDoesNotExits                  = mysql.ErrKeyColumnDoesNotExits
 	codeIncorrectPrefixKey                     = 1089
