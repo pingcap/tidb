@@ -33,11 +33,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -378,10 +378,13 @@ func (do *Domain) topNSlowQueryLoop() {
 			do.slowQuery.Append(info)
 		case msg := <-do.slowQuery.msgCh:
 			req := msg.request
-			if req.Tp == ast.ShowSlowTop {
+			switch req.Tp {
+			case ast.ShowSlowTop:
 				msg.result = do.slowQuery.QueryTop(int(req.Count), req.Kind)
-			} else if req.Tp == ast.ShowSlowRecent {
+			case ast.ShowSlowRecent:
 				msg.result = do.slowQuery.QueryRecent(int(req.Count))
+			default:
+				msg.result = do.slowQuery.QueryAll()
 			}
 			msg.Done()
 		}
@@ -843,6 +846,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 }
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+	defer recoverInDomain("updateStatsWorker", false)
 	lease := do.statsLease
 	deltaUpdateDuration := lease * 20
 	loadTicker := time.NewTicker(lease)
@@ -867,7 +871,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	}
 	defer func() {
 		do.SetStatsUpdating(false)
-		recoverInDomain("updateStatsWorker", false)
 		do.wg.Done()
 	}()
 	for {
@@ -924,11 +927,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 }
 
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
+	defer recoverInDomain("autoAnalyzeWorker", false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
-	defer analyzeTicker.Stop()
 	defer func() {
-		recoverInDomain("autoAnalyzeWorker", false)
+		analyzeTicker.Stop()
 		do.wg.Done()
 	}()
 	for {

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1333,7 +1334,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 
 func tblInfoFromCol(from ast.ResultSetNode, col *expression.Column) *model.TableInfo {
 	var tableList []*ast.TableName
-	tableList = extractTableList(from, tableList)
+	tableList = extractTableList(from, tableList, true)
 	for _, field := range tableList {
 		if field.Name.L == col.TblName.L {
 			return field.TableInfo
@@ -1994,6 +1995,15 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
+		// check partition by name.
+		for _, name := range tn.PartitionNames {
+			_, err = tables.FindPartitionByName(tableInfo, name.L)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	} else if len(tn.PartitionNames) != 0 {
+		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
 	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
@@ -2027,6 +2037,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 		indexHints:          tn.IndexHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
+		partitionNames:      tn.PartitionNames,
 	}.Init(b.ctx)
 
 	var handleCol *expression.Column
@@ -2304,11 +2315,14 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	}
 
 	var tableList []*ast.TableName
-	tableList = extractTableList(sel.From.TableRefs, tableList)
+	tableList = extractTableList(sel.From.TableRefs, tableList, false)
 	for _, t := range tableList {
 		dbName := t.Schema.L
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		if t.TableInfo.IsView() {
+			return nil, errors.Errorf("update view %s is not supported now.", t.Name.O)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
 	}
@@ -2343,8 +2357,8 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	updt.ResolveIndices()
-	return updt, nil
+	err = updt.ResolveIndices()
+	return updt, err
 }
 
 func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
@@ -2424,7 +2438,12 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	}
 	for _, assign := range newList {
 		col := assign.Col
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, col.DBName.L, col.TblName.L, "", nil)
+
+		dbName := col.DBName.L
+		if dbName == "" {
+			dbName = b.ctx.GetSessionVars().CurrentDB
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, col.OrigTblName.L, "", nil)
 	}
 	return newList, p, nil
 }
@@ -2538,7 +2557,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	del.SetSchema(expression.NewSchema())
 
 	var tableList []*ast.TableName
-	tableList = extractTableList(delete.TableRefs.TableRefs, tableList)
+	tableList = extractTableList(delete.TableRefs.TableRefs, tableList, true)
 
 	// Collect visitInfo.
 	if delete.Tables != nil {
@@ -2574,11 +2593,17 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 				// check sql like: `delete b from (select * from t) as a, t`
 				return nil, ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
 			}
+			if tn.TableInfo.IsView() {
+				return nil, errors.Errorf("delete view %s is not supported now.", tn.Name.O)
+			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "", nil)
 		}
 	} else {
 		// Delete from a, b, c, d.
 		for _, v := range tableList {
+			if v.TableInfo.IsView() {
+				return nil, errors.Errorf("delete view %s is not supported now.", v.Name.O)
+			}
 			dbName := v.Schema.L
 			if dbName == "" {
 				dbName = b.ctx.GetSessionVars().CurrentDB
@@ -2592,7 +2617,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 
 // buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
 // so after the projection, window functions only needs to deal with columns.
-func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []expression.Expression, error) {
+func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []property.Item, []expression.Expression, error) {
 	b.optFlag |= flagEliminateProjection
 
 	var items []*ast.ByItem
@@ -2600,15 +2625,17 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 	if spec.Ref.L != "" {
 		ref, ok := b.windowSpecs[spec.Ref.L]
 		if !ok {
-			return nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
+			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
 		}
 		err := mergeWindowSpec(&spec, &ref)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
+	lenPartition := 0
 	if spec.PartitionBy != nil {
 		items = append(items, spec.PartitionBy.Items...)
+		lenPartition = len(spec.PartitionBy.Items)
 	}
 	if spec.OrderBy != nil {
 		items = append(items, spec.OrderBy.Items...)
@@ -2628,7 +2655,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewrite(item.Expr, p, aggMap, true)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		p = np
 		if col, ok := it.(*expression.Column); ok {
@@ -2649,7 +2676,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 	for _, arg := range expr.Args {
 		newArg, np, err := b.rewrite(arg, p, aggMap, true)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		p = np
 		if col, ok := newArg.(*expression.Column); ok {
@@ -2668,19 +2695,22 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 
 	proj.SetSchema(schema)
 	proj.SetChildren(p)
-	return proj, propertyItems, newArgList, nil
+	return proj, propertyItems[:lenPartition], propertyItems[lenPartition:], newArgList, nil
 }
 
 func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
-	p, byItems, args, err := b.buildProjectionForWindow(p, expr, aggMap)
+	p, partitionBy, orderBy, args, err := b.buildProjectionForWindow(p, expr, aggMap)
 	if err != nil {
 		return nil, err
 	}
 
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
+	// TODO: Check if the function is aggregation function after we support more functions.
+	desc.WrapCastForAggArgs(b.ctx)
 	window := LogicalWindow{
 		WindowFuncDesc: desc,
-		ByItems:        byItems,
+		PartitionBy:    partitionBy,
+		OrderBy:        orderBy,
 	}.Init(b.ctx)
 	schema := p.Schema().Clone()
 	schema.Append(&expression.Column{
@@ -2757,14 +2787,16 @@ func buildWindowSpecs(specs []ast.WindowSpec) (map[string]ast.WindowSpec, error)
 }
 
 // extractTableList extracts all the TableNames from node.
-func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.TableName {
+// If asName is true, extract AsName prior to OrigName.
+// Privilege check should use OrigName, while expression may use AsName.
+func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName bool) []*ast.TableName {
 	switch x := node.(type) {
 	case *ast.Join:
-		input = extractTableList(x.Left, input)
-		input = extractTableList(x.Right, input)
+		input = extractTableList(x.Left, input, asName)
+		input = extractTableList(x.Right, input, asName)
 	case *ast.TableSource:
 		if s, ok := x.Source.(*ast.TableName); ok {
-			if x.AsName.L != "" {
+			if x.AsName.L != "" && asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
 				s.Name = x.AsName
