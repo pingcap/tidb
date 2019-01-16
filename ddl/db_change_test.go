@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -917,6 +918,8 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 				info = is
 				break
 			}
+			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
+			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
 			time.Sleep(interval)
 		}
 
@@ -928,6 +931,8 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 			if currID == firstConnID || seCnt == finishedCnt {
 				break
 			}
+			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
+			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
 			time.Sleep(interval)
 		}
 
