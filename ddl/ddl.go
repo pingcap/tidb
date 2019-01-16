@@ -202,6 +202,7 @@ var (
 	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
 	// ErrViewWrongList returns create view must include all columns in the select clause
 	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
+
 	// ErrTableIsNotView returns for table is not base table.
 	ErrTableIsNotView = terror.ClassDDL.New(codeErrWrongObject, "'%s.%s' is not VIEW")
 )
@@ -637,6 +638,7 @@ const (
 	codeBadField                               = 1054
 	codeTooLongIdent                           = 1059
 	codeDupKeyName                             = 1061
+	codeInvalidDefaultValue                    = 1067
 	codeTooLongKey                             = 1071
 	codeKeyColumnDoesNotExits                  = mysql.ErrKeyColumnDoesNotExits
 	codeIncorrectPrefixKey                     = 1089
