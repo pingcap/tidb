@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -236,7 +236,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 
 func (e *HashAggExec) initForUnparallelExec() {
 	e.groupSet = set.NewStringSet()
-	e.partialResultMap = make(aggPartialResultMapper, 0)
+	e.partialResultMap = make(aggPartialResultMapper)
 	e.groupKeyBuffer = make([]byte, 0, 8)
 	e.groupValDatums = make([]types.Datum, 0, len(e.groupKeyBuffer))
 	e.childResult = e.children[0].newFirstChunk()
@@ -271,7 +271,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
 			globalOutputCh:    e.finalOutputCh,
-			partialResultsMap: make(aggPartialResultMapper, 0),
+			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
 			groupValDatums:    make([]types.Datum, 0, len(e.GroupByItems)),
 			chk:               e.children[0].newFirstChunk(),
@@ -288,7 +288,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.maxChunkSize),
-			partialResultMap:    make(aggPartialResultMapper, 0),
+			partialResultMap:    make(aggPartialResultMapper),
 			groupSet:            set.NewStringSet(),
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
@@ -525,7 +525,7 @@ func (e *HashAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if e.isUnparallelExec {
@@ -802,7 +802,7 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	for !e.executed && req.NumRows() < e.maxChunkSize {
