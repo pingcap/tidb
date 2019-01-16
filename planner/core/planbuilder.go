@@ -550,14 +550,6 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ShowSlow{ShowSlow: as.ShowSlow}
 		p.SetSchema(buildShowSlowSchema())
 		ret = p
-	case ast.AdminRestoreTable:
-		if len(as.JobIDs) > 0 {
-			ret = &RestoreTable{JobID: as.JobIDs[0]}
-		} else if len(as.Tables) > 0 {
-			ret = &RestoreTable{Table: as.Tables[0], JobNum: as.JobNumber}
-		} else {
-			return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
-		}
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -1548,6 +1540,9 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			table:     v.NewTable.Name.L,
 			err:       nil,
 		})
+	case *ast.RestoreTableStmt:
+		// Restore table command can only be executed by administrator.
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	}
 
 	p := &DDL{Statement: node}
