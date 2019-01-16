@@ -2171,15 +2171,27 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
 		}
 	case *LogicalProjection:
-		if x.calculateGenCols {
-			ds := x.Children()[0].(*DataSource)
-			alias := extractTableAlias(x)
-			if alias != nil {
-				if _, ok := asNames[ds.tableInfo]; !ok {
-					asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
-				}
-				asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
+		if !x.calculateGenCols {
+			return
+		}
+
+		ds, isDS := x.Children()[0].(*DataSource)
+		if !isDS {
+			// try to extract the DataSource below a LogicalUnionScan.
+			if us, isUS := x.Children()[0].(*LogicalUnionScan); isUS {
+				ds, isDS = us.Children()[0].(*DataSource)
 			}
+		}
+		if !isDS {
+			return
+		}
+
+		alias := extractTableAlias(x)
+		if alias != nil {
+			if _, ok := asNames[ds.tableInfo]; !ok {
+				asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
+			}
+			asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
 		}
 	default:
 		for _, child := range p.Children() {
