@@ -1696,7 +1696,7 @@ func (b *PlanBuilder) buildCreateTableInsertPlan(p *DDL, v *ast.CreateTableStmt)
 	var insertCols []*ast.ColumnName
 	for _, col := range plan.Schema().Columns {
 		if _, ok := colMap[col.ColName.String()]; ok {
-			continue
+			return ErrBadGeneratedColumn.GenWithStackByArgs(col.ColName.O, v.Table.Name.O)
 		}
 		insertCols = append(insertCols, &ast.ColumnName{Name: col.ColName})
 	}

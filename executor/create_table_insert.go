@@ -30,8 +30,8 @@ type CreateTableInsertExec struct {
 }
 
 // Next implements Exec Next interface.
-func (e *CreateTableInsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.insert.Next(ctx, chk))
+func (e *CreateTableInsertExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	return errors.Trace(e.insert.Next(ctx, req))
 }
 
 // Close implements the Executor Close interface.

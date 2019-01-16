@@ -45,9 +45,8 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-
 	if job.IsRollingback() {
-		err = t.DropTable(job.SchemaID, job.TableID, true)
+		err = t.DropTableOrView(job.SchemaID, job.TableID, true)
 		if err != nil {
 			if meta.ErrDBNotExists.Equal(err) {
 				log.Warnf("Cancelling create table job, but database'(Schema ID %d)' does not exists", job.SchemaID)
@@ -76,6 +75,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err erro
 		// none -> public (for other 'create table' syntax)
 		err = checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 
@@ -674,7 +674,7 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
 
-// onAddTablePartition handle ActionAddTablePartition DDL job
+// onAddTablePartition handles ActionAddTablePartition DDL job
 // TODO: It may have the issue when two clients concurrently add partitions to a table.
 func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	partInfo := &model.PartitionInfo{}

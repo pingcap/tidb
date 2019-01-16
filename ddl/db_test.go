@@ -131,18 +131,22 @@ func (s *testDBSuite) TestAddIndexWithPK(c *C) {
 	s.tk.MustExec("create table test_add_index_with_pk(a int not null, b int not null default '0', primary key(a))")
 	s.tk.MustExec("insert into test_add_index_with_pk values(1, 2)")
 	s.tk.MustExec("alter table test_add_index_with_pk add index idx (a)")
+	c.Assert(s.tk.Se.AffectedRows(), Equals, uint64(0))
 	s.tk.MustQuery("select a from test_add_index_with_pk").Check(testkit.Rows("1"))
 	s.tk.MustExec("insert into test_add_index_with_pk values(2, 2)")
 	s.tk.MustExec("alter table test_add_index_with_pk add index idx1 (a, b)")
+	c.Assert(s.tk.Se.AffectedRows(), Equals, uint64(0))
 	s.tk.MustQuery("select * from test_add_index_with_pk").Check(testkit.Rows("1 2", "2 2"))
 	s.tk.MustExec("create table test_add_index_with_pk1(a int not null, b int not null default '0', c int, d int, primary key(c))")
 	s.tk.MustExec("insert into test_add_index_with_pk1 values(1, 1, 1, 1)")
 	s.tk.MustExec("alter table test_add_index_with_pk1 add index idx (c)")
+	c.Assert(s.tk.Se.AffectedRows(), Equals, uint64(0))
 	s.tk.MustExec("insert into test_add_index_with_pk1 values(2, 2, 2, 2)")
 	s.tk.MustQuery("select * from test_add_index_with_pk1").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 	s.tk.MustExec("create table test_add_index_with_pk2(a int not null, b int not null default '0', c int unsigned, d int, primary key(c))")
 	s.tk.MustExec("insert into test_add_index_with_pk2 values(1, 1, 1, 1)")
 	s.tk.MustExec("alter table test_add_index_with_pk2 add index idx (c)")
+	c.Assert(s.tk.Se.AffectedRows(), Equals, uint64(0))
 	s.tk.MustExec("insert into test_add_index_with_pk2 values(2, 2, 2, 2)")
 	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
@@ -531,7 +535,7 @@ func (s *testDBSuite) TestCancelRenameIndex(c *C) {
 	s.mustExec(c, "alter table t rename index idx_c2 to idx_c3")
 }
 
-// TestCancelDropTable tests cancel ddl job which type is drop table.
+// TestCancelDropTableAndSchema tests cancel ddl job which type is drop table.
 func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	testCases := []struct {
@@ -695,7 +699,7 @@ func (s *testDBSuite) TestCancelCreateTable(c *C) {
 			jobIDs := []int64{job.ID}
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.TODO())
+			err := hookCtx.NewTxn(context.Background())
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
@@ -725,7 +729,6 @@ func (s *testDBSuite) TestCancelCreateTable(c *C) {
 		sql = "create table test_cancel_create select * from test_source"
 		_, err = s.tk.Exec(sql)
 		c.Assert(checkErr, IsNil)
-		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 	}
 	// make sure the table can be created normally

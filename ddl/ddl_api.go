@@ -903,7 +903,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 	return
 }
 
-func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) (int64, error) {
+func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
@@ -1020,7 +1020,7 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	return tbInfo, nil
 }
 
-func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt, snapshotTS uint64) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if s.ReferTable != nil {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
@@ -2309,7 +2309,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	is := d.GetInformationSchema(ctx)
+	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)

@@ -180,17 +180,17 @@ func (s *testSuite3) TestCreateTable(c *C) {
 
 	// test 'ignore' and 'replace' keywords
 	tk.MustExec("drop table if exists create_target;")
-	_, err = tk.Exec("create table create_target(a int not null) select null as a")
+	err = tk.ExecToErr("create table create_target(a int not null) select null as a")
 	c.Assert(err.Error(), Equals, "[table:1048]Column 'a' cannot be null")
 	tk.MustExec("create table create_target(a int not null) ignore select null as a")
 
 	tk.MustExec("drop table if exists create_target;")
-	_, err = tk.Exec("create table create_target(a varchar(1)) select 'abcd' as a;")
+	err = tk.ExecToErr("create table create_target(a varchar(1)) select 'abcd' as a;")
 	c.Assert(err.Error(), Equals, "[types:1406]Data Too Long, field len 1, data len 4")
 	tk.MustExec("create table create_target(a varchar(1)) ignore select 'abcd' as a")
 
 	tk.MustExec("drop table if exists create_target;")
-	_, err = tk.Exec("create table create_target(a datetime) select '20180001' as a;")
+	err = tk.ExecToErr("create table create_target(a datetime) select '20180001' as a;")
 	c.Assert(err.Error(), Equals, "[types:1292]Incorrect datetime value: '2018-00-01'")
 	tk.MustExec("create table create_target(a datetime) ignore select '20180001' as a")
 
@@ -202,14 +202,14 @@ func (s *testSuite3) TestCreateTable(c *C) {
 
 	// duplicate primary key error
 	tk.MustExec("drop table create_target;")
-	_, err = tk.Exec("create table create_target(a int key, b int unique) select * from create_source order by ord;")
+	err = tk.ExecToErr("create table create_target(a int key, b int unique) select * from create_source order by ord;")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
-	_, err = tk.Exec("create table create_target (primary key (a)) (select 1 as a) union all (select 1 as a);")
+	err = tk.ExecToErr("create table create_target (primary key (a)) (select 1 as a) union all (select 1 as a);")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	// duplicate unique key error
-	_, err = tk.Exec("create table create_target(ord int key, a int, b int unique) select * from create_source order by ord;")
+	err = tk.ExecToErr("create table create_target(ord int key, a int, b int unique) select * from create_source order by ord;")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'b'")
 
 	// test ignore duplicate
@@ -224,13 +224,19 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	r.Check(testkit.Rows("1 2", "3 1"))
 
 	// test generated columns with select
-	tk.MustExec("drop table create_target")
+	tk.MustExec("drop table create_target;")
 	tk.MustExec("create table create_target(c int as (cnt * 10)) select count(*) as cnt from create_source;")
 	r = tk.MustQuery("select * from create_target;")
 	r.Check(testkit.Rows("30 3"))
 
+	tk.MustExec("drop table create_target;")
+	err = tk.ExecToErr("create table create_target(b int as (a * 2)) select a, b from create_source;")
+	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'b' in table 'create_target' is not allowed.")
+	err = tk.ExecToErr("create table create_target(b int as (a * 2) stored) select a, b from create_source;")
+	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'b' in table 'create_target' is not allowed.")
+
 	// tests adopted from MySQL
-	tk.MustExec(`drop table create_target`)
+	tk.MustExec(`drop table if exists create_target`)
 	tk.MustExec(`create table create_target select now() - now(), curtime() - curtime();`)
 	r = tk.MustQuery(`select * from create_target;`)
 	r.Check(testkit.Rows("0 0"))

@@ -257,7 +257,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 				return errors.Trace(err)
 			}
 		}
-	case model.ActionDropTable, model.ActionTruncateTable:
+	case model.ActionDropTable, model.ActionTruncateTable, model.ActionCreateTable:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		var startKey kv.Key
@@ -278,25 +278,6 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
-	case model.ActionCreateTable:
-		tbInfo := &model.TableInfo{}
-		if err := job.DecodeArgs(tbInfo); err != nil {
-			return errors.Trace(err)
-		}
-		physicalTableIDs := getPartitionIDs(tbInfo)
-		if len(physicalTableIDs) > 0 {
-			for _, pid := range physicalTableIDs {
-				startKey := tablecodec.EncodeTablePrefix(pid)
-				endKey := tablecodec.EncodeTablePrefix(pid + 1)
-				if err := doInsert(s, job.ID, pid, startKey, endKey, now); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			return nil
-		}
-		startKey := tablecodec.EncodeTablePrefix(tbInfo.ID)
-		endKey := tablecodec.EncodeTablePrefix(tbInfo.ID + 1)
-		return doInsert(s, job.ID, tbInfo.ID, startKey, endKey, now)
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		var physicalTableID int64
 		if err := job.DecodeArgs(&physicalTableID); err != nil {

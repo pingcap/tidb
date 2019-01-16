@@ -64,9 +64,7 @@ const (
 	codePartitionClauseOnNonpartitioned    = mysql.ErrPartitionClauseOnNonpartitioned
 	codeTableaccessDenied                  = mysql.ErrTableaccessDenied
 	codeSpecificAccessDenied               = mysql.ErrSpecificAccessDenied
-	codePartitionClauseOnNonpartitioned    = mysql.ErrPartitionClauseOnNonpartitioned
 	codeCantUpdateTableInCreateTableSelect = mysql.ErrCantUpdateTableInCreateTableSelect
-	codeTablenameNotAllowedHere            = mysql.ErrTablenameNotAllowedHere
 )
 
 // error definitions.

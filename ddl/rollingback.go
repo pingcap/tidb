@@ -206,7 +206,19 @@ func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 }
 
 func rollingbackCreateTable(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	job.State = model.JobStateRollingback
+	// If the value of SnapshotVer isn't zero, it means the work is inserting data.
+	if job.SchemaState == model.StateWriteReorganization {
+		job.State = model.JobStateRollingback
+	} else {
+		job.State = model.JobStateCancelled
+		if job.Error != nil {
+			// for insert error, `job.Error` is set already.
+			err = job.Error
+		} else {
+			err = errCancelledDDLJob
+		}
+		return
+	}
 	log.Infof("[ddl-%s] run the cancelling create table job: %s", w, job)
 	return
 }

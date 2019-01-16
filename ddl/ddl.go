@@ -574,7 +574,9 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
 			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
-			ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(historyJob.GetRowCount()))
+			if historyJob.Type == model.ActionCreateTable {
+				ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(historyJob.GetRowCount()))
+			}
 			return nil
 		}
 
