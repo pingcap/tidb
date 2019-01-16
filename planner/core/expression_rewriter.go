@@ -14,6 +14,9 @@
 package core
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -29,8 +32,6 @@ import (
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
-	"strconv"
-	"strings"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -1144,14 +1145,14 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		if patValue, ok := pat.GetValue().(string); ok {
 			patValue, patTypes := stringutil.CompilePattern(patValue, v.Escape)
 			if stringutil.IsExactMatch(patTypes) {
-				op := opcode.EQ
+				op := ast.EQ
 				if v.Not {
-					op = opcode.NE
+					op = ast.NE
 				}
 				types.DefaultTypeForValue(string(patValue), fieldType)
 				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
 					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
-					op.String())
+					op)
 				isPatternExactMatch = true
 			}
 		}

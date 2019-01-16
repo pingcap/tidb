@@ -128,18 +128,27 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
-		patTypes   []byte
+		pattern    string
+		escape     byte
 		exactMatch bool
 	}{
-		{nil, true},
-		{[]byte{}, true},
-		{[]byte{1}, true},
-		{[]byte{1, 1}, true},
-		{[]byte{1, 2}, false},
-		{[]byte{1, 3}, false},
-		{[]byte{1, 2, 3}, false},
+		{``, '\\', true},
+		{`_`, '\\', false},
+		{`%`, '\\', false},
+		{`a`, '\\', true},
+		{`a_`, '\\', false},
+		{`a%`, '\\', false},
+		{`a\_`, '\\', true},
+		{`a\%`, '\\', true},
+		{`a\\`, '\\', true},
+		{`a\\_`, '\\', false},
+		{`a+%`, '+', true},
+		{`a\%`, '+', false},
+		{`a++`, '+', true},
+		{`a++_`, '+', false},
 	}
 	for _, v := range tbl {
-		c.Assert(IsExactMatch(v.patTypes), Equals, v.exactMatch)
+		_, patTypes := CompilePattern(v.pattern, v.escape)
+		c.Assert(IsExactMatch(patTypes), Equals, v.exactMatch, Commentf("%v", v))
 	}
 }
