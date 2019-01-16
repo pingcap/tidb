@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/gcutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -156,6 +157,155 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	return ver, errors.Trace(err)
+}
+
+const (
+	restoreTableCheckFlagNone int64 = iota
+	restoreTableCheckFlagEnableGC
+	restoreTableCheckFlagDisableGC
+)
+
+func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	schemaID := job.SchemaID
+	tblInfo := &model.TableInfo{}
+	var autoID, dropJobID, restoreTableCheckFlag int64
+	var snapshotTS uint64
+	if err = job.DecodeArgs(tblInfo, &autoID, &dropJobID, &snapshotTS, &restoreTableCheckFlag); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// check GC and safe point
+	gcEnable, err := checkGCEnable(w)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = checkTableNotExists(t, job, schemaID, tblInfo.Name.L)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Restore table divide into 2 steps:
+	// 1. Check GC enable status, to decided whether enable GC after restore table.
+	//     a. Why not disable GC before put the job to DDL job queue?
+	//        Think about concurrency problem. If a restore job-1 is doing and already disabled GC,
+	//        then, another restore table job-2 check GC enable will get disable before into the job queue.
+	//        then, after restore table job-2 finished, the GC will be disabled.
+	//     b. Why split into 2 steps? 1 step also can finish this job: check GC -> disable GC -> restore table -> finish job.
+	//        What if the transaction commit failed? then, the job will retry, but the GC already disabled when first running.
+	//        So, after this job retry succeed, the GC will be disabled.
+	// 2. Do restore table job.
+	//     a. Check whether GC enabled, if enabled, disable GC first.
+	//     b. Check GC safe point. If drop table time if after safe point time, then can do restore.
+	//        otherwise, can't restore table, because the records of the table may already delete by gc.
+	//     c. Remove GC task of the table from gc_delete_range table.
+	//     d. Create table and rebase table auto ID.
+	//     e. Finish.
+	switch tblInfo.State {
+	case model.StateNone:
+		// none -> write only
+		// check GC enable and update flag.
+		if gcEnable {
+			job.Args[len(job.Args)-1] = restoreTableCheckFlagEnableGC
+		} else {
+			job.Args[len(job.Args)-1] = restoreTableCheckFlagDisableGC
+		}
+
+		job.SchemaState = model.StateWriteOnly
+		tblInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, false)
+	case model.StateWriteOnly:
+		// write only -> public
+		// do restore table.
+		if gcEnable {
+			err = disableGC(w)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
+			}
+		}
+		// check GC safe point
+		err = checkSafePoint(w, snapshotTS)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// Remove dropped table DDL job from gc_delete_range table.
+		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tblInfo.ID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// gofail: var mockRestoreTableCommitErr bool
+		// if mockRestoreTableCommitErr && mockRestoreTableCommitErrOnce {
+		//	 mockRestoreTableCommitErrOnce = false
+		//	 kv.MockCommitErrorEnable()
+		// }
+
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	default:
+		return ver, ErrInvalidTableState.GenWithStack("invalid restore table state %v", tblInfo.State)
+	}
+	return ver, nil
+}
+
+// mockRestoreTableCommitErrOnce uses to make sure `mockRestoreTableCommitErr` only mock error once.
+var mockRestoreTableCommitErrOnce = true
+
+func enableGC(w *worker) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.EnableGC(ctx)
+}
+
+func disableGC(w *worker) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.DisableGC(ctx)
+}
+
+func checkGCEnable(w *worker) (enable bool, err error) {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.CheckGCEnable(ctx)
+}
+
+func checkSafePoint(w *worker, snapshotTS uint64) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
 type splitableStore interface {

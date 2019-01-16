@@ -743,7 +743,7 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 
 	_, err = s.se.Execute(context.Background(), "drop database if exists t_part")
 	c.Assert(err, IsNil)
-	_, err = s.se.Execute(context.Background(), `create table t_part (a int key)
+	s.se.Execute(context.Background(), `create table t_part (a int key)
 	 partition by range(a) (
 	 partition p0 values less than (10),
 	 partition p1 values less than (20)

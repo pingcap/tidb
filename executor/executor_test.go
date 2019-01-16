@@ -62,7 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // TestLeakCheckCnt is the check count in the package of executor.
@@ -228,7 +228,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r, IsNil)
 	// error table name
-	r, err = tk.Exec("admin check table admin_test_error")
+	err = tk.ExecToErr("admin check table admin_test_error")
 	c.Assert(err, NotNil)
 	// different index values
 	sctx := tk.Se.(sessionctx.Context)
@@ -242,11 +242,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	r, errAdmin := tk.Exec("admin check table admin_test")
+	errAdmin := tk.ExecToErr("admin check table admin_test")
 	c.Assert(errAdmin, NotNil)
 
 	if config.CheckTableBeforeDrop {
-		r, err = tk.Exec("drop table admin_test")
+		err = tk.ExecToErr("drop table admin_test")
 		c.Assert(err.Error(), Equals, errAdmin.Error())
 
 		// Drop inconsistency index.
@@ -997,6 +997,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("CREATE TABLE t (a int, b int)")
 	tk.MustExec("INSERT INTO t VALUES ('1', '1')")
 	r = tk.MustQuery("select b from (SELECT * FROM t UNION ALL SELECT a, b FROM t order by a) t")
+	r.Check(testkit.Rows("1", "1"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a DECIMAL(4,2))")
@@ -1379,8 +1380,7 @@ func (s *testSuite) TestJSON(c *C) {
 	tk.MustExec(`insert into test_json (id, a) values (5, '4.0')`)
 	tk.MustExec(`insert into test_json (id, a) values (6, '"string"')`)
 
-	var result *testkit.Result
-	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
+	result := tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
 	result.Check(testkit.Rows(`{"a": [1, "2", {"aa": "bb"}, 4], "b": true}`, "null", "<nil>", "true", "3", "4", `"string"`))
 
 	// Check json_type function

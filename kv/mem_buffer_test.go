@@ -212,9 +212,8 @@ func (s *testKVSuite) TestBufferLimit(c *C) {
 	buffer := NewMemDbBuffer(DefaultTxnMembufCap).(*memDbBuffer)
 	buffer.bufferSizeLimit = 1000
 	buffer.entrySizeLimit = 500
-	var err error
 
-	err = buffer.Set([]byte("x"), make([]byte, 500))
+	err := buffer.Set([]byte("x"), make([]byte, 500))
 	c.Assert(err, NotNil) // entry size limit
 
 	err = buffer.Set([]byte("x"), make([]byte, 499))
