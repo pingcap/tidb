@@ -302,7 +302,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
