@@ -95,6 +95,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatementPerTransaction)
 	prometheus.MustRegister(StatsInaccuracyRate)
 	prometheus.MustRegister(StmtNodeCounter)
+	prometheus.MustRegister(DbStmtNodeCounter)
 	prometheus.MustRegister(StoreQueryFeedbackCounter)
 	prometheus.MustRegister(TiKVBackoffCounter)
 	prometheus.MustRegister(TiKVBackoffHistogram)

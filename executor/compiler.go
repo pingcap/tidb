@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -52,6 +51,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
+	DbCountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
 	isExpensive := logExpensiveQuery(stmtNode, finalPlan)
 
 	return &ExecStmt{
@@ -123,6 +123,111 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 		return
 	}
 	metrics.StmtNodeCounter.WithLabelValues(GetStmtLabel(stmtNode)).Inc()
+}
+
+func DbCountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
+	cfg := config.GetGlobalConfig()
+
+	if inRestrictedSQL || !cfg.DbQpsMetricSwitch {
+		return
+	}
+
+	dbLabels := GetStmtDbLabel(stmtNode)
+	typeLabel := GetStmtLabel(stmtNode)
+
+	for _,dbLabel := range dbLabels{
+		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel , typeLabel).Inc()
+	}
+}
+
+func GetStmtDbLabel(stmtNode ast.StmtNode) []string {
+	dbLabelMap := make(map[string]int,0)
+
+	switch x := stmtNode.(type) {
+	case *ast.AlterTableStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelMap[dbLabel] = 0
+	case *ast.AnalyzeTableStmt:
+		tables := x.TableNames
+		for _, table := range tables {
+			dbLabel := table.Schema.O
+			if _, ok := dbLabelMap[dbLabel]; !ok {
+				dbLabelMap[dbLabel] = 0
+			}
+		}
+	case *ast.CreateIndexStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelMap[dbLabel] = 0
+	case *ast.CreateTableStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelMap[dbLabel] = 0
+	case *ast.InsertStmt:
+		dbLabels := getDbFromResultNode(x.Table.TableRefs)
+		for _,db := range dbLabels {
+			dbLabelMap[db] = 0
+		}
+	case *ast.DropDatabaseStmt:
+	case *ast.DropIndexStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelMap[dbLabel] = 0
+	case *ast.DropTableStmt:
+		tables := x.Tables
+		for _, table := range tables {
+			dbLabel := table.Schema.O
+			if _, ok := dbLabelMap[dbLabel]; !ok {
+				dbLabelMap[dbLabel] = 0
+			}
+		}
+	case *ast.LoadDataStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelMap[dbLabel] = 0
+	case *ast.SelectStmt,*ast.UpdateStmt,*ast.DeleteStmt:
+		dbLabels := getDbFromResultNode(x)
+		for _,db := range dbLabels {
+			dbLabelMap[db] = 0
+		}
+	case *ast.TruncateTableStmt:
+		dbLabel := x.Table.Schema.O
+		dbLabelMap[dbLabel] = 0
+	}
+
+	dbLabels := make([]string , 0)
+
+	for k,_ := range dbLabelMap {
+		dbLabels = append(dbLabels , k)
+	}
+
+	fmt.Println("db:" , dbLabels)
+
+	return dbLabels
+}
+
+func getDbFromResultNode(resultNode ast.ResultSetNode) []string {//may have duplicate db name
+	dbLabels := make([]string , 0)
+	switch x := resultNode.(type) {
+	case *ast.TableSource:
+		return getDbFromResultNode(x.Source)
+	case *ast.SelectStmt:
+		return getDbFromResultNode(x.From.TableRefs)
+	case *ast.TableName:
+		dbLabels = append(dbLabels , x.DBInfo.Name.O)
+	case *ast.Join:
+		if x.Left != nil {
+			dbs := getDbFromResultNode(x.Left)
+			for _,db := range dbs{
+				dbLabels = append(dbLabels ,db)
+			}
+		}
+
+		if x.Right != nil {
+			dbs := getDbFromResultNode(x.Right)
+			for _,db := range dbs{
+				dbLabels = append(dbLabels ,db)
+			}
+		}
+	}
+
+	return dbLabels
 }
 
 // GetStmtLabel generates a label for a statement.

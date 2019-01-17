@@ -36,4 +36,12 @@ var (
 			Name:      "statement_total",
 			Help:      "Counter of StmtNode.",
 		}, []string{LblType})
+
+	DbStmtNodeCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "statement_Db_total",
+			Help:      "Counter of Db StmtNode.",
+		}, []string{LblDb,LblType})
 )
