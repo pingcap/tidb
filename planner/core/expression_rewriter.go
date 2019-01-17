@@ -1142,8 +1142,13 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	isPatternExactMatch := false
 	// Treat predicate 'like' the same way as predicate '=' when it is an exact match.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
-		if patExpression.RetType.EvalType() == types.ETString {
-			patValue, patTypes := stringutil.CompilePattern(patExpression.Value.GetString(), v.Escape)
+		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
+		if !isNull {
+			patValue, patTypes := stringutil.CompilePattern(patString, v.Escape)
 			if stringutil.IsExactMatch(patTypes) {
 				op := ast.EQ
 				if v.Not {
