@@ -26,7 +26,7 @@ type partialResult4RowNumber struct {
 	curIdx int64
 }
 
-func (wf *rowNumber) ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int64) ([]chunk.Row, int64, error) {
+func (wf *rowNumber) ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int) ([]chunk.Row, int, error) {
 	p := (*partialResult4RowNumber)(pr)
 	for len(rows) > 0 && remained > 0 {
 		p.curIdx++
@@ -37,7 +37,7 @@ func (wf *rowNumber) ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, 
 	return rows, remained, nil
 }
 
-func (wf *rowNumber) ExhaustResult(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int64) ([]chunk.Row, int64, error) {
+func (wf *rowNumber) ExhaustResult(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int) ([]chunk.Row, int, error) {
 	return rows, remained, nil
 }
 
