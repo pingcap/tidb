@@ -628,6 +628,18 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
+					if col.Tp == mysql.TypeTimestamp && col.Version == model.ColumnInfoVersion1 {
+						t, err := types.ParseTime(e.ctx.GetSessionVars().StmtCtx, defaultValStr, col.Tp, col.Decimal)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						err = t.ConvertTimeZone(time.UTC, e.ctx.GetSessionVars().TimeZone)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						defaultValStr = t.String()
+					}
+
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(&buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))

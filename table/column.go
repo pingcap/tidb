@@ -19,6 +19,7 @@ package table
 
 import (
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -355,6 +356,14 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		if err != nil {
 			return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
 				col.Name, errors.Trace(err))
+		}
+		if col.Tp == mysql.TypeTimestamp && col.Version == model.ColumnInfoVersion1 {
+			t := value.GetMysqlTime()
+			err = t.ConvertTimeZone(time.UTC, ctx.GetSessionVars().Location())
+			if err != nil {
+				return value, errors.Trace(err)
+			}
+			value.SetMysqlTime(t)
 		}
 		return value, nil
 	}

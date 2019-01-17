@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -255,6 +256,7 @@ func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 // In NO_ZERO_DATE SQL mode, TIMESTAMP/DATE/DATETIME type can't have zero date like '0000-00-00' or '0000-00-00 00:00:00'.
 func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, interface{}, error) {
 	hasDefaultValue := true
+	fmt.Printf("\n%v, value: %v\n\n=======\n", 1, value)
 	if value != nil && (col.Tp == mysql.TypeJSON ||
 		col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
 		col.Tp == mysql.TypeLongBlob || col.Tp == mysql.TypeBlob) {
@@ -275,17 +277,38 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 		// In strict SQL mode or default value is not an empty string.
 		return hasDefaultValue, value, errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
 	}
+	fmt.Printf("\n%v, ok: %v\n\n=======\n", 2, value)
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
 		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
 		if vv, ok := value.(string); ok {
-			t, err := types.ParseTime(nil, vv, col.Tp, 6)
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, col.Decimal)
 			if err != nil {
-				// Ignores ParseTime error, because ParseTime error has been dealt in getDefaultValue
-				// Some builtin function like CURRENT_TIMESTAMP() will cause ParseTime error.
-				return hasDefaultValue, value, nil
+				return hasDefaultValue, value, errors.Trace(err)
 			}
-			if t.Time == types.ZeroTime {
+			if timeValue.GetMysqlTime().Time == types.ZeroTime {
 				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+			}
+		}
+	}
+	fmt.Printf("\n%v\n=======\n", 3)
+	fmt.Printf("\n%v, value: %v\n=======\n", col.FieldType, value)
+	if value != nil && col.Tp == mysql.TypeTimestamp {
+		if vv, ok := value.(string); ok {
+			upperX := strings.ToUpper(vv)
+			if upperX != strings.ToUpper(ast.CurrentTimestamp) && upperX != types.ZeroDatetimeStr {
+				t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, col.Decimal)
+				if err != nil {
+					return hasDefaultValue, value, errors.Trace(err)
+				}
+				if t.Time != types.ZeroTime {
+					err = t.ConvertTimeZone(ctx.GetSessionVars().Location(), time.UTC)
+					if err != nil {
+						return hasDefaultValue, value, errors.Trace(err)
+					}
+					fmt.Printf("convert: old: %v, new: %v\n\n\n", value, t.String())
+					value = t.String()
+					col.Version = model.ColumnInfoVersion1
+				}
 			}
 		}
 	}
@@ -352,12 +375,14 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:
 				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
+				fmt.Printf("\ngetDefaultValue: value: %s, session.timezone: %v\n\n\n", value, ctx.GetSessionVars().TimeZone)
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 				}
 				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
+				fmt.Printf("\ncheckColumnDefaultValue: value: %s, session.timezone: %v, col.tp: %v\n\n\n", value, ctx.GetSessionVars().TimeZone, col.Tp)
 				if err = col.SetDefaultValue(value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -531,6 +556,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 	}
 
 	if c.GetDefaultValue() != nil {
+		fmt.Printf("check default value: %v\n\n", c.GetDefaultValue())
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
@@ -1890,6 +1916,9 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
 	if err != nil {
 		return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
+	}
+	if _, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+		return errors.Trace(err)
 	}
 	err = col.SetDefaultValue(value)
 	if err != nil {
