@@ -116,6 +116,7 @@ func (e *IndexLookUpHashJoin) Next(ctx context.Context, req *chunk.RecordBatch) 
 	if !ok {
 		return nil
 	}
+
 	if result.err != nil {
 		return errors.Trace(result.err)
 	}
