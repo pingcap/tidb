@@ -819,7 +819,7 @@ func (c *statsCache) setLoading(loading bool) {
 
 func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.Lock()
-	if time.Now().Sub(c.modifyTime) < TableStatsCacheExpiry || c.loading {
+	if time.Since(c.modifyTime) < TableStatsCacheExpiry || c.loading {
 		tableRows, colLength := c.tableRows, c.colLength
 		c.mu.Unlock()
 		return tableRows, colLength, nil
@@ -1601,5 +1601,122 @@ func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, e
 }
 
 func (it *infoschemaTable) Type() table.Type {
+	return table.VirtualTable
+}
+
+// VirtualTable is a dummy table.Table implementation.
+type VirtualTable struct{}
+
+// IterRecords implements table.Table Type interface.
+func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+	fn table.RecordIterFunc) error {
+	if len(startKey) != 0 {
+		return table.ErrUnsupportedOp
+	}
+	return nil
+}
+
+// RowWithCols implements table.Table Type interface.
+func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+	return nil, table.ErrUnsupportedOp
+}
+
+// Row implements table.Table Type interface.
+func (vt *VirtualTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
+	return nil, table.ErrUnsupportedOp
+}
+
+// Cols implements table.Table Type interface.
+func (vt *VirtualTable) Cols() []*table.Column {
+	return nil
+}
+
+// WritableCols implements table.Table Type interface.
+func (vt *VirtualTable) WritableCols() []*table.Column {
+	return nil
+}
+
+// Indices implements table.Table Type interface.
+func (vt *VirtualTable) Indices() []table.Index {
+	return nil
+}
+
+// WritableIndices implements table.Table Type interface.
+func (vt *VirtualTable) WritableIndices() []table.Index {
+	return nil
+}
+
+// DeletableIndices implements table.Table Type interface.
+func (vt *VirtualTable) DeletableIndices() []table.Index {
+	return nil
+}
+
+// RecordPrefix implements table.Table Type interface.
+func (vt *VirtualTable) RecordPrefix() kv.Key {
+	return nil
+}
+
+// IndexPrefix implements table.Table Type interface.
+func (vt *VirtualTable) IndexPrefix() kv.Key {
+	return nil
+}
+
+// FirstKey implements table.Table Type interface.
+func (vt *VirtualTable) FirstKey() kv.Key {
+	return nil
+}
+
+// RecordKey implements table.Table Type interface.
+func (vt *VirtualTable) RecordKey(h int64) kv.Key {
+	return nil
+}
+
+// AddRecord implements table.Table Type interface.
+func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// RemoveRecord implements table.Table Type interface.
+func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+	return table.ErrUnsupportedOp
+}
+
+// UpdateRecord implements table.Table Type interface.
+func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+	return table.ErrUnsupportedOp
+}
+
+// AllocAutoID implements table.Table Type interface.
+func (vt *VirtualTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// Allocator implements table.Table Type interface.
+func (vt *VirtualTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
+	return nil
+}
+
+// RebaseAutoID implements table.Table Type interface.
+func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+	return table.ErrUnsupportedOp
+}
+
+// Meta implements table.Table Type interface.
+func (vt *VirtualTable) Meta() *model.TableInfo {
+	return nil
+}
+
+// GetPhysicalID implements table.Table GetPhysicalID interface.
+func (vt *VirtualTable) GetPhysicalID() int64 {
+	return 0
+}
+
+// Seek implements table.Table Type interface.
+func (vt *VirtualTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
+	return 0, false, table.ErrUnsupportedOp
+}
+
+// Type implements table.Table Type interface.
+func (vt *VirtualTable) Type() table.Type {
 	return table.VirtualTable
 }

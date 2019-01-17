@@ -42,7 +42,6 @@ type testGCWorkerSuite struct {
 }
 
 var _ = Suite(&testGCWorkerSuite{})
-var _ = SerialSuites(&testGCWorkerSerialSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
@@ -161,58 +160,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(ok, IsTrue)
 }
 
-func (s *testGCWorkerSuite) TestDoGC(c *C) {
-	var err error
-	ctx := context.Background()
-
-	gcSafePointCacheInterval = 1
-
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
-	c.Assert(err, IsNil)
-
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
-	c.Assert(err, IsNil)
-
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency))
-	c.Assert(err, IsNil)
-	err = s.gcWorker.doGC(ctx, 20)
-	c.Assert(err, IsNil)
-}
-
-type testGCWorkerSerialSuite struct {
-	store    tikv.Storage
-	oracle   *mockoracle.MockOracle
-	gcWorker *GCWorker
-	dom      *domain.Domain
-}
-
-func (s *testGCWorkerSerialSuite) SetUpTest(c *C) {
-	tikv.NewGCHandlerFunc = NewGCWorker
-	store, err := mockstore.NewMockTikvStore()
-	s.store = store.(tikv.Storage)
-	c.Assert(err, IsNil)
-	s.oracle = &mockoracle.MockOracle{}
-	s.store.SetOracle(s.oracle)
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	gcWorker, err := NewGCWorker(s.store, nil)
-	c.Assert(err, IsNil)
-	gcWorker.Start()
-	gcWorker.Close()
-	s.gcWorker = gcWorker.(*GCWorker)
-}
-
-func (s *testGCWorkerSerialSuite) TearDownTest(c *C) {
-	s.dom.Close()
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-}
-
-func (s *testGCWorkerSerialSuite) TestDoGCForOneRegion(c *C) {
+func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	var successRegions int32
 	var failedRegions int32
 	taskWorker := newGCTaskWorker(s.store, nil, nil, s.gcWorker.uuid, &successRegions, &failedRegions)
@@ -243,4 +191,51 @@ func (s *testGCWorkerSerialSuite) TestDoGCForOneRegion(c *C) {
 	c.Assert(regionErr.GetServerIsBusy(), NotNil)
 	c.Assert(err, IsNil)
 	gofail.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreSendReqResult")
+}
+
+func (s *testGCWorkerSuite) TestDoGC(c *C) {
+	var err error
+	ctx := context.Background()
+
+	gcSafePointCacheInterval = 1
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
+	c.Assert(err, IsNil)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
+	c.Assert(err, IsNil)
+
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency))
+	c.Assert(err, IsNil)
+	err = s.gcWorker.doGC(ctx, 20)
+	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
+	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+	// Now the row must be set to the default value.
+	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, gcModeDistributed)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, false)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
 }

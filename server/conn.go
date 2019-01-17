@@ -49,7 +49,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -295,11 +295,9 @@ func parseOldHandshakeResponseBody(packet *handshakeResponse41, data []byte, off
 		}
 		if len(data[offset:]) > 0 {
 			packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-			offset += len(packet.Auth) + 1
 		}
 	} else {
 		packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-		offset += len(packet.Auth) + 1
 	}
 
 	return nil
@@ -525,7 +523,6 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run() {
 	const size = 4096
-	closedOutside := false
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -535,7 +532,7 @@ func (cc *clientConn) Run() {
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if !closedOutside {
+		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
 			err := cc.Close()
 			terror.Log(errors.Trace(err))
 		}
@@ -547,10 +544,7 @@ func (cc *clientConn) Run() {
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
-		if atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) == false {
-			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
-				closedOutside = true
-			}
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) {
 			return
 		}
 
@@ -563,7 +557,7 @@ func (cc *clientConn) Run() {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					idleTime := time.Now().Sub(start)
+					idleTime := time.Since(start)
 					log.Infof("con:%d read packet timeout, close this connection, idle: %v, wait_timeout: %v", cc.connectionID, idleTime, waitTimeout)
 				} else {
 					errStack := errors.ErrorStack(err)
@@ -576,10 +570,7 @@ func (cc *clientConn) Run() {
 			return
 		}
 
-		if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) == false {
-			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
-				closedOutside = true
-			}
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
 			return
 		}
 
@@ -1131,11 +1122,11 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // serverStatus, a flag bit represents server information
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
 	data := make([]byte, 4, 1024)
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	gotColumnInfo := false
 	for {
 		// Here server.tidbResultSet implements Next method.
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1149,16 +1140,16 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 			gotColumnInfo = true
 		}
-		rowCount := chk.NumRows()
+		rowCount := req.NumRows()
 		if rowCount == 0 {
 			break
 		}
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), chk.GetRow(i))
+				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), chk.GetRow(i))
+				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1179,22 +1170,22 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	fetchedRows := rs.GetFetchedRows()
 
 	// if fetchedRows is not enough, getting data from recordSet.
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for len(fetchedRows) < fetchSize {
 		// Here server.tidbResultSet implements Next method.
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowCount := chk.NumRows()
+		rowCount := req.NumRows()
 		if rowCount == 0 {
 			break
 		}
 		// filling fetchedRows with chunk
 		for i := 0; i < rowCount; i++ {
-			fetchedRows = append(fetchedRows, chk.GetRow(i))
+			fetchedRows = append(fetchedRows, req.GetRow(i))
 		}
-		chk = chunk.Renew(chk, cc.ctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
@@ -1274,7 +1265,7 @@ func (cc *clientConn) handleChangeUser(data []byte) error {
 	}
 	pass := data[:passLen]
 	data = data[passLen:]
-	dbName, data := parseNullTermString(data)
+	dbName, _ := parseNullTermString(data)
 	cc.dbname = hack.String(dbName)
 	err := cc.ctx.Close()
 	if err != nil {

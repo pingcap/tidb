@@ -416,8 +416,7 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 			join, ok = p.(LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
 			c.Assert(ok, IsTrue, comment)
 		}
-		joinType := fmt.Sprintf("%s", join.JoinType.String())
-		c.Assert(joinType, Equals, ca.joinType, comment)
+		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
 	}
 }
 
@@ -444,8 +443,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 		c.Assert(err, IsNil, comment)
 		c.Assert(ToString(p), Equals, ca.best, comment)
 		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
-		joinType := fmt.Sprintf("%s", join.JoinType.String())
-		c.Assert(joinType, Equals, ca.joinType, comment)
+		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
 	}
 }
 
@@ -1386,6 +1384,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			},
 		},
 		{
+			sql: "update t a1 set a1.a = a1.a + 1",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
+			},
+		},
+		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
 				{mysql.SelectPriv, "test", "t", "", nil},
@@ -1906,23 +1911,23 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 	}{
 		{
 			sql:    "select a, avg(a) over(partition by a) from t",
-			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(partition by b) from t",
-			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)))->Projection",
 		},
 		{
 			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
-			result: "TableReader(Table(t))->Projection->Sort->Window(avg(2_proj_window_3))->Projection",
+			result: "TableReader(Table(t))->Projection->Sort->Window(avg(cast(2_proj_window_3)))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
-			result: "TableReader(Table(t))->Sort->Window(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)))->Projection",
 		},
 		{
 			sql:    "select a, b as a, avg(a) over(partition by a) from t",
-			result: "TableReader(Table(t))->Window(avg(test.t.a))->Projection",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)))->Projection",
 		},
 		{
 			sql:    "select a, b as z, sum(z) over() from t",
@@ -1930,7 +1935,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, b as z from t order by (sum(z) over())",
-			result: "TableReader(Table(t))->Window(sum(test.t.z))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.z)))->Sort->Projection",
 		},
 		{
 			sql:    "select sum(avg(a)) over() from t",
@@ -1938,11 +1943,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select b from t order by(sum(a) over())",
-			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over(partition by a))",
-			result: "TableReader(Table(t))->Window(sum(test.t.a))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(avg(a)) over())",
@@ -1950,7 +1955,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
-			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(tt.a))->MaxOneRow->Sel([w])}->Projection",
+			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(cast(tt.a)))->MaxOneRow->Sel([w])}->Projection",
 		},
 		{
 			sql:    "select avg(a) over() as w from t having w > 1",
@@ -1959,6 +1964,42 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "select sum(a) over() as sum_a from t group by sum_a",
 			result: "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (w2)",
+			result: "[planner:3579]Window name 'w2' is not defined.",
+		},
+		{
+			sql:    "select sum(a) over(w) from t",
+			result: "[planner:3579]Window name 'w' is not defined.",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (w2), w2 as (w1)",
+			result: "[planner:3580]There is a circularity in the window dependency graph.",
+		},
+		{
+			sql:    "select sum(a) over(w partition by a) from t window w as ()",
+			result: "[planner:3581]A window which depends on another cannot define partitioning.",
+		},
+		{
+			sql:    "select sum(a) over(w) from t window w as (rows between 1 preceding AND 1 following)",
+			result: "[planner:3582]Window 'w' has a frame definition, so cannot be referenced by another window.",
+		},
+		{
+			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
+			result: "[planner:3583]Window '<unnamed window>' cannot inherit 'w' since both contain an ORDER BY clause.",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (), w1 as ()",
+			result: "[planner:3591]Window 'w1' is defined twice.",
+		},
+		{
+			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Window(avg(cast(test.t.a)))->Projection",
+		},
+		{
+			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
 		},
 	}
 
@@ -1987,6 +2028,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		lp, ok := p.(LogicalPlan)
 		c.Assert(ok, IsTrue)
 		p, err = physicalOptimize(lp)
+		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.result, comment)
 	}
 }

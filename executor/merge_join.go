@@ -88,7 +88,7 @@ type mergeJoinInnerTable struct {
 }
 
 func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
-	if t.reader == nil || t.joinKeys == nil || len(t.joinKeys) == 0 || ctx == nil {
+	if t.reader == nil || ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
 	t.ctx = ctx
@@ -138,7 +138,7 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 		if t.curRow == t.curIter.End() {
 			t.reallocReaderResult()
 			oldMemUsage := t.curResult.MemoryUsage()
-			err := t.reader.Next(t.ctx, t.curResult)
+			err := t.reader.Next(t.ctx, chunk.NewRecordBatch(t.curResult))
 			// error happens or no more data.
 			if err != nil || t.curResult.NumRows() == 0 {
 				t.curRow = t.curIter.End()
@@ -262,20 +262,20 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	if !e.prepared {
-		if err := e.prepare(ctx, chk); err != nil {
+		if err := e.prepare(ctx, req.Chunk); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	for chk.NumRows() < e.maxChunkSize {
-		hasMore, err := e.joinToChunk(ctx, chk)
+	for req.NumRows() < e.maxChunkSize {
+		hasMore, err := e.joinToChunk(ctx, req.Chunk)
 		if err != nil || !hasMore {
 			return errors.Trace(err)
 		}
@@ -330,6 +330,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 				e.joiner.onMissMatch(e.outerTable.row, chk)
 			}
 			e.outerTable.row = e.outerTable.iter.Next()
+			e.outerTable.hasMatch = false
 			e.innerIter4Row.Begin()
 		}
 
@@ -355,7 +356,7 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 // may not all belong to the same join key, but are guaranteed to be sorted
 // according to the join key.
 func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
-	err = e.outerTable.reader.Next(ctx, e.outerTable.chk)
+	err = e.outerTable.reader.Next(ctx, chunk.NewRecordBatch(e.outerTable.chk))
 	if err != nil {
 		return errors.Trace(err)
 	}

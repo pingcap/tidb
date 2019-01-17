@@ -169,17 +169,17 @@ LIMIT 0, 5;
 id	count	task	operator info
 Projection_13	0.00	root	te.expect_time
 └─Limit_19	0.00	root	offset:0, count:5
-  └─IndexJoin_137	0.00	root	left outer join, inner:IndexReader_136, outer key:tr.id, inner key:p.relate_id
-    ├─TopN_140	0.00	root	te.expect_time:asc, offset:0, count:5
+  └─IndexJoin_138	0.00	root	left outer join, inner:IndexReader_137, outer key:tr.id, inner key:p.relate_id
+    ├─TopN_141	0.00	root	te.expect_time:asc, offset:0, count:5
     │ └─IndexJoin_35	0.00	root	inner join, inner:IndexLookUp_34, outer key:tr.id, inner key:te.trade_id
-    │   ├─IndexLookUp_105	0.00	root	
-    │   │ ├─Selection_103	0.00	cop	eq(tr.business_type, 18), in(tr.trade_type, 1)
-    │   │ │ └─IndexScan_101	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
-    │   │ └─Selection_104	0.00	cop	eq(tr.brand_identy, 32314), eq(tr.domain_type, 2)
-    │   │   └─TableScan_102	0.00	cop	table:tr, keep order:false
+    │   ├─IndexLookUp_106	0.00	root	
+    │   │ ├─Selection_104	0.00	cop	eq(tr.business_type, 18), in(tr.trade_type, 1)
+    │   │ │ └─IndexScan_102	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
+    │   │ └─Selection_105	0.00	cop	eq(tr.brand_identy, 32314), eq(tr.domain_type, 2)
+    │   │   └─TableScan_103	0.00	cop	table:tr, keep order:false
     │   └─IndexLookUp_34	250.00	root	
     │     ├─IndexScan_31	10.00	cop	table:te, index:trade_id, range: decided by [tr.id], keep order:false, stats:pseudo
     │     └─Selection_33	250.00	cop	ge(te.expect_time, 2018-04-23 00:00:00.000000), le(te.expect_time, 2018-04-23 23:59:59.000000)
     │       └─TableScan_32	10.00	cop	table:te, keep order:false, stats:pseudo
-    └─IndexReader_136	10.00	root	index:IndexScan_135
-      └─IndexScan_135	10.00	cop	table:p, index:relate_id, range: decided by [tr.id], keep order:false, stats:pseudo
+    └─IndexReader_137	10.00	root	index:IndexScan_136
+      └─IndexScan_136	10.00	cop	table:p, index:relate_id, range: decided by [tr.id], keep order:false, stats:pseudo

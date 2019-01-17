@@ -271,9 +271,9 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustQuery("select 10 from idx_agg group by b").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 
-	tk.MustExec("set @@tidb_max_chunk_size=1;")
+	tk.MustExec("set @@tidb_init_chunk_size=1;")
 	tk.MustQuery("select group_concat(b) from idx_agg group by b;").Check(testkit.Rows("1", "2,2"))
-	tk.MustExec("set @@tidb_max_chunk_size=2;")
+	tk.MustExec("set @@tidb_init_chunk_size=2;")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b decimal(15,2))")
@@ -445,8 +445,7 @@ func (s *testSuite1) TestOnlyFullGroupBy(c *C) {
 	// test AggregateFunc
 	tk.MustQuery("select max(a) from t group by d")
 	// test incompatible with sql_mode = ONLY_FULL_GROUP_BY
-	var err error
-	err = tk.ExecToErr("select * from t group by d")
+	err := tk.ExecToErr("select * from t group by d")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	err = tk.ExecToErr("select b-c from t group by b+c")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
