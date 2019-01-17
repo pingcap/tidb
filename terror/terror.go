@@ -19,6 +19,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/mysql"
 	log "github.com/sirupsen/logrus"
 )
@@ -341,4 +342,26 @@ func Log(err error) {
 	if err != nil {
 		log.Error(errors.ErrorStack(err))
 	}
+}
+
+const (
+	// SyntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
+	SyntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
+)
+
+// SyntaxError converts parser error to TiDB's syntax error.
+func SyntaxError(err error) error {
+	if err == nil {
+		return nil
+	}
+	log.Errorf("%+v", err)
+	return parser.ErrParse.GenWithStackByArgs(SyntaxErrorPrefix, err.Error())
+}
+
+// SyntaxWarn converts parser warn to TiDB's syntax warn.
+func SyntaxWarn(err error) error {
+	if err == nil {
+		return nil
+	}
+	return parser.ErrParse.GenWithStackByArgs(SyntaxErrorPrefix, err.Error())
 }

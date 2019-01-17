@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	tterror "github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -932,7 +933,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if err != nil {
 		s.rollbackOnError(ctx)
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
-		return nil, errors.Trace(err)
+		return nil, tterror.SyntaxError(err)
 	}
 	label := s.getSQLLabel()
 	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
@@ -967,7 +968,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	for _, warn := range warns {
-		s.sessionVars.StmtCtx.AppendWarning(warn)
+		s.sessionVars.StmtCtx.AppendWarning(tterror.SyntaxWarn(warn))
 	}
 	return recordSets, nil
 }
