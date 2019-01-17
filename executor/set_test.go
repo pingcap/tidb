@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"context"
-	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
@@ -140,10 +139,10 @@ func (s *testSuite2) TestSetVar(c *C) {
 
 	tk.MustExec("set @@session.ddl_slow_threshold=12345")
 	tk.MustQuery("select @@session.ddl_slow_threshold").Check(testkit.Rows("12345"))
-	c.Assert(variable.DDLSlowOprThreshold, 10, uint32(12345))
+	c.Assert(variable.DDLSlowOprThreshold, Equals, uint32(12345))
 	tk.MustExec("set session ddl_slow_threshold=\"54321\"")
 	tk.MustQuery("show variables like 'ddl_slow_threshold'").Check(testkit.Rows("ddl_slow_threshold 54321"))
-	c.Assert(variable.DDLSlowOprThreshold, 10, uint32(54321))
+	c.Assert(variable.DDLSlowOprThreshold, Equals, uint32(54321))
 
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
