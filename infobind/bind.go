@@ -1,8 +1,4 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,19 +14,15 @@
 package infobind
 
 import (
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
 var _ Manager = (*BindManager)(nil)
 
-// BindManager use to manage both global bind info and session bind info
+// BindManager use to manage both global bind info and session bind info.
 type BindManager struct {
-	is            infoschema.InfoSchema
-	currentDB     string
 	SessionHandle *Handle //session handle
 	*Handle               //global handle
-	copy          bool
 }
 
 type keyType int

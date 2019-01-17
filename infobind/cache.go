@@ -1,8 +1,4 @@
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,25 +29,25 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const defaultBindCacheSize int = 1000
+const defaultBindCacheSize int = 5
 
-//BindData store the basic bind info and bindSql astNode
+// BindData store the basic bind info and bindSql astNode.
 type BindData struct {
 	bindRecord
 	ast ast.StmtNode
 }
 
-//BindCache hold a bindDataMap, key:origin sql hash value: bindData slice
+// BindCache hold a bindDataMap, key:origin sql hash value: bindData slice.
 type BindCache struct {
 	Cache map[string][]*BindData
 }
 
-//Handle hold a atomic bindCache
+// Handle hold a atomic bindCache.
 type Handle struct {
 	bind atomic.Value
 }
 
-//HandleUpdater use to update the BindCache
+// HandleUpdater use to update the BindCache.
 type HandleUpdater struct {
 	Parser         *parser.Parser
 	LastUpdateTime types.Time
@@ -70,7 +66,7 @@ type bindRecord struct {
 	Collation   string
 }
 
-//NewHandle create a Handle with a BindCache
+// NewHandle create a Handle with a BindCache.
 func NewHandle() *Handle {
 	handle := &Handle{}
 	bc := &BindCache{
@@ -80,7 +76,7 @@ func NewHandle() *Handle {
 	return handle
 }
 
-//Get get bindCache from a Handle
+// Get get bindCache from a Handle.
 func (h *Handle) Get() *BindCache {
 	bc := h.bind.Load()
 	if bc != nil {
@@ -91,7 +87,7 @@ func (h *Handle) Get() *BindCache {
 	}
 }
 
-//Load Diff use to load new bind info to bindCache bc
+// LoadDiff use to load new bind info to bindCache bc.
 func (h *HandleUpdater) loadDiff(sql string, bc *BindCache) error {
 	tmp, err := h.Ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
@@ -118,7 +114,6 @@ func (h *HandleUpdater) loadDiff(sql string, bc *BindCache) error {
 				log.Errorf("row decode error %s", err)
 				continue
 			}
-			log.Infof("record %v", record)
 			err = bc.appendNode(h.Ctx, record, h.Parser)
 			if err != nil {
 				continue
@@ -132,7 +127,7 @@ func (h *HandleUpdater) loadDiff(sql string, bc *BindCache) error {
 	}
 }
 
-//Update update the HandleUpdater's bindCache if tidb first startup,the fullLoad is true,otherwise fullLoad is false
+// Update update the HandleUpdater's bindCache if tidb first startup,the fullLoad is true,otherwise fullLoad is false.
 func (h *HandleUpdater) Update(fullLoad bool) error {
 	var (
 		err error
@@ -150,7 +145,6 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 	}
 
 	h.bind.Store(bc)
-	bc.Display()
 	return nil
 }
 
@@ -229,7 +223,6 @@ func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparse
 		ast:        stmtNodes[0],
 	}
 
-	log.Infof("original sql [%s] bind sql [%s]", value.OriginalSQL, value.BindSQL)
 	if bindArr, ok := b.Cache[hash]; ok {
 		for idx, v := range bindArr {
 			if v.Db == value.Db {
@@ -241,16 +234,4 @@ func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparse
 	b.Cache[hash] = append(b.Cache[hash], newNode)
 	return nil
 
-}
-
-//Display print all bind info into log
-func (b *BindCache) Display() {
-	for hash, bindArr := range b.Cache {
-		log.Infof("------------------hash entry %s-----------------------", hash)
-		for _, bindData := range bindArr {
-			log.Infof("%v", bindData.bindRecord)
-		}
-		log.Infof("------------------hash entry end -----------------------")
-
-	}
 }

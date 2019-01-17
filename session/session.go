@@ -141,7 +141,7 @@ type session struct {
 
 	store kv.Storage
 
-	Parser *parser.Parser
+	parser *parser.Parser
 
 	preparedPlanCache *kvcache.SimpleLRUCache
 
@@ -838,9 +838,9 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	s.Parser.SetSQLMode(s.sessionVars.SQLMode)
-	s.Parser.EnableWindowFunc(s.sessionVars.EnableWindowFunction)
-	return s.Parser.Parse(sql, charset, collation)
+	s.parser.SetSQLMode(s.sessionVars.SQLMode)
+	s.parser.EnableWindowFunc(s.sessionVars.EnableWindowFunction)
+	return s.parser.Parse(sql, charset, collation)
 }
 
 func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
@@ -1302,7 +1302,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = dom.LoadBindInfoLoop(se2, se2.Parser)
+	err = dom.LoadBindInfoLoop(se2, se2.parser)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1353,7 +1353,7 @@ func createSession(store kv.Storage) (*session, error) {
 	}
 	s := &session{
 		store:           store,
-		Parser:          parser.New(),
+		parser:          parser.New(),
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 	}
@@ -1377,7 +1377,7 @@ func createSession(store kv.Storage) (*session, error) {
 func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:       store,
-		Parser:      parser.New(),
+		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {

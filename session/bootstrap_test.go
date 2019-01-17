@@ -117,7 +117,7 @@ func globalVarsCount() int64 {
 func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	ss := &session{
 		store:       store,
-		Parser:      parser.New(),
+		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
 	ss.txn.init()
