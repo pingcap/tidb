@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ipwhitelist"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -306,6 +307,16 @@ func (s *Server) Run() error {
 			terror.Log(errors.Trace(err))
 			break
 		}
+
+		const useIPWhiteList = true
+		if useIPWhiteList {
+			if err := verify(conn); err != nil {
+				log.Info(err)
+				conn.Close()
+				continue
+			}
+		}
+
 		go s.onConn(conn)
 	}
 	err := s.listener.Close()
@@ -316,6 +327,10 @@ func (s *Server) Run() error {
 		log.Errorf("listener stopped, waiting for manual kill.")
 		time.Sleep(time.Minute)
 	}
+}
+
+func verify(conn net.Conn) error {
+	return ipwhitelist.Check(conn)
 }
 
 func (s *Server) shouldStopListener() bool {
