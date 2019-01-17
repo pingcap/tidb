@@ -956,7 +956,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				return errors.Trace(err)
 			}
 
-			if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
+			if err = checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
 				return errors.Trace(err)
 			}
 
@@ -1155,6 +1155,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
 		case ast.AlterTableDropPartition:
 			err = d.DropTablePartition(ctx, ident, spec)
+		case ast.AlterTableTruncatePartition:
+			err = d.TruncateTablePartition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
@@ -1400,7 +1402,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	err = checkAddPartitionTooManyPartitions(len(meta.Partition.Definitions) + len(partInfo.Definitions))
+	err = checkAddPartitionTooManyPartitions(uint64(len(meta.Partition.Definitions) + len(partInfo.Definitions)))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1424,6 +1426,43 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+	meta := t.Meta()
+	if meta.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	var pid int64
+	pid, err = findPartitionByName(meta, spec.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		Type:       model.ActionTruncateTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{pid},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

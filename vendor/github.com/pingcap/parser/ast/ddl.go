@@ -742,6 +742,7 @@ const (
 	AlterTableForce
 	AlterTableAddPartitions
 	AlterTableDropPartition
+	AlterTableTruncatePartition
 
 // TODO: Add more actions
 )
