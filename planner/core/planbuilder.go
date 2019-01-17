@@ -251,7 +251,8 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	p := &Set{}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 		}
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
@@ -778,8 +779,13 @@ const (
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	for _, tbl := range as.TableNames {
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", nil)
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", nil)
+		user := b.ctx.GetSessionVars().User
+		if user != nil {
+			insertErr := ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+			selectErr := ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
+		}
 	}
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
