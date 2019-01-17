@@ -588,7 +588,15 @@ type ExistsSubqueryExpr struct {
 
 // Restore implements Node interface.
 func (n *ExistsSubqueryExpr) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if n.Not {
+		ctx.WriteKeyWord("NOT EXISTS ")
+	} else {
+		ctx.WriteKeyWord("EXISTS ")
+	}
+	if err := n.Sel.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore ExistsSubqueryExpr.Sel")
+	}
+	return nil
 }
 
 // Format the ExprNode into a Writer.
