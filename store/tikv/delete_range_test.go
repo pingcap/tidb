@@ -60,7 +60,8 @@ func (s *testDeleteRangeSuite) checkData(c *C, expectedData map[string]string) {
 		err = it.Next()
 		c.Assert(err, IsNil)
 	}
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
 
 	// Print log
 	var actualKeys []string

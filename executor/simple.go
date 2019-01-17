@@ -210,9 +210,9 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		}
 		if !exists {
 			failedUsers = append(failedUsers, spec.User.String())
-			if s.IfExists {
-				// TODO: Make this error as a warning.
-			}
+			// TODO: Make this error as a warning.
+			// if s.IfExists {
+			// }
 			continue
 		}
 		pwd := ""

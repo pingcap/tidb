@@ -90,9 +90,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	retainedPredicates, _ := p.children[0].PredicatePushDown(predicates)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
-	for _, cond := range predicates {
-		p.conditions = append(p.conditions, cond)
-	}
+	p.conditions = append(p.conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
 	return retainedPredicates, p
 }
@@ -336,9 +334,7 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	for i, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
-		for _, cond := range predicates {
-			newExprs = append(newExprs, cond)
-		}
+		newExprs = append(newExprs, predicates...)
 		retCond, newChild := proj.PredicatePushDown(newExprs)
 		addSelection(p, newChild, retCond, i)
 	}

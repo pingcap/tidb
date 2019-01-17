@@ -1363,7 +1363,6 @@ func (d *MyDecimal) FromBin(bin []byte, precision, frac int) (binSize int, err e
 			*d = zeroMyDecimal
 			return binSize, ErrBadNumber
 		}
-		wordIdx++
 	}
 
 	if d.digitsInt == 0 && d.digitsFrac == 0 {
@@ -1797,7 +1796,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 		wordsFracTo = wordsFrac1 + wordsFrac2
 		idx1        = wordsInt1
 		idx2        = wordsInt2
-		idxTo       = 0
+		idxTo       int
 		tmp1        = wordsIntTo
 		tmp2        = wordsFracTo
 	)
@@ -2028,7 +2027,6 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 			idxTo++
 			digitsIntTo++
 		}
-		digitsIntTo++
 	}
 	i = digitsToWords(prec1)
 	len1 := i + digitsToWords(2*frac2+fracIncr+1) + 1
@@ -2040,7 +2038,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	copy(tmp1, from1.wordBuf[idx1:idx1+i])
 
 	start1 := 0
-	stop1 := len1
+	var stop1 int
 	start2 := idx2
 	stop2 := idx2 + digitsToWords(prec2) - 1
 
