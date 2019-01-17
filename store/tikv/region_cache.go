@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -357,6 +358,7 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 	if !ok {
 		return
 	}
+	log.Infof("drop region from cache: region %v, confVer %v, ver %v, stack:\n%v", verID.id, verID.confVer, verID.ver, string(debug.Stack()))
 	metrics.TiKVRegionCacheCounter.WithLabelValues("drop_region_from_cache", metrics.RetLabel(nil)).Inc()
 	c.mu.sorted.Delete(newBtreeItem(r.region))
 	delete(c.mu.regions, verID)
