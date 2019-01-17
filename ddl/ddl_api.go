@@ -1813,12 +1813,6 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 		return nil
 	}
 
-	// Not allow to change binary to utf8mb4 or utf8.
-	if origCharset == charset.CharsetBin {
-		msg := fmt.Sprintf("original binary charset modification is not supported, charset from %s to %s", origCharset, toCharset)
-		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
-	}
-
 	if toCharset != origCharset {
 		msg := fmt.Sprintf("charset from %s to %s", origCharset, toCharset)
 		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
@@ -2255,6 +2249,11 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	if origCharset == toCharset && origCollate == toCollate {
 		// nothing to do.
 		return nil
+	}
+	// Not allow to change binary to utf8mb4 or utf8.
+	if origCharset == charset.CharsetBin {
+		msg := fmt.Sprintf("original binary charset modification is not supported, charset from %s to %s", origCharset, toCharset)
+		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 
 	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
