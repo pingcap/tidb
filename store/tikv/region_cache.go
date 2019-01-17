@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -272,6 +273,7 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 func (c *RegionCache) DropRegion(id RegionVerID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	log.Infof("RegionCache DropRegion invoked: %+v, stack: %v", id, string(debug.Stack()))
 	c.dropRegionFromCache(id)
 }
 
@@ -282,12 +284,12 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 
 	r := c.getCachedRegion(regionID)
 	if r == nil {
-		log.Debugf("regionCache: cannot find region when updating leader %d,%d", regionID, leaderStoreID)
+		log.Infof("regionCache: cannot find region when updating leader %d,%d", regionID, leaderStoreID)
 		return
 	}
 
 	if !r.SwitchPeer(leaderStoreID) {
-		log.Debugf("regionCache: cannot find peer when updating leader %d,%d", regionID, leaderStoreID)
+		log.Infof("regionCache: cannot find peer when updating leader %d,%d", regionID, leaderStoreID)
 		c.dropRegionFromCache(r.VerID())
 	}
 }
@@ -296,6 +298,7 @@ func (c *RegionCache) UpdateLeader(regionID RegionVerID, leaderStoreID uint64) {
 func (c *RegionCache) insertRegionToCache(r *Region) {
 	old := c.mu.sorted.ReplaceOrInsert(newBtreeItem(r))
 	if old != nil {
+		log.Infof("sorted region cache replaced, new: %+v, old: %+v, stack: %v", r, old, string(debug.Stack()))
 		delete(c.mu.regions, old.(*btreeItem).region.VerID())
 	}
 	c.mu.regions[r.VerID()] = &CachedRegion{
@@ -358,7 +361,7 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 	if !ok {
 		return
 	}
-	log.Infof("drop region from cache: region %v, confVer %v, ver %v, stack:\n%v", verID.id, verID.confVer, verID.ver, string(debug.Stack()))
+	//log.Infof("drop region from cache: region %v, confVer %v, ver %v, stack:\n%v", verID.id, verID.confVer, verID.ver, string(debug.Stack()))
 	metrics.TiKVRegionCacheCounter.WithLabelValues("drop_region_from_cache", metrics.RetLabel(nil)).Inc()
 	c.mu.sorted.Delete(newBtreeItem(r.region))
 	delete(c.mu.regions, verID)
@@ -540,6 +543,11 @@ func (c *RegionCache) OnRegionStale(ctx *RPCContext, newRegions []*metapb.Region
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	newRegionsStr := ""
+	for _, r := range newRegions {
+		newRegionsStr += fmt.Sprintf("%+v, ", *r)
+	}
+	log.Infof("dropping region %+v due to region stale, new regions: [%v]", ctx.Region, newRegions)
 	c.dropRegionFromCache(ctx.Region)
 
 	for _, meta := range newRegions {
