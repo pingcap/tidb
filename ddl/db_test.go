@@ -2080,8 +2080,23 @@ func (s *testDBSuite) TestCheckConvertToCharacter(c *C) {
 	if rs != nil {
 		rs.Close()
 	}
+	
+	c.Assert(t.Meta().Charset, Equals, "binary)")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("create table t(a varchar(10)) charset binary;")
+	ctx = s.tk.Se.(sessionctx.Context)
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset utf8 collate utf8_bin")
+	c.Assert(err, NotNil)
+	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin")
+	c.Assert(err, NotNil)
+	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset latin collate latin1_bin")
+	c.Assert(err, NotNil)
+	if rs != nil {
+		rs.Close()
+	}
 	c.Assert(t.Cols()[0].Charset, Equals, "binary)")
-	c.Assert(err, IsNil)
 }
 func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)

@@ -2001,6 +2001,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
+	if col.Charset == charset.CharsetBin {
+		msg := fmt.Sprintf("original binary charset modification is not supported")
+		return nil, errUnsupportedModifyCharset.GenWithStackByArgs(msg)
+	}
+
 	newColName := specNewColumn.Name.Name
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
@@ -2107,7 +2112,6 @@ func (d *ddl) ChangeColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
 		return ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
 	}
-
 	job, err := d.getModifiableColumnJob(ctx, ident, spec.OldColumnName.Name, spec)
 	if err != nil {
 		return errors.Trace(err)
