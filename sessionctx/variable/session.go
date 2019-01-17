@@ -311,9 +311,6 @@ type SessionVars struct {
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 
-	// EnableDbQpsMetric enables the db qps metric.
-	EnableDbQpsMetric bool
-
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
@@ -671,7 +668,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBEnableDbQpsMetric:
-		s.EnableDbQpsMetric = TiDBOptOn(val)
+		atomic.StoreInt64(&config.GetGlobalConfig().DbQpsMetricSwitch , tidbOptInt64(val , DefEnableDbQpsMetric))
 	case TiDBQueryLogMaxLen:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBRetryLimit:

@@ -267,7 +267,6 @@ const (
 	DefTiDBRetryLimit                = 10
 	DefTiDBDisableTxnAutoRetry       = false
 	DefTiDBConstraintCheckInPlace    = false
-	DefTiDBEnableDbQpsMetric         = true
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
@@ -278,6 +277,7 @@ const (
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
+	DefEnableDbQpsMetric			 = 1
 )
 
 // Process global variables.

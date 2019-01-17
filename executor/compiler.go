@@ -128,7 +128,7 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 func DbCountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	cfg := config.GetGlobalConfig()
 
-	if inRestrictedSQL || !cfg.DbQpsMetricSwitch {
+	if inRestrictedSQL || cfg.DbQpsMetricSwitch != 1 {
 		return
 	}
 

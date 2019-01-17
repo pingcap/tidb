@@ -204,7 +204,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "master_verify_checksum", "OFF"},
 	{ScopeGlobal, "key_cache_division_limit", "100"},
 	{ScopeGlobal, "rpl_semi_sync_master_trace_level", ""},
-	{ScopeGlobal, TiDBEnableDbQpsMetric, "ON"},
 	{ScopeGlobal | ScopeSession, "max_insert_delayed_threads", "20"},
 	{ScopeNone, "performance_schema_session_connect_attrs_size", "512"},
 	{ScopeGlobal | ScopeSession, "time_zone", "SYSTEM"},
@@ -631,7 +630,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBAutoAnalyzeStartTime, DefAutoAnalyzeStartTime},
 	{ScopeGlobal, TiDBAutoAnalyzeEndTime, DefAutoAnalyzeEndTime},
 	{ScopeSession, TiDBChecksumTableConcurrency, strconv.Itoa(DefChecksumTableConcurrency)},
-	{ScopeGlobal, TiDBEnableDbQpsMetric, boolToIntStr(DefTiDBEnableDbQpsMetric)},
 	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBOptInSubqToJoinAndAgg, boolToIntStr(DefOptInSubqToJoinAndAgg)},
 	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
@@ -669,6 +667,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBOptimizerSelectivityLevel, strconv.Itoa(DefTiDBOptimizerSelectivityLevel)},
 	{ScopeGlobal | ScopeSession, TiDBEnableWindowFunction, boolToIntStr(DefEnableWindowFunction)},
 	/* The following variable is defined as session scope but is actually server scope. */
+	{ScopeSession, TiDBEnableDbQpsMetric, "ON"},
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBSlowLogThreshold, strconv.Itoa(logutil.DefaultSlowThreshold)},
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
