@@ -348,10 +348,12 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	}
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
@@ -369,7 +371,8 @@ func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 	}
 	if !find {
-		return ver, errUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
+		job.State = model.JobStateCancelled
+		return ver, table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O)
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
