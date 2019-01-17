@@ -81,7 +81,6 @@ github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5 h1:2U0HzY8BJ8hVwDK
 github.com/klauspost/cpuid v0.0.0-20170728055534-ae7887de9fa5/go.mod h1:Pj4uuM528wm8OyEC2QMXAi2YiTZ96dNQPGgoMS4s3ek=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1 h1:mweAR1A6xJ3oS2pRaGiHgQ4OO8tzTaLawm8vnODuwDk=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=
-github.com/lamxTyler/parser v0.0.0-20190115082239-c8cd296ca201/go.mod h1:6c1rwSy9dUuNebYdr1IMI4+/sT3/Q65MXP2UCg7/vJI=
 github.com/matttproud/golang_protobuf_extensions v1.0.1 h1:4hp9jkHxhMHkqkrB3Ix0jegS5sx/RkqARlsWZ6pIwiU=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
 github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 h1:pmpDGKLw4n82EtrNiLqB+xSz/JQwFOaZuMALYUHwX5s=
@@ -111,8 +110,8 @@ github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e h1:P73/4dPCL96rG
 github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20190110035000-d4fe6b336379 h1:l4KInBOtxjbgQLjCFHzX66vZgNzsH4a+RiuVZGrO0xk=
 github.com/pingcap/kvproto v0.0.0-20190110035000-d4fe6b336379/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
-github.com/pingcap/parser v0.0.0-20190114091152-8b799d66df61 h1:J9Z8Xn0MwBMOsB3jUcrirtRh0Df1Nzrv+hBmCyUg6E4=
-github.com/pingcap/parser v0.0.0-20190114091152-8b799d66df61/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20190117104731-c02a7ccd3d6b h1:Z2qM+gP9BkJA1lg6Kai7Uy9kHT0EXF9U8BqYzP4Jcj4=
+github.com/pingcap/parser v0.0.0-20190117104731-c02a7ccd3d6b/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/tidb-tools v2.1.3-0.20190104033906-883b07a04a73+incompatible h1:Ba48wwPwPq5hd1kkQpgua49dqB5cthC2zXVo7fUUDec=
