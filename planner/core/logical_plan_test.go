@@ -416,8 +416,7 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 			join, ok = p.(LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
 			c.Assert(ok, IsTrue, comment)
 		}
-		joinType := fmt.Sprintf("%s", join.JoinType.String())
-		c.Assert(joinType, Equals, ca.joinType, comment)
+		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
 	}
 }
 
@@ -444,8 +443,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 		c.Assert(err, IsNil, comment)
 		c.Assert(ToString(p), Equals, ca.best, comment)
 		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
-		joinType := fmt.Sprintf("%s", join.JoinType.String())
-		c.Assert(joinType, Equals, ca.joinType, comment)
+		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
 	}
 }
 
@@ -2078,6 +2076,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		lp, ok := p.(LogicalPlan)
 		c.Assert(ok, IsTrue)
 		p, err = physicalOptimize(lp)
+		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.result, comment)
 	}
 }

@@ -63,6 +63,8 @@ const (
 	codeWindowDuplicateName             = mysql.ErrWindowDuplicateName
 	codeErrTooBigPrecision              = mysql.ErrTooBigPrecision
 	codePartitionClauseOnNonpartitioned = mysql.ErrPartitionClauseOnNonpartitioned
+	codeTableaccessDenied               = mysql.ErrTableaccessDenied
+	codeSpecificAccessDenied            = mysql.ErrSpecificAccessDenied
 	codeWindowFrameStartIllegal         = mysql.ErrWindowFrameStartIllegal
 	codeWindowFrameEndIllegal           = mysql.ErrWindowFrameEndIllegal
 	codeWindowFrameIllegal              = mysql.ErrWindowFrameIllegal
@@ -120,6 +122,8 @@ var (
 	ErrWindowDuplicateName             = terror.ClassOptimizer.New(codeWindowDuplicateName, mysql.MySQLErrName[mysql.ErrWindowDuplicateName])
 	ErrPartitionClauseOnNonpartitioned = terror.ClassOptimizer.New(codePartitionClauseOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionClauseOnNonpartitioned])
 	errTooBigPrecision                 = terror.ClassExpression.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
+	ErrTableaccessDenied               = terror.ClassOptimizer.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
+	ErrSpecificAccessDenied            = terror.ClassOptimizer.New(mysql.ErrSpecificAccessDenied, mysql.MySQLErrName[mysql.ErrSpecificAccessDenied])
 	ErrWindowFrameStartIllegal         = terror.ClassOptimizer.New(codeWindowFrameStartIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameStartIllegal])
 	ErrWindowFrameEndIllegal           = terror.ClassOptimizer.New(codeWindowFrameEndIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameEndIllegal])
 	ErrWindowFrameIllegal              = terror.ClassOptimizer.New(codeWindowFrameIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameIllegal])
@@ -167,6 +171,8 @@ func init() {
 		codeWindowDuplicateName:             mysql.ErrWindowDuplicateName,
 		codePartitionClauseOnNonpartitioned: mysql.ErrPartitionClauseOnNonpartitioned,
 		codeErrTooBigPrecision:              mysql.ErrTooBigPrecision,
+		codeTableaccessDenied:               mysql.ErrTableaccessDenied,
+		codeSpecificAccessDenied:            mysql.ErrSpecificAccessDenied,
 		codeWindowFrameStartIllegal:         mysql.ErrWindowFrameStartIllegal,
 		codeWindowFrameEndIllegal:           mysql.ErrWindowFrameEndIllegal,
 		codeWindowFrameIllegal:              mysql.ErrWindowFrameIllegal,
