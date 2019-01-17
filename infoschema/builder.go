@@ -51,7 +51,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	var oldTableID, newTableID int64
 	tblIDs := make([]int64, 0, 2)
 	switch diff.Type {
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionRestoreTable:
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, newTableID)
 	case model.ActionDropTable, model.ActionDropView:
@@ -89,7 +89,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		}
 	}
 	if tableIDIsValid(newTableID) {
-		// All types except DropTable.
+		// All types except DropTableOrView.
 		err := b.applyCreateTable(m, dbInfo, newTableID, alloc)
 		if err != nil {
 			return nil, errors.Trace(err)
