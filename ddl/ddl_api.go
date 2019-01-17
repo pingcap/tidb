@@ -1315,11 +1315,14 @@ func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset s
 
 func findTableOptionCharset(options []*ast.TableOption) string {
 	var tableCharset string
-	for _, op := range options {
+LOOP:
+	for i := len(options) - 1; i >= 0; i-- {
+		op := options[i]
 		switch op.Tp {
 		// find the last one.
 		case ast.TableOptionCharset:
 			tableCharset = op.StrValue
+			break LOOP
 		}
 	}
 	return tableCharset
@@ -1375,7 +1378,7 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (charset, collate string) {
 	charsets := make([]string, len(options))
 	collates := make([]string, len(options))
-	for i := startIdx; i < len(options); i++ {
+	for i := len(options) - 1; i >= startIdx; i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
