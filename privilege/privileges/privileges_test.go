@@ -324,7 +324,6 @@ func (s *testPrivilegeSuite) TestUseDb(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "use mysql")
 	c.Assert(err, IsNil)
-
 }
 
 func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
@@ -339,7 +338,6 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "setglobal_b", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), `set global innodb_commit_concurrency=16`)
 	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
-
 }
 
 func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
