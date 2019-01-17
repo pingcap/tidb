@@ -1137,13 +1137,13 @@ func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 		return
 	}
 
-	var fieldType = &types.FieldType{}
 	var function expression.Expression
-	// treat predicate 'like' the same way as predicate '=' when it is an exact match.
-	var isPatternExactMatch = false
-	if pat, ok := v.Pattern.(*driver.ValueExpr); ok {
-		if patValue, ok := pat.GetValue().(string); ok {
-			patValue, patTypes := stringutil.CompilePattern(patValue, v.Escape)
+	fieldType := &types.FieldType{}
+	isPatternExactMatch := false
+	// Treat predicate 'like' the same way as predicate '=' when it is an exact match.
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
+		if patExpression.RetType.EvalType() == types.ETString {
+			patValue, patTypes := stringutil.CompilePattern(patExpression.Value.GetString(), v.Escape)
 			if stringutil.IsExactMatch(patTypes) {
 				op := ast.EQ
 				if v.Not {
