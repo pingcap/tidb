@@ -1378,7 +1378,7 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (charset, collate string) {
 	charsets := make([]string, len(options))
 	collates := make([]string, len(options))
-	for i := len(options) - 1; i >= startIdx; i++ {
+	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
