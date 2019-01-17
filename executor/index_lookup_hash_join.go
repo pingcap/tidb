@@ -106,12 +106,12 @@ func (e *IndexLookUpHashJoin) startWorkers(ctx context.Context) {
 }
 
 // Next implements the IndexLookUpHashJoin Executor interface.
-func (e *IndexLookUpHashJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *IndexLookUpHashJoin) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	result, ok := <-e.joinResultCh
 	if !ok {
 		return nil
@@ -119,7 +119,7 @@ func (e *IndexLookUpHashJoin) Next(ctx context.Context, chk *chunk.Chunk) error 
 	if result.err != nil {
 		return errors.Trace(result.err)
 	}
-	chk.SwapColumns(result.chk)
+	req.Chunk.SwapColumns(result.chk)
 	result.src <- result.chk
 	return nil
 }
