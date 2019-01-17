@@ -202,7 +202,7 @@ func (s *testIntegrationSuite) testErrorCode(c *C, tk *testkit.TestKit, sql stri
 	c.Assert(err, NotNil)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	c.Assert(ok, IsTrue, Commentf("err: %T, errorTrace", originErr, errors.ErrorStack(err)))
+	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
 	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
 }
 
