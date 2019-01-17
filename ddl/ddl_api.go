@@ -1813,6 +1813,12 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 		return nil
 	}
 
+	// Not allow to change binary to utf8mb4 or utf8.
+	if origCharset == charset.CharsetBin {
+		msg := fmt.Sprintf("original binary charset modification is not supported, charset from %s to %s", origCharset, toCharset)
+		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
+	}
+
 	if toCharset != origCharset {
 		msg := fmt.Sprintf("charset from %s to %s", origCharset, toCharset)
 		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
@@ -2065,7 +2071,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		// `modifyColumnTp` indicates that there is a type modification.
 		modifyColumnTp = mysql.TypeNull
 	}
-
 	if err = checkColumnFieldLength(schema, spec.NewColumns, t.Meta()); err != nil {
 		return nil, errors.Trace(err)
 	}
