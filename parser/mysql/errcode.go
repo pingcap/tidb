@@ -901,7 +901,7 @@ const (
 	ErrWindowFrameEndIllegal                                        = 3585
 	ErrWindowFrameIllegal                                           = 3586
 	ErrWindowRangeFrameOrderType                                    = 3587
-	ErrWindowRangeFrameTEMPORALType                                 = 3588
+	ErrWindowRangeFrameTemporalType                                 = 3588
 	ErrWindowRangeFrameNumericType                                  = 3589
 	ErrWindowRangeBoundNotConstant                                  = 3590
 	ErrWindowDuplicateName                                          = 3591
