@@ -2080,10 +2080,10 @@ func (s *testDBSuite) TestCheckConvertToCharacter(c *C) {
 	if rs != nil {
 		rs.Close()
 	}
-	
+
 	c.Assert(t.Meta().Charset, Equals, "binary)")
 	s.tk.MustExec("drop table if exists t")
-	s.tk.MustExec("create table t(a varchar(10)) charset binary;")
+	s.tk.MustExec("create table t(a varchar(10) charset binary);")
 	ctx = s.tk.Se.(sessionctx.Context)
 	is = domain.GetDomain(ctx).InfoSchema()
 	t, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
