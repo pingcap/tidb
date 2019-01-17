@@ -1995,9 +1995,12 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
-	if col.Charset == charset.CharsetBin {
-		msg := fmt.Sprintf("original binary charset modification is not supported")
-		return nil, errUnsupportedModifyCharset.GenWithStackByArgs(msg)
+	switch col.Tp {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
+		if col.Charset == charset.CharsetBin {
+			msg := fmt.Sprintf("original binary charset modification is not supported")
+			return nil, errUnsupportedModifyCharset.GenWithStackByArgs(msg)
+		}
 	}
 
 	newColName := specNewColumn.Name.Name
