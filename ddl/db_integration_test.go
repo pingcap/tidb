@@ -202,7 +202,7 @@ func (s *testIntegrationSuite) testErrorCode(c *C, tk *testkit.TestKit, sql stri
 	c.Assert(err, NotNil)
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
-	c.Assert(ok, IsTrue, Commentf("err: %T", originErr))
+	c.Assert(ok, IsTrue, Commentf("err: %T, errorTrace", originErr, errors.ErrorStack(err)))
 	c.Assert(tErr.ToSQLError().Code, DeepEquals, uint16(errCode), Commentf("MySQL code:%v", tErr.ToSQLError()))
 }
 
@@ -988,6 +988,36 @@ func (s *testIntegrationSuite) TestAddIndexAfterAddColumn(c *C) {
 	s.testErrorCode(c, s.tk, sql, tmysql.ErrDupEntry)
 	sql = "alter table test_add_index_after_add_col add index idx_test(f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13,f14,f15,f16,f17);"
 	s.testErrorCode(c, s.tk, sql, tmysql.ErrTooManyKeyParts)
+}
+
+func (s *testIntegrationSuite) TestResolveCharset(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists resolve_charset")
+	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	s.tk.MustExec("INSERT INTO resolve_charset VALUES('鰈')")
+
+	s.tk.MustExec("create database resolve_charset charset binary")
+	s.tk.MustExec("use resolve_charset")
+	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	c.Assert(tbl.Meta().Charset, Equals, "latin1")
+
+	s.tk.MustExec(`CREATE TABLE resolve_charset1 (a varchar(255) DEFAULT NULL)`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "binary")
+	c.Assert(tbl.Meta().Charset, Equals, "binary")
 }
 
 func (s *testIntegrationSuite) TestAddAnonymousIndex(c *C) {
