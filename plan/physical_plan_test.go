@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
@@ -1247,4 +1248,28 @@ func (s *testPlanSuite) TestRequestTypeSupportedOff(c *C) {
 	p, err := plan.Optimize(se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(plan.ToString(p), Equals, expect, Commentf("for %s", sql))
+}
+
+func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	sql := "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2"
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	p, err := plan.Optimize(se, stmt, s.is)
+	c.Assert(err, IsNil)
+	c.Assert(plan.ToString(p), Equals, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}")
+	warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+	lastWarn := warnings[len(warnings)-1]
+	err = plan.ErrInternal.GenByArgs("TIDB_INLJ hint is inapplicable without column equal ON condition")
+	c.Assert(terror.ErrorEqual(err, lastWarn.Err), IsTrue)
 }

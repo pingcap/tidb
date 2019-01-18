@@ -244,3 +244,23 @@ func (s *testSuite) TestSetCharset(c *C) {
 	// Issue 1523
 	tk.MustExec(`SET NAMES binary`)
 }
+
+func (s *testSuite) TestSelectGlobalVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
+	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("151"))
+
+	tk.MustExec("set @@global.max_connections=100;")
+
+	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("100"))
+
+	tk.MustExec("set @@global.max_connections=151;")
+
+	// test for unknown variable.
+	_, err := tk.Exec("select @@invalid")
+	c.Assert(err.Error(), Equals, variable.UnknownSystemVar.GenByArgs("invalid").Error())
+	_, err = tk.Exec("select @@global.invalid")
+	c.Assert(err.Error(), Equals, variable.UnknownSystemVar.GenByArgs("invalid").Error())
+}

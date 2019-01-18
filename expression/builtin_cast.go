@@ -457,7 +457,8 @@ func (b *builtinCastIntAsRealSig) evalReal(row types.Row) (res float64, isNull b
 		res = float64(val)
 	} else {
 		var uVal uint64
-		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		sc := b.ctx.GetSessionVars().StmtCtx
+		uVal, err = types.ConvertIntToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		res = float64(uVal)
 	}
 	return res, false, errors.Trace(err)
@@ -482,7 +483,8 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDe
 		res = types.NewDecFromInt(val)
 	} else {
 		var uVal uint64
-		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		sc := b.ctx.GetSessionVars().StmtCtx
+		uVal, err = types.ConvertIntToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
 			return res, false, errors.Trace(err)
 		}
@@ -511,7 +513,8 @@ func (b *builtinCastIntAsStringSig) evalString(row types.Row) (res string, isNul
 		res = strconv.FormatInt(val, 10)
 	} else {
 		var uVal uint64
-		uVal, err = types.ConvertIntToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		sc := b.ctx.GetSessionVars().StmtCtx
+		uVal, err = types.ConvertIntToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		if err != nil {
 			return res, false, errors.Trace(err)
 		}
@@ -732,7 +735,8 @@ func (b *builtinCastRealAsIntSig) evalInt(row types.Row) (res int64, isNull bool
 		res, err = types.ConvertFloatToInt(val, types.SignedLowerBound[mysql.TypeLonglong], types.SignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
 	} else {
 		var uintVal uint64
-		uintVal, err = types.ConvertFloatToUint(val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
+		sc := b.ctx.GetSessionVars().StmtCtx
+		uintVal, err = types.ConvertFloatToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
 		res = int64(uintVal)
 	}
 	return res, isNull, errors.Trace(err)
@@ -967,7 +971,7 @@ func (b *builtinCastDecimalAsDurationSig) Clone() builtinFunc {
 func (b *builtinCastDecimalAsDurationSig) evalDuration(row types.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return res, false, errors.Trace(err)
+		return res, true, errors.Trace(err)
 	}
 	res, err = types.ParseDuration(string(val.ToString()), b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
