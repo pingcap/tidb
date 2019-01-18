@@ -6,8 +6,6 @@ github.com/beorn7/perks v0.0.0-20160229213445-3ac7bf7a47d1 h1:OnJHjoVbY69GG4gclp
 github.com/beorn7/perks v0.0.0-20160229213445-3ac7bf7a47d1/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=
 github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470 h1:AAFU1eDJHimRQvJGBBnhO0Cm4oe7V2GG3CLtiQk/6wg=
 github.com/blacktear23/go-proxyprotocol v0.0.0-20171102103907-62e368e1c470/go.mod h1:VKt7CNAQxpFpSDz3sXyj9hY/GbVsQCr0sB3w59nE7lU=
-github.com/bobotu/parser v0.0.0-20190118022514-3c1c12e6a756 h1:utTf9C0tbBZKkFWWINh7VjGcdt9EmO1VQvFMxrTg360=
-github.com/bobotu/parser v0.0.0-20190118022514-3c1c12e6a756/go.mod h1:rtt+tpWlmShJj1sAXi+9oAScwFAWwM8HnLfNOSPqEig=
 github.com/cockroachdb/cmux v0.0.0-20170110192607-30d10be49292 h1:dzj1/xcivGjNPwwifh/dWTczkwcuqsXXFHY1X/TZMtw=
 github.com/cockroachdb/cmux v0.0.0-20170110192607-30d10be49292/go.mod h1:qRiX68mZX1lGBkTWyp3CLcenw9I94W2dLeRvMzcn9N4=
 github.com/codahale/hdrhistogram v0.0.0-20160425231609-f8ad88b59a58 h1:hHWif/4GirK3P5uvCyyj941XSVIQDzuJhbEguCICdPE=
@@ -94,8 +92,8 @@ github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030 h1:XJLuW0lsP7vAt
 github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929 h1:NAq95+VGsS2G7SjzZ5LP9iUlCMNAs13QUzbNY3G90v8=
 github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
-github.com/pingcap/parser v0.0.0-20190116142258-00e692951ce1 h1:fis1l2hPX1piYENHn5B9sMmpbUURp8l2IJJpKHP1aUk=
-github.com/pingcap/parser v0.0.0-20190116142258-00e692951ce1/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20190118033454-a52e5bde3bd2 h1:7YGx4hF6M0nlFJVZrLF3EbMRI+XOizL+9aB8Txe745U=
+github.com/pingcap/parser v0.0.0-20190118033454-a52e5bde3bd2/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/tidb-tools v2.1.1-0.20181218072513-b2235d442b06+incompatible h1:Bsd+NHosPVowEGB3BCx+2d8wUQGDTXSSC5ljeNS6cXo=
