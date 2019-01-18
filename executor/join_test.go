@@ -18,7 +18,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -118,14 +117,6 @@ func (s *testSuite2) TestJoin(c *C) {
 	result = tk.MustQuery("select a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
 
-	plannercore.AllowCartesianProduct = false
-	err := tk.ExecToErr("select * from t, t1")
-	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	err = tk.ExecToErr("select * from t left join t1 on 1")
-	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	err = tk.ExecToErr("select * from t right join t1 on 1")
-	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	plannercore.AllowCartesianProduct = true
 	tk.MustExec("drop table if exists t,t2,t1")
 	tk.MustExec("create table t(c1 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
@@ -152,7 +143,7 @@ func (s *testSuite2) TestJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_INLJ(t) */ avg(t.b) from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1.5000"))
 
 	// Test that two conflict hints will return error.
-	err = tk.ExecToErr("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
+	err := tk.ExecToErr("select /*+ TIDB_INLJ(t) TIDB_SMJ(t) */ * from t join t1 on t.a=t1.a")
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("select /*+ TIDB_INLJ(t) TIDB_HJ(t) */ from t join t1 on t.a=t1.a")
 	c.Assert(err, NotNil)
@@ -343,10 +334,10 @@ func (s *testSuite2) TestJoinCast(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a varchar(10), index idx(a))")
 	tk.MustExec("insert into t values('1'), ('2'), ('3')")
-	tk.MustExec("set @@tidb_max_chunk_size=1")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
 	result = tk.MustQuery("select a from (select /*+ TIDB_INLJ(t1, t2) */ t1.a from t t1 join t t2 on t1.a=t2.a) t group by a")
 	result.Sort().Check(testkit.Rows("1", "2", "3"))
-	tk.MustExec("set @@tidb_max_chunk_size=1024")
+	tk.MustExec("set @@tidb_init_chunk_size=32")
 }
 
 func (s *testSuite2) TestUsing(c *C) {
@@ -768,8 +759,8 @@ func (s *testSuite2) TestJoinLeak(c *C) {
 	tk.MustExec("commit")
 	result, err := tk.Exec("select * from t t1 left join (select 1) t2 on 1")
 	c.Assert(err, IsNil)
-	chk := result.NewChunk()
-	err = result.Next(context.Background(), chk)
+	req := result.NewRecordBatch()
+	err = result.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond)
 	result.Close()
@@ -828,7 +819,7 @@ func (s *testSuite2) TestIssue5278(c *C) {
 func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_max_chunk_size=2")
+	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("DROP TABLE IF EXISTS t")
 	tk.MustExec("CREATE TABLE `t` (`a` int, pk integer auto_increment,`b` char (20),primary key (pk))")
 	tk.MustExec("CREATE INDEX idx_t_a ON t(`a`)")
@@ -858,7 +849,7 @@ func (s *testSuite2) TestIndexLookupJoin(c *C) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint, b bigint, unique key idx1(a, b));`)
 	tk.MustExec(`insert into t values(1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6);`)
-	tk.MustExec(`set @@tidb_max_chunk_size = 2;`)
+	tk.MustExec(`set @@tidb_init_chunk_size = 2;`)
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2) */ * from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b + 4;`).Check(testkit.Rows(
 		`1 1 <nil> <nil>`,
 		`1 2 <nil> <nil>`,
@@ -903,7 +894,7 @@ func (s *testSuite2) TestMergejoinOrder(c *C) {
 		"  └─TableScan_12 6666.67 cop table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
 	))
 
-	tk.MustExec("set @@tidb_max_chunk_size=1")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
 	tk.MustQuery("select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
 		"1 100 <nil> <nil>",
 		"2 100 <nil> <nil>",
@@ -951,7 +942,7 @@ func (s *testSuite2) TestHashJoin(c *C) {
 	tk.MustExec("insert into t1 values(1,1),(2,2),(3,3),(4,4),(5,5);")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("5"))
 	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("0"))
-	tk.MustExec("set @@tidb_max_chunk_size=1;")
+	tk.MustExec("set @@tidb_init_chunk_size=1;")
 	result := tk.MustQuery("explain analyze select /*+ TIDB_HJ(t1, t2) */ * from t1 where exists (select a from t2 where t1.a = t2.a);")
 	// id	count	task	operator info	execution info
 	// HashLeftJoin_9	8000.00	root	semi join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)]	time:1.036712ms, loops:1, rows:0
@@ -962,7 +953,8 @@ func (s *testSuite2) TestHashJoin(c *C) {
 	row := result.Rows()
 	c.Assert(len(row), Equals, 5)
 	outerExecInfo := row[1][4].(string)
-	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "1")
+	// FIXME: revert this result to 1 after TableReaderExecutor can handle initChunkSize.
+	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "5")
 	innerExecInfo := row[3][4].(string)
 	c.Assert(innerExecInfo[len(innerExecInfo)-1:], Equals, "0")
 
@@ -996,4 +988,23 @@ func (s *testSuite2) TestHashJoin(c *C) {
 	c.Assert(outerExecInfo[len(outerExecInfo)-1:], Equals, "0")
 	innerExecInfo = row[3][4].(string)
 	c.Assert(innerExecInfo[len(innerExecInfo)-1:], LessEqual, "5")
+}
+
+func (s *testSuite2) TestJoinDifferentDecimals(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("Use test")
+	tk.MustExec("Drop table if exists t1")
+	tk.MustExec("Create table t1 (v int)")
+	tk.MustExec("Insert into t1 value (1)")
+	tk.MustExec("Insert into t1 value (2)")
+	tk.MustExec("Insert into t1 value (3)")
+	tk.MustExec("Drop table if exists t2")
+	tk.MustExec("Create table t2 (v decimal(12, 3))")
+	tk.MustExec("Insert into t2 value (1)")
+	tk.MustExec("Insert into t2 value (2.0)")
+	tk.MustExec("Insert into t2 value (000003.000000)")
+	rst := tk.MustQuery("Select * from t1, t2 where t1.v = t2.v order by t1.v")
+	row := rst.Rows()
+	c.Assert(len(row), Equals, 3)
+	rst.Check(testkit.Rows("1 1.000", "2 2.000", "3 3.000"))
 }

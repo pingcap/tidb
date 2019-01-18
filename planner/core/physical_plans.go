@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -47,6 +48,7 @@ var (
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
+	_ PhysicalPlan = &PhysicalWindow{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -372,4 +374,13 @@ type PhysicalTableDual struct {
 	physicalSchemaProducer
 
 	RowCount int
+}
+
+// PhysicalWindow is the physical operator of window function.
+type PhysicalWindow struct {
+	physicalSchemaProducer
+
+	WindowFuncDesc *aggregation.WindowFuncDesc
+	PartitionBy    []property.Item
+	OrderBy        []property.Item
 }

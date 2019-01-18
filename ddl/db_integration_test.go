@@ -69,7 +69,7 @@ func (s *testIntegrationSuite) TearDownTest(c *C) {
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
 	testleak.BeforeTest()
-	s.lease = 200 * time.Millisecond
+	s.lease = 50 * time.Millisecond
 
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
@@ -96,6 +96,20 @@ func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
+}
+
+func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	defer tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+
+	tk.MustExec("use test;")
+	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION';")
+	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time date NOT NULL DEFAULT '0000-00-00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default '0000-00-00 00');", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default 0);", mysql.ErrInvalidDefault)
 }
 
 func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
@@ -376,7 +390,7 @@ func (s *testIntegrationSuite) TestMySQLErrorCode(c *C) {
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	s.testErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
-	tk.Exec("alter table test_error_code_succ add index idx (c1)")
+	tk.MustExec("alter table test_error_code_succ add index idx (c1)")
 	sql = "alter table test_error_code_succ add index idx (c1)"
 	s.testErrorCode(c, tk, sql, tmysql.ErrDupKeyName)
 	// drop index
@@ -1133,6 +1147,7 @@ func (s *testIntegrationSuite) TestAlterColumn(c *C) {
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	c.Assert(createSQL, Equals, expected)
 	s.tk.MustExec("alter table mc modify column a bigint") // Drops auto_increment
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]

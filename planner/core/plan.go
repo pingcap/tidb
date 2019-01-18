@@ -82,8 +82,11 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
-	// deriveStats derives statistic info between plans.
-	deriveStats() (*property.StatsInfo, error)
+	// recursiveDeriveStats derives statistic info between plans.
+	recursiveDeriveStats() (*property.StatsInfo, error)
+
+	// DeriveStats derives statistic info for current plan node given child stats.
+	DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -137,7 +140,7 @@ type PhysicalPlan interface {
 	SetChildren(...PhysicalPlan)
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	ResolveIndices()
+	ResolveIndices() error
 }
 
 type baseLogicalPlan struct {

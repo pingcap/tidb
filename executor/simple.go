@@ -49,7 +49,7 @@ type SimpleExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.done {
 		return nil
 	}
@@ -132,7 +132,9 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	e.ctx.Txn(true)
+	if _, err := e.ctx.Txn(true); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -208,9 +210,9 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		}
 		if !exists {
 			failedUsers = append(failedUsers, spec.User.String())
-			if s.IfExists {
-				// TODO: Make this error as a warning.
-			}
+			// TODO: Make this error as a warning.
+			// if s.IfExists {
+			// }
 			continue
 		}
 		pwd := ""
