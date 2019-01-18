@@ -50,10 +50,10 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
-	"github.com/pingcap/tidb/plugin"
 )
 
 var (
@@ -383,7 +383,7 @@ func (s *Server) onConn(c net.Conn) {
 	for _, p := range plugin.GetByKind(plugin.Audit) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars() ,plugin.Connected, 0)
+			authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Connected, 0)
 		}
 	}
 
@@ -392,7 +392,7 @@ func (s *Server) onConn(c net.Conn) {
 	for _, p := range plugin.GetByKind(plugin.Audit) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Disconnect, 0)
+			authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Disconnect, conn.lastCode)
 		}
 	}
 }

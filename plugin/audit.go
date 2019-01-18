@@ -20,6 +20,7 @@ import (
 )
 
 type AuditEvent int
+
 const (
 	General AuditEvent = 1 + iota
 	Connection
@@ -33,6 +34,7 @@ const (
 )
 
 type GeneralEvent byte
+
 const (
 	Log GeneralEvent = iota
 	Error
@@ -41,6 +43,7 @@ const (
 )
 
 type ConnectionEvent byte
+
 const (
 	Connected ConnectionEvent = iota
 	Disconnect
@@ -49,18 +52,21 @@ const (
 )
 
 type ParseEvent byte
+
 const (
 	PreParse ParseEvent = 1 + iota
 	PostParse
 )
 
 type ServerEvent byte
+
 const (
 	Startup ParseEvent = 1 + iota
 	Shut
 )
 
 type CommandEvent int
+
 const (
 	Start CommandEvent = 1 + iota
 	End
@@ -68,8 +74,8 @@ const (
 
 type QueryEvent int
 
-
 type TableAccessEvent int
+
 const (
 	Insert TableAccessEvent = 1 + iota
 	Delete
@@ -80,12 +86,12 @@ const (
 // AuditManifest presents a sub-manifest that every audit plugin must provide.
 type AuditManifest struct {
 	Manifest
-	OnGeneralEvent func(ctx context.Context, sctx *variable.SessionVars, event GeneralEvent) error
-	OnConnectionEvent func(ctx context.Context, sctx *variable.SessionVars, event ConnectionEvent, errorCode int) error
-	OnParseEvent func(ctx context.Context, sctx *variable.SessionVars, event ParseEvent) error
-	OnServerEvent func(ctx context.Context, event ServerEvent) error
-	OnCommandEvent func(ctx context.Context, sctx *variable.SessionVars, event CommandEvent) error
-	OnQueryEvent func(ctx context.Context, sctx *variable.SessionVars, event QueryEvent) error
-	OnTableAccessEvent func(ctx context.Context, sctx *variable.SessionVars, event TableAccessEvent) error
+	OnGeneralEvent        func(ctx context.Context, sctx *variable.SessionVars, event GeneralEvent) error
+	OnConnectionEvent     func(ctx context.Context, sctx *variable.SessionVars, event ConnectionEvent, errorCode int16) error
+	OnParseEvent          func(ctx context.Context, sctx *variable.SessionVars, event ParseEvent) error
+	OnServerEvent         func(ctx context.Context, event ServerEvent) error
+	OnCommandEvent        func(ctx context.Context, sctx *variable.SessionVars, event CommandEvent) error
+	OnQueryEvent          func(ctx context.Context, sctx *variable.SessionVars, event QueryEvent) error
+	OnTableAccessEvent    func(ctx context.Context, sctx *variable.SessionVars, event TableAccessEvent) error
 	OnGlobalVariableEvent func(ctx context.Context, sctx *variable.SessionVars) error
 }
