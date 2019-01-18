@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/parser/auth"
 )
 
 type AuditEvent int
@@ -87,7 +88,7 @@ const (
 type AuditManifest struct {
 	Manifest
 	OnGeneralEvent        func(ctx context.Context, sctx *variable.SessionVars, event GeneralEvent) error
-	OnConnectionEvent     func(ctx context.Context, sctx *variable.SessionVars, event ConnectionEvent, errorCode uint16) error
+	OnConnectionEvent     func(ctx context.Context, identity *auth.UserIdentity, event ConnectionEvent, errorCode uint16) error
 	OnParseEvent          func(ctx context.Context, sctx *variable.SessionVars, event ParseEvent) error
 	OnServerEvent         func(ctx context.Context, event ServerEvent) error
 	OnCommandEvent        func(ctx context.Context, sctx *variable.SessionVars, event CommandEvent) error

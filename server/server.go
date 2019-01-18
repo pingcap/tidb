@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/parser/auth"
 )
 
 var (
@@ -354,11 +355,11 @@ func (s *Server) Close() {
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
 	conn := s.newConn(c)
-
 	for _, p := range plugin.GetByKind(plugin.Audit) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			err := authPlugin.OnConnectionEvent(context.Background(), nil, plugin.PreAuth, 0)
+			host, _ := conn.PeerHost()
+			err := authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname:host}, plugin.PreAuth, 0)
 			if err != nil {
 
 			}
@@ -386,7 +387,7 @@ func (s *Server) onConn(c net.Conn) {
 	for _, p := range plugin.GetByKind(plugin.Audit) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			err := authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Connected, 0)
+			err := authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars().User, plugin.Connected, 0)
 			if err != nil {
 
 			}
@@ -398,7 +399,7 @@ func (s *Server) onConn(c net.Conn) {
 	for _, p := range plugin.GetByKind(plugin.Audit) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			err := authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Disconnect, conn.lastCode)
+			err := authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars().User, plugin.Disconnect, conn.lastCode)
 			if err != nil {
 
 			}

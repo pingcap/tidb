@@ -102,7 +102,8 @@ type clientConn struct {
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 	status       int32             // dispatching/reading/shutdown/waitshutdown
-	lastCode     uint16             // latest error code
+	peerHost     string            // peer host
+	lastCode     uint16            // latest error code
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -497,14 +498,9 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	host := variable.DefHostname
-	if !cc.server.isUnixSocket() {
-		addr := cc.bufReadConn.RemoteAddr().String()
-		// Do Auth.
-		host, _, err = net.SplitHostPort(addr)
-		if err != nil {
-			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
-		}
+	host, err := cc.PeerHost()
+	if err != nil {
+		return err
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
 		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
@@ -517,6 +513,25 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	}
 	cc.ctx.SetSessionManager(cc.server)
 	return nil
+}
+
+func (cc *clientConn) PeerHost() (host string, err error) {
+	if len(cc.peerHost) > 0 {
+		return  cc.peerHost, nil
+	}
+	host = variable.DefHostname
+	if cc.server.isUnixSocket() {
+		cc.peerHost = host
+		return
+	}
+	addr := cc.bufReadConn.RemoteAddr().String()
+	host, _, err = net.SplitHostPort(addr)
+	if err != nil {
+		err = errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES")
+		return
+	}
+	cc.peerHost = host
+	return
 }
 
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
