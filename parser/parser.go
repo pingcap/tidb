@@ -11177,7 +11177,7 @@ yynewstate:
 		{
 			stmt := yyS[yypt-1].item.(*ast.ShowStmt)
 			if yyS[yypt-0].item != nil {
-				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok {
+				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok && x.Expr == nil {
 					stmt.Pattern = x
 				} else {
 					stmt.Where = yyS[yypt-0].item.(ast.ExprNode)
@@ -11240,7 +11240,7 @@ yynewstate:
 				Tp: ast.ShowStatsMeta,
 			}
 			if yyS[yypt-0].item != nil {
-				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok {
+				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok && x.Expr == nil {
 					stmt.Pattern = x
 				} else {
 					stmt.Where = yyS[yypt-0].item.(ast.ExprNode)
@@ -11254,7 +11254,7 @@ yynewstate:
 				Tp: ast.ShowStatsHistograms,
 			}
 			if yyS[yypt-0].item != nil {
-				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok {
+				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok && x.Expr == nil {
 					stmt.Pattern = x
 				} else {
 					stmt.Where = yyS[yypt-0].item.(ast.ExprNode)
@@ -11268,7 +11268,7 @@ yynewstate:
 				Tp: ast.ShowStatsBuckets,
 			}
 			if yyS[yypt-0].item != nil {
-				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok {
+				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok && x.Expr == nil {
 					stmt.Pattern = x
 				} else {
 					stmt.Where = yyS[yypt-0].item.(ast.ExprNode)
@@ -11282,7 +11282,7 @@ yynewstate:
 				Tp: ast.ShowStatsHealthy,
 			}
 			if yyS[yypt-0].item != nil {
-				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok {
+				if x, ok := yyS[yypt-0].item.(*ast.PatternLikeExpr); ok && x.Expr == nil {
 					stmt.Pattern = x
 				} else {
 					stmt.Where = yyS[yypt-0].item.(ast.ExprNode)
