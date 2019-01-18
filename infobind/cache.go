@@ -29,7 +29,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const defaultBindCacheSize  = 5
+const defaultBindCacheSize = 5
 
 // BindData store the basic bind info and bindSql astNode.
 type BindData struct {
