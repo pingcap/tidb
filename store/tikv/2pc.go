@@ -267,6 +267,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	var cancel context.CancelFunc
 	if action == actionPrewrite {
 		backoffer, cancel = bo.Fork()
+		defer cancel()
 	}
 
 	// Concurrently do the work for each batch.
