@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync/atomic"
 	"time"
@@ -592,7 +591,6 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 			ss += str
 			ss += "     "
 		}
-		fmt.Printf("\n  index  value: %v,  system_zone: %v\n\n\n>>>>>>>>>>\n", ss, sysZone)
 	}
 	// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
 	// the generated value, so we need to clear up the reusing map.

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner"
@@ -2190,6 +2191,68 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	r.Check(testkit.Rows("123381351 2014-03-31 08:57:10"))
 	r = tk.MustQuery("select datetime from t1 where datetime='2014-03-31 08:57:10';")
 	r.Check(testkit.Rows("2014-03-31 08:57:10"))
+}
+
+func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustExec(`create table t (a int, b timestamp default "2019-01-17 14:46:14")`)
+	tk.MustExec("insert into t set a=1")
+	r := tk.MustQuery(`show create table t`)
+	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '2019-01-17 14:46:14'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("insert into t set a=2")
+	r = tk.MustQuery(`show create table t`)
+	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '2019-01-17 06:46:14'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	r = tk.MustQuery(`select a,b from t order by a`)
+	r.Check(testkit.Rows("1 2019-01-17 06:46:14", "2 2019-01-17 06:46:14"))
+	tk.MustExec("set time_zone = '+08:00'")
+	r = tk.MustQuery(`select a,b from t order by a`)
+	r.Check(testkit.Rows("1 2019-01-17 14:46:14", "2 2019-01-17 14:46:14"))
+	tk.MustExec("set time_zone = '-08:00'")
+	r = tk.MustQuery(`show create table t`)
+	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '2019-01-16 22:46:14'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// test zero default value in multiple time zone.
+	defer tk.MustExec(fmt.Sprintf("set @@sql_mode='%s'", tk.MustQuery("select @@sql_mode").Rows()[0][0]))
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustExec(`create table t (a int, b timestamp default "0000-00-00 00")`)
+	tk.MustExec("insert into t set a=1")
+	r = tk.MustQuery(`show create table t`)
+	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '0000-00-00 00:00:00'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("insert into t set a=2")
+	r = tk.MustQuery(`show create table t`)
+	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '0000-00-00 00:00:00'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("set time_zone = '-08:00'")
+	tk.MustExec("insert into t set a=3")
+	r = tk.MustQuery(`show create table t`)
+	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '0000-00-00 00:00:00'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	r = tk.MustQuery(`select a,b from t order by a`)
+	r.Check(testkit.Rows("1 0000-00-00 00:00:00", "2 0000-00-00 00:00:00", "3 0000-00-00 00:00:00"))
+
+	// test add timestamp column default current_timestamp.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`set time_zone = 'Asia/Shanghai'`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`insert into t set a=1`)
+	tk.MustExec(`alter table t add column b timestamp not null default current_timestamp;`)
+	time_in_8 := tk.MustQuery("select b from t").Rows()[0][0]
+	tk.MustExec(`set time_zone = '+00:00'`)
+	time_in_0 := tk.MustQuery("select b from t").Rows()[0][0]
+	c.Assert(time_in_8 != time_in_0, IsTrue, Commentf("%v == %v", time_in_8, time_in_0))
+	datumTimeIn8, err := expression.GetTimeValue(tk.Se, time_in_8, mysql.TypeTimestamp, 0)
+	c.Assert(err, IsNil)
+	tIn8To0 := datumTimeIn8.GetMysqlTime()
+	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
+	c.Assert(err, IsNil)
+	err = tIn8To0.ConvertTimeZone(timeZoneIn8, time.UTC)
+	c.Assert(err, IsNil)
+	c.Assert(time_in_0 == tIn8To0.String(), IsTrue, Commentf("%v != %v", time_in_0, tIn8To0.String()))
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {
