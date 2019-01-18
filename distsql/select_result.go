@@ -173,7 +173,8 @@ func (r *selectResult) getSelectResp() error {
 }
 
 func (r *selectResult) updateCopRuntimeStats(callee string) {
-	if callee == "" || len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil ||
+		callee == "" || len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
 		return
 	}
 

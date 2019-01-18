@@ -55,7 +55,7 @@ func (e *hashAggExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append([]*execDetail{&e.execDetail}, suffix...)
+	return append(suffix, &e.execDetail)
 }
 
 func (e *hashAggExec) SetSrcExec(exec executor) {
@@ -228,7 +228,7 @@ func (e *streamAggExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append([]*execDetail{&e.execDetail}, suffix...)
+	return append(suffix, &e.execDetail)
 }
 
 func (e *streamAggExec) SetSrcExec(exec executor) {

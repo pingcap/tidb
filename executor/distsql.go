@@ -281,11 +281,6 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	if err := e.open(ctx, kvRanges); err != nil {
 		return errors.Trace(err)
 	}
-
-	if e.runtimeStats != nil {
-		collExec := true
-		e.dagPB.CollectExecutionSummaries = &collExec
-	}
 	return nil
 }
 
@@ -296,6 +291,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
 	var builder distsql.RequestBuilder
@@ -310,7 +310,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	e.result, err = distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -381,11 +381,6 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	if err != nil {
 		e.feedback.Invalidate()
 	}
-
-	if e.runtimeStats != nil {
-		collExec := true
-		e.dagPB.CollectExecutionSummaries = &collExec
-	}
 	return errors.Trace(err)
 }
 
@@ -428,6 +423,11 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask) error {
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
+	}
+
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -440,7 +440,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.idxPlans))
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.tblPlans))
 	if err != nil {
 		return errors.Trace(err)
 	}

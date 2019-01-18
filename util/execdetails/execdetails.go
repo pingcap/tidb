@@ -197,7 +197,7 @@ func (e *RuntimeStatsColl) CopSummary(planID string) string {
 
 	n := len(procTimes)
 	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("procNs max:%v, min:%v, p80:%v, p95:%v, numRows:%v, numIters:%v, numTasks:%v",
+	return fmt.Sprintf("procNs max:%v, min:%v, p80:%v, p95:%v, rows:%v, iters:%v, tasks:%v",
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
 }
 

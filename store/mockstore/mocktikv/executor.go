@@ -57,7 +57,7 @@ type executor interface {
 	// Cursor returns the key gonna to be scanned by the Next() function.
 	Cursor() (key []byte, desc bool)
 	// ExecDetails returns its and its children's execution details.
-	// The order is from parent to child, [parent, child, child's child, ...].
+	// The order is same as DAGRequest.Executors, which child is in front of parent.
 	ExecDetails() []*execDetail
 }
 
@@ -82,7 +82,7 @@ func (e *tableScanExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append([]*execDetail{&e.execDetail}, suffix...)
+	return append(suffix, &e.execDetail)
 }
 
 func (e *tableScanExec) SetSrcExec(exec executor) {
@@ -268,7 +268,7 @@ func (e *indexScanExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append([]*execDetail{&e.execDetail}, suffix...)
+	return append(suffix, &e.execDetail)
 }
 
 func (e *indexScanExec) SetSrcExec(exec executor) {
@@ -456,7 +456,7 @@ func (e *selectionExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append([]*execDetail{&e.execDetail}, suffix...)
+	return append(suffix, &e.execDetail)
 }
 
 func (e *selectionExec) SetSrcExec(exec executor) {
@@ -548,7 +548,7 @@ func (e *topNExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append([]*execDetail{&e.execDetail}, suffix...)
+	return append(suffix, &e.execDetail)
 }
 
 func (e *topNExec) SetSrcExec(src executor) {
@@ -651,7 +651,7 @@ func (e *limitExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append([]*execDetail{&e.execDetail}, suffix...)
+	return append(suffix, &e.execDetail)
 }
 
 func (e *limitExec) SetSrcExec(src executor) {
