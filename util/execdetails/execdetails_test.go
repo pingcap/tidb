@@ -14,6 +14,7 @@
 package execdetails
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -51,14 +52,16 @@ func TestString(t *testing.T) {
 
 func TestCopRuntimeStats(t *testing.T) {
 	stats := NewRuntimeStatsColl()
-	stats.GetCop("table_scan", "8.8.8.8").Record(1, 1, 1)
-	stats.GetCop("table_scan", "8.8.8.9").Record(2, 2, 2)
-	stats.GetCop("agg", "8.8.8.8").Record(3, 3, 3)
-	stats.GetCop("agg", "8.8.8.9").Record(4, 4, 4)
-	if stats.CopSummary("table_scan") != "max proc ns:2, total rows:3, total iters:3" {
+	stats.RecordOneCopTask("table_scan", "8.8.8.8", 1, 1, 1)
+	stats.RecordOneCopTask("table_scan", "8.8.8.9", 2, 2, 2)
+	stats.RecordOneCopTask("agg", "8.8.8.8", 3, 3, 3)
+	stats.RecordOneCopTask("agg", "8.8.8.9", 4, 4, 4)
+	fmt.Println(stats.CopSummary("table_scan"))
+	fmt.Println(stats.CopSummary("agg"))
+	if stats.CopSummary("table_scan") != "procNs max:2, min:1, p80:2, p95:2, numRows:3, numIters:3, numTasks:2" {
 		t.Fatal("table_scan")
 	}
-	if stats.CopSummary("agg") != "max proc ns:4, total rows:7, total iters:7" {
+	if stats.CopSummary("agg") != "procNs max:4, min:3, p80:4, p95:4, numRows:7, numIters:7, numTasks:2" {
 		t.Fatal("agg")
 	}
 }

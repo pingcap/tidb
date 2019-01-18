@@ -181,8 +181,8 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			planID := r.copPlanIDs[i]
-			stats := r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCop(planID, callee)
-			stats.Record(*detail.TimeProcessedNs, *detail.NumProducedRows, *detail.NumIterations)
+			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+				RecordOneCopTask(planID, callee, *detail.TimeProcessedNs, *detail.NumProducedRows, *detail.NumIterations)
 		}
 	}
 }

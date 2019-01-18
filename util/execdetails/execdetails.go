@@ -15,6 +15,7 @@ package execdetails
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -114,9 +115,12 @@ type RuntimeStatsColl struct {
 	mu    sync.Mutex
 	stats map[string]*RuntimeStats
 	// Usually, CopTasks are executed on TiKV cluster consist of multiple instances,
-	// So coprocessors' addresses must be taken into account.
-	// Then the first key is executor's planID and the second is coprocessor's address.
-	copStats map[string]map[string]*CopRuntimeStats
+	// so coprocessors' addresses must be taken into account.
+	// And Sometimes, several cop tasks of one operator can be executed in a same TiKV instance,
+	// which depend on how we split the cop tasks and the distribution of data regions.
+	// So we have to use a list to maintain all tasks executed on the instance.
+	// Then the type is map[operator ID]map[TiKV instance address][all tasks executed on this instance].
+	copStats map[string]map[string][]*CopRuntimeStats
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -142,7 +146,7 @@ type CopRuntimeStats struct {
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
 	return &RuntimeStatsColl{stats: make(map[string]*RuntimeStats),
-		copStats: make(map[string]map[string]*CopRuntimeStats)}
+		copStats: make(map[string]map[string][]*CopRuntimeStats)}
 }
 
 // Get gets execStat for a executor.
@@ -157,21 +161,19 @@ func (e *RuntimeStatsColl) Get(planID string) *RuntimeStats {
 	return runtimeStats
 }
 
-// GetCop gets a CopRuntimeStats by planID and address.
-func (e *RuntimeStatsColl) GetCop(planID, address string) *CopRuntimeStats {
+// RecordOneCopTask records a specific cop tasks's execution detail.
+func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string,
+	timeProcessedNs, numProducedRows, numIterations uint64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	stats, ok := e.copStats[planID]
+
+	_, ok := e.copStats[planID]
 	if !ok {
-		stats = make(map[string]*CopRuntimeStats, 8)
-		e.copStats[planID] = stats
+		e.copStats[planID] = make(map[string][]*CopRuntimeStats, 8)
 	}
-	stat, ok := stats[address]
-	if !ok {
-		stat = new(CopRuntimeStats)
-		stats[address] = stat
-	}
-	return stat
+
+	e.copStats[planID][address] = append(e.copStats[planID][address],
+		&CopRuntimeStats{timeProcessedNs, numProducedRows, numIterations})
 }
 
 // CopSummary gets a summary of the cop task's execution information.
@@ -182,15 +184,21 @@ func (e *RuntimeStatsColl) CopSummary(planID string) string {
 	if !ok {
 		return ""
 	}
-	var maxProcesses, totalRows, totalIters uint64
-	for _, stat := range stats {
-		if stat.timeProcessedNs > maxProcesses {
-			maxProcesses = stat.timeProcessedNs
+	var totalRows, totalIters, totalTasks uint64
+	procTimes := make([]uint64, 0, 32)
+	for _, instanceStats := range stats {
+		for _, stat := range instanceStats {
+			procTimes = append(procTimes, stat.timeProcessedNs)
+			totalRows += stat.numProducedRows
+			totalIters += stat.numIterations
+			totalTasks++
 		}
-		totalRows += stat.numProducedRows
-		totalIters += stat.numIterations
 	}
-	return fmt.Sprintf("max proc ns:%v, total rows:%v, total iters:%v", maxProcesses, totalRows, totalIters)
+
+	n := len(procTimes)
+	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
+	return fmt.Sprintf("procNs max:%v, min:%v, p80:%v, p95:%v, numRows:%v, numIters:%v, numTasks:%v",
+		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
 }
 
 // Exists checks if the planID exists in the stats collection.
@@ -199,13 +207,6 @@ func (e *RuntimeStatsColl) Exists(planID string) bool {
 	defer e.mu.Unlock()
 	_, exists := e.stats[planID]
 	return exists
-}
-
-// Record records executor's information.
-func (e *CopRuntimeStats) Record(timeProcessedNs, numProducedRows, numIterations uint64) {
-	e.timeProcessedNs += timeProcessedNs
-	e.numProducedRows += numProducedRows
-	e.numIterations += numIterations
 }
 
 // Record records executor's execution.
