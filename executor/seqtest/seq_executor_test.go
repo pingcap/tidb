@@ -352,6 +352,17 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"id|int(11)|binary|NO||0||select,insert,update,references|show_test_comment_id",
 	))
 
+	// Test show create table with different charset
+	tk.MustExec(`drop table if exists different_charset`)
+	tk.MustExec(`create table different_charset(ch1 varchar(10) charset utf8, ch2 varchar(10) charset binary);`)
+	tk.MustQuery(`show create table different_charset`).Check(testutil.RowsWithSep("|",
+		""+
+			"different_charset CREATE TABLE `different_charset` (\n"+
+			"  `ch1` varchar(10) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
+			"  `ch2` varbinary(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
 	// Test show create table with AUTO_INCREMENT option
 	// for issue https://github.com/pingcap/tidb/issues/3747
 	tk.MustExec(`drop table if exists show_auto_increment`)
