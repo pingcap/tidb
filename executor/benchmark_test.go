@@ -1,3 +1,16 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package executor
 
 import (
@@ -18,6 +31,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+)
+
+var (
+	_ Executor = &mockDataSource{}
 )
 
 type mockDataSourceParameters struct {
@@ -113,13 +130,13 @@ func (mds *mockDataSource) prepareChunks() {
 
 func (mds *mockDataSource) Open(context.Context) error { return nil }
 
-func (mds *mockDataSource) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (mds *mockDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if mds.chunkPtr >= len(mds.chunks) {
-		chk.Reset()
+		req.Reset()
 		return nil
 	}
 	dataChk := mds.chunks[mds.chunkPtr]
-	dataChk.SwapColumns(chk)
+	dataChk.SwapColumns(req.Chunk)
 	mds.chunkPtr++
 	return nil
 }
@@ -206,9 +223,8 @@ func buildHashAggExecutor(v *aggExecutorParameters) Executor {
 func buildStreamAggExecutor(v *aggExecutorParameters) Executor {
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(v.ctx, v.schema, "", v.child),
-		StmtCtx:      v.ctx.GetSessionVars().StmtCtx,
+		groupChecker: newGroupChecker(v.ctx.GetSessionVars().StmtCtx, v.groupByItems),
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.aggFuncs)),
-		GroupByItems: v.groupByItems,
 	}
 	if len(v.groupByItems) != 0 || aggregation.IsAllFirstRow(v.aggFuncs) {
 		e.defaultVal = nil
@@ -326,7 +342,7 @@ func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
 			b.Fatal(err)
 		}
 		for {
-			if err := aggExec.Next(tmpCtx, chk); err != nil {
+			if err := aggExec.Next(tmpCtx, chunk.NewRecordBatch(chk)); err != nil {
 				b.Fatal(b)
 			}
 			if chk.NumRows() == 0 {
