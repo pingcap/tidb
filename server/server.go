@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
+	"github.com/pingcap/tidb/plugin"
 )
 
 var (
@@ -353,6 +354,14 @@ func (s *Server) Close() {
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
 	conn := s.newConn(c)
+
+	for _, p := range plugin.GetByKind(plugin.Audit) {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			authPlugin.OnConnectionEvent(context.Background(), nil, plugin.PreAuth, 0)
+		}
+	}
+
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
@@ -371,7 +380,21 @@ func (s *Server) onConn(c net.Conn) {
 	s.rwlock.Unlock()
 	metrics.ConnGauge.Set(float64(connections))
 
+	for _, p := range plugin.GetByKind(plugin.Audit) {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars() ,plugin.Connected, 0)
+		}
+	}
+
 	conn.Run()
+
+	for _, p := range plugin.GetByKind(plugin.Audit) {
+		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+		if authPlugin.OnConnectionEvent != nil {
+			authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Disconnect, 0)
+		}
+	}
 }
 
 // ShowProcessList implements the SessionManager interface.
