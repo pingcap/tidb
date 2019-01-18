@@ -206,7 +206,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) CHARSET utf8mb4 COLLATE utf8mb4_bin NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -415,7 +415,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) CHARSET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='a\\nb\\rc	d\\0e'"}
+		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT NULL COMMENT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='a\\nb\\rc	d\\0e'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -431,7 +431,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) CHARSET utf8mb4 COLLATE utf8mb4_bin DEFAULT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -523,7 +523,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL,\n"+
-			"  `c` char(1) CHARSET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,\n"+
+			"  `c` char(1) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
 	))
