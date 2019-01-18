@@ -102,7 +102,7 @@ type clientConn struct {
 	ctx          QueryCtx          // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 	status       int32             // dispatching/reading/shutdown/waitshutdown
-	lastCode     int16             // latest error code
+	lastCode     uint16             // latest error code
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {

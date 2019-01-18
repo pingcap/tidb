@@ -87,11 +87,11 @@ const (
 type AuditManifest struct {
 	Manifest
 	OnGeneralEvent        func(ctx context.Context, sctx *variable.SessionVars, event GeneralEvent) error
-	OnConnectionEvent     func(ctx context.Context, sctx *variable.SessionVars, event ConnectionEvent, errorCode int16) error
+	OnConnectionEvent     func(ctx context.Context, sctx *variable.SessionVars, event ConnectionEvent, errorCode uint16) error
 	OnParseEvent          func(ctx context.Context, sctx *variable.SessionVars, event ParseEvent) error
 	OnServerEvent         func(ctx context.Context, event ServerEvent) error
 	OnCommandEvent        func(ctx context.Context, sctx *variable.SessionVars, event CommandEvent) error
 	OnQueryEvent          func(ctx context.Context, sctx *variable.SessionVars, event QueryEvent) error
 	OnTableAccessEvent    func(ctx context.Context, sctx *variable.SessionVars, event TableAccessEvent) error
-	OnGlobalVariableEvent func(ctx context.Context, sctx *variable.SessionVars) error
+	OnGlobalVariableEvent func(ctx context.Context, sctx *variable.SessionVars, varName, varValue string) error
 }
