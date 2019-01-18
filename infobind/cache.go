@@ -29,7 +29,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const defaultBindCacheSize int = 5
+const defaultBindCacheSize  = 5
 
 // BindData store the basic bind info and bindSql astNode.
 type BindData struct {
@@ -69,22 +69,18 @@ type bindRecord struct {
 // NewHandle create a Handle with a BindCache.
 func NewHandle() *Handle {
 	handle := &Handle{}
-	bc := &BindCache{
-		Cache: make(map[string][]*BindData, defaultBindCacheSize),
-	}
-	handle.bind.Store(bc)
 	return handle
 }
 
 // Get get bindCache from a Handle.
 func (h *Handle) Get() *BindCache {
 	bc := h.bind.Load()
+
 	if bc != nil {
 		return bc.(*BindCache)
 	}
-	return &BindCache{
-		Cache: make(map[string][]*BindData, defaultBindCacheSize),
-	}
+
+	return nil
 }
 
 // LoadDiff use to load new bind info to bindCache bc.
@@ -135,12 +131,19 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 	)
 	bc := h.Get()
 
-	newBc := &BindCache{
-		Cache: make(map[string][]*BindData, len(bc.Cache)),
+	length := defaultBindCacheSize
+	if bc != nil {
+		length = len(bc.Cache)
 	}
 
-	for hash, bindDataArr := range bc.Cache {
-		newBc.Cache[hash] = append(newBc.Cache[hash], bindDataArr...)
+	newBc := &BindCache{
+		Cache: make(map[string][]*BindData, length),
+	}
+
+	if bc != nil {
+		for hash, bindDataArr := range bc.Cache {
+			newBc.Cache[hash] = append(newBc.Cache[hash], bindDataArr...)
+		}
 	}
 
 	if fullLoad {
@@ -163,42 +166,16 @@ func parseSQL(sctx sessionctx.Context, parser *parser.Parser, sql string, charse
 
 func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) (bindRecord, error) {
 	var value bindRecord
-	for i, f := range fs {
-		switch {
-		case f.ColumnAsName.L == "original_sql":
-			value.OriginalSQL = row.GetString(i)
-		case f.ColumnAsName.L == "bind_sql":
-			value.BindSQL = row.GetString(i)
-		case f.ColumnAsName.L == "default_db":
-			value.Db = row.GetString(i)
-		case f.ColumnAsName.L == "status":
-			value.Status = row.GetInt64(i)
-		case f.ColumnAsName.L == "create_time":
-			var err error
-			value.CreateTime = row.GetTime(i)
-			if err != nil {
-				return value, errors.Trace(err)
-			}
-		case f.ColumnAsName.L == "update_time":
-			var err error
-			value.UpdateTime = row.GetTime(i)
-			if err != nil {
-				return value, errors.Trace(err)
-			}
-		case f.ColumnAsName.L == "charset":
-			var err error
-			value.Charset = row.GetString(i)
-			if err != nil {
-				return value, errors.Trace(err)
-			}
-		case f.ColumnAsName.L == "collation":
-			var err error
-			value.Collation = row.GetString(i)
-			if err != nil {
-				return value, errors.Trace(err)
-			}
-		}
-	}
+
+	value.OriginalSQL = row.GetString(0)
+	value.BindSQL = row.GetString(1)
+	value.Db = row.GetString(2)
+	value.Status = row.GetInt64(3)
+	value.CreateTime = row.GetTime(4)
+	value.UpdateTime = row.GetTime(5)
+	value.Charset = row.GetString(6)
+	value.Collation = row.GetString(7)
+
 	return value, nil
 }
 
