@@ -14,7 +14,6 @@
 package execdetails
 
 import (
-	"fmt"
 	"testing"
 	"time"
 )
@@ -56,8 +55,6 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask("table_scan", "8.8.8.9", 2, 2, 2)
 	stats.RecordOneCopTask("agg", "8.8.8.8", 3, 3, 3)
 	stats.RecordOneCopTask("agg", "8.8.8.9", 4, 4, 4)
-	fmt.Println(stats.CopSummary("table_scan"))
-	fmt.Println(stats.CopSummary("agg"))
 	if stats.CopSummary("table_scan") != "procNs max:2, min:1, p80:2, p95:2, numRows:3, numIters:3, numTasks:2" {
 		t.Fatal("table_scan")
 	}
