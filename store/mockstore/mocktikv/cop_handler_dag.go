@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/timeutil"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -84,7 +84,12 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		rowCnt++
 	}
 	warnings := dagCtx.evalCtx.sc.GetWarnings()
-	return buildResp(chunks, e.Counts(), err, warnings)
+
+	var execDetails []*execDetail
+	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+		execDetails = e.ExecDetails()
+	}
+	return buildResp(chunks, e.Counts(), execDetails, err, warnings)
 }
 
 func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
@@ -545,12 +550,26 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 	return chunk, finish, &ran, mock.exec.Counts(), warnings, nil
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, execDetails []*execDetail, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
 	resp := &coprocessor.Response{}
+
+	execSummary := make([]*tipb.ExecutorExecutionSummary, 0, len(execDetails))
+	for _, d := range execDetails {
+		costNs := uint64(d.timeProcessed / time.Nanosecond)
+		rows := uint64(d.numProducedRows)
+		numIter := uint64(d.numIterations)
+		execSummary = append(execSummary, &tipb.ExecutorExecutionSummary{
+			TimeProcessedNs: &costNs,
+			NumProducedRows: &rows,
+			NumIterations:   &numIter,
+		})
+	}
+
 	selResp := &tipb.SelectResponse{
-		Error:        toPBError(err),
-		Chunks:       chunks,
-		OutputCounts: counts,
+		Error:              toPBError(err),
+		Chunks:             chunks,
+		OutputCounts:       counts,
+		ExecutionSummaries: execSummary,
 	}
 	if len(warnings) > 0 {
 		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
