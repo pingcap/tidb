@@ -358,7 +358,10 @@ func (s *Server) onConn(c net.Conn) {
 	for _, p := range plugin.GetByKind(plugin.Audit) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			authPlugin.OnConnectionEvent(context.Background(), nil, plugin.PreAuth, 0)
+			err := authPlugin.OnConnectionEvent(context.Background(), nil, plugin.PreAuth, 0)
+			if err != nil {
+
+			}
 		}
 	}
 
@@ -383,7 +386,10 @@ func (s *Server) onConn(c net.Conn) {
 	for _, p := range plugin.GetByKind(plugin.Audit) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Connected, 0)
+			err := authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Connected, 0)
+			if err != nil {
+
+			}
 		}
 	}
 
@@ -392,7 +398,10 @@ func (s *Server) onConn(c net.Conn) {
 	for _, p := range plugin.GetByKind(plugin.Audit) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
-			authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Disconnect, conn.lastCode)
+			err := authPlugin.OnConnectionEvent(context.Background(), conn.ctx.GetSessionVars(), plugin.Disconnect, conn.lastCode)
+			if err != nil {
+
+			}
 		}
 	}
 }
