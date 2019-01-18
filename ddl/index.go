@@ -585,12 +585,6 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 			}
 		}
 		idxVal[j] = idxColumnVal
-		ss := ""
-		for _, vv := range idxVal {
-			str, _ := vv.ToString()
-			ss += str
-			ss += "     "
-		}
 	}
 	// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
 	// the generated value, so we need to clear up the reusing map.

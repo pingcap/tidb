@@ -368,7 +368,6 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:
 				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
-				fmt.Printf("\ngetDefaultValue: value: %s, session.timezone: %v\n\n\n", value, ctx.GetSessionVars().TimeZone)
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 				}
@@ -548,7 +547,6 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 	}
 
 	if c.GetDefaultValue() != nil {
-		fmt.Printf("check default value: %v\n\n", c.GetDefaultValue())
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
 			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
