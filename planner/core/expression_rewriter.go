@@ -48,7 +48,8 @@ func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 	if ctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		b.is = ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	newExpr, _, err := b.rewrite(expr, nil, nil, true)
+	fakePlan := LogicalTableDual{}.Init(ctx)
+	newExpr, _, err := b.rewrite(expr, fakePlan, nil, true)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
