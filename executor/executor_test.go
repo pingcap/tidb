@@ -2241,18 +2241,18 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	tk.MustExec(`create table t (a int)`)
 	tk.MustExec(`insert into t set a=1`)
 	tk.MustExec(`alter table t add column b timestamp not null default current_timestamp;`)
-	time_in_8 := tk.MustQuery("select b from t").Rows()[0][0]
+	timeIn8 := tk.MustQuery("select b from t").Rows()[0][0]
 	tk.MustExec(`set time_zone = '+00:00'`)
-	time_in_0 := tk.MustQuery("select b from t").Rows()[0][0]
-	c.Assert(time_in_8 != time_in_0, IsTrue, Commentf("%v == %v", time_in_8, time_in_0))
-	datumTimeIn8, err := expression.GetTimeValue(tk.Se, time_in_8, mysql.TypeTimestamp, 0)
+	timeIn0 := tk.MustQuery("select b from t").Rows()[0][0]
+	c.Assert(timeIn8 != timeIn0, IsTrue, Commentf("%v == %v", timeIn8, timeIn0))
+	datumTimeIn8, err := expression.GetTimeValue(tk.Se, timeIn8, mysql.TypeTimestamp, 0)
 	c.Assert(err, IsNil)
 	tIn8To0 := datumTimeIn8.GetMysqlTime()
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
 	err = tIn8To0.ConvertTimeZone(timeZoneIn8, time.UTC)
 	c.Assert(err, IsNil)
-	c.Assert(time_in_0 == tIn8To0.String(), IsTrue, Commentf("%v != %v", time_in_0, tIn8To0.String()))
+	c.Assert(timeIn0 == tIn8To0.String(), IsTrue, Commentf("%v != %v", timeIn0, tIn8To0.String()))
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {
