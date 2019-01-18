@@ -92,8 +92,7 @@ check-slow:tools/bin/gometalinter tools/bin/gosec
 
 errcheck:tools/bin/errcheck
 	@echo "errcheck"
-	@$(GO) mod vendor
-	@tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:tools/bin/revive
 	@echo "linting"
