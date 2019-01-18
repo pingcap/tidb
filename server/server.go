@@ -46,11 +46,12 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ipwhitelist"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
@@ -308,12 +309,22 @@ func (s *Server) Run() error {
 			break
 		}
 
-		const useIPWhiteList = true
-		if useIPWhiteList {
-			if err := verify(conn); err != nil {
-				log.Info(err)
-				conn.Close()
-				continue
+		for _, p := range plugin.GetByKind(plugin.Audit) {
+			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+			if authPlugin.OnConnectionEvent != nil {
+				host, err := getPeerHost(conn)
+				if err != nil {
+					log.Error(err)
+					conn.Close()
+					continue
+				}
+
+				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host})
+				if err != nil {
+					log.Info(err)
+					conn.Close()
+					continue
+				}
 			}
 		}
 
@@ -329,8 +340,13 @@ func (s *Server) Run() error {
 	}
 }
 
-func verify(conn net.Conn) error {
-	return ipwhitelist.Check(conn)
+func getPeerHost(conn net.Conn) (string, error) {
+	addr := conn.RemoteAddr().String()
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return host, nil
 }
 
 func (s *Server) shouldStopListener() bool {
