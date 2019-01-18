@@ -1558,7 +1558,165 @@ type ShowStmt struct {
 
 // Restore implements Node interface.
 func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	restoreOptFull := func() {
+		if n.Full {
+			ctx.WriteKeyWord("FULL ")
+		}
+	}
+	restoreShowDatabaseNameOpt := func() {
+		if n.DBName != "" {
+			// FROM OR IN
+			ctx.WriteKeyWord(" IN ")
+			ctx.WriteName(n.DBName)
+		}
+	}
+	restoreGlobalScope := func() {
+		if n.GlobalScope {
+			ctx.WriteKeyWord("GLOBAL ")
+		} else {
+			ctx.WriteKeyWord("SESSION ")
+		}
+	}
+	restoreShowLikeOrWhereOpt := func() error {
+		if n.Pattern != nil && n.Pattern.Pattern != nil {
+			ctx.WriteKeyWord(" LIKE ")
+			if err := n.Pattern.Pattern.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while resotre ShowStmt.Pattern")
+			}
+		} else if n.Where != nil {
+			ctx.WriteKeyWord(" WHERE ")
+			if err := n.Where.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while resotre ShowStmt.Where")
+			}
+		}
+		return nil
+	}
+	restoreUserName := func() error {
+		if n.User.CurrentUser {
+			ctx.WriteKeyWord("CURRENT_USER")
+		} else {
+			ctx.WriteString(n.User.Username)
+			if n.User.Hostname != "" {
+				ctx.WritePlain("@")
+				ctx.WriteString(n.User.Hostname)
+			}
+		}
+		return nil
+	}
+
+	ctx.WriteKeyWord("SHOW ")
+	switch n.Tp {
+	case ShowCreateTable:
+		ctx.WriteKeyWord("CREATE TABLE ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while resotre ShowStmt.Table")
+		}
+	case ShowCreateDatabase:
+		ctx.WriteKeyWord("CREATE DATABASE ")
+		if n.IfNotExists {
+			ctx.WriteKeyWord("IF NOT EXISTS ")
+		}
+		ctx.WriteName(n.DBName)
+	case ShowCreateUser:
+		ctx.WriteKeyWord("CREATE USER ")
+		restoreUserName()
+	case ShowGrants:
+		ctx.WriteKeyWord("GRANTS")
+		if n.User != nil {
+			ctx.WriteKeyWord(" FOR ")
+			restoreUserName()
+		}
+	case ShowMasterStatus:
+		ctx.WriteKeyWord("MASTER STATUS")
+	case ShowProcessList:
+		restoreOptFull()
+		ctx.WriteKeyWord("PROCESSLIST")
+	case ShowStatsMeta:
+		ctx.WriteKeyWord("STATS_META")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowStatsHistograms:
+		ctx.WriteKeyWord("STATS_HISTOGRAMS")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowStatsBuckets:
+		ctx.WriteKeyWord("STATS_BUCKETS")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowStatsHealthy:
+		ctx.WriteKeyWord("STATS_HEALTHY")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+	case ShowProfiles:
+		ctx.WriteKeyWord("PROFILES")
+	case ShowPrivileges:
+		ctx.WriteKeyWord("PRIVILEGES")
+	// ShowTargetFilterable
+	default:
+		switch n.Tp {
+		case ShowEngines:
+			ctx.WriteKeyWord("ENGINES")
+		case ShowDatabases:
+			ctx.WriteKeyWord("DATABASES")
+		case ShowCharset:
+			ctx.WriteKeyWord("CHARSET")
+		case ShowTables:
+			restoreOptFull()
+			ctx.WriteKeyWord("TABLES")
+			restoreShowDatabaseNameOpt()
+		case ShowTableStatus:
+			ctx.WriteKeyWord("TABLE STATUS")
+			restoreShowDatabaseNameOpt()
+		case ShowIndex:
+			// here can be INDEX INDEXES KEYS
+			// FROM or IN
+			ctx.WriteKeyWord("INDEX IN ")
+			if err := n.Table.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while resotre ShowStmt.Table")
+			} // TODO: remember to check this case
+		case ShowColumns: // equivalent to SHOW FIELDS
+			restoreOptFull()
+			ctx.WriteKeyWord("COLUMNS")
+			if n.Table != nil {
+				// FROM or IN
+				ctx.WriteKeyWord(" IN ")
+				if err := n.Table.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while resotre ShowStmt.Table")
+				}
+			}
+			restoreShowDatabaseNameOpt()
+		case ShowWarnings:
+			ctx.WriteKeyWord("WARNINGS")
+		case ShowErrors:
+			ctx.WriteKeyWord("ERRORS")
+		case ShowVariables:
+			restoreGlobalScope()
+			ctx.WriteKeyWord("VARIABLES")
+		case ShowStatus:
+			restoreGlobalScope()
+			ctx.WriteKeyWord("STATUS")
+		case ShowCollation:
+			ctx.WriteKeyWord("COLLATION")
+		case ShowTriggers:
+			ctx.WriteKeyWord("TRIGGERS")
+			restoreShowDatabaseNameOpt()
+		case ShowProcedureStatus:
+			ctx.WriteKeyWord("PROCEDURE STATUS")
+		case ShowEvents:
+			ctx.WriteKeyWord("EVENTS")
+			restoreShowDatabaseNameOpt()
+		case ShowPlugins:
+			ctx.WriteKeyWord("PLUGINS")
+		default:
+			return errors.New("Unknown ShowStmt type")
+		}
+		restoreShowLikeOrWhereOpt()
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
