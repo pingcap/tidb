@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -236,7 +236,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 
 func (e *HashAggExec) initForUnparallelExec() {
 	e.groupSet = set.NewStringSet()
-	e.partialResultMap = make(aggPartialResultMapper, 0)
+	e.partialResultMap = make(aggPartialResultMapper)
 	e.groupKeyBuffer = make([]byte, 0, 8)
 	e.groupValDatums = make([]types.Datum, 0, len(e.groupKeyBuffer))
 	e.childResult = e.children[0].newFirstChunk()
@@ -271,7 +271,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
 			globalOutputCh:    e.finalOutputCh,
-			partialResultsMap: make(aggPartialResultMapper, 0),
+			partialResultsMap: make(aggPartialResultMapper),
 			groupByItems:      e.GroupByItems,
 			groupValDatums:    make([]types.Datum, 0, len(e.GroupByItems)),
 			chk:               e.children[0].newFirstChunk(),
@@ -288,7 +288,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.maxChunkSize),
-			partialResultMap:    make(aggPartialResultMapper, 0),
+			partialResultMap:    make(aggPartialResultMapper),
 			groupSet:            set.NewStringSet(),
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
@@ -518,20 +518,20 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 }
 
 // Next implements the Executor Next interface.
-func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *HashAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("hashagg.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	if e.isUnparallelExec {
-		return errors.Trace(e.unparallelExec(ctx, chk))
+		return errors.Trace(e.unparallelExec(ctx, req.Chunk))
 	}
-	return errors.Trace(e.parallelExec(ctx, chk))
+	return errors.Trace(e.parallelExec(ctx, req.Chunk))
 }
 
 func (e *HashAggExec) fetchChildData(ctx context.Context) {
@@ -559,7 +559,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 			}
 			chk = input.chk
 		}
-		err = e.children[0].Next(ctx, chk)
+		err = e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
 			return
@@ -684,7 +684,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	inputIter := chunk.NewIterator4Chunk(e.childResult)
 	for {
-		err := e.children[0].Next(ctx, e.childResult)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -760,10 +760,7 @@ type StreamAggExec struct {
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
 	isChildReturnEmpty bool
 	defaultVal         *chunk.Chunk
-	StmtCtx            *stmtctx.StatementContext
-	GroupByItems       []expression.Expression
-	curGroupKey        []types.Datum
-	tmpGroupKey        []types.Datum
+	groupChecker       *groupChecker
 	inputIter          *chunk.Iterator4Chunk
 	inputRow           chunk.Row
 	aggFuncs           []aggfuncs.AggFunc
@@ -798,18 +795,18 @@ func (e *StreamAggExec) Close() error {
 }
 
 // Next implements the Executor Next interface.
-func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("streamAgg.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
-	for !e.executed && chk.NumRows() < e.maxChunkSize {
-		err := e.consumeOneGroup(ctx, chk)
+	req.Reset()
+	for !e.executed && req.NumRows() < e.maxChunkSize {
+		err := e.consumeOneGroup(ctx, req.Chunk)
 		if err != nil {
 			e.executed = true
 			return errors.Trace(err)
@@ -824,7 +821,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 			return errors.Trace(err)
 		}
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
-			meetNewGroup, err := e.meetNewGroup(e.inputRow)
+			meetNewGroup, err := e.groupChecker.meetNewGroup(e.inputRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -874,7 +871,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return errors.Trace(err)
 	}
 
-	err = e.children[0].Next(ctx, e.childResult)
+	err = e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -911,8 +908,23 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	return nil
 }
 
+type groupChecker struct {
+	StmtCtx      *stmtctx.StatementContext
+	GroupByItems []expression.Expression
+	curGroupKey  []types.Datum
+	tmpGroupKey  []types.Datum
+}
+
+func newGroupChecker(stmtCtx *stmtctx.StatementContext, items []expression.Expression) *groupChecker {
+	return &groupChecker{
+		StmtCtx:      stmtCtx,
+		GroupByItems: items,
+	}
+}
+
 // meetNewGroup returns a value that represents if the new group is different from last group.
-func (e *StreamAggExec) meetNewGroup(row chunk.Row) (bool, error) {
+// TODO: Since all the group by items are only a column reference, guaranteed by building projection below aggregation, we can directly compare data in a chunk.
+func (e *groupChecker) meetNewGroup(row chunk.Row) (bool, error) {
 	if len(e.GroupByItems) == 0 {
 		return false, nil
 	}

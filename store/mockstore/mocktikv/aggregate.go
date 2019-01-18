@@ -86,7 +86,7 @@ func (e *hashAggExec) Cursor() ([]byte, bool) {
 func (e *hashAggExec) Next(ctx context.Context) (value [][]byte, err error) {
 	e.count++
 	if e.aggCtxsMap == nil {
-		e.aggCtxsMap = make(aggCtxsMapper, 0)
+		e.aggCtxsMap = make(aggCtxsMapper)
 	}
 	if !e.executed {
 		for {

@@ -232,8 +232,7 @@ func (v weekBehaviour) test(flag weekBehaviour) bool {
 }
 
 func weekMode(mode int) weekBehaviour {
-	var weekFormat weekBehaviour
-	weekFormat = weekBehaviour(mode & 7)
+	weekFormat := weekBehaviour(mode & 7)
 	if (weekFormat & weekBehaviourMondayFirst) == 0 {
 		weekFormat ^= weekBehaviourFirstWeekday
 	}

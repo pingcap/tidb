@@ -61,6 +61,9 @@ const (
 	codeWindowNoRedefineOrderBy         = mysql.ErrWindowNoRedefineOrderBy
 	codeWindowDuplicateName             = mysql.ErrWindowDuplicateName
 	codeErrTooBigPrecision              = mysql.ErrTooBigPrecision
+	codePartitionClauseOnNonpartitioned = mysql.ErrPartitionClauseOnNonpartitioned
+	codeTableaccessDenied               = mysql.ErrTableaccessDenied
+	codeSpecificAccessDenied            = mysql.ErrSpecificAccessDenied
 )
 
 // error definitions.
@@ -107,7 +110,10 @@ var (
 	ErrWindowNoInherentFrame           = terror.ClassOptimizer.New(codeWindowNoInherentFrame, mysql.MySQLErrName[mysql.ErrWindowNoInherentFrame])
 	ErrWindowNoRedefineOrderBy         = terror.ClassOptimizer.New(codeWindowNoRedefineOrderBy, mysql.MySQLErrName[mysql.ErrWindowNoRedefineOrderBy])
 	ErrWindowDuplicateName             = terror.ClassOptimizer.New(codeWindowDuplicateName, mysql.MySQLErrName[mysql.ErrWindowDuplicateName])
+	ErrPartitionClauseOnNonpartitioned = terror.ClassOptimizer.New(codePartitionClauseOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionClauseOnNonpartitioned])
 	errTooBigPrecision                 = terror.ClassExpression.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
+	ErrTableaccessDenied               = terror.ClassOptimizer.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
+	ErrSpecificAccessDenied            = terror.ClassOptimizer.New(mysql.ErrSpecificAccessDenied, mysql.MySQLErrName[mysql.ErrSpecificAccessDenied])
 )
 
 func init() {
@@ -144,7 +150,10 @@ func init() {
 		codeWindowNoInherentFrame:           mysql.ErrWindowNoInherentFrame,
 		codeWindowNoRedefineOrderBy:         mysql.ErrWindowNoRedefineOrderBy,
 		codeWindowDuplicateName:             mysql.ErrWindowDuplicateName,
+		codePartitionClauseOnNonpartitioned: mysql.ErrPartitionClauseOnNonpartitioned,
 		codeErrTooBigPrecision:              mysql.ErrTooBigPrecision,
+		codeTableaccessDenied:               mysql.ErrTableaccessDenied,
+		codeSpecificAccessDenied:            mysql.ErrSpecificAccessDenied,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }

@@ -137,12 +137,12 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 		if err != nil {
 			return
 		}
-		chk := rs[0].NewChunk()
-		err = rs[0].Next(ctx, chk)
+		req := rs[0].NewRecordBatch()
+		err = rs[0].Next(ctx, req)
 		if err != nil {
 			return
 		}
-		count := chk.GetRow(0).GetInt64(0)
+		count := req.GetRow(0).GetInt64(0)
 		value := types.NewDatum(colInfo.OriginDefaultValue)
 		value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 		if err != nil {
