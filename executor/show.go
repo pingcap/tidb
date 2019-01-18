@@ -357,6 +357,13 @@ func (e *ShowExec) fetchShowColumns() error {
 		if desc.DefaultValue != nil {
 			// SHOW COLUMNS result expects string value
 			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
+			if col.Tp == mysql.TypeTimestamp && strings.ToUpper(defaultValStr) != strings.ToUpper(ast.CurrentTimestamp) && defaultValStr != types.ZeroDatetimeStr {
+				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				defaultValStr = timeValue.GetMysqlTime().String()
+			}
 			if col.Tp == mysql.TypeBit {
 				defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)

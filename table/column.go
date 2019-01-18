@@ -359,16 +359,20 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 				col.Name, errors.Trace(err))
 		}
 		if col.Tp == mysql.TypeTimestamp {
-			t := value.GetMysqlTime()
-			defaultTimeZone := timeutil.SystemLocation()
-			if col.Version == model.ColumnInfoVersion1 {
-				defaultTimeZone = time.UTC
+			if vv, ok := defaultVal.(string); ok {
+				if strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) && vv != types.ZeroDatetimeStr {
+					t := value.GetMysqlTime()
+					defaultTimeZone := timeutil.SystemLocation()
+					if col.Version == model.ColumnInfoVersion1 {
+						defaultTimeZone = time.UTC
+					}
+					err = t.ConvertTimeZone(defaultTimeZone, ctx.GetSessionVars().Location())
+					if err != nil {
+						return value, errors.Trace(err)
+					}
+					value.SetMysqlTime(t)
+				}
 			}
-			err = t.ConvertTimeZone(defaultTimeZone, ctx.GetSessionVars().Location())
-			if err != nil {
-				return value, errors.Trace(err)
-			}
-			value.SetMysqlTime(t)
 		}
 		return value, nil
 	}
