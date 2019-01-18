@@ -117,8 +117,8 @@ type RuntimeStatsColl struct {
 	// Usually, CopTasks are executed on TiKV cluster consist of multiple instances,
 	// so coprocessors' addresses must be taken into account.
 	// And Sometimes, several cop tasks of one operator can be executed in a same TiKV instance,
-	// which depend on how we split the cop tasks and the distribution of data regions.
-	// So we have to use a list to maintain all tasks executed on the instance.
+	// which depend on how we split cop tasks and the distribution of data regions.
+	// So we have to use a list to maintain all tasks executed on each instance.
 	// Then the type is map[operator ID]map[TiKV instance address][all tasks executed on this instance].
 	copStats map[string]map[string][]*CopRuntimeStats
 }

@@ -278,10 +278,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	if err := e.open(ctx, kvRanges); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return e.open(ctx, kvRanges)
 }
 
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {

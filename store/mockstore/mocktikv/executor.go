@@ -57,7 +57,7 @@ type executor interface {
 	// Cursor returns the key gonna to be scanned by the Next() function.
 	Cursor() (key []byte, desc bool)
 	// ExecDetails returns its and its children's execution details.
-	// The order is same as DAGRequest.Executors, which child is in front of parent.
+	// The order is same as DAGRequest.Executors, which children are in front of parents.
 	ExecDetails() []*execDetail
 }
 

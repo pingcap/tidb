@@ -552,24 +552,24 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 
 func buildResp(chunks []tipb.Chunk, counts []int64, execDetails []*execDetail, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-
-	execSummary := make([]*tipb.ExecutorExecutionSummary, 0, len(execDetails))
-	for _, d := range execDetails {
-		costNs := uint64(d.timeProcessed / time.Nanosecond)
-		rows := uint64(d.numProducedRows)
-		numIter := uint64(d.numIterations)
-		execSummary = append(execSummary, &tipb.ExecutorExecutionSummary{
-			TimeProcessedNs: &costNs,
-			NumProducedRows: &rows,
-			NumIterations:   &numIter,
-		})
-	}
-
 	selResp := &tipb.SelectResponse{
-		Error:              toPBError(err),
-		Chunks:             chunks,
-		OutputCounts:       counts,
-		ExecutionSummaries: execSummary,
+		Error:        toPBError(err),
+		Chunks:       chunks,
+		OutputCounts: counts,
+	}
+	if len(execDetails) > 0 {
+		execSummary := make([]*tipb.ExecutorExecutionSummary, 0, len(execDetails))
+		for _, d := range execDetails {
+			costNs := uint64(d.timeProcessed / time.Nanosecond)
+			rows := uint64(d.numProducedRows)
+			numIter := uint64(d.numIterations)
+			execSummary = append(execSummary, &tipb.ExecutorExecutionSummary{
+				TimeProcessedNs: &costNs,
+				NumProducedRows: &rows,
+				NumIterations:   &numIter,
+			})
+		}
+		selResp.ExecutionSummaries = execSummary
 	}
 	if len(warnings) > 0 {
 		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
