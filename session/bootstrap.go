@@ -220,7 +220,8 @@ const (
 		update_time timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		charset varchar(100) NOT NULL,
 		collation varchar(100) NOT NULL,
- 		UNIQUE KEY sql_db (original_sql, default_db)
+ 		UNIQUE KEY sql_db (original_sql, default_db),
+		INDEX time_index(update_time)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 )
 

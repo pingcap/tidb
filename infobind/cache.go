@@ -134,17 +134,26 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 		sql string
 	)
 	bc := h.Get()
+
+	newBc := &BindCache{
+		Cache: make(map[string][]*BindData, len(bc.Cache)),
+	}
+
+	for hash, bindDataArr := range bc.Cache {
+		newBc.Cache[hash] = append(newBc.Cache[hash], bindDataArr...)
+	}
+
 	if fullLoad {
 		sql = fmt.Sprintf("select * from mysql.bind_info")
 	} else {
 		sql = fmt.Sprintf("select * from mysql.bind_info where update_time > \"%s\"", h.LastUpdateTime.String())
 	}
-	err = h.loadDiff(sql, bc)
+	err = h.loadDiff(sql, newBc)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	h.bind.Store(bc)
+	h.bind.Store(newBc)
 	return nil
 }
 
