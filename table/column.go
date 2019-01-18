@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -357,9 +358,13 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 			return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
 				col.Name, errors.Trace(err))
 		}
-		if col.Tp == mysql.TypeTimestamp && col.Version == model.ColumnInfoVersion1 {
+		if col.Tp == mysql.TypeTimestamp {
 			t := value.GetMysqlTime()
-			err = t.ConvertTimeZone(time.UTC, ctx.GetSessionVars().Location())
+			defaultTimeZone := timeutil.SystemLocation()
+			if col.Version == model.ColumnInfoVersion1 {
+				defaultTimeZone = time.UTC
+			}
+			err = t.ConvertTimeZone(defaultTimeZone, ctx.GetSessionVars().Location())
 			if err != nil {
 				return value, errors.Trace(err)
 			}
