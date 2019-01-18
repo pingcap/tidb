@@ -26,6 +26,7 @@ type UnionStore interface {
 	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
 	// Lazy condition pairs should be checked before transaction commit.
 	CheckLazyConditionPairs() error
+	ShouldNotExist(k Key) bool
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -199,6 +200,13 @@ func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
 		value: v,
 		err:   e,
 	}
+}
+
+func (us *unionStore) ShouldNotExist(k Key) bool {
+	if v, ok := us.lazyConditionPairs[string(k)]; ok {
+		return v == nil
+	}
+	return false
 }
 
 // CheckLazyConditionPairs implements the UnionStore interface.

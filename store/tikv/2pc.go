@@ -101,6 +101,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 				Op:    pb.Op_Put,
 				Key:   k,
 				Value: v,
+				ShouldNotExist: txn.us.ShouldNotExist(k),
 			}
 			putCnt++
 		} else {
