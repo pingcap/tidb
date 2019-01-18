@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -1112,7 +1112,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				}
 			}
 		}
-		index := -1
+		var index int
 		if resolveFieldsFirst {
 			index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			if a.err != nil {
@@ -1283,7 +1283,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	case *ast.ColumnNameExpr:
 		col, err := g.schema.FindColumn(v.Name)
 		if col == nil || !g.inExpr {
-			var index = -1
+			var index int
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
 				return inNode, false
@@ -1671,7 +1671,6 @@ func allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*expression.Column]s
 		cols: cols,
 	}
 	n.Accept(extractor)
-	return
 }
 
 func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression, error) {

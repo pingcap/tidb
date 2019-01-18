@@ -77,7 +77,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}
