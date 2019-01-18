@@ -1197,6 +1197,7 @@ func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo
 	}
 
 	// TODO: Check CreatePartitionValue.
+	// Range columns partition key supports multiple data types with integer、datetime、string.
 	// if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
 	// 	return errors.Trace(err)
 	// }
