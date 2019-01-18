@@ -232,7 +232,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
 		go func() {
-			e := c.doActionOnBatches(bo, action, batches)
+			e := c.doActionOnBatches(NewBackoffer(context.Background(), CommitMaxBackoff), action, batches)
 			if e != nil {
 				log.Debugf("con:%d 2PC async doActionOnBatches %s err: %v", c.connID, action, e)
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
