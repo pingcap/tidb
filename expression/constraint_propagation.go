@@ -249,7 +249,21 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 			return
 		}
 	}
-	if !col1.Equal(ctx, col2) {
+
+	// Make sure col1 and col2 are the same column.
+	// Can't use col1.Equal(ctx, col2) here, because they are not generated in one
+	// expression and their UniqueID are not the same.
+	if col1.ColName.L != col2.ColName.L {
+		return
+	}
+	if col1.OrigColName.L != "" &&
+		col2.OrigColName.L != "" &&
+		col1.OrigColName.L != col2.OrigColName.L {
+		return
+	}
+	if col1.OrigTblName.L != "" &&
+		col2.OrigTblName.L != "" &&
+		col1.OrigColName.L != col2.OrigColName.L {
 		return
 	}
 	v, isNull, err := compareConstant(ctx, negOP(OP2), fc1, con2)
@@ -299,4 +313,9 @@ func compareConstant(ctx sessionctx.Context, fn string, c1, c2 Expression) (int6
 		return 0, false, err
 	}
 	return cmp.EvalInt(ctx, chunk.Row{})
+}
+
+// NewPartitionPruneSolver returns a constraintSolver for partition pruning.
+func NewPartitionPruneSolver() constraintSolver {
+	return newConstraintSolver(ruleColumnOPConst)
 }
