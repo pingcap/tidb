@@ -1448,13 +1448,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `create user 'test'@'%' identified by '123456'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", nil},
+				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
 			},
 		},
 		{
 			sql: `drop user 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", nil},
+				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
 			},
 		},
 		{
@@ -1562,6 +1562,10 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 
 	c.Assert(len(v1), Equals, len(v2), comment)
 	for i := 0; i < len(v1); i++ {
+		// loose compare errors for code match
+		c.Assert(terror.ErrorEqual(v1[i].err, v2[i].err), IsTrue, Commentf("err1 %v, err2 %v for %s", v1[i].err, v2[i].err, comment))
+		// compare remainder
+		v1[i].err = v2[i].err
 		c.Assert(v1[i], Equals, v2[i], comment)
 	}
 }
