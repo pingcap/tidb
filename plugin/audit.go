@@ -20,20 +20,6 @@ import (
 	"github.com/pingcap/parser/auth"
 )
 
-type AuditEvent int
-
-const (
-	General AuditEvent = 1 + iota
-	Connection
-	Parse
-	TableAccess
-	GlobalVariable
-	ServerStartup
-	ServerShutdown
-	Command
-	Auth
-)
-
 type GeneralEvent byte
 
 const (
