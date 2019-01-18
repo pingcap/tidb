@@ -278,7 +278,15 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	return e.open(ctx, kvRanges)
+	if err := e.open(ctx, kvRanges); err != nil {
+		return errors.Trace(err)
+	}
+
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
+	}
+	return nil
 }
 
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
@@ -372,6 +380,11 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	err = e.open(ctx, kvRanges)
 	if err != nil {
 		e.feedback.Invalidate()
+	}
+
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 	return errors.Trace(err)
 }

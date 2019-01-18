@@ -17,7 +17,7 @@ import (
 	"context"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -66,6 +66,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+	}
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 	if e.corColInAccess {
 		ts := e.plans[0].(*plannercore.PhysicalTableScan)
