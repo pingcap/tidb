@@ -309,6 +309,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 	return totalRanges, []expression.Expression{expression.ComposeDNFCondition(sctx, newAccessItems...)}, hasResidual, nil
 }
 
+// DetachRangeResult wraps up results when detaching conditions and builing ranges.
 type DetachRangeResult struct {
 	Ranges        []*Range
 	AccessConds   []expression.Expression
