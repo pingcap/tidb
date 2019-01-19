@@ -251,18 +251,23 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
-	var accessConds []expression.Expression
+	isDNF := false
+	var accessConds, filter []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
 		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].UniqueID)
 		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType)
 	case ranger.IndexRangeType:
-		ranges, accessConds, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+		ranges, accessConds, filter, _, isDNF, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
 	default:
 		panic("should never be here")
 	}
 	if err != nil {
 		return 0, nil, errors.Trace(err)
+	}
+	if isDNF && len(filter) == 0 {
+		mask |= 1
+		return mask, ranges, nil
 	}
 	for i := range exprs {
 		for j := range accessConds {

@@ -529,7 +529,7 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	// In `buildFakeEqCondsForIndexJoin`, we construct the equal conditions for join keys and remove filters that contain the join keys' column.
 	// When t1.a = t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as the access condition.
 	// So the equal conditions we built can be successfully used to build a range if they can be used. They won't be affected by the existing filters.
-	ranges, accesses, moreRemained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, access, idxCols, colLengths)
+	ranges, accesses, moreRemained, _, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, access, idxCols, colLengths)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil

@@ -298,10 +298,9 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 }
 
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.
-// If the top layer is DNF, we return a int slice which is eqAndInCount of every DNF item.
-// Otherwise just one number is returned.
+// If the top layer is CNF, we return a int of eqAndInCount, otherwise we return 0.
 func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) ([]*Range, []expression.Expression, []expression.Expression, int, error) {
+	lengths []int) (ranges []*Range, accesses, filters []expression.Expression, eqCount int, isDNF bool, err error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
@@ -310,16 +309,17 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 		if sf, ok := conditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			ranges, accesses, hasResidual, err := detachDNFCondAndBuildRangeForIndex(sctx, sf, cols, newTpSlice, lengths)
 			if err != nil {
-				return nil, nil, nil, 0, errors.Trace(err)
+				return nil, nil, nil, 0, false, errors.Trace(err)
 			}
 			// If this DNF have something cannot be to calculate range, then all this DNF should be pushed as filter condition.
 			if hasResidual {
-				return ranges, accesses, conditions, 0, nil
+				return ranges, accesses, conditions, 0, true, nil
 			}
-			return ranges, accesses, nil, 0, nil
+			return ranges, accesses, nil, 0, true, nil
 		}
 	}
-	return detachCNFCondAndBuildRangeForIndex(sctx, conditions, cols, newTpSlice, lengths, true)
+	ranges, accesses, filters, eqCount, err = detachCNFCondAndBuildRangeForIndex(sctx, conditions, cols, newTpSlice, lengths, true)
+	return ranges, accesses, filters, eqCount, false, err
 }
 
 // DetachSimpleCondAndBuildRangeForIndex will detach the index filters from table filters.

@@ -294,7 +294,7 @@ func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIn
 	ranges := ranger.FullRange()
 	if len(idxCols) > 0 {
 		var err error
-		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
+		ranges, _, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

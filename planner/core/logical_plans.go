@@ -454,7 +454,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if len(path.idxCols) != 0 {
-		path.ranges, path.accessConds, path.tableFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
+		path.ranges, path.accessConds, path.tableFilters, path.eqCondCount, _, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
