@@ -311,15 +311,20 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 
 // DetachRangeResult wraps up results when detaching conditions and builing ranges.
 type DetachRangeResult struct {
-	Ranges        []*Range
-	AccessConds   []expression.Expression
+	// Ranges is the ranges extracted and built from conditions.
+	Ranges []*Range
+	// AccessConds is the extracted conditions for access.
+	AccessConds []expression.Expression
+	// RemainedConds is the filter conditions which should be kept after access.
 	RemainedConds []expression.Expression
-	EqCondCount   int
-	IsDNFCond     bool
+	// EqCondCount is the number of equal conditions extracted.
+	EqCondCount int
+	// IsDNFCond indicates if the top layer of conditions are in DNF.
+	IsDNFCond bool
 }
 
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.
-// If the top layer is CNF, we return a int of eqAndInCount, otherwise we return 0.
+// The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int) (*DetachRangeResult, error) {
 	res := &DetachRangeResult{}

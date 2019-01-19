@@ -39,6 +39,9 @@ type StatsNode struct {
 	Selectivity float64
 	// numCols is the number of columns contained in the index or column(which is always 1).
 	numCols int
+	// partCover indicates whether the bit in the mask is for a full cover or partial cover. It is only true
+	// when the condition is a DNF expression on index, and the expression is not totally extracted as access condition.
+	partCover bool
 }
 
 // The type of the StatsNode.
@@ -142,7 +145,6 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 // Selectivity is a function calculate the selectivity of the expressions.
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
-// TODO: support expressions that the top layer is a DNF.
 // Currently the time complexity is o(n^2).
 func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Expression) (float64, []*StatsNode, error) {
 	// If table's count is zero or conditions are empty, we should return 100% selectivity.
@@ -186,7 +188,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	for id, colInfo := range coll.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		if col != nil {
-			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, col)
+			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -215,7 +217,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			for i := 0; i < len(idxCols); i++ {
 				lengths = append(lengths, idxInfo.Info.Columns[i].Length)
 			}
-			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, idxCols...)
+			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -231,6 +233,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				Ranges:      ranges,
 				numCols:     len(idxInfo.Info.Columns),
 				Selectivity: selectivity,
+				partCover:   partCover,
 			})
 		}
 	}
@@ -240,6 +243,9 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	for _, set := range usedSets {
 		mask &^= set.mask
 		ret *= set.Selectivity
+		if set.partCover {
+			ret *= selectionFactor
+		}
 	}
 	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
 	if mask > 0 {
@@ -249,7 +255,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 }
 
 func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
-	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, err error) {
+	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, partCover bool, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	isDNF := false
 	var accessConds, remainedConds []expression.Expression
@@ -265,11 +271,11 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 		panic("should never be here")
 	}
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, false, err
 	}
-	if isDNF && len(remainedConds) == 0 {
+	if isDNF && len(accessConds) > 0 {
 		mask |= 1
-		return mask, ranges, nil
+		return mask, ranges, len(remainedConds) > 0, nil
 	}
 	for i := range exprs {
 		for j := range accessConds {
@@ -279,7 +285,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 			}
 		}
 	}
-	return mask, ranges, nil
+	return mask, ranges, false, nil
 }
 
 // getUsableSetsByGreedy will select the indices and pk used for calculate selectivity by greedy algorithm.
