@@ -1803,7 +1803,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 
 // modifiableCharsetAndCollation returns error when the charset or collation is not modifiable.
 func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate string) error {
-	// Not allow to change binary to utf8mb4 or utf8.
+	// Only allow utf8 to be changed to utf8mb4.
 	if len(toCharset) != 0 && origCharset != charset.CharsetUTF8 {
 		msg := fmt.Sprintf("original binary charset modification is not supported, charset from %s to %s", origCharset, toCharset)
 		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
