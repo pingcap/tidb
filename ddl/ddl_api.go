@@ -1803,10 +1803,15 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 
 // modifiableCharsetAndCollation returns error when the charset or collation is not modifiable.
 func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate string) error {
+	// Not allow to change binary to utf8mb4 or utf8.
+	if len(toCharset) != 0 && origCharset != charset.CharsetUTF8 {
+		msg := fmt.Sprintf("original binary charset modification is not supported, charset from %s to %s", origCharset, toCharset)
+		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
+	}
+
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
 		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset, toCollate)
 	}
-
 	if toCharset == charset.CharsetUTF8MB4 || (toCharset == charset.CharsetUTF8 && origCharset != charset.CharsetUTF8MB4) {
 		// TiDB treats all the data as utf8mb4, so we support changing the charset to utf8mb4.
 		// And not allow to change utf8mb4 to utf8.
@@ -1995,14 +2000,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if col == nil {
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
-	switch col.Tp {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
-		if col.Charset == charset.CharsetBin {
-			msg := fmt.Sprintf("original binary charset modification is not supported")
-			return nil, errUnsupportedModifyCharset.GenWithStackByArgs(msg)
-		}
-	}
-
 	newColName := specNewColumn.Name.Name
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
@@ -2010,6 +2007,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		if c != nil {
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
+	}
+	if len(specNewColumn.Tp.Charset) !=0 && col.Charset != charset.CharsetUTF8 {
+		msg := fmt.Sprintf("original binary charset modification is not supported")
+		return nil, errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
@@ -2252,11 +2253,6 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	if origCharset == toCharset && origCollate == toCollate {
 		// nothing to do.
 		return nil
-	}
-	// Not allow to change binary to utf8mb4 or utf8.
-	if origCharset == charset.CharsetBin {
-		msg := fmt.Sprintf("original binary charset modification is not supported, charset from %s to %s", origCharset, toCharset)
-		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 
 	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
