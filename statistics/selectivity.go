@@ -252,20 +252,22 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	lengths []int, cols ...*expression.Column) (mask int64, ranges []*ranger.Range, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	isDNF := false
-	var accessConds, filter []expression.Expression
+	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
 		accessConds = ranger.ExtractAccessConditionsForColumn(exprs, cols[0].UniqueID)
 		ranges, err = ranger.BuildColumnRange(accessConds, sc, cols[0].RetType)
 	case ranger.IndexRangeType:
-		ranges, accessConds, filter, _, isDNF, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+		var res *ranger.DetachRangeResult
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths)
+		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
 	default:
 		panic("should never be here")
 	}
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return 0, nil, err
 	}
-	if isDNF && len(filter) == 0 {
+	if isDNF && len(remainedConds) == 0 {
 		mask |= 1
 		return mask, ranges, nil
 	}
