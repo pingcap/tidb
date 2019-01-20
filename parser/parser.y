@@ -5930,6 +5930,13 @@ ShowStmt:
 			Table:	$4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "CREATE" "VIEW" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:	ast.ShowCreateView,
+			Table:	$4.(*ast.TableName),
+		}
+	}
 |	"SHOW" "CREATE" "DATABASE" IfNotExists DBName
 	{
 		$$ = &ast.ShowStmt{
