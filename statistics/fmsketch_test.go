@@ -23,7 +23,7 @@ import (
 func (s *testStatisticsSuite) TestSketch(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(sc, s.samples, maxSize)
+	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(6232))
 
@@ -51,7 +51,7 @@ func (s *testStatisticsSuite) TestSketch(c *C) {
 func (s *testStatisticsSuite) TestSketchProtoConversion(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	maxSize := 1000
-	sampleSketch, ndv, err := buildFMSketch(sc, s.samples, maxSize)
+	sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
 	c.Check(err, IsNil)
 	c.Check(ndv, Equals, int64(6232))
 

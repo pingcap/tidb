@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -29,9 +30,58 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// SampleItem is an item of sampled column value.
+type SampleItem struct {
+	// Value is the sampled column value.
+	Value types.Datum
+	// Ordinal is original position of this item in SampleCollector before sorting. This
+	// is used for computing correlation.
+	Ordinal int
+}
+
+// SortSampleItems sorts a slice of SampleItem.
+func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
+	sorter := sampleItemSorter{items: items, sc: sc}
+	sort.Sort(&sorter)
+	return sorter.err
+}
+
+// extractSampleItemsDatums is for test purpose only to extract Datum slice
+// from SampleItem slice.
+func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
+	datums := make([]types.Datum, len(items))
+	for i, item := range items {
+		datums[i] = item.Value
+	}
+	return datums
+}
+
+type sampleItemSorter struct {
+	items []*SampleItem
+	sc    *stmtctx.StatementContext
+	err   error
+}
+
+func (s *sampleItemSorter) Len() int {
+	return len(s.items)
+}
+
+func (s *sampleItemSorter) Less(i, j int) bool {
+	var cmp int
+	cmp, s.err = s.items[i].Value.CompareDatum(s.sc, &s.items[j].Value)
+	if s.err != nil {
+		return true
+	}
+	return cmp < 0
+}
+
+func (s *sampleItemSorter) Swap(i, j int) {
+	s.items[i], s.items[j] = s.items[j], s.items[i]
+}
+
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
 type SampleCollector struct {
-	Samples       []types.Datum
+	Samples       []*SampleItem
 	seenValues    int64 // seenValues is the current seen values.
 	IsMerger      bool
 	NullCount     int64
@@ -52,8 +102,8 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 		err := c.CMSketch.MergeCMSketch(rc.CMSketch)
 		terror.Log(errors.Trace(err))
 	}
-	for _, val := range rc.Samples {
-		err := c.collect(sc, val)
+	for _, item := range rc.Samples {
+		err := c.collect(sc, item.Value)
 		terror.Log(errors.Trace(err))
 	}
 }
@@ -69,8 +119,8 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	if c.CMSketch != nil {
 		collector.CmSketch = CMSketchToProto(c.CMSketch)
 	}
-	for _, sample := range c.Samples {
-		collector.Samples = append(collector.Samples, sample.GetBytes())
+	for _, item := range c.Samples {
+		collector.Samples = append(collector.Samples, item.Value.GetBytes())
 	}
 	return collector
 }
@@ -91,7 +141,8 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	for _, val := range collector.Samples {
 		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
 		if len(val) <= maxSampleValueLength {
-			s.Samples = append(s.Samples, types.NewBytesDatum(val))
+			item := &SampleItem{Value: types.NewBytesDatum(val)}
+			s.Samples = append(s.Samples, item)
 		}
 	}
 	return s
@@ -118,12 +169,16 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.
 	if len(c.Samples) < int(c.MaxSampleSize) {
-		c.Samples = append(c.Samples, types.CopyDatum(d))
+		newItem := &SampleItem{Value: types.CopyDatum(d)}
+		c.Samples = append(c.Samples, newItem)
 	} else {
 		shouldAdd := rand.Int63n(c.seenValues) < c.MaxSampleSize
 		if shouldAdd {
 			idx := rand.Intn(int(c.MaxSampleSize))
-			c.Samples[idx] = types.CopyDatum(d)
+			newItem := &SampleItem{Value: types.CopyDatum(d)}
+			// To keep the order of the elements, we use delete and append, not direct replacement.
+			c.Samples = append(c.Samples[:idx], c.Samples[idx+1:]...)
+			c.Samples = append(c.Samples, newItem)
 		}
 	}
 	return nil
