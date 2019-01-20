@@ -1584,6 +1584,7 @@ const (
 	ShowStatus
 	ShowCollation
 	ShowCreateTable
+	ShowCreateView
 	ShowCreateUser
 	ShowGrants
 	ShowTriggers
@@ -1650,12 +1651,12 @@ func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
 		if n.Pattern != nil && n.Pattern.Pattern != nil {
 			ctx.WriteKeyWord(" LIKE ")
 			if err := n.Pattern.Pattern.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while resotre ShowStmt.Pattern")
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Pattern")
 			}
 		} else if n.Where != nil {
 			ctx.WriteKeyWord(" WHERE ")
 			if err := n.Where.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while resotre ShowStmt.Where")
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Where")
 			}
 		}
 		return nil
@@ -1678,7 +1679,12 @@ func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
 	case ShowCreateTable:
 		ctx.WriteKeyWord("CREATE TABLE ")
 		if err := n.Table.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while resotre ShowStmt.Table")
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+		}
+	case ShowCreateView:
+		ctx.WriteKeyWord("CREATE VIEW ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.VIEW")
 		}
 	case ShowCreateDatabase:
 		ctx.WriteKeyWord("CREATE DATABASE ")
