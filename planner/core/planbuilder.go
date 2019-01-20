@@ -1513,9 +1513,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
 		if _, ok := plan.(LogicalPlan); ok {
 			b.visitInfo = append(b.visitInfo, visitInfo{
-				// TODO: We should check CreateViewPriv instead of CreatePriv.
-				// See https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_create-view.
-				privilege: mysql.CreatePriv,
+				privilege: mysql.CreateViewPriv,
 				db:        v.ViewName.Schema.L,
 				table:     v.ViewName.Name.L,
 				err:       nil,

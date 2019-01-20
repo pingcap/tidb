@@ -1470,6 +1470,8 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.AlterPriv, "test", "", "", nil},
 				{mysql.ExecutePriv, "test", "", "", nil},
 				{mysql.IndexPriv, "test", "", "", nil},
+				{mysql.CreateViewPriv, "test", "", "", nil},
+				{mysql.ShowViewPriv, "test", "", "", nil},
 			},
 		},
 		{
