@@ -243,6 +243,10 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	for _, set := range usedSets {
 		mask &^= set.mask
 		ret *= set.Selectivity
+		// If `partCover` is true, it means that the conditions are in DNF form, and only part
+		// of the DNF expressions are extracted as access conditions, so besides from the selectivity
+		// of the extracted access conditions, we multiply another selectionFactor for the residual
+		// conditions.
 		if set.partCover {
 			ret *= selectionFactor
 		}
