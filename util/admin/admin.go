@@ -441,7 +441,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			col := cols[i]
 			if val.IsNull() {
 				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
-					return false, errors.New("Miss")
+					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
 				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
@@ -648,7 +648,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		ri, ok := rowMap[col.ID]
 		if !ok {
 			if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
-				return nil, errors.New("Miss")
+				return nil, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h)
 			}
 			// NULL value is regarded as its default value.
 			colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
