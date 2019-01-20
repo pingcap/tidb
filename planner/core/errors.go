@@ -26,6 +26,7 @@ const (
 	codeWrongParamCount                 = 5
 	codeSchemaChanged                   = 6
 
+	codeNotSupportedYet                 = mysql.ErrNotSupportedYet
 	codeWrongUsage                      = mysql.ErrWrongUsage
 	codeAmbiguous                       = mysql.ErrNonUniq
 	codeUnknown                         = mysql.ErrUnknown
@@ -62,6 +63,16 @@ const (
 	codeWindowDuplicateName             = mysql.ErrWindowDuplicateName
 	codeErrTooBigPrecision              = mysql.ErrTooBigPrecision
 	codePartitionClauseOnNonpartitioned = mysql.ErrPartitionClauseOnNonpartitioned
+	codeTableaccessDenied               = mysql.ErrTableaccessDenied
+	codeSpecificAccessDenied            = mysql.ErrSpecificAccessDenied
+	codeWindowFrameStartIllegal         = mysql.ErrWindowFrameStartIllegal
+	codeWindowFrameEndIllegal           = mysql.ErrWindowFrameEndIllegal
+	codeWindowFrameIllegal              = mysql.ErrWindowFrameIllegal
+	codeWindowRangeFrameOrderType       = mysql.ErrWindowRangeFrameOrderType
+	codeWindowRangeFrameTemporalType    = mysql.ErrWindowRangeFrameTemporalType
+	codeWindowRangeFrameNumericType     = mysql.ErrWindowRangeFrameNumericType
+	codeWindowRangeBoundNotConstant     = mysql.ErrWindowRangeBoundNotConstant
+	codeWindowRowsIntervalUse           = mysql.ErrWindowRowsIntervalUse
 )
 
 // error definitions.
@@ -74,6 +85,7 @@ var (
 	ErrSchemaChanged               = terror.ClassOptimizer.New(codeSchemaChanged, "Schema has changed")
 	ErrTablenameNotAllowedHere     = terror.ClassOptimizer.New(codeTablenameNotAllowedHere, "Table '%s' from one of the %ss cannot be used in %s")
 
+	ErrNotSupportedYet                 = terror.ClassOptimizer.New(codeNotSupportedYet, mysql.MySQLErrName[mysql.ErrNotSupportedYet])
 	ErrWrongUsage                      = terror.ClassOptimizer.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
 	ErrAmbiguous                       = terror.ClassOptimizer.New(codeAmbiguous, mysql.MySQLErrName[mysql.ErrNonUniq])
 	ErrUnknown                         = terror.ClassOptimizer.New(codeUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
@@ -110,10 +122,21 @@ var (
 	ErrWindowDuplicateName             = terror.ClassOptimizer.New(codeWindowDuplicateName, mysql.MySQLErrName[mysql.ErrWindowDuplicateName])
 	ErrPartitionClauseOnNonpartitioned = terror.ClassOptimizer.New(codePartitionClauseOnNonpartitioned, mysql.MySQLErrName[mysql.ErrPartitionClauseOnNonpartitioned])
 	errTooBigPrecision                 = terror.ClassExpression.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
+	ErrTableaccessDenied               = terror.ClassOptimizer.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
+	ErrSpecificAccessDenied            = terror.ClassOptimizer.New(mysql.ErrSpecificAccessDenied, mysql.MySQLErrName[mysql.ErrSpecificAccessDenied])
+	ErrWindowFrameStartIllegal         = terror.ClassOptimizer.New(codeWindowFrameStartIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameStartIllegal])
+	ErrWindowFrameEndIllegal           = terror.ClassOptimizer.New(codeWindowFrameEndIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameEndIllegal])
+	ErrWindowFrameIllegal              = terror.ClassOptimizer.New(codeWindowFrameIllegal, mysql.MySQLErrName[mysql.ErrWindowFrameIllegal])
+	ErrWindowRangeFrameOrderType       = terror.ClassOptimizer.New(codeWindowRangeFrameOrderType, mysql.MySQLErrName[mysql.ErrWindowRangeFrameOrderType])
+	ErrWindowRangeFrameTemporalType    = terror.ClassOptimizer.New(codeWindowRangeFrameTemporalType, mysql.MySQLErrName[mysql.ErrWindowRangeFrameTemporalType])
+	ErrWindowRangeFrameNumericType     = terror.ClassOptimizer.New(codeWindowRangeFrameNumericType, mysql.MySQLErrName[mysql.ErrWindowRangeFrameNumericType])
+	ErrWindowRangeBoundNotConstant     = terror.ClassOptimizer.New(codeWindowRangeBoundNotConstant, mysql.MySQLErrName[mysql.ErrWindowRangeBoundNotConstant])
+	ErrWindowRowsIntervalUse           = terror.ClassOptimizer.New(codeWindowRowsIntervalUse, mysql.MySQLErrName[mysql.ErrWindowRowsIntervalUse])
 )
 
 func init() {
 	mysqlErrCodeMap := map[terror.ErrCode]uint16{
+		codeNotSupportedYet:              mysql.ErrNotSupportedYet,
 		codeWrongUsage:                   mysql.ErrWrongUsage,
 		codeAmbiguous:                    mysql.ErrNonUniq,
 		codeUnknownColumn:                mysql.ErrBadField,
@@ -148,6 +171,16 @@ func init() {
 		codeWindowDuplicateName:             mysql.ErrWindowDuplicateName,
 		codePartitionClauseOnNonpartitioned: mysql.ErrPartitionClauseOnNonpartitioned,
 		codeErrTooBigPrecision:              mysql.ErrTooBigPrecision,
+		codeTableaccessDenied:               mysql.ErrTableaccessDenied,
+		codeSpecificAccessDenied:            mysql.ErrSpecificAccessDenied,
+		codeWindowFrameStartIllegal:         mysql.ErrWindowFrameStartIllegal,
+		codeWindowFrameEndIllegal:           mysql.ErrWindowFrameEndIllegal,
+		codeWindowFrameIllegal:              mysql.ErrWindowFrameIllegal,
+		codeWindowRangeFrameOrderType:       mysql.ErrWindowRangeFrameOrderType,
+		codeWindowRangeFrameTemporalType:    mysql.ErrWindowRangeFrameTemporalType,
+		codeWindowRangeFrameNumericType:     mysql.ErrWindowRangeFrameNumericType,
+		codeWindowRangeBoundNotConstant:     mysql.ErrWindowRangeBoundNotConstant,
+		codeWindowRowsIntervalUse:           mysql.ErrWindowRowsIntervalUse,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }
