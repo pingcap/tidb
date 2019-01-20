@@ -614,6 +614,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		// for show create table
 		{"show create table test.t", true, "SHOW CREATE TABLE `test`.`t`"},
 		{"show create table t", true, "SHOW CREATE TABLE `t`"},
+		// for show create view
+		{"show create view test.t", true, "SHOW CREATE VIEW `test`.`t`"},
+		{"show create view t", true, "SHOW CREATE VIEW `t`"},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},
