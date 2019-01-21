@@ -1317,7 +1317,7 @@ func findTableOptionCharset(options []*ast.TableOption) string {
 	var tableCharset string
 	for i := len(options) - 1; i >= 0; i-- {
 		op := options[i]
-		if op.Tp == ast.TableOptionCollate {
+		if op.Tp == ast.TableOptionCharset {
 			// find the last one.
 			tableCharset = op.StrValue
 			break
