@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -38,15 +37,15 @@ var (
 )
 
 type mockDataSourceParameters struct {
-	types     []*types.FieldType // types
-	ndvs      []int              // number of distinct values on columns[i] and zero represents no limit
-	orders    []bool             // columns[i] should be ordered if orders[i] is true
-	rows      int                // number of rows the DataSource should output
-	chunkSize int
-	ctx       *stmtctx.StatementContext
+	schema *expression.Schema // schema
+	ndvs   []int              // number of distinct values on columns[i] and zero represents no limit
+	orders []bool             // columns[i] should be ordered if orders[i] is true
+	rows   int                // number of rows the DataSource should output
+	ctx    sessionctx.Context
 }
 
 type mockDataSource struct {
+	baseExecutor
 	p        mockDataSourceParameters
 	colData  [][]interface{}
 	chunks   []*chunk.Chunk
@@ -80,7 +79,7 @@ func (mds *mockDataSource) genColDatums(typ *types.FieldType, order bool, rows, 
 	if order {
 		sort.Slice(results, func(i, j int) bool {
 			switch typ.Tp {
-			case mysql.TypeLong:
+			case mysql.TypeLong, mysql.TypeLonglong:
 				return results[i].(int64) < results[j].(int64)
 			case mysql.TypeDouble:
 				return results[i].(float64) < results[j].(float64)
@@ -107,16 +106,19 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 }
 
 func (mds *mockDataSource) prepareChunks() {
-	mds.chunks = make([]*chunk.Chunk, (mds.p.rows+mds.p.chunkSize-1)/mds.p.chunkSize)
+	mds.chunks = make([]*chunk.Chunk, (mds.p.rows+mds.initCap-1)/mds.initCap)
 	for i := range mds.chunks {
 		mds.chunks[i] = mds.newFirstChunk()
 	}
 
 	for i := 0; i < mds.p.rows; i++ {
-		idx := i / mds.p.chunkSize
-		for colIdx := 0; colIdx < len(mds.p.types); colIdx++ {
-			switch mds.p.types[colIdx].Tp {
+		idx := i / mds.initCap
+		types := mds.retTypes()
+		for colIdx := 0; colIdx < len(types); colIdx++ {
+			switch types[colIdx].Tp {
 			case mysql.TypeLong:
+				mds.chunks[idx].AppendInt64(colIdx, int64(mds.colData[colIdx][i].(int32)))
+			case mysql.TypeLonglong:
 				mds.chunks[idx].AppendInt64(colIdx, mds.colData[colIdx][i].(int64))
 			case mysql.TypeDouble:
 				mds.chunks[idx].AppendFloat64(colIdx, mds.colData[colIdx][i].(float64))
@@ -127,8 +129,6 @@ func (mds *mockDataSource) prepareChunks() {
 	}
 	mds.chunkPtr = 0
 }
-
-func (mds *mockDataSource) Open(context.Context) error { return nil }
 
 func (mds *mockDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if mds.chunkPtr >= len(mds.chunks) {
@@ -141,21 +141,13 @@ func (mds *mockDataSource) Next(ctx context.Context, req *chunk.RecordBatch) err
 	return nil
 }
 
-func (mds *mockDataSource) Close() error { return nil }
-
-func (mds *mockDataSource) Schema() *expression.Schema { return nil }
-
-func (mds *mockDataSource) retTypes() []*types.FieldType { return mds.p.types }
-
-func (mds *mockDataSource) newFirstChunk() *chunk.Chunk {
-	return chunk.New(mds.p.types, mds.p.chunkSize, mds.p.chunkSize)
-}
-
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
-	m := &mockDataSource{opt, nil, nil, 0}
-	m.colData = make([][]interface{}, len(m.p.types))
-	for i := 0; i < len(m.p.types); i++ {
-		m.colData[i] = m.genColDatums(m.p.types[i], m.p.orders[i], m.p.rows, m.p.ndvs[i])
+	baseExec := newBaseExecutor(opt.ctx, opt.schema, "")
+	m := &mockDataSource{baseExec, opt, nil, nil, 0}
+	types := m.retTypes()
+	m.colData = make([][]interface{}, len(types))
+	for i := 0; i < len(types); i++ {
+		m.colData[i] = m.genColDatums(types[i], m.p.orders[i], m.p.rows, m.p.ndvs[i])
 	}
 	return m
 }
@@ -251,6 +243,7 @@ type aggTestCase struct {
 	hasDistinct bool
 	rows        int
 	concurrency int
+	ctx         sessionctx.Context
 }
 
 func (a aggTestCase) String() string {
@@ -259,45 +252,35 @@ func (a aggTestCase) String() string {
 }
 
 func defaultAggTestCase(exec string) *aggTestCase {
-	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4}
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 1024
+	ctx.GetSessionVars().MaxChunkSize = 1024
+	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, ctx}
 }
 
 func buildAggDataSource(b *testing.B, cas *aggTestCase) *mockDataSource {
-	fieldTypes := []*types.FieldType{
-		types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLong),
+	cols := []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
 	}
-	cols := make([]*expression.Column, len(fieldTypes))
-	for i := range cols {
-		cols[i] = &expression.Column{Index: i, RetType: fieldTypes[i]}
-	}
-	ctx := mock.NewContext()
-
-	chunkSize := 1 << 10
-	orders := make([]bool, len(fieldTypes))
-	if cas.exec == "stream" {
-		orders[1] = true
-	}
+	orders := []bool{false, cas.exec == "stream"}
 	child := buildMockDataSource(mockDataSourceParameters{
-		types:     fieldTypes,
-		ndvs:      []int{0, cas.groupByNDV},
-		orders:    orders,
-		rows:      cas.rows,
-		chunkSize: chunkSize,
-		ctx:       ctx.GetSessionVars().StmtCtx,
+		schema: expression.NewSchema(cols...),
+		ndvs:   []int{0, cas.groupByNDV},
+		orders: orders,
+		rows:   cas.rows,
+		ctx:    cas.ctx,
 	})
 	return child
 }
 
 func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
-	childTypes := []*types.FieldType{
-		types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLong),
+	childCols := []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
 	}
-	childCols := make([]*expression.Column, len(childTypes))
-	for i := range childCols {
-		childCols[i] = &expression.Column{Index: i, RetType: childTypes[i]}
-	}
-	ctx := mock.NewContext()
 
+	ctx := cas.ctx
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", cas.concurrency)); err != nil {
 		b.Fatal(err)
 	}
