@@ -304,6 +304,9 @@ func convertTimestampDelfaultValToUTC(ctx sessionctx.Context, defaultVal interfa
 					return defaultVal, errors.Trace(err)
 				}
 				defaultVal = t.String()
+				// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
+				//              This will fix bug in version 0.
+				// TODO: remove this version field after there is no old version 0.
 				col.Version = model.ColumnInfoVersion1
 			}
 		}
