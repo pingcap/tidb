@@ -545,7 +545,7 @@ func (s *testIntegrationSuite) TestChangingCharsetToUtf8(c *C) {
 	}
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
-	
+
 	rs, err = tk.Exec("alter table t modify column a char(10) charset utf8mb4 collate utf8bin")
 	if rs != nil {
 		rs.Close()
