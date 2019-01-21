@@ -13,7 +13,7 @@ export PATH := $(path_to_add):$(PATH)
 
 GO        := GO111MODULE=on go
 GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG)
-GOTEST    := CGO_ENABLED=1 $(GO) test -p 3 -v
+GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 OVERALLS  := CGO_ENABLED=1 GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
