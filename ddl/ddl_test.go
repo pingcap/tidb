@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testleak"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -89,10 +90,6 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	}
 }
 
-// TestLeakCheckCnt is the check count in the package of ddl.
-// In this package CustomParallelSuiteFlag is true, so we need to increase check count.
-const TestLeakCheckCnt = 1000
-
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
@@ -103,7 +100,13 @@ func TestT(t *testing.T) {
 	})
 	autoid.SetStep(5000)
 	ReorgWaitTimeout = 30 * time.Millisecond
+
+	errorFunc := func(cnt int, g string) {
+		t.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
+	}
+	testleak.BeforeTest()
 	TestingT(t)
+	testleak.AfterTestT(errorFunc)()
 }
 
 func testCreateStore(c *C, name string) kv.Storage {

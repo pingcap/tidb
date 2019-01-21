@@ -48,7 +48,12 @@ func TestT(t *testing.T) {
 		Level:  logLevel,
 		Format: "highlight",
 	})
+	testleak.BeforeTest()
 	TestingT(t)
+	errorFunc := func(cnt int, g string) {
+		t.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
+	}
+	testleak.AfterTestT(errorFunc)()
 }
 
 var _ = Suite(&testFailDBSuite{})
@@ -64,7 +69,6 @@ type testFailDBSuite struct {
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -90,7 +94,6 @@ func (s *testFailDBSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.

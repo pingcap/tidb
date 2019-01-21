@@ -25,3 +25,9 @@ func AfterTest(c *check.C, checkCnt ...int) func() {
 	return func() {
 	}
 }
+
+// AfterTestT is used after all the test cases is finished.
+func AfterTestT(errorFunc func(cnt int, g string)) func() {
+	return func() {
+	}
+}

@@ -76,13 +76,7 @@ func BeforeTest() {
 
 const defaultCheckCnt = 50
 
-// AfterTest gets the current goroutines and runs the returned function to
-// get the goroutines at that time to contrast whether any goroutines leaked.
-// Usage: defer testleak.AfterTest(c)()
-// It can call with BeforeTest() at the beginning of check.Suite.TearDownSuite() or
-// call alone at the beginning of each test.
-// TODO: The type of checkCnt will be modified in the next PR.
-func AfterTest(c *check.C, checkCnt ...int) func() {
+func checkLeakAfterTest(errorFunc func(cnt int, g string), checkCnt ...int) func() {
 	if len(beforeTestGorountines) == 0 {
 		for _, g := range interestingGoroutines() {
 			beforeTestGorountines[g] = true
@@ -117,7 +111,25 @@ func AfterTest(c *check.C, checkCnt ...int) func() {
 			return
 		}
 		for _, g := range leaked {
-			c.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
+			errorFunc(cnt, g)
 		}
 	}
+}
+
+// AfterTest gets the current goroutines and runs the returned function to
+// get the goroutines at that time to contrast whether any goroutines leaked.
+// Usage: defer testleak.AfterTest(c)()
+// It can call with BeforeTest() at the beginning of check.Suite.TearDownSuite() or
+// call alone at the beginning of each test.
+// TODO: The type of checkCnt will be modified in the next PR.
+func AfterTest(c *check.C, checkCnt ...int) func() {
+	errorFunc := func(cnt int, g string) {
+		c.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
+	}
+	return checkLeakAfterTest(errorFunc, checkCnt...)
+}
+
+// AfterTestT is used after all the test cases is finished.
+func AfterTestT(errorFunc func(cnt int, g string)) func() {
+	return checkLeakAfterTest(errorFunc)
 }
