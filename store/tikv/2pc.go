@@ -236,8 +236,12 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
+		// The backoffer instance is created outside of the goroutine to avoid
+		// potencial data race in unit test since `CommitMaxBackoff` will be updated
+		// by test suites.
+		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff)
 		go func() {
-			e := c.doActionOnBatches(NewBackoffer(context.Background(), CommitMaxBackoff), action, batches)
+			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
 				log.Debugf("con:%d 2PC async doActionOnBatches %s err: %v", c.connID, action, e)
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()

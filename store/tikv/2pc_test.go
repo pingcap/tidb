@@ -47,9 +47,6 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 	store.EnableTxnLocalLatches(1024000)
 	s.store = store
-}
-
-func (s *testCommitterSuite) SetUpSuite(c *C) {
 	CommitMaxBackoff = 2000
 }
 
