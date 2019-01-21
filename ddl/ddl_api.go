@@ -288,24 +288,32 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 			}
 		}
 	}
-	if value != nil && col.Tp == mysql.TypeTimestamp {
-		if vv, ok := value.(string); ok {
-			upperX := strings.ToUpper(vv)
-			if upperX != strings.ToUpper(ast.CurrentTimestamp) && upperX != types.ZeroDatetimeStr {
+	value, err := convertTimestampDelfaultValToUTC(ctx, value, col)
+	if err != nil {
+		return hasDefaultValue, value, errors.Trace(err)
+
+	}
+	return hasDefaultValue, value, nil
+}
+
+func convertTimestampDelfaultValToUTC(ctx sessionctx.Context, defaultVal interface{}, col *table.Column) (interface{}, error) {
+	if defaultVal != nil && col.Tp == mysql.TypeTimestamp {
+		if vv, ok := defaultVal.(string); ok {
+			if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
 				t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, col.Decimal)
 				if err != nil {
-					return hasDefaultValue, value, errors.Trace(err)
+					return defaultVal, errors.Trace(err)
 				}
 				err = t.ConvertTimeZone(ctx.GetSessionVars().Location(), time.UTC)
 				if err != nil {
-					return hasDefaultValue, value, errors.Trace(err)
+					return defaultVal, errors.Trace(err)
 				}
-				value = t.String()
+				defaultVal = t.String()
 				col.Version = model.ColumnInfoVersion1
 			}
 		}
 	}
-	return hasDefaultValue, value, nil
+	return defaultVal, nil
 }
 
 // isExplicitTimeStamp is used to check if explicit_defaults_for_timestamp is on or off.

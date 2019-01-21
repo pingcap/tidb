@@ -573,6 +573,8 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	if odValue == strings.ToUpper(ast.CurrentTimestamp) &&
 		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
 		odValue = time.Now().UTC().Format(types.TimeFormat)
+		// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
+		//              This will fix bug in version 0.
 		col.Version = model.ColumnInfoVersion1
 	}
 	return odValue, nil

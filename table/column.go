@@ -358,10 +358,12 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 			return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
 				col.Name, errors.Trace(err))
 		}
+		// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
 		if col.Tp == mysql.TypeTimestamp {
 			if vv, ok := defaultVal.(string); ok {
-				if strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) && vv != types.ZeroDatetimeStr {
+				if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
 					t := value.GetMysqlTime()
+					// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.
 					defaultTimeZone := timeutil.SystemLocation()
 					if col.Version == model.ColumnInfoVersion1 {
 						defaultTimeZone = time.UTC
