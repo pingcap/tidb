@@ -700,20 +700,23 @@ func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-// checkColumnFieldLength check the maximum length limit for different character set varchar type columns.
-func checkColumnFieldLength(dbCharset string, colDefs []*ast.ColumnDef, tbInfo *model.TableInfo) error {
-	for _, colDef := range colDefs {
-		if colDef.Tp.Tp == mysql.TypeVarchar {
-			setCharset, _, err := ResolveCharsetCollation(tbInfo.Charset, dbCharset)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if err = IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, setCharset); err != nil {
-				return errors.Trace(err)
-			}
+// checkColumnsFieldLength check the maximum length limit for different character set varchar type columns.
+func checkColumnsFieldLength(cols []*table.Column) error {
+	for _, col := range cols {
+		if err := checkColumnFieldLength(col); err != nil {
+			return errors.Trace(err)
 		}
 	}
+	return nil
+}
+
+func checkColumnFieldLength(col *table.Column) error {
+	if col.Tp == mysql.TypeVarchar {
+		if err := IsTooBigFieldLength(col.Flen, col.Name.O, col.Charset); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	return nil
 }
 
@@ -1008,6 +1011,10 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
+	if err = checkColumnsFieldLength(cols); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	err = checkConstraintNames(newConstraints)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1053,9 +1060,6 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkColumnFieldLength(dbCharset, s.Cols, tbInfo); err != nil {
-		return nil, errors.Trace(err)
-	}
 	return tbInfo, nil
 }
 
@@ -2111,7 +2115,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		modifyColumnTp = mysql.TypeNull
 	}
 
-	if err = checkColumnFieldLength(schema.Charset, spec.NewColumns, t.Meta()); err != nil {
+	if err = checkColumnFieldLength(newCol); err != nil {
 		return nil, errors.Trace(err)
 	}
 
