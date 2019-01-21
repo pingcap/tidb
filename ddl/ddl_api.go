@@ -1315,16 +1315,15 @@ func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset s
 
 func findTableOptionCharset(options []*ast.TableOption) string {
 	var tableCharset string
-LOOP:
 	for i := len(options) - 1; i >= 0; i-- {
 		op := options[i]
-		switch op.Tp {
-		// find the last one.
-		case ast.TableOptionCharset:
+		if op.Tp == ast.TableOptionCollate {
+			// find the last one.
 			tableCharset = op.StrValue
-			break LOOP
+			break
 		}
 	}
+
 	return tableCharset
 }
 
