@@ -39,7 +39,7 @@ var (
 
 type mockDataSourceParameters struct {
 	types     []*types.FieldType // types
-	NDVs      []int              // number of distinct values on columns[i] and zero represents no limit
+	ndvs      []int              // number of distinct values on columns[i] and zero represents no limit
 	orders    []bool             // columns[i] should be ordered if orders[i] is true
 	rows      int                // number of rows the DataSource should output
 	chunkSize int
@@ -54,51 +54,51 @@ type mockDataSource struct {
 }
 
 func (mds *mockDataSource) genColDatums(typ *types.FieldType, order bool, rows, NDV int) (results []interface{}) {
-	defer func() {
-		if order {
-			sort.Slice(results, func(i, j int) bool {
-				switch typ.Tp {
-				case mysql.TypeLong:
-					return results[i].(int64) < results[j].(int64)
-				case mysql.TypeDouble:
-					return results[i].(float64) < results[j].(float64)
-				default:
-					panic("not implement")
-				}
-			})
-		}
-	}()
-
 	results = make([]interface{}, 0, rows)
 	if NDV == 0 {
 		for i := 0; i < rows; i++ {
 			results = append(results, mds.randDatum(typ))
 		}
-		return
-	}
-
-	datumSet := make(map[string]bool, NDV)
-	datums := make([]interface{}, 0, NDV)
-	for len(datums) < NDV {
-		d := mds.randDatum(typ)
-		str := fmt.Sprintf("%v", d)
-		if datumSet[str] {
-			continue
+	} else {
+		datumSet := make(map[string]bool, NDV)
+		datums := make([]interface{}, 0, NDV)
+		for len(datums) < NDV {
+			d := mds.randDatum(typ)
+			str := fmt.Sprintf("%v", d)
+			if datumSet[str] {
+				continue
+			}
+			datumSet[str] = true
+			datums = append(datums, d)
 		}
-		datumSet[str] = true
-		datums = append(datums, d)
+
+		for i := 0; i < rows; i++ {
+			results = append(results, datums[rand.Intn(NDV)])
+		}
 	}
 
-	for i := 0; i < rows; i++ {
-		results = append(results, datums[rand.Intn(NDV)])
+	if order {
+		sort.Slice(results, func(i, j int) bool {
+			switch typ.Tp {
+			case mysql.TypeLong:
+				return results[i].(int64) < results[j].(int64)
+			case mysql.TypeDouble:
+				return results[i].(float64) < results[j].(float64)
+			default:
+				panic("not implement")
+			}
+		})
 	}
+
 	return
 }
 
 func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	switch typ.Tp {
-	case mysql.TypeLong:
+	case mysql.TypeLonglong:
 		return int64(rand.Int())
+	case mysql.TypeLong:
+		return int32(rand.Int())
 	case mysql.TypeDouble:
 		return rand.Float64()
 	default:
@@ -155,7 +155,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	m := &mockDataSource{opt, nil, nil, 0}
 	m.colData = make([][]interface{}, len(m.p.types))
 	for i := 0; i < len(m.p.types); i++ {
-		m.colData[i] = m.genColDatums(m.p.types[i], m.p.orders[i], m.p.rows, m.p.NDVs[i])
+		m.colData[i] = m.genColDatums(m.p.types[i], m.p.orders[i], m.p.rows, m.p.ndvs[i])
 	}
 	return m
 }
@@ -279,7 +279,7 @@ func buildAggDataSource(b *testing.B, cas *aggTestCase) *mockDataSource {
 	}
 	child := buildMockDataSource(mockDataSourceParameters{
 		types:     fieldTypes,
-		NDVs:      []int{0, cas.groupByNDV},
+		ndvs:      []int{0, cas.groupByNDV},
 		orders:    orders,
 		rows:      cas.rows,
 		chunkSize: chunkSize,
