@@ -136,26 +136,18 @@ func DbCountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	dbLabels := GetStmtDbLabel(stmtNode)
 	typeLabel := GetStmtLabel(stmtNode)
 
-	for _,dbLabel := range dbLabels{
-		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel , typeLabel).Inc()
+	for _, dbLabel := range dbLabels {
+		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
 	}
 }
 
 func GetStmtDbLabel(stmtNode ast.StmtNode) []string {
-	dbLabelMap := make(map[string]int,0)
+	dbLabelMap := make(map[string]int, 0)
 
 	switch x := stmtNode.(type) {
 	case *ast.AlterTableStmt:
 		dbLabel := x.Table.Schema.O
 		dbLabelMap[dbLabel] = 0
-	case *ast.AnalyzeTableStmt:
-		tables := x.TableNames
-		for _, table := range tables {
-			dbLabel := table.Schema.O
-			if _, ok := dbLabelMap[dbLabel]; !ok {
-				dbLabelMap[dbLabel] = 0
-			}
-		}
 	case *ast.CreateIndexStmt:
 		dbLabel := x.Table.Schema.O
 		dbLabelMap[dbLabel] = 0
@@ -164,7 +156,7 @@ func GetStmtDbLabel(stmtNode ast.StmtNode) []string {
 		dbLabelMap[dbLabel] = 0
 	case *ast.InsertStmt:
 		dbLabels := getDbFromResultNode(x.Table.TableRefs)
-		for _,db := range dbLabels {
+		for _, db := range dbLabels {
 			dbLabelMap[db] = 0
 		}
 	case *ast.DropIndexStmt:
@@ -178,46 +170,40 @@ func GetStmtDbLabel(stmtNode ast.StmtNode) []string {
 				dbLabelMap[dbLabel] = 0
 			}
 		}
-	case *ast.LoadDataStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelMap[dbLabel] = 0
 	case *ast.SelectStmt:
 		dbLabels := getDbFromResultNode(x)
-		for _,db := range dbLabels {
+		for _, db := range dbLabels {
 			dbLabelMap[db] = 0
 		}
 	case *ast.UpdateStmt:
 		if x.TableRefs != nil {
 			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
-			for _,db := range dbLabels {
+			for _, db := range dbLabels {
 				dbLabelMap[db] = 0
 			}
 		}
 	case *ast.DeleteStmt:
 		if x.TableRefs != nil {
 			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
-			for _,db := range dbLabels {
+			for _, db := range dbLabels {
 				dbLabelMap[db] = 0
 			}
 		}
-	case *ast.TruncateTableStmt:
-		dbLabel := x.Table.Schema.O
-		dbLabelMap[dbLabel] = 0
 	}
 
-	dbLabels := make([]string , 0)
+	dbLabels := make([]string, 0)
 
-	for k,_ := range dbLabelMap {
-		dbLabels = append(dbLabels , k)
+	for k := range dbLabelMap {
+		dbLabels = append(dbLabels, k)
 	}
 
-	fmt.Println("db:" , dbLabels)
+	fmt.Println("db:", dbLabels)
 
 	return dbLabels
 }
 
-func getDbFromResultNode(resultNode ast.ResultSetNode) []string {//may have duplicate db name
-	dbLabels := make([]string , 0)
+func getDbFromResultNode(resultNode ast.ResultSetNode) []string { //may have duplicate db name
+	var dbLabels []string
 
 	if resultNode == nil {
 		return dbLabels
@@ -227,21 +213,27 @@ func getDbFromResultNode(resultNode ast.ResultSetNode) []string {//may have dupl
 	case *ast.TableSource:
 		return getDbFromResultNode(x.Source)
 	case *ast.SelectStmt:
-		return getDbFromResultNode(x.From.TableRefs)
+		if x.From != nil {
+			return getDbFromResultNode(x.From.TableRefs)
+		}
 	case *ast.TableName:
-		dbLabels = append(dbLabels , x.DBInfo.Name.O)
+		dbLabels = append(dbLabels, x.DBInfo.Name.O)
 	case *ast.Join:
 		if x.Left != nil {
 			dbs := getDbFromResultNode(x.Left)
-			for _,db := range dbs{
-				dbLabels = append(dbLabels ,db)
+			if dbs != nil {
+				for _, db := range dbs {
+					dbLabels = append(dbLabels, db)
+				}
 			}
 		}
 
 		if x.Right != nil {
 			dbs := getDbFromResultNode(x.Right)
-			for _,db := range dbs{
-				dbLabels = append(dbLabels ,db)
+			if dbs != nil {
+				for _, db := range dbs {
+					dbLabels = append(dbLabels, db)
+				}
 			}
 		}
 	}

@@ -277,7 +277,7 @@ const (
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
-	DefEnableDbQpsMetric			 = 1
+	DefEnableDbQpsMetric             = 1
 )
 
 // Process global variables.

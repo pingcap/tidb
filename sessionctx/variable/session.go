@@ -668,7 +668,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBEnableDbQpsMetric:
-		atomic.StoreInt64(&config.GetGlobalConfig().DbQpsMetricSwitch , tidbOptInt64(val , DefEnableDbQpsMetric))
+		atomic.StoreInt64(&config.GetGlobalConfig().DbQpsMetricSwitch, tidbOptInt64(val, DefEnableDbQpsMetric))
 	case TiDBQueryLogMaxLen:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBRetryLimit:

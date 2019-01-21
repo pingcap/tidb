@@ -43,5 +43,5 @@ var (
 			Subsystem: "executor",
 			Name:      "statement_Db_total",
 			Help:      "Counter of Db StmtNode.",
-		}, []string{LblDb,LblType})
+		}, []string{LblDb, LblType})
 )
