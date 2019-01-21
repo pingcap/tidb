@@ -530,25 +530,22 @@ func (s *testIntegrationSuite) TestChangingCharsetToUtf8(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a char(10) charset utf8)")
 	tk.MustExec("alter table t1 modify column a char(10) charset utf8mb4")
-
 	tk.MustExec("create table t(a char(10) charset latin1)")
-	rs, err := tk.Exec("alter table t modify column a char(10) charset latin1")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, IsNil)
-	rs, err = tk.Exec("alter table t modify column a char(10) charset utf8")
+	tk.MustExec("alter table t modify column a char(10) charset latin1")
+
+	rs, err := tk.Exec("alter table t modify column a char(10) charset utf8")
 	if rs != nil {
 		rs.Close()
 	}
 	c.Assert(err, NotNil)
-
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
 	rs, err = tk.Exec("alter table t modify column a char(10) charset utf8mb4")
 	if rs != nil {
 		rs.Close()
 	}
 	c.Assert(err, NotNil)
-
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+	
 	rs, err = tk.Exec("alter table t modify column a char(10) charset utf8mb4 collate utf8bin")
 	if rs != nil {
 		rs.Close()
