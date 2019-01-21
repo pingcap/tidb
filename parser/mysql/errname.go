@@ -79,7 +79,7 @@ var MySQLErrName = map[uint16]string{
 	ErrDupKeyName:                               "Duplicate key name '%-.192s'",
 	ErrDupEntry:                                 "Duplicate entry '%-.192s' for key %d",
 	ErrWrongFieldSpec:                           "Incorrect column specifier for column '%-.192s'",
-	ErrParse:                                    "%s near '%-.80s' at line %d",
+	ErrParse:                                    "%s %s",
 	ErrEmptyQuery:                               "Query was empty",
 	ErrNonuniqTable:                             "Not unique table/alias: '%-.192s'",
 	ErrInvalidDefault:                           "Invalid default value for '%-.192s'",

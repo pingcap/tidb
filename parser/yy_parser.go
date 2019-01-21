@@ -14,6 +14,7 @@
 package parser
 
 import (
+	"fmt"
 	"math"
 	"regexp"
 	"strconv"
@@ -159,7 +160,7 @@ func ParseErrorWith(errstr string, lineno int) error {
 	if len(errstr) > mysql.ErrTextLength {
 		errstr = errstr[:mysql.ErrTextLength]
 	}
-	return ErrParse.GenWithStackByArgs(mysql.MySQLErrName[mysql.ErrSyntax], errstr, lineno)
+	return fmt.Errorf("near '%-.80s' at line %d", errstr, lineno)
 }
 
 // The select statement is not at the end of the whole statement, if the last

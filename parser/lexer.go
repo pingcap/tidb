@@ -16,6 +16,7 @@ package parser
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -50,6 +51,10 @@ type Scanner struct {
 	// It may break the compatibility when support those keywords,
 	// because some application may already use them as identifiers.
 	supportWindowFunc bool
+
+	// lastScanOffset indicates last offset returned by scan().
+	// It's used to substring sql in syntax error message.
+	lastScanOffset int
 }
 
 type specialCommentScanner interface {
@@ -123,17 +128,14 @@ func (s *Scanner) stmtText() string {
 // Scanner satisfies yyLexer interface which need this function.
 func (s *Scanner) Errorf(format string, a ...interface{}) {
 	str := fmt.Sprintf(format, a...)
-	col := s.r.p.Col
-	startPos := s.stmtStartPos
-	if s.r.s[startPos] == '\n' {
-		startPos++
-		col--
-	}
-	val := s.r.s[startPos:]
+	val := s.r.s[s.lastScanOffset:]
+	var lenStr = ""
 	if len(val) > 2048 {
+		lenStr = "(total length " + strconv.Itoa(len(val)) + ")"
 		val = val[:2048]
 	}
-	err := fmt.Errorf("line %d column %d near \"%s\"%s (total length %d)", s.r.p.Line, col, val, str, len(s.r.s))
+	err := fmt.Errorf("line %d column %d near \"%s\"%s %s",
+		s.r.p.Line, s.r.p.Col, val, str, lenStr)
 	s.errs = append(s.errs, err)
 }
 
@@ -144,6 +146,7 @@ func (s *Scanner) Errorf(format string, a ...interface{}) {
 // return invalid tells parser that scanner meets illegal character.
 func (s *Scanner) Lex(v *yySymType) int {
 	tok, pos, lit := s.scan()
+	s.lastScanOffset = pos.Offset
 	v.offset = pos.Offset
 	v.ident = lit
 	if tok == identifier {
