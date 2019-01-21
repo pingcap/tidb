@@ -183,6 +183,21 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
 
+func (s *testCommitterSuite) TestContextCancel2(c *C) {
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("a"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("b"), []byte("b"))
+	c.Assert(err, IsNil)
+	ctx, cancel := context.WithCancel(context.Background())
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	cancel()
+	// Secondary keys should not be canceled.
+	time.Sleep(time.Millisecond * 20)
+	c.Assert(s.isKeyLocked(c, []byte("b")), IsFalse)
+}
+
 func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	txn1, txn2, txn3 := s.begin(c), s.begin(c), s.begin(c)
 	// txn1 locks "b"
