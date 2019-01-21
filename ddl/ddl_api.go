@@ -288,11 +288,6 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 			}
 		}
 	}
-	value, err := convertTimestampDelfaultValToUTC(ctx, value, col)
-	if err != nil {
-		return hasDefaultValue, value, errors.Trace(err)
-
-	}
 	return hasDefaultValue, value, nil
 }
 
@@ -381,6 +376,11 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				}
 				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
+				}
+				value, err = convertTimestampDelfaultValToUTC(ctx, value, col)
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+
 				}
 				if err = col.SetDefaultValue(value); err != nil {
 					return nil, nil, errors.Trace(err)
@@ -1918,6 +1918,11 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	if _, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 		return errors.Trace(err)
 	}
+	value, err = convertTimestampDelfaultValToUTC(ctx, value, col)
+	if err != nil {
+		return errors.Trace(err)
+
+	}
 	err = col.SetDefaultValue(value)
 	if err != nil {
 		return errors.Trace(err)
@@ -1949,6 +1954,11 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			}
 			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 				return errors.Trace(err)
+			}
+			value, err = convertTimestampDelfaultValToUTC(ctx, value, col)
+			if err != nil {
+				return errors.Trace(err)
+
 			}
 			if err = col.SetDefaultValue(value); err != nil {
 				return errors.Trace(err)
