@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -166,7 +167,6 @@ func GetStmtDbLabel(stmtNode ast.StmtNode) []string {
 		for _,db := range dbLabels {
 			dbLabelMap[db] = 0
 		}
-	case *ast.DropDatabaseStmt:
 	case *ast.DropIndexStmt:
 		dbLabel := x.Table.Schema.O
 		dbLabelMap[dbLabel] = 0
@@ -181,10 +181,24 @@ func GetStmtDbLabel(stmtNode ast.StmtNode) []string {
 	case *ast.LoadDataStmt:
 		dbLabel := x.Table.Schema.O
 		dbLabelMap[dbLabel] = 0
-	case *ast.SelectStmt,*ast.UpdateStmt,*ast.DeleteStmt:
+	case *ast.SelectStmt:
 		dbLabels := getDbFromResultNode(x)
 		for _,db := range dbLabels {
 			dbLabelMap[db] = 0
+		}
+	case *ast.UpdateStmt:
+		if x.TableRefs != nil {
+			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
+			for _,db := range dbLabels {
+				dbLabelMap[db] = 0
+			}
+		}
+	case *ast.DeleteStmt:
+		if x.TableRefs != nil {
+			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
+			for _,db := range dbLabels {
+				dbLabelMap[db] = 0
+			}
 		}
 	case *ast.TruncateTableStmt:
 		dbLabel := x.Table.Schema.O
@@ -204,6 +218,11 @@ func GetStmtDbLabel(stmtNode ast.StmtNode) []string {
 
 func getDbFromResultNode(resultNode ast.ResultSetNode) []string {//may have duplicate db name
 	dbLabels := make([]string , 0)
+
+	if resultNode == nil {
+		return dbLabels
+	}
+
 	switch x := resultNode.(type) {
 	case *ast.TableSource:
 		return getDbFromResultNode(x.Source)
