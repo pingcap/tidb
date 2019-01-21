@@ -134,6 +134,10 @@ github.com/zhangjinpeng1987/kvproto v0.0.0-20190118034031-adb116189d5d h1:G6+FKS
 github.com/zhangjinpeng1987/kvproto v0.0.0-20190118034031-adb116189d5d/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 github.com/zhangjinpeng1987/kvproto v0.0.0-20190118085233-0f1acc064422 h1:MqCoelVF6qdE+JtW9K0yfVQID97g/1JG6kAIrIUN9Ng=
 github.com/zhangjinpeng1987/kvproto v0.0.0-20190118085233-0f1acc064422/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
+github.com/zhangjinpeng1987/kvproto v0.0.0-20190121013553-e3b80b3e1c59 h1:yRRjCL/zAMymcZkCb6to0GPlwOwlYhe6MFe87jWftZs=
+github.com/zhangjinpeng1987/kvproto v0.0.0-20190121013553-e3b80b3e1c59/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
+github.com/zhangjinpeng1987/kvproto v0.0.0-20190121015610-0cff7b3071ee h1:Wl70DqCOagFpzqj2qCsaKrRwEyQ4QmzCz1oIOZFcAkg=
+github.com/zhangjinpeng1987/kvproto v0.0.0-20190121015610-0cff7b3071ee/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 go.uber.org/atomic v1.3.2/go.mod h1:gD2HeocX3+yG+ygLZcrzQJaqmWj9AIm7n08wl/qW/PE=
 go.uber.org/multierr v1.1.0/go.mod h1:wR5kodmAFQ0UK8QlbwjlSNy0Z68gJhDJUG5sjR94q/0=
 go.uber.org/zap v1.9.1/go.mod h1:vwi/ZaCAaUcBkycHslxD9B2zi4UTXhF60s6SWpuDF0Q=

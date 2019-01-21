@@ -17,6 +17,7 @@ import (
 	"bytes"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
@@ -26,7 +27,8 @@ type UnionStore interface {
 	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
 	// Lazy condition pairs should be checked before transaction commit.
 	CheckLazyConditionPairs() error
-	ShouldNotExist(k Key) bool
+	// GetConditionPair returns ConditionPair for k if it exists.
+	GetPrecondition(k Key) *kvrpcpb.Precondition
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -202,11 +204,22 @@ func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
 	}
 }
 
-func (us *unionStore) ShouldNotExist(k Key) bool {
-	if v, ok := us.lazyConditionPairs[string(k)]; ok {
-		return v == nil
+func (us *unionStore) GetPrecondition(k Key) *kvrpcpb.Precondition {
+	if c, ok := us.lazyConditionPairs[string(k)]; ok {
+		if c != nil && c.value != nil {
+			if len(c.value) == 0 {
+				return &kvrpcpb.Precondition {
+					ShouldNotExist: true,
+				}
+			} else {
+				return &kvrpcpb.Precondition {
+					ShouldNotExist: false,
+					EqualTo: c.value,
+				}
+			}
+		}
 	}
-	return false
+	return nil
 }
 
 // CheckLazyConditionPairs implements the UnionStore interface.
