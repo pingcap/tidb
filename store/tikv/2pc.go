@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
+	"fmt"
 )
 
 type twoPhaseCommitAction int
@@ -377,6 +378,18 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		var locks []*Lock
 		for _, keyErr := range keyErrs {
+			// Check already exists error
+			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
+				key := alreadyExist.GetKey()
+				err := c.txn.us.GetPreconditionErr(key)
+				if err == nil {
+					panic(fmt.Sprintf("con:%d, precondition error for key:%s should not be nil", c.connID, key))
+				}
+				log.Errorf("con:%d key: %s already exists", c.connID, key)
+				return errors.Trace(err)
+			}
+
+			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
 				return errors.Trace(err1)

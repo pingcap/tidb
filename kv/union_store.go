@@ -29,6 +29,8 @@ type UnionStore interface {
 	CheckLazyConditionPairs() error
 	// GetConditionPair returns ConditionPair for k if it exists.
 	GetPrecondition(k Key) *kvrpcpb.Precondition
+	// Returns related error if precondition is not satisfied.
+	GetPreconditionErr(k Key) error
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -217,6 +219,15 @@ func (us *unionStore) GetPrecondition(k Key) *kvrpcpb.Precondition {
 					EqualTo: c.value,
 				}
 			}
+		}
+	}
+	return nil
+}
+
+func (us *unionStore) GetPreconditionErr(k Key) error {
+	if c, ok := us.lazyConditionPairs[string(k)]; ok {
+		if c != nil {
+			return c.err
 		}
 	}
 	return nil
