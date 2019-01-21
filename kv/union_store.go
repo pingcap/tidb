@@ -14,8 +14,6 @@
 package kv
 
 import (
-	"bytes"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
@@ -24,9 +22,6 @@ import (
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
-	// Lazy condition pairs should be checked before transaction commit.
-	CheckLazyConditionPairs() error
 	// GetConditionPair returns ConditionPair for k if it exists.
 	GetPrecondition(k Key) *kvrpcpb.Precondition
 	// Returns related error if precondition is not satisfied.
@@ -228,34 +223,6 @@ func (us *unionStore) GetPreconditionErr(k Key) error {
 	if c, ok := us.lazyConditionPairs[string(k)]; ok {
 		if c != nil {
 			return c.err
-		}
-	}
-	return nil
-}
-
-// CheckLazyConditionPairs implements the UnionStore interface.
-func (us *unionStore) CheckLazyConditionPairs() error {
-	if len(us.lazyConditionPairs) == 0 {
-		return nil
-	}
-	keys := make([]Key, 0, len(us.lazyConditionPairs))
-	for _, v := range us.lazyConditionPairs {
-		keys = append(keys, v.key)
-	}
-	values, err := us.snapshot.BatchGet(keys)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for k, v := range us.lazyConditionPairs {
-		if len(v.value) == 0 {
-			if _, exist := values[k]; exist {
-				return errors.Trace(v.err)
-			}
-		} else {
-			if !bytes.Equal(values[k], v.value) {
-				return errors.Trace(ErrLazyConditionPairsNotMatch)
-			}
 		}
 	}
 	return nil

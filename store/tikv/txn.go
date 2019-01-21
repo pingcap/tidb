@@ -180,10 +180,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	start := time.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
 
-	//if err := txn.us.CheckLazyConditionPairs(); err != nil {
-	//	return errors.Trace(err)
-	//}
-
 	// connID is used for log.
 	var connID uint64
 	val := ctx.Value(sessionctx.ConnID)
