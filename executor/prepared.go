@@ -27,8 +27,8 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/terror"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -118,11 +118,11 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		var warns []error
 		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
 		for _, warn := range warns {
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.SyntaxWarn(warn))
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
 	}
 	if err != nil {
-		return terror.SyntaxError(err)
+		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
 		return ErrPrepareMulti

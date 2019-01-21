@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util"
 )
 
 // nameResolver is the visitor to resolve table name and column name.
@@ -66,7 +66,7 @@ func parseExpression(expr string) (node ast.ExprNode, err error) {
 	if err == nil {
 		node = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	}
-	return node, terror.SyntaxError(err)
+	return node, util.SyntaxError(err)
 }
 
 // SimpleResolveName resolves all column names in the expression node.
