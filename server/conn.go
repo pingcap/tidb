@@ -51,12 +51,14 @@ import (
 
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
@@ -517,7 +519,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 
 func (cc *clientConn) PeerHost() (host string, err error) {
 	if len(cc.peerHost) > 0 {
-		return  cc.peerHost, nil
+		return cc.peerHost, nil
 	}
 	host = variable.DefHostname
 	if cc.server.isUnixSocket() {
@@ -723,6 +725,20 @@ func (cc *clientConn) dispatch(data []byte) error {
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
+
+	auditPlugins := plugin.GetByKind(plugin.Audit)
+	if auditPlugins != nil {
+		for _, p := range auditPlugins {
+			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
+			if auditPlugin.OnGeneralEvent != nil {
+				sql := cc.lastCmd
+				if cmd == mysql.ComQuery {
+					sql = parser.DigestText(sql)
+				}
+				auditPlugin.OnGeneralEvent(context.Background(), cc.ctx.GetSessionVars(), plugin.Log, cmd, sql)
+			}
+		}
+	}
 
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)

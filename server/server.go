@@ -46,6 +46,7 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
@@ -54,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
-	"github.com/pingcap/parser/auth"
 )
 
 var (
@@ -359,7 +359,7 @@ func (s *Server) onConn(c net.Conn) {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			host, _ := conn.PeerHost()
-			err := authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname:host}, plugin.PreAuth, 0)
+			err := authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host}, plugin.PreAuth, 0)
 			if err != nil {
 
 			}

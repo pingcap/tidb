@@ -16,69 +16,57 @@ package plugin
 import (
 	"context"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
+// GeneralEvent presents TiDB generate event.
 type GeneralEvent byte
 
 const (
+	// Log presents log event.
 	Log GeneralEvent = iota
+	// Error presents error event.
 	Error
+	// Result presents result event.
 	Result
+	// Status presents status event.
 	Status
 )
 
+// ConnectionEvent presents TiDB connection event.
 type ConnectionEvent byte
 
 const (
+	// Connected presents new connection establish event(finish auth).
 	Connected ConnectionEvent = iota
+	// Disconnect presents disconnect event.
 	Disconnect
+	// ChangeUser presents change user.
 	ChangeUser
+	// PreAuth presents event before start auth.
 	PreAuth
 )
 
+// ParseEvent presents events happen around parser.
 type ParseEvent byte
 
 const (
+	// PreParse presents event before parse.
 	PreParse ParseEvent = 1 + iota
+	// PostParse presents event after parse.
 	PostParse
-)
-
-type ServerEvent byte
-
-const (
-	Startup ParseEvent = 1 + iota
-	Shut
-)
-
-type CommandEvent int
-
-const (
-	Start CommandEvent = 1 + iota
-	End
-)
-
-type QueryEvent int
-
-type TableAccessEvent int
-
-const (
-	Insert TableAccessEvent = 1 + iota
-	Delete
-	Update
-	Read
 )
 
 // AuditManifest presents a sub-manifest that every audit plugin must provide.
 type AuditManifest struct {
 	Manifest
-	OnGeneralEvent        func(ctx context.Context, sctx *variable.SessionVars, event GeneralEvent) error
-	OnConnectionEvent     func(ctx context.Context, identity *auth.UserIdentity, event ConnectionEvent, errorCode uint16) error
-	OnParseEvent          func(ctx context.Context, sctx *variable.SessionVars, event ParseEvent) error
-	OnServerEvent         func(ctx context.Context, event ServerEvent) error
-	OnCommandEvent        func(ctx context.Context, sctx *variable.SessionVars, event CommandEvent) error
-	OnQueryEvent          func(ctx context.Context, sctx *variable.SessionVars, event QueryEvent) error
-	OnTableAccessEvent    func(ctx context.Context, sctx *variable.SessionVars, event TableAccessEvent) error
+	// OnConnectionEvent will be called when TiDB receive or disconnect from client.
+	OnConnectionEvent func(ctx context.Context, identity *auth.UserIdentity, event ConnectionEvent, errorCode uint16) error
+	// OnGeneralEvent will be called during TiDB execution.
+	OnGeneralEvent func(ctx context.Context, sctx *variable.SessionVars, event GeneralEvent, cmd byte, stmt string) error
+	// OnGlobalVariableEvent will be called when Change GlobalVariable.
 	OnGlobalVariableEvent func(ctx context.Context, sctx *variable.SessionVars, varName, varValue string) error
+	// OnParseEvent will be called around parse logic.
+	OnParseEvent func(ctx context.Context, sctx *variable.SessionVars, event ParseEvent) error
 }
