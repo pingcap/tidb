@@ -506,6 +506,14 @@ func (s *testSuite1) TestAdminCheckTable(c *C) {
 	tk.MustExec(`ALTER TABLE td1 ADD COLUMN c4 DECIMAL(12,8) NULL DEFAULT '213.41598062';`)
 	tk.MustExec(`ALTER TABLE td1 ADD INDEX id2 (c4) ;`)
 	tk.MustExec(`ADMIN CHECK TABLE td1;`)
+
+	// Test add not null column, then add index.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1 (a int);`)
+	tk.MustExec(`insert into t1 set a=2;`)
+	tk.MustExec(`alter table t1 add column b timestamp not null;`)
+	tk.MustExec(`alter table t1 add index(b);`)
+	tk.MustExec(`admin check table t1;`)
 }
 
 func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {
@@ -551,7 +559,7 @@ func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
-	safePointValue := "20060102-15:04:05 -0700 MST"
+	safePointValue := "20060102-15:04:05 -0700"
 	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
 	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY

@@ -32,7 +32,7 @@ type Group struct {
 	SelfFingerprint string
 
 	ImplMap map[string]Implementation
-	*property.LogicalProperty
+	Prop    *property.LogicalProperty
 }
 
 // NewGroup creates a new Group.

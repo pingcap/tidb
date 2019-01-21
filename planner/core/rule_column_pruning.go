@@ -15,9 +15,9 @@ package core
 
 import (
 	"fmt"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 )
@@ -68,6 +68,12 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 		if !used[i] && !exprHasSetVar(p.Exprs[i]) {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
+		}
+	}
+	// Prune TblID2Handle since that handle column may be pruned.
+	for k, cols := range p.schema.TblID2Handle {
+		if p.schema.ColumnIndex(cols[0]) == -1 {
+			delete(p.schema.TblID2Handle, k)
 		}
 	}
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
@@ -156,7 +162,15 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) {
 // PruneColumns implements LogicalPlan interface.
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	used := getUsedList(parentUsedCols, ds.schema)
+	var (
+		handleCol     *expression.Column
+		handleColInfo *model.ColumnInfo
+	)
 	for i := len(used) - 1; i >= 0; i-- {
+		if ds.tableInfo.PKIsHandle && mysql.HasPriKeyFlag(ds.Columns[i].Flag) {
+			handleCol = ds.schema.Columns[i]
+			handleColInfo = ds.Columns[i]
+		}
 		if !used[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
@@ -170,8 +184,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 && !infoschema.IsMemoryDB(ds.DBName.L) {
-		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
-		ds.schema.Append(ds.newExtraHandleSchemaCol())
+		if handleCol == nil {
+			handleCol = ds.newExtraHandleSchemaCol()
+			handleColInfo = model.NewExtraHandleColInfo()
+		}
+		ds.Columns = append(ds.Columns, handleColInfo)
+		ds.schema.Append(handleCol)
 	}
 }
 
@@ -264,4 +282,34 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) {
 		}
 		p.children[0].PruneColumns(parentUsedCols)
 	}
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) {
+	windowColumn := p.GetWindowResultColumn()
+	len := 0
+	for _, col := range parentUsedCols {
+		if !windowColumn.Equal(nil, col) {
+			parentUsedCols[len] = col
+			len++
+		}
+	}
+	parentUsedCols = parentUsedCols[:len]
+	parentUsedCols = p.extractUsedCols(parentUsedCols)
+	p.children[0].PruneColumns(parentUsedCols)
+	p.SetSchema(p.children[0].Schema().Clone())
+	p.Schema().Append(windowColumn)
+}
+
+func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*expression.Column {
+	for _, arg := range p.WindowFuncDesc.Args {
+		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(arg)...)
+	}
+	for _, by := range p.PartitionBy {
+		parentUsedCols = append(parentUsedCols, by.Col)
+	}
+	for _, by := range p.OrderBy {
+		parentUsedCols = append(parentUsedCols, by.Col)
+	}
+	return parentUsedCols
 }

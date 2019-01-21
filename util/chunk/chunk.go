@@ -138,6 +138,11 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
 }
 
+// MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
+func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
+	c.columns[dstColIdx] = src.columns[srcColIdx]
+}
+
 // SwapColumn swaps column "c.columns[colIdx]" with column
 // "other.columns[otherIdx]". If there exists columns refer to the column to be
 // swapped, we need to re-build the reference.
@@ -288,7 +293,8 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 //    when the Insert() function is called parallelly, the data race on a byte
 //    can not be avoided although the manipulated bits are different inside a
 //    byte.
-func (c *Chunk) PreAlloc(row Row) {
+func (c *Chunk) PreAlloc(row Row) (rowIdx uint32) {
+	rowIdx = uint32(c.NumRows())
 	for i, srcCol := range row.c.columns {
 		dstCol := c.columns[i]
 		dstCol.appendNullBitmap(!srcCol.isNull(row.idx))
@@ -304,16 +310,28 @@ func (c *Chunk) PreAlloc(row Row) {
 			continue
 		}
 		// Grow the capacity according to golang.growslice.
+		// Implementation differences with golang:
+		// 1. We double the capacity when `dstCol.data < 1024*elemLen bytes` but
+		// not `1024 bytes`.
+		// 2. We expand the capacity to 1.5*originCap rather than 1.25*originCap
+		// during the slow-increasing phase.
 		newCap := cap(dstCol.data)
 		doubleCap := newCap << 1
 		if needCap > doubleCap {
 			newCap = needCap
 		} else {
-			if len(dstCol.data) < 1024 {
+			avgElemLen := elemLen
+			if !srcCol.isFixed() {
+				avgElemLen = len(dstCol.data) / len(dstCol.offsets)
+			}
+			// slowIncThreshold indicates the threshold exceeding which the
+			// dstCol.data capacity increase fold decreases from 2 to 1.5.
+			slowIncThreshold := 1024 * avgElemLen
+			if len(dstCol.data) < slowIncThreshold {
 				newCap = doubleCap
 			} else {
 				for 0 < newCap && newCap < needCap {
-					newCap += newCap / 4
+					newCap += newCap / 2
 				}
 				if newCap <= 0 {
 					newCap = needCap
@@ -322,6 +340,7 @@ func (c *Chunk) PreAlloc(row Row) {
 		}
 		dstCol.data = make([]byte, len(dstCol.data)+elemLen, newCap)
 	}
+	return
 }
 
 // Insert inserts `row` on the position specified by `rowIdx`.

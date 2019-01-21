@@ -73,7 +73,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 	// insert t values (1, 2);
 	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 	row := types.MakeDatums(1, 2)
-	h, err := originTable.AddRecord(ctx, row, false)
+	h, err := originTable.AddRecord(ctx, row)
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
@@ -97,8 +97,7 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		prevState = job.SchemaState
-		var err error
-		err = hookCtx.NewTxn(context.Background())
+		err := hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -164,8 +163,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		prevState = job.SchemaState
-		var err error
-		err = hookCtx.NewTxn(context.Background())
+		err := hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 		}
@@ -180,7 +178,7 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10), false)
+			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10))
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -235,7 +233,7 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3), false)
+	_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -310,7 +308,7 @@ func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h, err := publicTable.AddRecord(sctx, types.MakeDatums(4, 4, 4), false)
+	h, err := publicTable.AddRecord(sctx, types.MakeDatums(4, 4, 4))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -367,10 +365,13 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 
 func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]interface{}) error {
 	var gotRows [][]interface{}
-	t.IterRecords(ctx, t.FirstKey(), cols, func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err := t.IterRecords(ctx, t.FirstKey(), cols, func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))
 		return true, nil
 	})
+	if err != nil {
+		return err
+	}
 	got := fmt.Sprintf("%v", gotRows)
 	expect := fmt.Sprintf("%v", rows)
 	if got != expect {

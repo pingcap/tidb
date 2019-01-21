@@ -19,7 +19,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -74,16 +74,16 @@ func (e *SortExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("sort.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
 		if err != nil {
@@ -104,12 +104,12 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		e.fetched = true
 	}
-	for chk.NumRows() < e.maxChunkSize {
+	for req.NumRows() < e.maxChunkSize {
 		if e.Idx >= len(e.rowPtrs) {
 			return nil
 		}
 		rowPtr := e.rowPtrs[e.Idx]
-		chk.AppendRow(e.rowChunks.GetRow(rowPtr))
+		req.AppendRow(e.rowChunks.GetRow(rowPtr))
 		e.Idx++
 	}
 	return nil
@@ -122,7 +122,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
 		chk := e.children[0].newFirstChunk()
-		err := e.children[0].Next(ctx, chk)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -305,16 +305,16 @@ func (e *TopNExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("topN.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	if !e.fetched {
 		e.totalLimit = e.limit.Offset + e.limit.Count
 		e.Idx = int(e.limit.Offset)
@@ -331,9 +331,9 @@ func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	for chk.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
+	for req.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		chk.AppendRow(row)
+		req.AppendRow(row)
 		e.Idx++
 	}
 	return nil
@@ -346,7 +346,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := e.children[0].newFirstChunk()
-		err := e.children[0].Next(ctx, srcChk)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(srcChk))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -382,7 +382,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	}
 	childRowChk := e.children[0].newFirstChunk()
 	for {
-		err := e.children[0].Next(ctx, childRowChk)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(childRowChk))
 		if err != nil {
 			return errors.Trace(err)
 		}

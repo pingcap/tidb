@@ -979,6 +979,37 @@ func (mvcc *MVCCLevelDB) RawScan(startKey, endKey []byte, limit int) []Pair {
 	return pairs
 }
 
+// RawReverseScan implements the RawKV interface.
+// Scan the range of [endKey, startKey)
+// It doesn't support Scanning from "", because locating the last Region is not yet implemented.
+func (mvcc *MVCCLevelDB) RawReverseScan(startKey, endKey []byte, limit int) []Pair {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	iter := mvcc.db.NewIterator(&util.Range{
+		Limit: startKey,
+	}, nil)
+
+	success := iter.Last()
+
+	var pairs []Pair
+	for success && len(pairs) < limit {
+		key := iter.Key()
+		value := iter.Value()
+		err := iter.Error()
+		if bytes.Compare(key, endKey) < 0 {
+			break
+		}
+		pairs = append(pairs, Pair{
+			Key:   append([]byte{}, key...),
+			Value: append([]byte{}, value...),
+			Err:   err,
+		})
+		success = iter.Prev()
+	}
+	return pairs
+}
+
 // RawDeleteRange implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawDeleteRange(startKey, endKey []byte) {
 	terror.Log(mvcc.doRawDeleteRange(startKey, endKey))
