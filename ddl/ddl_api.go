@@ -1803,18 +1803,11 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 
 // modifiableCharsetAndCollation returns error when the charset or collation is not modifiable.
 func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate string) error {
-	// Only allow utf8 to be changed to utf8mb4.
-	if len(toCharset) != 0 && origCharset != charset.CharsetUTF8 {
-		msg := fmt.Sprintf("original binary charset modification is not supported, charset from %s to %s", origCharset, toCharset)
-		return errUnsupportedModifyCharset.GenWithStackByArgs(msg)
-	}
-
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
 		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset, toCollate)
 	}
-	if toCharset == charset.CharsetUTF8MB4 || (toCharset == charset.CharsetUTF8 && origCharset != charset.CharsetUTF8MB4) {
-		// TiDB treats all the data as utf8mb4, so we support changing the charset to utf8mb4.
-		// And not allow to change utf8mb4 to utf8.
+	if toCharset == charset.CharsetUTF8MB4 && origCharset == charset.CharsetUTF8 {
+		// TiDB only allow utf8 to be changed to utf8mb4.
 		return nil
 	}
 
@@ -2007,10 +2000,6 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		if c != nil {
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
-	}
-	if len(specNewColumn.Tp.Charset) !=0 && col.Charset != charset.CharsetUTF8 {
-		msg := fmt.Sprintf("original binary charset modification is not supported")
-		return nil, errUnsupportedModifyCharset.GenWithStackByArgs(msg)
 	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
