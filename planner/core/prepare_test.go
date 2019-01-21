@@ -148,7 +148,7 @@ func (s *testPlanSuite) TestPrepareCacheDeferredFunction(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (id int PRIMARY KEY, c1 TIMESTAMP(3) NOT NULL DEFAULT '0000-00-00 00:00:00', KEY idx1 (c1))")
+	tk.MustExec("create table t1 (id int PRIMARY KEY, c1 TIMESTAMP(3) NOT NULL DEFAULT '2019-01-14 10:43:20', KEY idx1 (c1))")
 	tk.MustExec("prepare sel1 from 'select id, c1 from t1 where c1 < now(3)'")
 
 	sql1 := "execute sel1"
@@ -259,9 +259,8 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 			_, err = tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 			c.Assert(terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached), IsTrue)
 			break
-		} else {
-			tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 		}
+		tk.Exec(`prepare stmt` + strconv.Itoa(i) + ` from "select 1"`)
 	}
 }
 

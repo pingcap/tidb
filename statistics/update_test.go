@@ -701,7 +701,7 @@ func (s *testStatsSuite) TestSplitRange(c *C) {
 				HighExclude: t.exclude[i+1],
 			})
 		}
-		ranges = h.SplitRange(ranges)
+		ranges = h.SplitRange(nil, ranges, false)
 		var ranStrs []string
 		for _, ran := range ranges {
 			ranStrs = append(ranStrs, ran.String())
@@ -782,7 +782,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	feedback := h.GetQueryFeedback()
 	c.Assert(len(feedback), Equals, 0)
 
-	// Test only collect for max number of ranges.
+	// Test only collect for max number of Ranges.
 	statistics.MaxNumberOfRanges = 0
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
@@ -969,14 +969,14 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := table.Meta()
-	tbl := h.GetTableStats(tblInfo)
+	h.GetTableStats(tblInfo)
 
 	testKit.MustQuery("select * from t use index(idx) where b <= 5")
 	testKit.MustQuery("select * from t where a > 1")
 	testKit.MustQuery("select * from t use index(idx) where b = 5")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
-	tbl = h.GetTableStats(tblInfo)
+	tbl := h.GetTableStats(tblInfo)
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
@@ -1360,5 +1360,63 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 		tblInfo := table.Meta()
 		tbl := h.GetTableStats(tblInfo)
 		c.Assert(tbl.Columns[t.colID].ToString(0), Equals, tests[i].hist)
+	}
+}
+
+func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+	oriProbability := statistics.FeedbackProbability
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MaxNumberOfRanges = oriNumber
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t with 3 buckets")
+	for i := 30; i < 40; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	tests := []struct {
+		sql  string
+		hist string
+	}{
+		{
+			sql: "select * from t where a <= 50",
+			hist: "column:1 ndv:30 totColSize:0\n" +
+				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+		},
+		{
+			sql: "select count(*) from t",
+			hist: "column:1 ndv:30 totColSize:0\n" +
+				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0",
+		},
+	}
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		c.Assert(err, IsNil)
+		h.Update(is)
+		tblInfo := table.Meta()
+		tbl := h.GetTableStats(tblInfo)
+		c.Assert(tbl.Columns[1].ToString(0), Equals, tests[i].hist)
 	}
 }

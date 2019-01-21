@@ -17,10 +17,10 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
@@ -69,11 +69,45 @@ type ValueExpr struct {
 	projectionOffset int
 }
 
-// Restore implements Recoverable interface.
-func (n *ValueExpr) Restore(sb *strings.Builder) error {
-	err := n.format(sb)
-	if err != nil {
-		return errors.Trace(err)
+// Restore implements Node interface.
+func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
+	switch n.Kind() {
+	case types.KindNull:
+		ctx.WriteKeyWord("NULL")
+	case types.KindInt64:
+		if n.Type.Flag&mysql.IsBooleanFlag != 0 {
+			if n.GetInt64() > 0 {
+				ctx.WriteKeyWord("TRUE")
+			} else {
+				ctx.WriteKeyWord("FALSE")
+			}
+		} else {
+			ctx.WritePlain(strconv.FormatInt(n.GetInt64(), 10))
+		}
+	case types.KindUint64:
+		ctx.WritePlain(strconv.FormatUint(n.GetUint64(), 10))
+	case types.KindFloat32:
+		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 32))
+	case types.KindFloat64:
+		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
+	case types.KindString, types.KindBytes:
+		ctx.WriteString(n.GetString())
+	case types.KindMysqlDecimal:
+		ctx.WritePlain(n.GetMysqlDecimal().String())
+	case types.KindBinaryLiteral:
+		if n.Type.Flag&mysql.UnsignedFlag != 0 {
+			ctx.WritePlainf("x'%x'", n.GetBytes())
+		} else {
+			ctx.WritePlain(n.GetBinaryLiteral().ToBitLiteralString(true))
+		}
+	case types.KindMysqlDuration, types.KindMysqlEnum,
+		types.KindMysqlBit, types.KindMysqlSet, types.KindMysqlTime,
+		types.KindInterface, types.KindMinNotNull, types.KindMaxValue,
+		types.KindRaw, types.KindMysqlJSON:
+		// TODO implement Restore function
+		return errors.New("Not implemented")
+	default:
+		return errors.New("can't format to string")
 	}
 	return nil
 }
@@ -84,7 +118,7 @@ func (n *ValueExpr) GetDatumString() string {
 }
 
 // Format the ExprNode into a Writer.
-func (n *ValueExpr) format(w io.Writer) error {
+func (n *ValueExpr) Format(w io.Writer) {
 	var s string
 	switch n.Kind() {
 	case types.KindNull:
@@ -116,18 +150,9 @@ func (n *ValueExpr) format(w io.Writer) error {
 			s = n.GetBinaryLiteral().ToBitLiteralString(true)
 		}
 	default:
-		return errors.New("can't format to string")
-	}
-	fmt.Fprint(w, s)
-	return nil
-}
-
-// Format the ExprNode into a Writer.
-func (n *ValueExpr) Format(w io.Writer) {
-	err := n.format(w)
-	if err != nil {
 		panic("Can't format to string")
 	}
+	fmt.Fprint(w, s)
 }
 
 // newValueExpr creates a ValueExpr with value, and sets default field type.
@@ -170,9 +195,9 @@ type ParamMarkerExpr struct {
 	Order  int
 }
 
-// Restore implements Recoverable interface.
-func (n *ParamMarkerExpr) Restore(sb *strings.Builder) error {
-	sb.WriteString("?")
+// Restore implements Node interface.
+func (n *ParamMarkerExpr) Restore(ctx *format.RestoreCtx) error {
+	ctx.WritePlain("?")
 	return nil
 }
 

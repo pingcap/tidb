@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -250,6 +250,10 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	builder.Request.Priority = kv.PriorityLow
 
 	kvReq, err := builder.Build()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	sctx := newContext(d.store)
 	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
@@ -328,8 +332,8 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var (
 		err   error
-		start int64 = math.MinInt64
-		end   int64 = math.MaxInt64
+		start int64
+		end   int64
 		pid   int64
 		info  reorgInfo
 	)

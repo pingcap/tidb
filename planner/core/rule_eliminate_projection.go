@@ -33,7 +33,7 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 // eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// If this projection is specially added for `DO`, we keep it.
-	if p.CalculateNoDelay == true {
+	if p.CalculateNoDelay {
 		return false
 	}
 	if p.Schema().Len() == 0 {
@@ -116,6 +116,8 @@ func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*exp
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		childFlag = false
 	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
+		childFlag = true
+	} else if _, isWindow := p.(*LogicalWindow); isWindow {
 		childFlag = true
 	}
 	for i, child := range p.Children() {
@@ -202,5 +204,17 @@ func (ls *LogicalSort) replaceExprColumns(replace map[string]*expression.Column)
 func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range lt.ByItems {
 		resolveExprAndReplace(byItem.Expr, replace)
+	}
+}
+
+func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column) {
+	for _, arg := range p.WindowFuncDesc.Args {
+		resolveExprAndReplace(arg, replace)
+	}
+	for _, item := range p.PartitionBy {
+		resolveColumnAndReplace(item.Col, replace)
+	}
+	for _, item := range p.OrderBy {
+		resolveColumnAndReplace(item.Col, replace)
 	}
 }

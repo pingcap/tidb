@@ -137,7 +137,7 @@ func (l *KeyLocation) Contains(key []byte) bool {
 // LocateKey searches for the region and range that the key is located.
 func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
 	c.mu.RLock()
-	r := c.searchCachedRegion(key)
+	r := c.searchCachedRegion(key, false)
 	if r != nil {
 		loc := &KeyLocation{
 			Region:   r.VerID(),
@@ -149,7 +149,39 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 	}
 	c.mu.RUnlock()
 
-	r, err := c.loadRegion(bo, key)
+	r, err := c.loadRegion(bo, key, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.insertRegionToCache(r)
+
+	return &KeyLocation{
+		Region:   r.VerID(),
+		StartKey: r.StartKey(),
+		EndKey:   r.EndKey(),
+	}, nil
+}
+
+// LocateEndKey searches for the region and range that the key is located.
+// Unlike LocateKey, start key of a region is exclusive and end key is inclusive.
+func (c *RegionCache) LocateEndKey(bo *Backoffer, key []byte) (*KeyLocation, error) {
+	c.mu.RLock()
+	r := c.searchCachedRegion(key, true)
+	if r != nil {
+		loc := &KeyLocation{
+			Region:   r.VerID(),
+			StartKey: r.StartKey(),
+			EndKey:   r.EndKey(),
+		}
+		c.mu.RUnlock()
+		return loc, nil
+	}
+	c.mu.RUnlock()
+
+	r, err := c.loadRegion(bo, key, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -291,13 +323,18 @@ func (c *RegionCache) getCachedRegion(id RegionVerID) *Region {
 // searchCachedRegion finds a region from cache by key. Like `getCachedRegion`,
 // it should be called with c.mu.RLock(), and the returned Region should not be
 // used after c.mu is RUnlock().
-func (c *RegionCache) searchCachedRegion(key []byte) *Region {
+// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful when processing in reverse order.
+func (c *RegionCache) searchCachedRegion(key []byte, isEndKey bool) *Region {
 	var r *Region
 	c.mu.sorted.DescendLessOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
 		r = item.(*btreeItem).region
+		if isEndKey && bytes.Equal(r.StartKey(), key) {
+			r = nil     // clear result
+			return true // iterate next item
+		}
 		return false
 	})
-	if r != nil && r.Contains(key) {
+	if r != nil && (!isEndKey && r.Contains(key) || isEndKey && r.ContainsByEnd(key)) {
 		return c.getCachedRegion(r.VerID())
 	}
 	return nil
@@ -326,16 +363,25 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
-func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
+// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful when processing in reverse order.
+func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
 	var backoffErr error
+	searchPrev := false
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(boPDRPC, backoffErr)
+			err := bo.Backoff(BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		meta, leader, err := c.pdClient.GetRegion(bo.ctx, key)
+		var meta *metapb.Region
+		var leader *metapb.Peer
+		var err error
+		if searchPrev {
+			meta, leader, err = c.pdClient.GetPrevRegion(bo.ctx, key)
+		} else {
+			meta, leader, err = c.pdClient.GetRegion(bo.ctx, key)
+		}
 		metrics.TiKVRegionCacheCounter.WithLabelValues("get_region", metrics.RetLabel(err)).Inc()
 		if err != nil {
 			backoffErr = errors.Errorf("loadRegion from PD failed, key: %q, err: %v", key, err)
@@ -347,6 +393,10 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 		}
 		if len(meta.Peers) == 0 {
 			return nil, errors.New("receive Region with no peer")
+		}
+		if isEndKey && !searchPrev && bytes.Compare(meta.StartKey, key) == 0 && len(meta.StartKey) != 0 {
+			searchPrev = true
+			continue
 		}
 		region := &Region{
 			meta: meta,
@@ -364,7 +414,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 	var backoffErr error
 	for {
 		if backoffErr != nil {
-			err := bo.Backoff(boPDRPC, backoffErr)
+			err := bo.Backoff(BoPDRPC, backoffErr)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -437,7 +487,7 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 				return "", errors.Trace(err)
 			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", id, err)
-			if err = bo.Backoff(boPDRPC, err); err != nil {
+			if err = bo.Backoff(BoPDRPC, err); err != nil {
 				return "", errors.Trace(err)
 			}
 			continue
@@ -602,6 +652,14 @@ func (r *Region) SwitchPeer(storeID uint64) bool {
 func (r *Region) Contains(key []byte) bool {
 	return bytes.Compare(r.meta.GetStartKey(), key) <= 0 &&
 		(bytes.Compare(key, r.meta.GetEndKey()) < 0 || len(r.meta.GetEndKey()) == 0)
+}
+
+// ContainsByEnd check the region contains the greatest key that is less than key.
+// for the maximum region endKey is empty.
+// startKey < key <= endKey.
+func (r *Region) ContainsByEnd(key []byte) bool {
+	return bytes.Compare(r.meta.GetStartKey(), key) < 0 &&
+		(bytes.Compare(key, r.meta.GetEndKey()) <= 0 || len(r.meta.GetEndKey()) == 0)
 }
 
 // Store contains a tikv server's address.

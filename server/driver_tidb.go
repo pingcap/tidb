@@ -225,6 +225,11 @@ func (tc *TiDBContext) AffectedRows() uint64 {
 	return tc.session.AffectedRows()
 }
 
+// LastMessage implements QueryCtx LastMessage method.
+func (tc *TiDBContext) LastMessage() string {
+	return tc.session.LastMessage()
+}
+
 // CurrentDB implements QueryCtx CurrentDB method.
 func (tc *TiDBContext) CurrentDB() string {
 	return tc.currentDB
@@ -351,12 +356,12 @@ type tidbResultSet struct {
 	closed    bool
 }
 
-func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
-	return trs.recordSet.NewChunk()
+func (trs *tidbResultSet) NewRecordBatch() *chunk.RecordBatch {
+	return trs.recordSet.NewRecordBatch()
 }
 
-func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	return trs.recordSet.Next(ctx, chk)
+func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	return trs.recordSet.Next(ctx, req)
 }
 
 func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {

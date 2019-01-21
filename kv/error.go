@@ -99,9 +99,5 @@ func IsRetryableError(err error) bool {
 
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
-	if ErrNotExist.Equal(err) {
-		return true
-	}
-
-	return false
+	return ErrNotExist.Equal(err)
 }

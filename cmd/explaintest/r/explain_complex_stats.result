@@ -161,9 +161,9 @@ id	count	task	operator info
 Projection_10	428.32	root	dt.id, dt.aid, dt.pt, dt.dic, dt.cm, rr.gid, rr.acd, rr.t, dt.p1, dt.p2, dt.p3, dt.p4, dt.p5, dt.p6_md5, dt.p7_md5
 └─Limit_13	428.32	root	offset:0, count:2000
   └─IndexJoin_19	428.32	root	inner join, inner:IndexLookUp_18, outer key:dt.aid, dt.dic, inner key:rr.aid, rr.dic
-    ├─TableReader_43	428.32	root	data:Selection_42
-    │ └─Selection_42	428.32	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592)
-    │   └─TableScan_41	2000.00	cop	table:dt, range:[0,+inf], keep order:false
+    ├─TableReader_45	428.32	root	data:Selection_44
+    │ └─Selection_44	428.32	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592)
+    │   └─TableScan_43	2000.00	cop	table:dt, range:[0,+inf], keep order:false
     └─IndexLookUp_18	970.00	root	
       ├─IndexScan_15	1.00	cop	table:rr, index:aid, dic, range: decided by [dt.aid dt.dic], keep order:false
       └─Selection_17	970.00	cop	eq(rr.pt, "ios"), gt(rr.t, 1478185592)
@@ -205,23 +205,24 @@ CREATE TABLE tbl_009 (a int, b int);
 load stats 's/explain_complex_stats_tbl_009.json';
 explain select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
 id	count	task	operator info
-HashAgg_34	18000.00	root	group by:x.b, funcs:sum(x.a)
-└─Union_35	18000.00	root	
-  ├─TableReader_38	2000.00	root	data:TableScan_37
-  │ └─TableScan_37	2000.00	cop	table:tbl_001, range:[-inf,+inf], keep order:false
-  ├─TableReader_41	2000.00	root	data:TableScan_40
-  │ └─TableScan_40	2000.00	cop	table:tbl_002, range:[-inf,+inf], keep order:false
-  ├─TableReader_44	2000.00	root	data:TableScan_43
-  │ └─TableScan_43	2000.00	cop	table:tbl_003, range:[-inf,+inf], keep order:false
-  ├─TableReader_47	2000.00	root	data:TableScan_46
-  │ └─TableScan_46	2000.00	cop	table:tbl_004, range:[-inf,+inf], keep order:false
-  ├─TableReader_50	2000.00	root	data:TableScan_49
-  │ └─TableScan_49	2000.00	cop	table:tbl_005, range:[-inf,+inf], keep order:false
-  ├─TableReader_53	2000.00	root	data:TableScan_52
-  │ └─TableScan_52	2000.00	cop	table:tbl_006, range:[-inf,+inf], keep order:false
-  ├─TableReader_56	2000.00	root	data:TableScan_55
-  │ └─TableScan_55	2000.00	cop	table:tbl_007, range:[-inf,+inf], keep order:false
-  ├─TableReader_59	2000.00	root	data:TableScan_58
-  │ └─TableScan_58	2000.00	cop	table:tbl_008, range:[-inf,+inf], keep order:false
-  └─TableReader_62	2000.00	root	data:TableScan_61
-    └─TableScan_61	2000.00	cop	table:tbl_009, range:[-inf,+inf], keep order:false
+HashAgg_34	18000.00	root	group by:col_1, funcs:sum(col_0)
+└─Projection_63	18000.00	root	cast(x.a), x.b
+  └─Union_35	18000.00	root	
+    ├─TableReader_38	2000.00	root	data:TableScan_37
+    │ └─TableScan_37	2000.00	cop	table:tbl_001, range:[-inf,+inf], keep order:false
+    ├─TableReader_41	2000.00	root	data:TableScan_40
+    │ └─TableScan_40	2000.00	cop	table:tbl_002, range:[-inf,+inf], keep order:false
+    ├─TableReader_44	2000.00	root	data:TableScan_43
+    │ └─TableScan_43	2000.00	cop	table:tbl_003, range:[-inf,+inf], keep order:false
+    ├─TableReader_47	2000.00	root	data:TableScan_46
+    │ └─TableScan_46	2000.00	cop	table:tbl_004, range:[-inf,+inf], keep order:false
+    ├─TableReader_50	2000.00	root	data:TableScan_49
+    │ └─TableScan_49	2000.00	cop	table:tbl_005, range:[-inf,+inf], keep order:false
+    ├─TableReader_53	2000.00	root	data:TableScan_52
+    │ └─TableScan_52	2000.00	cop	table:tbl_006, range:[-inf,+inf], keep order:false
+    ├─TableReader_56	2000.00	root	data:TableScan_55
+    │ └─TableScan_55	2000.00	cop	table:tbl_007, range:[-inf,+inf], keep order:false
+    ├─TableReader_59	2000.00	root	data:TableScan_58
+    │ └─TableScan_58	2000.00	cop	table:tbl_008, range:[-inf,+inf], keep order:false
+    └─TableReader_62	2000.00	root	data:TableScan_61
+      └─TableScan_61	2000.00	cop	table:tbl_009, range:[-inf,+inf], keep order:false

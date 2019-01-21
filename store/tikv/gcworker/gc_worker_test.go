@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
@@ -86,6 +86,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare()
 	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 	c.Assert(err, IsNil)
 	c.Assert(lastRun, NotNil)
@@ -212,4 +213,29 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 	c.Assert(err, IsNil)
 	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)
+}
+
+func (s *testGCWorkerSuite) TestCheckGCMode(c *C) {
+	useDistributedGC, err := s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+	// Now the row must be set to the default value.
+	str, err := s.gcWorker.loadValueFromSysTable(gcModeKey)
+	c.Assert(err, IsNil)
+	c.Assert(str, Equals, gcModeDistributed)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeCentral)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, false)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, gcModeDistributed)
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
+
+	s.gcWorker.saveValueToSysTable(gcModeKey, "invalid_mode")
+	useDistributedGC, err = s.gcWorker.checkUseDistributedGC()
+	c.Assert(err, IsNil)
+	c.Assert(useDistributedGC, Equals, true)
 }
