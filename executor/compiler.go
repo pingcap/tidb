@@ -126,7 +126,7 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	metrics.StmtNodeCounter.WithLabelValues(GetStmtLabel(stmtNode)).Inc()
 }
 
-// CountStmtNode records the number of statements with the same type and db.
+// DbCountStmtNode records the number of statements with the same type and db.
 func DbCountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	cfg := config.GetGlobalConfig()
 
