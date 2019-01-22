@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/pingcap/check"
@@ -125,6 +126,9 @@ func AfterTest(c *check.C) func() {
 }
 
 // AfterTestT is used after all the test cases is finished.
-func AfterTestT(errorFunc func(cnt int, g string)) func() {
+func AfterTestT(t *testing.T) func() {
+	errorFunc := func(cnt int, g string) {
+		t.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
+	}
 	return checkLeakAfterTest(errorFunc)
 }

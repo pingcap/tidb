@@ -101,12 +101,9 @@ func TestT(t *testing.T) {
 	autoid.SetStep(5000)
 	ReorgWaitTimeout = 30 * time.Millisecond
 
-	errorFunc := func(cnt int, g string) {
-		t.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
-	}
 	testleak.BeforeTest()
 	TestingT(t)
-	testleak.AfterTestT(errorFunc)()
+	testleak.AfterTestT(t)()
 }
 
 func testCreateStore(c *C, name string) kv.Storage {
