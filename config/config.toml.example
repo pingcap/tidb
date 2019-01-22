@@ -35,6 +35,9 @@ token-limit = 1000
 # Valid options: ["log", "cancel"]
 oom-action = "log"
 
+# whether tidb enable db qps metric
+db-qps-metric-switch = 1
+
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368
 
