@@ -454,6 +454,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	err = checkColumnFieldLength(col)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	return col, constraints, nil
 }
 
@@ -694,16 +698,6 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if err := checkColumnAttributes(colDef.Name.OrigColName(), colDef.Tp); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// checkColumnsFieldLength check the maximum length limit for different character set varchar type columns.
-func checkColumnsFieldLength(cols []*table.Column) error {
-	for _, col := range cols {
-		if err := checkColumnFieldLength(col); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1008,10 +1002,6 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	// The column charset haven't been resolved here.
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, dbCharset)
 	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if err = checkColumnsFieldLength(cols); err != nil {
 		return nil, errors.Trace(err)
 	}
 
