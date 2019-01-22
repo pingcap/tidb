@@ -50,10 +50,7 @@ func TestT(t *testing.T) {
 	})
 	testleak.BeforeTest()
 	TestingT(t)
-	errorFunc := func(cnt int, g string) {
-		t.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
-	}
-	testleak.AfterTestT(errorFunc)()
+	testleak.AfterTestT(t)()
 }
 
 var _ = Suite(&testFailDBSuite{})

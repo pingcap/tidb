@@ -14,7 +14,11 @@
 
 package testleak
 
-import "github.com/pingcap/check"
+import (
+	"testing"
+
+	"github.com/pingcap/check"
+)
 
 // BeforeTest is a dummy implementation when build tag 'leak' is not set.
 func BeforeTest() {
