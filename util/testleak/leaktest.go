@@ -76,7 +76,7 @@ func BeforeTest() {
 
 const defaultCheckCnt = 50
 
-func checkLeakAfterTest(errorFunc func(cnt int, g string), checkCnt ...int) func() {
+func checkLeakAfterTest(errorFunc func(cnt int, g string)) func() {
 	if len(beforeTestGorountines) == 0 {
 		for _, g := range interestingGoroutines() {
 			beforeTestGorountines[g] = true
@@ -84,10 +84,6 @@ func checkLeakAfterTest(errorFunc func(cnt int, g string), checkCnt ...int) func
 	}
 
 	cnt := defaultCheckCnt
-	if len(checkCnt) > 0 {
-		cnt = checkCnt[0]
-	}
-
 	return func() {
 		defer func() {
 			beforeTestGorountines = map[string]bool{}
@@ -121,12 +117,11 @@ func checkLeakAfterTest(errorFunc func(cnt int, g string), checkCnt ...int) func
 // Usage: defer testleak.AfterTest(c)()
 // It can call with BeforeTest() at the beginning of check.Suite.TearDownSuite() or
 // call alone at the beginning of each test.
-// TODO: The type of checkCnt will be modified in the next PR.
-func AfterTest(c *check.C, checkCnt ...int) func() {
+func AfterTest(c *check.C) func() {
 	errorFunc := func(cnt int, g string) {
 		c.Errorf("Test check-count %d appears to have leaked: %v", cnt, g)
 	}
-	return checkLeakAfterTest(errorFunc, checkCnt...)
+	return checkLeakAfterTest(errorFunc)
 }
 
 // AfterTestT is used after all the test cases is finished.
