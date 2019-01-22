@@ -197,8 +197,6 @@ func GetStmtDbLabel(stmtNode ast.StmtNode) []string {
 		dbLabels = append(dbLabels, k)
 	}
 
-	fmt.Println("db:", dbLabels)
-
 	return dbLabels
 }
 

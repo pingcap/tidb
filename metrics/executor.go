@@ -41,7 +41,7 @@ var (
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
-			Name:      "statement_Db_total",
-			Help:      "Counter of Db StmtNode.",
+			Name:      "statement_db_total",
+			Help:      "Counter of db StmtNode.",
 		}, []string{LblDb, LblType})
 )
