@@ -52,7 +52,11 @@ type mockDataSource struct {
 	chunkPtr int
 }
 
-func (mds *mockDataSource) genColDatums(typ *types.FieldType, order bool, rows, NDV int) (results []interface{}) {
+func (mds *mockDataSource) genColDatums(ordinal int) (results []interface{}) {
+	typ := mds.retFieldTypes[ordinal]
+	order := mds.p.orders[ordinal]
+	rows := mds.p.rows
+	NDV := mds.p.ndvs[ordinal]
 	results = make([]interface{}, 0, rows)
 	if NDV == 0 {
 		for i := 0; i < rows; i++ {
@@ -147,7 +151,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	types := m.retTypes()
 	m.colData = make([][]interface{}, len(types))
 	for i := 0; i < len(types); i++ {
-		m.colData[i] = m.genColDatums(types[i], m.p.orders[i], m.p.rows, m.p.ndvs[i])
+		m.colData[i] = m.genColDatums(i)
 	}
 	return m
 }
