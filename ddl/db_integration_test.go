@@ -229,7 +229,7 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 	if rs != nil {
 		rs.Close()
 	}
-	c.Assert(err,NotNil)
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestCaseInsensitiveCharsetAndCollate(c *C) {
