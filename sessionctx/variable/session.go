@@ -286,8 +286,8 @@ type SessionVars struct {
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
-	// TiDBEnableDbQpsMetric indicates if we should record the dp qps metric data.
-	TiDBDbQpsMetricSwitch bool
+	// TiDBEnableDbQPSMetric indicates if we should record the dp qps metric data.
+	TiDBDbQPSMetricSwitch bool
 
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
@@ -670,8 +670,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
-	case TiDBEnableDbQpsMetric:
-		atomic.StoreInt64(&config.GetGlobalConfig().DbQpsMetricSwitch, tidbOptInt64(val, DefEnableDbQpsMetric))
+	case TiDBEnableDbQPSMetric:
+		atomic.StoreInt64(&config.GetGlobalConfig().DbQPSMetricSwitch, tidbOptInt64(val, DefEnableDbQpsMetric))
 	case TiDBQueryLogMaxLen:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(tidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 	case TiDBRetryLimit:

@@ -126,14 +126,15 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	metrics.StmtNodeCounter.WithLabelValues(GetStmtLabel(stmtNode)).Inc()
 }
 
+// CountStmtNode records the number of statements with the same type and db.
 func DbCountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	cfg := config.GetGlobalConfig()
 
-	if inRestrictedSQL || cfg.DbQpsMetricSwitch != 1 {
+	if inRestrictedSQL || cfg.DbQPSMetricSwitch != 1 {
 		return
 	}
 
-	dbLabels := GetStmtDbLabel(stmtNode)
+	dbLabels := getStmtDbLabel(stmtNode)
 	typeLabel := GetStmtLabel(stmtNode)
 
 	for _, dbLabel := range dbLabels {
@@ -141,7 +142,7 @@ func DbCountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	}
 }
 
-func GetStmtDbLabel(stmtNode ast.StmtNode) []string {
+func getStmtDbLabel(stmtNode ast.StmtNode) []string {
 	dbLabelMap := make(map[string]int, 0)
 
 	switch x := stmtNode.(type) {
