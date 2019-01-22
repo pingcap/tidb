@@ -1033,8 +1033,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if err = resolveDefaultTableCharsetAndCollation(tbl, ""); err != nil {
-		return nil, errors.Trace(err)
+	if err = resolveDefaultTableCharsetAndCollation(tbInfo, schema.Charset); err != nil {
+		return errors.Trace(err)
 	}
 
 	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
@@ -1820,7 +1820,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Name:               newColName,
 	})
 
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
