@@ -167,7 +167,7 @@ type aggTestCase struct {
 	ctx         sessionctx.Context
 }
 
-func (cas aggTestCase) columns() []*expression.Column {
+func (a aggTestCase) columns() []*expression.Column {
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}}
