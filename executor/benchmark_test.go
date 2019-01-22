@@ -16,17 +16,17 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math/rand"
 	"sort"
 	"testing"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -156,91 +156,8 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	return m
 }
 
-type aggExecutorParameters struct {
-	ctx          sessionctx.Context
-	schema       *expression.Schema
-	child        Executor
-	aggFuncs     []*aggregation.AggFuncDesc
-	groupByItems []expression.Expression
-	concurrency  int
-}
-
-func buildHashAggExecutor(v *aggExecutorParameters) Executor {
-	sessionVars := v.ctx.GetSessionVars()
-	e := &HashAggExec{
-		baseExecutor:    newBaseExecutor(v.ctx, v.schema, "", v.child),
-		sc:              sessionVars.StmtCtx,
-		PartialAggFuncs: make([]aggfuncs.AggFunc, 0, len(v.aggFuncs)),
-		GroupByItems:    v.groupByItems,
-	}
-	if len(v.groupByItems) != 0 || aggregation.IsAllFirstRow(v.aggFuncs) {
-		e.defaultVal = nil
-	} else {
-		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
-	}
-	for _, aggDesc := range v.aggFuncs {
-		if aggDesc.HasDistinct {
-			e.isUnparallelExec = true
-		}
-	}
-	if finalCon, partialCon := sessionVars.HashAggFinalConcurrency, sessionVars.HashAggPartialConcurrency; finalCon <= 0 || partialCon <= 0 || finalCon == 1 && partialCon == 1 {
-		e.isUnparallelExec = true
-	}
-	partialOrdinal := 0
-	for i, aggDesc := range v.aggFuncs {
-		if e.isUnparallelExec {
-			e.PartialAggFuncs = append(e.PartialAggFuncs, aggfuncs.Build(v.ctx, aggDesc, i))
-		} else {
-			ordinal := []int{partialOrdinal}
-			partialOrdinal++
-			if aggDesc.Name == ast.AggFuncAvg {
-				ordinal = append(ordinal, partialOrdinal+1)
-				partialOrdinal++
-			}
-			partialAggDesc, finalDesc := aggDesc.Split(ordinal)
-			partialAggFunc := aggfuncs.Build(v.ctx, partialAggDesc, i)
-			finalAggFunc := aggfuncs.Build(v.ctx, finalDesc, i)
-			e.PartialAggFuncs = append(e.PartialAggFuncs, partialAggFunc)
-			e.FinalAggFuncs = append(e.FinalAggFuncs, finalAggFunc)
-			if partialAggDesc.Name == ast.AggFuncGroupConcat {
-				finalAggFunc.(interface{ SetTruncated(t *int32) }).SetTruncated(
-					partialAggFunc.(interface{ GetTruncated() *int32 }).GetTruncated(),
-				)
-			}
-		}
-		if e.defaultVal != nil {
-			value := aggDesc.GetDefaultValue()
-			e.defaultVal.AppendDatum(i, &value)
-		}
-	}
-	return e
-}
-
-func buildStreamAggExecutor(v *aggExecutorParameters) Executor {
-	e := &StreamAggExec{
-		baseExecutor: newBaseExecutor(v.ctx, v.schema, "", v.child),
-		groupChecker: newGroupChecker(v.ctx.GetSessionVars().StmtCtx, v.groupByItems),
-		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.aggFuncs)),
-	}
-	if len(v.groupByItems) != 0 || aggregation.IsAllFirstRow(v.aggFuncs) {
-		e.defaultVal = nil
-	} else {
-		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
-	}
-	for i, aggDesc := range v.aggFuncs {
-		aggFunc := aggfuncs.Build(v.ctx, aggDesc, i)
-		e.aggFuncs = append(e.aggFuncs, aggFunc)
-		if e.defaultVal != nil {
-			value := aggDesc.GetDefaultValue()
-			e.defaultVal.AppendDatum(i, &value)
-		}
-	}
-
-	return e
-}
-
 type aggTestCase struct {
-	// The test table's schema is fixed (aggCol Double, groupBy Long).
+	// The test table's schema is fixed (aggCol Double, groupBy LongLong).
 	exec        string // "hash" or "stream"
 	aggFunc     string // sum, avg, count ....
 	groupByNDV  int    // the number of distinct group-by keys
@@ -248,6 +165,12 @@ type aggTestCase struct {
 	rows        int
 	concurrency int
 	ctx         sessionctx.Context
+}
+
+func (cas aggTestCase) columns() []*expression.Column {
+	return []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}}
 }
 
 func (a aggTestCase) String() string {
@@ -262,28 +185,37 @@ func defaultAggTestCase(exec string) *aggTestCase {
 	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, ctx}
 }
 
-func buildAggDataSource(b *testing.B, cas *aggTestCase) *mockDataSource {
-	cols := []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-	}
-	orders := []bool{false, cas.exec == "stream"}
-	child := buildMockDataSource(mockDataSourceParameters{
-		schema: expression.NewSchema(cols...),
-		ndvs:   []int{0, cas.groupByNDV},
-		orders: orders,
-		rows:   cas.rows,
-		ctx:    cas.ctx,
-	})
-	return child
+func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expression.Schema,
+	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression) Executor {
+	plan := new(core.PhysicalHashAgg)
+	plan.AggFuncs = aggFuncs
+	plan.GroupByItems = groupItems
+	plan.SetSchema(schema)
+	plan.Init(ctx, nil)
+	plan.SetChildren(nil)
+	b := newExecutorBuilder(ctx, nil)
+	exec := b.build(plan)
+	hashAgg := exec.(*HashAggExec)
+	hashAgg.children[0] = src
+	return exec
+}
+
+func buildStreamAggExecutor(ctx sessionctx.Context, src Executor, schema *expression.Schema,
+	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression) Executor {
+	plan := new(core.PhysicalStreamAgg)
+	plan.AggFuncs = aggFuncs
+	plan.GroupByItems = groupItems
+	plan.SetSchema(schema)
+	plan.Init(ctx, nil)
+	plan.SetChildren(nil)
+	b := newExecutorBuilder(ctx, nil)
+	exec := b.build(plan)
+	streamAgg := exec.(*StreamAggExec)
+	streamAgg.children[0] = src
+	return exec
 }
 
 func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
-	childCols := []*expression.Column{
-		{Index: 0, RetType: types.NewFieldType(mysql.TypeDouble)},
-		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-	}
-
 	ctx := cas.ctx
 	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", cas.concurrency)); err != nil {
 		b.Fatal(err)
@@ -292,30 +224,35 @@ func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
 		b.Fatal(err)
 	}
 
-	aggFunc := aggregation.NewAggFuncDesc(ctx, cas.aggFunc, []expression.Expression{childCols[0]}, cas.hasDistinct)
-	p := &aggExecutorParameters{
-		ctx:          ctx,
-		schema:       expression.NewSchema(childCols...),
-		child:        child,
-		aggFuncs:     []*aggregation.AggFuncDesc{aggFunc},
-		groupByItems: []expression.Expression{childCols[1]},
-	}
+	childCols := cas.columns()
+	schema := expression.NewSchema(childCols...)
+	groupBy := []expression.Expression{childCols[1]}
+	aggFunc := aggregation.NewAggFuncDesc(cas.ctx, cas.aggFunc, []expression.Expression{childCols[0]}, cas.hasDistinct)
+	aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 
-	var agg Executor
+	var aggExec Executor
 	switch cas.exec {
 	case "hash":
-		agg = buildHashAggExecutor(p)
+		aggExec = buildHashAggExecutor(cas.ctx, child, schema, aggFuncs, groupBy)
 	case "stream":
-		agg = buildStreamAggExecutor(p)
+		aggExec = buildStreamAggExecutor(cas.ctx, child, schema, aggFuncs, groupBy)
 	default:
 		b.Fatal("not implement")
 	}
-
-	return agg
+	return aggExec
 }
 
 func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
-	dataSource := buildAggDataSource(b, cas)
+	cols := cas.columns()
+	orders := []bool{false, cas.exec == "stream"}
+	dataSource := buildMockDataSource(mockDataSourceParameters{
+		schema: expression.NewSchema(cols...),
+		ndvs:   []int{0, cas.groupByNDV},
+		orders: orders,
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+	})
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer() // prepare a new agg-executor
