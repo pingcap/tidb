@@ -1017,6 +1017,36 @@ func (s *testIntegrationSuite) TestAddIndexAfterAddColumn(c *C) {
 	s.testErrorCode(c, s.tk, sql, tmysql.ErrTooManyKeyParts)
 }
 
+func (s *testIntegrationSuite) TestResolveCharset(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists resolve_charset")
+	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	s.tk.MustExec("INSERT INTO resolve_charset VALUES('鰈')")
+
+	s.tk.MustExec("create database resolve_charset charset binary")
+	s.tk.MustExec("use resolve_charset")
+	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	c.Assert(tbl.Meta().Charset, Equals, "latin1")
+
+	s.tk.MustExec(`CREATE TABLE resolve_charset1 (a varchar(255) DEFAULT NULL)`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "binary")
+	c.Assert(tbl.Meta().Charset, Equals, "binary")
+}
+
 func (s *testIntegrationSuite) TestAddAnonymousIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
