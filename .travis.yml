@@ -3,7 +3,7 @@ language: go
 go_import_path: github.com/pingcap/tidb
 
 go:
-  - "1.11.3"
+  - "1.11.4"
 
 env:
     - TRAVIS_COVERAGE=0
@@ -13,7 +13,7 @@ env:
 matrix:
   fast_finish: true
   allow_failures:
-    - go: "1.11.3"
+    - go: "1.11.4"
       env: TRAVIS_COVERAGE=1
 
 before_install:  
