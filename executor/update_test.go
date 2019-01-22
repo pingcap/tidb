@@ -65,7 +65,7 @@ func (s *testUpdateSuite) SetUpSuite(c *C) {
 func (s *testUpdateSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
+	testleak.AfterTest(c)()
 }
 
 func (s *testUpdateSuite) TearDownTest(c *C) {

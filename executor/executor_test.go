@@ -65,10 +65,6 @@ import (
 	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
-// TestLeakCheckCnt is the check count in the package of executor.
-// In this package CustomParallelSuiteFlag is true, so we need to increase check count.
-const TestLeakCheckCnt = 1000
-
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
@@ -125,7 +121,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
@@ -3448,7 +3444,7 @@ func (s *testSuite2) SetUpSuite(c *C) {
 func (s *testSuite2) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite2) TearDownTest(c *C) {
@@ -3501,7 +3497,7 @@ func (s *testSuite3) SetUpSuite(c *C) {
 func (s *testSuite3) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite3) TearDownTest(c *C) {
