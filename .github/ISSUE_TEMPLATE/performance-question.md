@@ -1,29 +1,28 @@
 ---
-name: "\U0001F947 Performance Question"
+name: "\U0001F947 Performance Questions"
 about: Performance question about TiDB which is not caused by bug.
-
 ---
 
-## Performance Question
+## Performance Questions
 
 - What version of TiDB are you using?
 <!-- You can try `tidb-server -V` or run `select tidb_version();` on TiDB to get this information -->
 
-- What's the difference between the performance you expect and the performance you observe?
+- What's the observed and your expected performance respectively?
 
-- Are you comparing TiDB with some other databases? What's the difference between TiDB and the compared one?
+- Have you compared TiDB with other databases? If yes, what's their difference?
 
-- If it's a specific SQL query, could you please
-    - let us know whether you analyzed the tables involved in the query or not. And how long it is after you ran the last `ANALYZE`.
-    - tell us whether this SQL always runs slowly, or just occasionally.
-    - provide the `EXPLAIN ANALYZE` result of this query if your TiDB version is higher than 2.1, or you can just provide the `EXPLAIN` result.
-    - provide the plain text of the SQL and table schema so we can test it locally. It would be better if you can provide the dumped statistics information.
+- For a specific slow SQL query, please provide the following information:
+    - Whether you analyzed the tables involved in the query and how long it is after you ran the last `ANALYZE`.
+    - Whether this SQL query always or occasionally runs slowly.
+    - The `EXPLAIN ANALYZE` result of this query if your TiDB version is higher than 2.1, or you can just provide the `EXPLAIN` result.
+    - The plain text of the SQL query and table schema so we can test it locally. It would be better if you can provide the dumped statistics information.
         <!-- you can use `show create table ${involved_table}\G` to get the table schema.-->
         <!-- use `curl -G "http://${tidb-server-ip}:${tidb-server-status-port}/stats/dump/${db_name}/${table_name}" > ${table_name}_stats.json` to get the dumped statistics of one involved table.-->
-    - provide the `EXPLAIN` result of the compared database. For mysql, `EXPLAIN format=json`'s result will be more helpful.
-    - provide other information that is useful from your perspective.
+    - The `EXPLAIN` result of the compared database. For MySQL, `EXPLAIN format=json`'s result will be more helpful.
+    - Other information that is useful from your perspective.
 
-- If it's not about a specific SQL query, e.g. the benchmark result you got by yourself is not expected. Could you please
-    - show us your cluster's topology architecture.
-    - a simple description of you workload.
-    - the metrics PDF generated from grafana monitor. Remember that set the time range to when the performance issue happened.
+- For a general performance question, e.g. the benchmark result you got by yourself is not expected, please provide the following information:
+    - Your cluster's topology architecture.
+    - A simple description of you workload.
+    - The metrics PDF generated from Grafana monitor. Remember to set the time range to the performance issue duration.
