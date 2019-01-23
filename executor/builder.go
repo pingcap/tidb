@@ -1896,9 +1896,9 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 			partialResult: agg.AllocPartialResult(),
 		}
 	} else {
-		wf, err := windowfuncs.Build(b.ctx, v.WindowFuncDesc, resultColIdx)
-		if err != nil {
-			b.err = err
+		var wf windowfuncs.WindowFunc
+		wf, b.err = windowfuncs.Build(b.ctx, v.WindowFuncDesc, resultColIdx)
+		if b.err != nil {
 			return nil
 		}
 		processor = &noFrameWindowProcessor{

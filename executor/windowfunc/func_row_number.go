@@ -28,13 +28,13 @@ type partialResult4RowNumber struct {
 
 func (wf *rowNumber) ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int) ([]chunk.Row, int, error) {
 	p := (*partialResult4RowNumber)(pr)
-	for len(rows) > 0 && remained > 0 {
+	processedRows, numRows := 0, len(rows)
+	for processedRows < numRows && processedRows < remained {
 		p.curIdx++
-		remained--
+		processedRows++
 		dest.AppendInt64(wf.ordinal, p.curIdx)
-		rows = rows[1:]
 	}
-	return rows, remained, nil
+	return rows[processedRows:], remained - processedRows, nil
 }
 
 func (wf *rowNumber) ExhaustResult(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int) ([]chunk.Row, int, error) {
