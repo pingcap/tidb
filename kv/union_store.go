@@ -202,17 +202,15 @@ func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
 }
 
 func (us *unionStore) GetPrecondition(k Key) *kvrpcpb.Precondition {
-	if c, ok := us.lazyConditionPairs[string(k)]; ok {
-		if c != nil && c.value != nil {
-			if len(c.value) == 0 {
-				return &kvrpcpb.Precondition {
-					ShouldNotExist: true,
-				}
-			} else {
-				return &kvrpcpb.Precondition {
-					ShouldNotExist: false,
-					EqualTo: c.value,
-				}
+	if c, ok := us.lazyConditionPairs[string(k)]; ok && c != nil {
+		if len(c.value) == 0 {
+			return &kvrpcpb.Precondition {
+				ShouldNotExist: true,
+			}
+		} else {
+			return &kvrpcpb.Precondition {
+				ShouldNotExist: false,
+				EqualTo: c.value,
 			}
 		}
 	}

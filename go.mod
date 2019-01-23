@@ -49,7 +49,7 @@ require (
 	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190110035000-d4fe6b336379
+	github.com/pingcap/kvproto v0.0.0-20190121084144-be0b43ee9241
 	github.com/pingcap/parser v0.0.0-20190117104731-c02a7ccd3d6b
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190104033906-883b07a04a73+incompatible
@@ -94,5 +94,3 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/pingcap/kvproto => github.com/zhangjinpeng1987/kvproto v0.0.0-20190121023921-8b065921c2a3
