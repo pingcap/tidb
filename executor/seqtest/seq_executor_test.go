@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
@@ -78,7 +77,6 @@ type seqTestSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *seqTestSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -104,7 +102,6 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 func (s *seqTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 func (s *seqTestSuite) TestEarlyClose(c *C) {

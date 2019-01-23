@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -68,7 +67,6 @@ func (s *testIntegrationSuite) TearDownTest(c *C) {
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
-	testleak.BeforeTest()
 	s.lease = 50 * time.Millisecond
 
 	s.cluster = mocktikv.NewCluster()
@@ -95,7 +93,6 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
@@ -527,24 +524,47 @@ func (s *testIntegrationSuite) TestNullGeneratedColumn(c *C) {
 func (s *testIntegrationSuite) TestChangingCharsetToUtf8(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("USE test")
-	tk.MustExec("create table t(a char(10) charset latin1)")
-	tk.MustExec("alter table t modify column a char(10) charset latin1")
-	tk.MustExec("alter table t modify column a char(10) charset utf8")
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4")
-	rs, err := tk.Exec("alter table t modify column a char(10) charset utf8mb4 collate utf8bin")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_bin")
-	rs, err = tk.Exec("alter table t modify column a char(10) charset utf8 collate utf8_bin")
-	if rs != nil {
-		rs.Close()
-	}
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a varchar(20) charset utf8)")
+	tk.MustExec("insert into t1 values (?)", "t1_value")
 
+	tk.MustExec("alter table t1 modify column a varchar(20) charset utf8mb4")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("t1_value"))
+
+	tk.MustExec("create table t(a varchar(20) charset latin1)")
+	tk.MustExec("insert into t values (?)", "t_value")
+
+	tk.MustExec("alter table t modify column a varchar(20) charset latin1")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("t_value"))
+
+	rs, err := tk.Exec("alter table t modify column a varchar(20) charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
 	c.Assert(err, NotNil)
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_general_ci")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8 collate utf8_bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
@@ -557,20 +577,24 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 		rs.Close()
 	}
 	c.Assert(err.Error(), Equals, "Unknown charset gbk")
-	tk.MustExec("alter table t charset utf8")
-	tk.MustExec("alter table t charset utf8 collate utf8_bin")
+	rs, err = tk.Exec("alter table t charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
+
 	rs, err = tk.Exec("alter table t charset utf8 collate latin1_bin")
 	if rs != nil {
 		rs.Close()
 	}
 	c.Assert(err, NotNil)
-	tk.MustExec("alter table t charset utf8mb4")
-	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
-
-	rs, err = tk.Exec("alter table t charset utf8 collate utf8_bin")
+	rs, err = tk.Exec("alter table t charset utf8mb4")
 	if rs != nil {
 		rs.Close()
 	}
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+
+	rs, err = tk.Exec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	c.Assert(err, NotNil)
 }
 
