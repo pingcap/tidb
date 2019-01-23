@@ -62,6 +62,13 @@ func (s SchemaState) String() string {
 	}
 }
 
+const (
+	// ColumnInfoVersion0 means the column info version is 0.
+	ColumnInfoVersion0 = uint64(0)
+	// ColumnInfoVersion1 means the column info version is 1.
+	ColumnInfoVersion1 = uint64(1)
+)
+
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
 	ID                  int64               `json:"id"`
@@ -76,6 +83,12 @@ type ColumnInfo struct {
 	types.FieldType     `json:"type"`
 	State               SchemaState `json:"state"`
 	Comment             string      `json:"comment"`
+	// Version means the version of the column info.
+	// Version = 0: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in system time zone.
+	//              That is a bug if multiple TiDB servers in different system time zone.
+	// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
+	//              This will fix bug in version 0. For compatibility with version 0, we add version field in column info struct.
+	Version uint64 `json:"version"`
 }
 
 // Clone clones ColumnInfo.
