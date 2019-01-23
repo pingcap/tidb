@@ -1595,10 +1595,8 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
 		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset, toCollate)
 	}
-
-	if toCharset == charset.CharsetUTF8MB4 || (toCharset == charset.CharsetUTF8 && origCharset != charset.CharsetUTF8MB4) {
-		// TiDB treats all the data as utf8mb4, so we support changing the charset to utf8mb4.
-		// And not allow to change utf8mb4 to utf8.
+	if toCharset == charset.CharsetUTF8MB4 && origCharset == charset.CharsetUTF8 {
+		// TiDB only allow utf8 to be changed to utf8mb4.
 		return nil
 	}
 
