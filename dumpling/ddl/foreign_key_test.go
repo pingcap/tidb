@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testForeighKeySuite{})
@@ -38,14 +37,12 @@ type testForeighKeySuite struct {
 }
 
 func (s *testForeighKeySuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_foreign")
 }
 
 func (s *testForeighKeySuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
