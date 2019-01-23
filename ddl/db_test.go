@@ -2051,6 +2051,27 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	s.tk.MustExec("drop database test1")
 }
 
+func (s *testDBSuite) TestCheckConvertToCharacter(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	defer s.tk.MustExec("drop table t")
+	s.tk.MustExec("create table t(a varchar(10) charset binary);")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	rs, err := s.tk.Exec("alter table t modify column a varchar(10) charset utf8 collate utf8_bin")
+	c.Assert(err, NotNil)
+	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin")
+	c.Assert(err, NotNil)
+	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset latin collate latin1_bin")
+	c.Assert(err, NotNil)
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(t.Cols()[0].Charset, Equals, "binary")
+}
+
 func (s *testDBSuite) TestRenameMultiTables(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
@@ -3662,26 +3683,30 @@ func (s *testDBSuite) TestAlterTableCharset(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t.Meta().Collate, Equals, defCollate)
 
-	tk.MustExec("alter table t charset utf8")
-	is = domain.GetDomain(ctx).InfoSchema()
-	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
-	c.Assert(t.Meta().Charset, Equals, "utf8")
-	defCollate, err = charset.GetDefaultCollation("utf8")
-	c.Assert(err, IsNil)
-	c.Assert(t.Meta().Collate, Equals, defCollate)
-
-	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_general_ci")
-	is = domain.GetDomain(ctx).InfoSchema()
-	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
-	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
-	c.Assert(t.Meta().Collate, Equals, "utf8mb4_general_ci")
-
 	rs, err := tk.Exec("alter table t charset utf8")
 	if rs != nil {
 		rs.Close()
 	}
+	c.Assert(err, NotNil)
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(t.Meta().Charset, Equals, "latin1")
+	defCollate, err = charset.GetDefaultCollation("latin1")
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().Collate, Equals, defCollate)
 
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8mb4 to utf8")
+	rs, err = tk.Exec("alter table t charset utf8mb4 collate utf8mb4_general_ci")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(t.Meta().Charset, Equals, "latin1")
+	c.Assert(t.Meta().Collate, Equals, "latin1_bin")
+
+	rs, err = tk.Exec("alter table t charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
+
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
 }
 
 func (s *testDBSuite) TestAlterColumnCharset(c *C) {
@@ -3702,40 +3727,40 @@ func (s *testDBSuite) TestAlterColumnCharset(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(col.Collate, Equals, defCollate)
 
-	tk.MustExec("alter table t modify column a char(10) charset utf8")
+	_, err = tk.Exec("alter table t modify column a char(10) charset utf8")
 	is = domain.GetDomain(ctx).InfoSchema()
 	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	col = model.FindColumnInfo(t.Meta().Columns, "a")
 	c.Assert(col, NotNil)
-	c.Assert(col.Charset, Equals, "utf8")
-	defCollate, err = charset.GetDefaultCollation("utf8")
+	c.Assert(col.Charset, Equals, "latin1")
+	defCollate, err = charset.GetDefaultCollation("latin1")
 	c.Assert(err, IsNil)
 	c.Assert(col.Collate, Equals, defCollate)
 
-	tk.MustExec("alter table t modify column a char(10) charset utf8 collate utf8_general_ci")
+	_, err = tk.Exec("alter table t modify column a char(10) charset utf8 collate utf8_general_ci")
 	is = domain.GetDomain(ctx).InfoSchema()
 	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	col = model.FindColumnInfo(t.Meta().Columns, "a")
 	c.Assert(col, NotNil)
-	c.Assert(col.Charset, Equals, "utf8")
-	c.Assert(col.Collate, Equals, "utf8_general_ci")
+	c.Assert(col.Charset, Equals, "latin1")
+	c.Assert(col.Collate, Equals, "latin1_bin")
 
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_general_ci")
+	_, err = tk.Exec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_general_ci")
 	is = domain.GetDomain(ctx).InfoSchema()
 	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	col = model.FindColumnInfo(t.Meta().Columns, "a")
 	c.Assert(col, NotNil)
-	c.Assert(col.Charset, Equals, "utf8mb4")
-	c.Assert(col.Collate, Equals, "utf8mb4_general_ci")
+	c.Assert(col.Charset, Equals, "latin1")
+	c.Assert(col.Collate, Equals, "latin1_bin")
 
 	rs, err := tk.Exec("alter table t modify column a char(10) charset utf8")
 	if rs != nil {
 		rs.Close()
 	}
-	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from utf8mb4 to utf8")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
 }
 
 func (s *testDBSuite) TestDropSchemaWithPartitionTable(c *C) {
