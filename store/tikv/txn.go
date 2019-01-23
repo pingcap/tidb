@@ -169,6 +169,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
+	// gofail: var mockCommitError bool
+	// if mockCommitError && kv.IsMockCommitErrorEnable() {
+	//  kv.MockCommitErrorDisable()
+	//	return errors.New("mock commit error")
+	// }
+
 	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
 	start := time.Now()

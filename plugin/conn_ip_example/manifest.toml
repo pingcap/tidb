@@ -1,0 +1,15 @@
+name = "conn_ip_example"
+kind = "Audit"
+description = "just a test"
+version = "1"
+license = ""
+sysVars = [
+    {name="conn_ip_example_test_variable", scope="Global", value="2"},
+    {name="conn_ip_example_test_variable2", scope="Session", value="2"},
+]
+validate = "Validate"
+onInit = "OnInit"
+onShutdown = "OnShutdown"
+export = [
+    {extPoint="NotifyEvent", impl="NotifyEvent"}
+]

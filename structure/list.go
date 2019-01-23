@@ -60,7 +60,7 @@ func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 		return errors.Trace(err)
 	}
 
-	index := int64(0)
+	var index int64
 	for _, v := range values {
 		if left {
 			meta.LIndex--
@@ -99,7 +99,7 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	index := int64(0)
+	var index int64
 	if left {
 		index = meta.LIndex
 		meta.LIndex++

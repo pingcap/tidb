@@ -94,7 +94,7 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func writeData(w http.ResponseWriter, data interface{}) {
-	js, err := json.Marshal(data)
+	js, err := json.MarshalIndent(data, "", " ")
 	if err != nil {
 		writeError(w, err)
 		return
@@ -598,7 +598,6 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeData(w, val)
-	return
 }
 
 // TableRegions is the response data for list table's regions.
@@ -729,7 +728,6 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
-	return
 }
 
 // ServeHTTP recovers binlog service.
@@ -796,7 +794,6 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// all databases' schemas
 	writeData(w, schema.AllSchemas())
-	return
 }
 
 // ServeHTTP handles table related requests, such as table's region information, disk usage.
@@ -867,7 +864,6 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	writeData(w, jobs)
-	return
 }
 
 func (h ddlResignOwnerHandler) resignDDLOwner() error {
