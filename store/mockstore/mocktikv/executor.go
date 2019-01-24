@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"sort"
 
@@ -29,8 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -566,9 +566,7 @@ func (e *topNExec) evalTopN(value [][]byte) error {
 	}
 
 	if e.heap.tryToAddRow(newRow) {
-		for _, val := range value {
-			newRow.data = append(newRow.data, val)
-		}
+		newRow.data = append(newRow.data, value...)
 	}
 	return errors.Trace(e.heap.err)
 }

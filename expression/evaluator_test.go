@@ -103,6 +103,8 @@ func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
 		ft.Collate = charset.CollationBin
 	case types.KindMysqlBit:
 		ft.Tp = mysql.TypeBit
+	case types.KindMysqlJSON:
+		ft.Tp = mysql.TypeJSON
 	}
 	return ft
 }
@@ -152,13 +154,13 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(chunk.Row{})
+	_, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, NotNil)
 	c.Assert(isNull, IsFalse)
 	d[0].SetFloat64(-2.5)
 	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(chunk.Row{})
+	_, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, NotNil)
 	c.Assert(isNull, IsFalse)
 

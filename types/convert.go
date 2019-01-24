@@ -106,7 +106,11 @@ func ConvertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 }
 
 // ConvertIntToUint converts an int value to an uint value.
-func ConvertIntToUint(val int64, upperBound uint64, tp byte) (uint64, error) {
+func ConvertIntToUint(sc *stmtctx.StatementContext, val int64, upperBound uint64, tp byte) (uint64, error) {
+	if sc.ShouldClipToZero() && val < 0 {
+		return 0, overflow(val, tp)
+	}
+
 	if uint64(val) > upperBound {
 		return upperBound, overflow(val, tp)
 	}
@@ -124,9 +128,12 @@ func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 }
 
 // ConvertFloatToUint converts a float value to an uint value.
-func ConvertFloatToUint(fval float64, upperBound uint64, tp byte) (uint64, error) {
+func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
 	val := RoundFloat(fval)
 	if val < 0 {
+		if sc.ShouldClipToZero() {
+			return 0, overflow(val, tp)
+		}
 		return uint64(int64(val)), overflow(val, tp)
 	}
 
@@ -239,10 +246,32 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 	return floatStrToIntStr(sc, floatPrefix, str)
 }
 
+// roundIntStr is to round int string base on the number following dot.
+func roundIntStr(numNextDot byte, intStr string) string {
+	if numNextDot < '5' {
+		return intStr
+	}
+	retStr := []byte(intStr)
+	for i := len(intStr) - 1; i >= 0; i-- {
+		if retStr[i] != '9' {
+			retStr[i]++
+			break
+		}
+		if i == 0 {
+			retStr[i] = '1'
+			retStr = append(retStr, '0')
+			break
+		}
+		retStr[i] = '0'
+	}
+	return string(retStr)
+}
+
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
-// be lost.
-func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (string, error) {
+// be lost. For example, the string value "18446744073709551615" which is the max number of unsigned
+// int will cause some precision to lose. intStr[0] may be a positive and negative sign like '+' or '-'.
+func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
 	for i := 0; i < len(validFloat); i++ {
@@ -257,7 +286,25 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		if dotIdx == -1 {
 			return validFloat, nil
 		}
-		return validFloat[:dotIdx], nil
+		var digits []byte
+		if validFloat[0] == '-' || validFloat[0] == '+' {
+			dotIdx--
+			digits = []byte(validFloat[1:])
+		} else {
+			digits = []byte(validFloat)
+		}
+		if dotIdx == 0 {
+			intStr = "0"
+		} else {
+			intStr = string(digits)[:dotIdx]
+		}
+		if len(digits) > dotIdx+1 {
+			intStr = roundIntStr(digits[dotIdx+1], intStr)
+		}
+		if (len(intStr) > 1 || intStr[0] != '0') && validFloat[0] == '-' {
+			intStr = "-" + intStr
+		}
+		return intStr, nil
 	}
 	var intCnt int
 	digits := make([]byte, 0, len(validFloat))
@@ -280,14 +327,27 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	}
 	intCnt += exp
 	if intCnt <= 0 {
-		return "0", nil
+		intStr = "0"
+		if intCnt == 0 && len(digits) > 0 {
+			intStr = roundIntStr(digits[0], intStr)
+		}
+		return intStr, nil
 	}
 	if intCnt == 1 && (digits[0] == '-' || digits[0] == '+') {
-		return "0", nil
+		intStr = "0"
+		if len(digits) > 1 {
+			intStr = roundIntStr(digits[1], intStr)
+		}
+		if intStr[0] == '1' {
+			intStr = string(digits[:1]) + intStr
+		}
+		return intStr, nil
 	}
-	var validInt string
 	if intCnt <= len(digits) {
-		validInt = string(digits[:intCnt])
+		intStr = string(digits[:intCnt])
+		if intCnt < len(digits) {
+			intStr = roundIntStr(digits[intCnt], intStr)
+		}
 	} else {
 		// convert scientific notation decimal number
 		extraZeroCount := intCnt - len(digits)
@@ -296,9 +356,9 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 			sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
 			return validFloat[:eIdx], nil
 		}
-		validInt = string(digits) + strings.Repeat("0", extraZeroCount)
+		intStr = string(digits) + strings.Repeat("0", extraZeroCount)
 	}
-	return validInt, nil
+	return intStr, nil
 }
 
 // StrToFloat converts a string to a float64 at the best-effort.
@@ -345,7 +405,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeDouble)
 		}
 		bound := UnsignedUpperBound[mysql.TypeLonglong]
-		u, err := ConvertFloatToUint(f, bound, mysql.TypeDouble)
+		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
 		return StrToInt(sc, hack.String(j.GetString()))
@@ -368,7 +428,7 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 	case json.TypeCodeInt64:
 		return float64(j.GetInt64()), nil
 	case json.TypeCodeUint64:
-		u, err := ConvertIntToUint(j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		u, err := ConvertIntToUint(sc, j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		return float64(u), errors.Trace(err)
 	case json.TypeCodeFloat64:
 		return j.GetFloat64(), nil

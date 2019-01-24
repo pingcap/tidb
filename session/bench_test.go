@@ -14,6 +14,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var smallCount = 100
@@ -84,16 +84,16 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 }
 
 func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for count > 0 {
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, req)
 		if err != nil {
 			log.Fatal(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			log.Fatal(count)
 		}
-		count -= chk.NumRows()
+		count -= req.NumRows()
 	}
 	rs.Close()
 }

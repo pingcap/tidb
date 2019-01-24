@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 // For gofail injection.
@@ -475,7 +475,30 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 			},
 		}
 	}
-	pairs := rawKV.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
+
+	var pairs []Pair
+	if req.Reverse {
+		lowerBound := h.startKey
+		if bytes.Compare(req.EndKey, lowerBound) > 0 {
+			lowerBound = req.EndKey
+		}
+		pairs = rawKV.RawReverseScan(
+			req.StartKey,
+			lowerBound,
+			int(req.GetLimit()),
+		)
+	} else {
+		upperBound := h.endKey
+		if len(req.EndKey) > 0 && (len(upperBound) == 0 || bytes.Compare(req.EndKey, upperBound) < 0) {
+			upperBound = req.EndKey
+		}
+		pairs = rawKV.RawScan(
+			req.StartKey,
+			upperBound,
+			int(req.GetLimit()),
+		)
+	}
+
 	return &kvrpcpb.RawScanResponse{
 		Kvs: convertToPbPairs(pairs),
 	}
@@ -749,6 +772,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		ctx1, cancel := context.WithCancel(ctx)
 		copStream, err := handler.handleCopStream(ctx1, r)
 		if err != nil {
+			cancel()
 			return nil, errors.Trace(err)
 		}
 

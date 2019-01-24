@@ -42,7 +42,7 @@ type RowDecoder struct {
 }
 
 // NewRowDecoder returns a new RowDecoder.
-func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) RowDecoder {
+func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) *RowDecoder {
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	haveGenCol := false
 	for id, col := range decodeColMap {
@@ -52,7 +52,7 @@ func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) RowDecod
 		}
 	}
 	if !haveGenCol {
-		return RowDecoder{
+		return &RowDecoder{
 			colTypes: colFieldMap,
 		}
 	}
@@ -61,7 +61,7 @@ func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) RowDecod
 	for _, col := range cols {
 		tps[col.Offset] = &col.FieldType
 	}
-	return RowDecoder{
+	return &RowDecoder{
 		mutRow:        chunk.MutRowFromTypes(tps),
 		columns:       decodeColMap,
 		colTypes:      colFieldMap,
@@ -70,7 +70,7 @@ func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) RowDecod
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
-func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	row, err := tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	if err != nil {
 		return nil, errors.Trace(err)

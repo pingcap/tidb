@@ -14,9 +14,10 @@
 package kv
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
-	"golang.org/x/net/context"
 )
 
 // Transaction options
@@ -31,8 +32,6 @@ const (
 	PresumeKeyNotExistsError
 	// BinlogInfo contains the binlog data and client.
 	BinlogInfo
-	// Skip existing check when "prewrite".
-	SkipCheckForWrite
 	// SchemaChecker is used for checking schema-validity.
 	SchemaChecker
 	// IsolationLevel sets isolation level for current transaction. The default level is SI.

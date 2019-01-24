@@ -392,7 +392,7 @@ func (s *testTimeSuite) TestYear(c *C) {
 	}
 
 	for _, test := range valids {
-		_, err := types.AdjustYear(test.Year)
+		_, err := types.AdjustYear(test.Year, false)
 		if test.Expect {
 			c.Assert(err, IsNil)
 		} else {
@@ -400,6 +400,29 @@ func (s *testTimeSuite) TestYear(c *C) {
 		}
 	}
 
+	strYears := []struct {
+		Year   int64
+		Expect int64
+	}{
+		{0, 2000},
+	}
+	for _, test := range strYears {
+		res, err := types.AdjustYear(test.Year, true)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.Expect)
+	}
+
+	numYears := []struct {
+		Year   int64
+		Expect int64
+	}{
+		{0, 0},
+	}
+	for _, test := range numYears {
+		res, err := types.AdjustYear(test.Year, false)
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, test.Expect)
+	}
 }
 
 func (s *testTimeSuite) getLocation(c *C) *time.Location {
@@ -433,13 +456,13 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 	t, err = types.ParseTimestamp(sc, "2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
-	packed, err := t.ToPackedUint()
+	_, err = t.ToPackedUint()
 	c.Assert(err, IsNil)
 
 	var t1 types.Time
 	t1.Type = mysql.TypeTimestamp
 	t1.Time = types.FromGoTime(time.Now())
-	packed, err = t1.ToPackedUint()
+	packed, err := t1.ToPackedUint()
 	c.Assert(err, IsNil)
 
 	var t2 types.Time

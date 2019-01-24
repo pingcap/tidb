@@ -52,7 +52,11 @@ type batchChecker struct {
 
 // batchGetOldValues gets the values of storage in batch.
 func (b *batchChecker) batchGetOldValues(ctx sessionctx.Context, batchKeys []kv.Key) error {
-	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	values, err := kv.BatchGetValues(txn, batchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -205,7 +209,11 @@ func (b *batchChecker) batchGetInsertKeys(ctx sessionctx.Context, t table.Table,
 			batchKeys = append(batchKeys, k.newKV.key)
 		}
 	}
-	b.dupKVs, err = kv.BatchGetValues(ctx.Txn(), batchKeys)
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	b.dupKVs, err = kv.BatchGetValues(txn, batchKeys)
 	return errors.Trace(err)
 }
 

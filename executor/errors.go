@@ -26,10 +26,12 @@ const (
 	codeResultIsEmpty
 	codeErrBuildExec
 	codeBatchInsertFail
+	codeGetStartTS
 )
 
 // Error instances.
 var (
+	ErrGetStartTS      = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
 	ErrUnknownPlan     = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti    = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
 	ErrPrepareDDL      = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
@@ -43,6 +45,9 @@ var (
 	ErrCantChangeTxCharacteristics = terror.ClassExecutor.New(mysql.ErrCantChangeTxCharacteristics, mysql.MySQLErrName[mysql.ErrCantChangeTxCharacteristics])
 	ErrPsManyParam                 = terror.ClassExecutor.New(mysql.ErrPsManyParam, mysql.MySQLErrName[mysql.ErrPsManyParam])
 	ErrAdminCheckTable             = terror.ClassExecutor.New(mysql.ErrAdminCheckTable, mysql.MySQLErrName[mysql.ErrAdminCheckTable])
+	ErrDBaccessDenied              = terror.ClassExecutor.New(mysql.ErrDBaccessDenied, mysql.MySQLErrName[mysql.ErrDBaccessDenied])
+	ErrTableaccessDenied           = terror.ClassExecutor.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
+	ErrBadDB                       = terror.ClassExecutor.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
 )
 
 func init() {
@@ -55,6 +60,9 @@ func init() {
 		mysql.ErrCantChangeTxCharacteristics: mysql.ErrCantChangeTxCharacteristics,
 		mysql.ErrPsManyParam:                 mysql.ErrPsManyParam,
 		mysql.ErrAdminCheckTable:             mysql.ErrAdminCheckTable,
+		mysql.ErrDBaccessDenied:              mysql.ErrDBaccessDenied,
+		mysql.ErrTableaccessDenied:           mysql.ErrTableaccessDenied,
+		mysql.ErrBadDB:                       mysql.ErrBadDB,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }

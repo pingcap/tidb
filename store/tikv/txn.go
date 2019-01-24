@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -22,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/execdetails"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -92,6 +93,9 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
 	ret, err := txn.us.Get(k)
+	if kv.IsErrNotFound(err) {
+		return nil, err
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -165,6 +169,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
+	// gofail: var mockCommitError bool
+	// if mockCommitError && kv.IsMockCommitErrorEnable() {
+	//  kv.MockCommitErrorDisable()
+	//	return errors.New("mock commit error")
+	// }
+
 	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
 	start := time.Now()
@@ -184,6 +194,17 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	if err != nil || committer == nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		ctxValue := ctx.Value(execdetails.CommitDetailCtxKey)
+		if ctxValue != nil {
+			commitDetail := ctxValue.(**execdetails.CommitDetails)
+			if *commitDetail != nil {
+				(*commitDetail).TxnRetry += 1
+			} else {
+				*commitDetail = committer.detail
+			}
+		}
+	}()
 	// latches disabled
 	if txn.store.txnLatches == nil {
 		err = committer.executeAndWriteFinishBinlog(ctx)
@@ -193,7 +214,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 	// latches enabled
 	// for transactions which need to acquire latches
+	start = time.Now()
 	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
+	committer.detail.LocalLatchTime = time.Since(start)
+	if committer.detail.LocalLatchTime > 0 {
+		metrics.TiKVLocalLatchWaitTimeHistogram.Observe(committer.detail.LocalLatchTime.Seconds())
+	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
 		err = errors.Errorf("startTS %d is stale", txn.startTS)

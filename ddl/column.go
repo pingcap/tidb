@@ -15,6 +15,9 @@ package ddl
 
 import (
 	"fmt"
+	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -24,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -120,23 +125,19 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 	return colInfo, position, nil
 }
 
-func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo, *ast.ColumnPosition, int, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return nil, nil, nil, nil, 0, errors.Trace(err)
 	}
-	// gofail: var errorBeforeDecodeArgs bool
-	// if errorBeforeDecodeArgs {
-	// 	return ver, errors.New("occur an error before decode args")
-	// }
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
 	offset := 0
 	err = job.DecodeArgs(col, pos, &offset)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return nil, nil, nil, nil, 0, errors.Trace(err)
 	}
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
@@ -144,9 +145,32 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
 			job.State = model.JobStateCancelled
-			return ver, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
+			return nil, nil, nil, nil, 0, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 		}
-	} else {
+	}
+	return tblInfo, columnInfo, col, pos, offset, nil
+}
+
+func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
+		ver, err = onDropColumn(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
+	// gofail: var errorBeforeDecodeArgs bool
+	// if errorBeforeDecodeArgs {
+	// 	return ver, errors.New("occur an error before decode args")
+	// }
+
+	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if columnInfo == nil {
 		columnInfo, offset, err = createColumnInfo(tblInfo, col, pos)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -201,26 +225,8 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, colInfo, err := checkDropColumn(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	var colName model.CIStr
-	err = job.DecodeArgs(&colName)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
-	if colInfo == nil {
-		job.State = model.JobStateCancelled
-		return ver, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
-	}
-	if err = isDroppableColumn(tblInfo, colName); err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -232,6 +238,15 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		colInfo.State = model.StateWriteOnly
 		// Set this column's offset to the last and reset all following columns' offsets.
 		adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
+		// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
+		// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
+		// And we need consider the column without not-null flag.
+		if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
+			colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only
@@ -254,11 +269,41 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 
 		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		if job.IsRollingback() {
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+		} else {
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		}
 	default:
 		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfo(t, job, schemaID)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	var colName model.CIStr
+	err = job.DecodeArgs(&colName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, errors.Trace(err)
+	}
+
+	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+	if colInfo == nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+	}
+	if err = isDroppableColumn(tblInfo, colName); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, errors.Trace(err)
+	}
+	return tblInfo, colInfo, nil
 }
 
 func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -469,7 +514,7 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 }
 
 func checkAddColumnTooManyColumns(oldCols int) error {
-	if oldCols > TableColumnCountLimit {
+	if uint32(oldCols) > atomic.LoadUint32(&TableColumnCountLimit) {
 		return errTooManyFields
 	}
 	return nil
@@ -512,4 +557,22 @@ func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 	tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	return ver, errors.Trace(err)
+}
+
+func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
+	var err error
+	odValue := col.GetDefaultValue()
+	if odValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		zeroVal := table.GetZeroValue(col)
+		odValue, err = zeroVal.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	if odValue == strings.ToUpper(ast.CurrentTimestamp) &&
+		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
+		odValue = time.Now().Format(types.TimeFormat)
+	}
+	return odValue, nil
 }

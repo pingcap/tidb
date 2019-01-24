@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	log "github.com/sirupsen/logrus"
 )
 
 func (e *ShowExec) fetchShowStatsMeta() error {
@@ -115,10 +116,14 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil {
-				e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
+				if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl)); err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+						log.Error(errors.ErrorStack(err))
+					}
 				}
 			}
 		}

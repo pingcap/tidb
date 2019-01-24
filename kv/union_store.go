@@ -39,6 +39,23 @@ type UnionStore interface {
 	GetMemBuffer() MemBuffer
 }
 
+// ContractType is the type of a contract
+type ContractType int
+
+const (
+	// MustExist is a kind of ContractType
+	MustExist ContractType = 1 + iota
+	// MustNotExist is a kind of ContractType
+	MustNotExist
+)
+
+// StoreContract is a defined interface for stores that support contract checking.
+// contracts are some conditions that an operation must meet.
+type StoreContract interface {
+	// SetContract sets the contract for the key operation.
+	SetContract(key Key, contract ContractType)
+}
+
 // Option is used for customizing kv store's behaviors during a transaction.
 type Option int
 
@@ -56,6 +73,14 @@ type conditionPair struct {
 	err   error
 }
 
+type contractPair struct {
+	key      Key
+	contract Contract
+}
+
+// unionStore implements the StoreContract interface.
+var _ StoreContract = &unionStore{}
+
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
@@ -63,6 +88,7 @@ type unionStore struct {
 	snapshot           Snapshot                  // for read
 	lazyConditionPairs map[string]*conditionPair // for delay check
 	opts               options
+	contracts          []contractPair // for data consistency check
 }
 
 // NewUnionStore builds a new UnionStore.
@@ -105,7 +131,7 @@ type lazyMemBuffer struct {
 
 func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 	if lmb.mb == nil {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, ErrNotExist
 	}
 
 	return lmb.mb.Get(k)
@@ -176,7 +202,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 			} else {
 				us.markLazyConditionPair(k, nil, ErrKeyExists)
 			}
-			return nil, errors.Trace(ErrNotExist)
+			return nil, ErrNotExist
 		}
 	}
 	if IsErrNotFound(err) {
@@ -186,7 +212,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 		return v, errors.Trace(err)
 	}
 	if len(v) == 0 {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, ErrNotExist
 	}
 	return v, nil
 }
@@ -221,7 +247,7 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 				return errors.Trace(v.err)
 			}
 		} else {
-			if bytes.Compare(values[k], v.value) != 0 {
+			if !bytes.Equal(values[k], v.value) {
 				return errors.Trace(ErrLazyConditionPairsNotMatch)
 			}
 		}

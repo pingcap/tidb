@@ -31,16 +31,12 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncAvg,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
-	}
-	finalDesc := desc.Split([]int{0, 1})
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncAvg, args, false)
+	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build avg func for partial phase.
-	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialAvgFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialAvgFunc.AllocPartialResult()
 	partialPr2 := partialAvgFunc.AllocPartialResult()
 
@@ -57,9 +53,9 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 	partialAvgFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
 	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(2)) == 0, IsTrue)
 
-	row := iter.Begin()
-	row = iter.Next()
-	for row = iter.Next(); row != iter.End(); row = iter.Next() {
+	iter.Begin()
+	iter.Next()
+	for row := iter.Next(); row != iter.End(); row = iter.Next() {
 		partialAvgFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
 	}
 	resultChk.Reset()
@@ -86,17 +82,12 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 		srcChk.AppendFloat64(0, float64(i))
 	}
 	iter := chunk.NewIterator4Chunk(srcChk)
-
-	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncAvg,
-		Mode:  aggregation.CompleteMode,
-		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
-		RetTp: types.NewFieldType(mysql.TypeDouble),
-	}
-	finalDesc := desc.Split([]int{0, 1})
+	args := []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
+	desc := aggregation.NewAggFuncDesc(s.ctx, ast.AggFuncAvg, args, false)
+	partialDesc, finalDesc := desc.Split([]int{0, 1})
 
 	// build avg func for partial phase.
-	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialAvgFunc := aggfuncs.Build(s.ctx, partialDesc, 0)
 	partialPr1 := partialAvgFunc.AllocPartialResult()
 	partialPr2 := partialAvgFunc.AllocPartialResult()
 
@@ -113,9 +104,9 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 	// (0+1+2+3+4) / 5
 	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(2), IsTrue)
 
-	row := iter.Begin()
-	row = iter.Next()
-	for row = iter.Next(); row != iter.End(); row = iter.Next() {
+	iter.Begin()
+	iter.Next()
+	for row := iter.Next(); row != iter.End(); row = iter.Next() {
 		partialAvgFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
 	}
 	resultChk.Reset()

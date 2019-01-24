@@ -14,6 +14,7 @@
 package tables_test
 
 import (
+	"context"
 	"io"
 	"time"
 
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testIndexSuite{})

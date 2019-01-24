@@ -14,11 +14,12 @@
 package tikv
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/net/context"
 )
 
 type codecPDClient struct {
@@ -30,6 +31,12 @@ type codecPDClient struct {
 func (c *codecPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
 	region, peer, err := c.Client.GetRegion(ctx, encodedKey)
+	return processRegionResult(region, peer, err)
+}
+
+func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+	encodedKey := codec.EncodeBytes([]byte(nil), key)
+	region, peer, err := c.Client.GetPrevRegion(ctx, encodedKey)
 	return processRegionResult(region, peer, err)
 }
 

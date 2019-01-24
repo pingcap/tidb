@@ -34,7 +34,7 @@ func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stat
 	}
 	value, err := ff.Args[0].Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	evalCtx.Value = types.CopyDatum(value)
 	evalCtx.GotFirstRow = true

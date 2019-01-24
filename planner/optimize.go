@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/cascades"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -43,8 +44,8 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if !plannercore.CheckPrivilege(pm, builder.GetVisitInfo()) {
-			return nil, errors.New("privilege check fail")
+		if err := plannercore.CheckPrivilege(pm, builder.GetVisitInfo()); err != nil {
+			return nil, err
 		}
 	}
 
@@ -62,7 +63,7 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if ctx.GetSessionVars().EnableCascadesPlanner {
-		return nil, errors.New("the cascades planner is not implemented yet")
+		return cascades.FindBestPlan(ctx, logic)
 	}
 	return plannercore.DoOptimize(builder.GetOptFlag(), logic)
 }

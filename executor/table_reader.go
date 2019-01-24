@@ -14,8 +14,10 @@
 package executor
 
 import (
+	"context"
 	"time"
 
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
@@ -25,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 // make sure `TableReaderExecutor` implements `Executor`.
@@ -77,6 +78,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 
 	e.resultHandler = &tableResultHandler{}
+	if e.feedback != nil && e.feedback.Hist() != nil {
+		// EncodeInt don't need *statement.Context.
+		e.ranges = e.feedback.Hist().SplitRange(nil, e.ranges, false)
+	}
 	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
@@ -99,12 +104,16 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
-func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tableReader.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
+	if err := e.resultHandler.nextChunk(ctx, req.Chunk); err != nil {
 		e.feedback.Invalidate()
 		return err
 	}
@@ -113,8 +122,12 @@ func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	e.ctx.StoreQueryFeedback(e.feedback)
 	err := e.resultHandler.Close()
+	if e.runtimeStats != nil {
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.plans[0].ExplainID())
+		copStats.SetRowNum(e.feedback.Actual())
+	}
+	e.ctx.StoreQueryFeedback(e.feedback)
 	return errors.Trace(err)
 }
 

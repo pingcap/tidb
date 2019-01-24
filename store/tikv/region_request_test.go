@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"net"
 	"strings"
 	"sync"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -232,6 +232,9 @@ func (s *mockTikvGrpcServer) Coprocessor(context.Context, *coprocessor.Request) 
 func (s *mockTikvGrpcServer) Raft(tikvpb.Tikv_RaftServer) error {
 	return errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) BatchRaft(tikvpb.Tikv_BatchRaftServer) error {
+	return errors.New("unreachable")
+}
 func (s *mockTikvGrpcServer) Snapshot(tikvpb.Tikv_SnapshotServer) error {
 	return errors.New("unreachable")
 }
@@ -246,6 +249,10 @@ func (s *mockTikvGrpcServer) SplitRegion(context.Context, *kvrpcpb.SplitRegionRe
 }
 
 func (s *mockTikvGrpcServer) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv_CoprocessorStreamServer) error {
+	return errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) BatchCommands(tikvpb.Tikv_BatchCommandsServer) error {
 	return errors.New("unreachable")
 }
 

@@ -198,13 +198,6 @@ func genColumnData(table *table, column *column) (string, error) {
 		if isUnique {
 			data = float64(uniqInt64Value(column, 0, math.MaxInt64))
 		} else {
-			if column.hist != nil {
-				if tp.Tp == mysql.TypeDouble {
-					data = column.hist.randFloat64()
-				} else {
-					data = float64(column.hist.randFloat32())
-				}
-			}
 			if isUnsigned {
 				data = float64(randInt64Value(column, 0, math.MaxInt64-1))
 			} else {

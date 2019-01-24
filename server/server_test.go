@@ -161,6 +161,9 @@ func (dbt *DBTest) mustQueryRows(query string, args ...interface{}) {
 
 func runTestRegression(c *C, overrider configOverrider, dbName string) {
 	runTestsOnNewDB(c, overrider, dbName, func(dbt *DBTest) {
+		// Show the user
+		dbt.mustExec("select user()")
+
 		// Create Table
 		dbt.mustExec("CREATE TABLE test (val TINYINT)")
 
@@ -472,12 +475,155 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 
 		// don't support lines terminated is ""
-		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
+		_, err = dbt.db.Exec("load data local infile '/tmp/load_data_test.csv' into table test lines terminated by ''")
 		dbt.Assert(err, NotNil)
 
 		// infile doesn't exist
-		rs, err = dbt.db.Exec("load data local infile '/tmp/nonexistence.csv' into table test")
+		_, err = dbt.db.Exec("load data local infile '/tmp/nonexistence.csv' into table test")
 		dbt.Assert(err, NotNil)
+	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test mixed unenclosed and enclosed fields.
+	_, err = fp.WriteString(
+		"\"abc\",123\n" +
+			"def,456,\n" +
+			"hig,\"789\",")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("create table test (str varchar(10) default null, i int default null)")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
+		dbt.Assert(err1, IsNil)
+		var (
+			str string
+			id  int
+		)
+		rows := dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&str, &id)
+		dbt.Check(err, IsNil)
+		dbt.Check(str, DeepEquals, "abc")
+		dbt.Check(id, DeepEquals, 123)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&str, &id)
+		dbt.Check(str, DeepEquals, "def")
+		dbt.Check(id, DeepEquals, 456)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&str, &id)
+		dbt.Check(str, DeepEquals, "hig")
+		dbt.Check(id, DeepEquals, 789)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		dbt.mustExec("delete from test")
+	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test irregular csv file.
+	_, err = fp.WriteString(
+		`,\N,NULL,,` + "\n" +
+			"00,0,000000,,\n" +
+			`2003-03-03, 20030303,030303,\N` + "\n")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a date, b date, c date not null, d date)")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ','`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a sql.NullString
+			b sql.NullString
+			d sql.NullString
+			c sql.NullString
+		)
+		rows := dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c, &d)
+		dbt.Check(err, IsNil)
+		dbt.Check(a.String, Equals, "0000-00-00")
+		dbt.Check(b.String, Equals, "")
+		dbt.Check(c.String, Equals, "0000-00-00")
+		dbt.Check(d.String, Equals, "0000-00-00")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c, &d)
+		dbt.Check(a.String, Equals, "0000-00-00")
+		dbt.Check(b.String, Equals, "0000-00-00")
+		dbt.Check(c.String, Equals, "0000-00-00")
+		dbt.Check(d.String, Equals, "0000-00-00")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b, &c, &d)
+		dbt.Check(a.String, Equals, "2003-03-03")
+		dbt.Check(b.String, Equals, "2003-03-03")
+		dbt.Check(c.String, Equals, "2003-03-03")
+		dbt.Check(d.String, Equals, "")
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		dbt.mustExec("delete from test")
+	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test double enclosed.
+	_, err = fp.WriteString(
+		`"field1","field2"` + "\n" +
+			`"a""b","cd""ef"` + "\n" +
+			`"a"b",c"d"e` + "\n")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a varchar(20), b varchar(20))")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table test FIELDS TERMINATED BY ',' enclosed by '"'`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a sql.NullString
+			b sql.NullString
+		)
+		rows := dbt.mustQuery("select * from test")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a.String, Equals, "field1")
+		dbt.Check(b.String, Equals, "field2")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b)
+		dbt.Check(a.String, Equals, `a"b`)
+		dbt.Check(b.String, Equals, `cd"ef`)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		rows.Scan(&a, &b)
+		dbt.Check(a.String, Equals, `a"b`)
+		dbt.Check(b.String, Equals, `c"d"e`)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+		dbt.mustExec("delete from test")
 	})
 
 	// unsupport ClientLocalFiles capability
@@ -616,13 +762,14 @@ func runTestShowProcessList(c *C) {
 func runTestAuth(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest'@'%' IDENTIFIED BY '123';`)
+		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	runTests(c, func(config *mysql.Config) {
 		config.User = "authtest"
 		config.Passwd = "123"
 	}, func(dbt *DBTest) {
-		dbt.mustExec(`USE mysql;`)
+		dbt.mustExec(`USE information_schema;`)
 	})
 
 	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
@@ -630,20 +777,21 @@ func runTestAuth(c *C) {
 		config.Passwd = "456"
 	}))
 	c.Assert(err, IsNil)
-	_, err = db.Query("USE mysql;")
+	_, err = db.Query("USE information_schema;")
 	c.Assert(err, NotNil, Commentf("Wrong password should be failed"))
 	db.Close()
 
 	// Test login use IP that not exists in mysql.user.
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest2'@'localhost' IDENTIFIED BY '123';`)
+		dbt.mustExec(`GRANT ALL on test.* to 'authtest2'@'localhost'`)
 		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	runTests(c, func(config *mysql.Config) {
 		config.User = "authtest2"
 		config.Passwd = "123"
 	}, func(dbt *DBTest) {
-		dbt.mustExec(`USE mysql;`)
+		dbt.mustExec(`USE information_schema;`)
 	})
 }
 
@@ -680,7 +828,9 @@ func runTestIssue3680(c *C) {
 func runTestIssue3682(c *C) {
 	runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
-		dbt.mustExec(`FLUSH PRIVILEGES;`)
+		dbt.mustExec(`GRANT ALL on test.* to 'issue3682'`)
+		dbt.mustExec(`GRANT ALL on mysql.* to 'issue3682'`)
+		dbt.mustExec(`FLUSH PRIVILEGES`)
 	})
 	runTests(c, func(config *mysql.Config) {
 		config.User = "issue3682"

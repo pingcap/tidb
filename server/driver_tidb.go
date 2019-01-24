@@ -14,6 +14,7 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 // TiDBDriver implements IDriver.
@@ -225,6 +226,11 @@ func (tc *TiDBContext) AffectedRows() uint64 {
 	return tc.session.AffectedRows()
 }
 
+// LastMessage implements QueryCtx LastMessage method.
+func (tc *TiDBContext) LastMessage() string {
+	return tc.session.LastMessage()
+}
+
 // CurrentDB implements QueryCtx CurrentDB method.
 func (tc *TiDBContext) CurrentDB() string {
 	return tc.currentDB
@@ -351,12 +357,12 @@ type tidbResultSet struct {
 	closed    bool
 }
 
-func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
-	return trs.recordSet.NewChunk()
+func (trs *tidbResultSet) NewRecordBatch() *chunk.RecordBatch {
+	return trs.recordSet.NewRecordBatch()
 }
 
-func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	return trs.recordSet.Next(ctx, chk)
+func (trs *tidbResultSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	return trs.recordSet.Next(ctx, req)
 }
 
 func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {
@@ -422,10 +428,14 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// * gb2312, the multiple is 2
 		// * Utf-8, the multiple is 3
 		// * utf8mb4, the multiple is 4
-		// So the large enough multiple is 4 in here.
 		// We used to check non-string types to avoid the truncation problem in some MySQL
 		// client such as Navicat. Now we only allow string type enter this branch.
-		ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
+		charsetDesc, err := charset.GetCharsetDesc(fld.Column.Charset)
+		if err != nil {
+			ci.ColumnLength = ci.ColumnLength * 4
+		} else {
+			ci.ColumnLength = ci.ColumnLength * uint32(charsetDesc.Maxlen)
+		}
 	}
 
 	if fld.Column.Decimal == types.UnspecifiedLength {

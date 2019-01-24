@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
 )
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
@@ -162,14 +162,14 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 		}
 	}
 	ctx := context.TODO()
-	chk := s.RecordSet.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := s.RecordSet.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err := s.RecordSet.Next(ctx, chk)
+		err := s.RecordSet.Next(ctx, req)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			return collectors, s.PkBuilder, nil
 		}
 		if len(s.RecordSet.Fields()) == 0 {

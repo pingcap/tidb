@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"context"
 	"math"
 	"testing"
 	"time"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -83,23 +83,23 @@ func (r *recordSet) getNext() []types.Datum {
 	return row
 }
 
-func (r *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (r *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	row := r.getNext()
 	if row != nil {
 		for i := 0; i < len(row); i++ {
-			chk.AppendDatum(i, &row[i])
+			req.AppendDatum(i, &row[i])
 		}
 	}
 	return nil
 }
 
-func (r *recordSet) NewChunk() *chunk.Chunk {
+func (r *recordSet) NewRecordBatch() *chunk.RecordBatch {
 	fields := make([]*types.FieldType, 0, len(r.fields))
 	for _, field := range r.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunkWithCapacity(fields, 32)
+	return chunk.NewRecordBatch(chunk.NewChunkWithCapacity(fields, 32))
 }
 
 func (r *recordSet) Close() error {
@@ -174,15 +174,15 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.Reco
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
 	for {
-		chk := records.NewChunk()
-		err := records.Next(ctx, chk)
+		req := records.NewRecordBatch()
+		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
-		it := chunk.NewIterator4Chunk(chk)
+		it := chunk.NewIterator4Chunk(req.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, records.Fields())
 			err = b.Iterate(datums[0])
@@ -198,14 +198,14 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
-	chk := records.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := records.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err := records.Next(ctx, chk)
+		err := records.Next(ctx, req)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {

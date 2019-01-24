@@ -29,9 +29,11 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math/rand"
 	"net"
@@ -72,7 +74,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectWithDB | mysql.ClientProtocol41 |
 	mysql.ClientTransactions | mysql.ClientSecureConnection | mysql.ClientFoundRows |
 	mysql.ClientMultiStatements | mysql.ClientMultiResults | mysql.ClientLocalFiles |
-	mysql.ClientConnectAtts | mysql.ClientPluginAuth
+	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -80,6 +82,7 @@ type Server struct {
 	tlsConfig         *tls.Config
 	driver            IDriver
 	listener          net.Listener
+	socket            net.Listener
 	rwlock            *sync.RWMutex
 	concurrentLimiter *TokenLimiter
 	clients           map[uint32]*clientConn
@@ -129,8 +132,41 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	return cc
 }
 
-func (s *Server) skipAuth() bool {
+func (s *Server) isUnixSocket() bool {
 	return s.cfg.Socket != ""
+}
+
+func (s *Server) forwardUnixSocketToTCP() {
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	for {
+		if s.listener == nil {
+			return // server shutdown has started
+		}
+		if uconn, err := s.socket.Accept(); err == nil {
+			log.Infof("server socket forwarding from [%s] to [%s]", s.cfg.Socket, addr)
+			go s.handleForwardedConnection(uconn, addr)
+		} else {
+			if s.listener != nil {
+				log.Errorf("server failed to forward from [%s] to [%s], err: %s", s.cfg.Socket, addr, err)
+			}
+		}
+	}
+}
+
+func (s *Server) handleForwardedConnection(uconn net.Conn, addr string) {
+	defer terror.Call(uconn.Close)
+	if tconn, err := net.Dial("tcp", addr); err == nil {
+		go func() {
+			if _, err := io.Copy(uconn, tconn); err != nil {
+				log.Warningf("copy server to socket failed: %s", err)
+			}
+		}()
+		if _, err := io.Copy(tconn, uconn); err != nil {
+			log.Warningf("socket forward copy failed: %s", err)
+		}
+	} else {
+		log.Warningf("socket forward failed: could not connect to [%s], err: %s", addr, err)
+	}
 }
 
 // NewServer creates a new Server.
@@ -151,15 +187,24 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	var err error
-	if cfg.Socket != "" {
+
+	if s.cfg.Host != "" && s.cfg.Port != 0 {
+		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+		if s.listener, err = net.Listen("tcp", addr); err == nil {
+			log.Infof("Server is running MySQL Protocol at [%s]", addr)
+			if cfg.Socket != "" {
+				if s.socket, err = net.Listen("unix", s.cfg.Socket); err == nil {
+					log.Infof("Server redirecting [%s] to [%s]", s.cfg.Socket, addr)
+					go s.forwardUnixSocketToTCP()
+				}
+			}
+		}
+	} else if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
 			log.Infof("Server is running MySQL Protocol through Socket [%s]", cfg.Socket)
 		}
 	} else {
-		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-		if s.listener, err = net.Listen("tcp", addr); err == nil {
-			log.Infof("Server is running MySQL Protocol at [%s]", addr)
-		}
+		err = errors.New("Server not configured to listen on either -socket or -host and -port")
 	}
 
 	if cfg.ProxyProtocol.Networks != "" {
@@ -292,6 +337,11 @@ func (s *Server) Close() {
 		terror.Log(errors.Trace(err))
 		s.listener = nil
 	}
+	if s.socket != nil {
+		err := s.socket.Close()
+		terror.Log(errors.Trace(err))
+		s.socket = nil
+	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
 		terror.Log(errors.Trace(err))
@@ -351,36 +401,85 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 		return
 	}
 
+	killConn(conn, query)
+}
+
+func killConn(conn *clientConn, query bool) {
+	if !query {
+		// Mark the client connection status as WaitShutdown, when the goroutine detect
+		// this, it will end the dispatch loop and exit.
+		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+	}
+
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc
 	conn.mu.RUnlock()
 	if cancelFunc != nil {
 		cancelFunc()
 	}
+}
 
-	if !query {
-		// Mark the client connection status as WaitShutdown, when the goroutine detect
-		// this, it will end the dispatch loop and exit.
-		atomic.StoreInt32(&conn.status, connStatusWaitShutdown)
+// KillAllConnections kills all connections when server is not gracefully shutdown.
+func (s *Server) KillAllConnections() {
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+	log.Info("[server] kill all connections.")
+
+	for _, conn := range s.clients {
+		atomic.StoreInt32(&conn.status, connStatusShutdown)
+		terror.Log(errors.Trace(conn.closeWithoutLock()))
+		conn.mu.RLock()
+		cancelFunc := conn.mu.cancelFunc
+		conn.mu.RUnlock()
+		if cancelFunc != nil {
+			cancelFunc()
+		}
+	}
+}
+
+var gracefulCloseConnectionsTimeout = 15 * time.Second
+
+// TryGracefulDown will try to gracefully close all connection first with timeout. if timeout, will close all connection directly.
+func (s *Server) TryGracefulDown() {
+	ctx, cancel := context.WithTimeout(context.Background(), gracefulCloseConnectionsTimeout)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		s.GracefulDown(ctx, done)
+	}()
+	select {
+	case <-ctx.Done():
+		s.KillAllConnections()
+	case <-done:
+		return
 	}
 }
 
 // GracefulDown waits all clients to close.
-func (s *Server) GracefulDown() {
+func (s *Server) GracefulDown(ctx context.Context, done chan struct{}) {
 	log.Info("[server] graceful shutdown.")
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventGracefulDown).Inc()
 
 	count := s.ConnectionCount()
 	for i := 0; count > 0; i++ {
-		time.Sleep(time.Second)
 		s.kickIdleConnection()
 
 		count = s.ConnectionCount()
+		if count == 0 {
+			break
+		}
 		// Print information for every 30s.
 		if i%30 == 0 {
 			log.Infof("graceful shutdown...connection count %d\n", count)
 		}
+		ticker := time.After(time.Second)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker:
+		}
 	}
+	close(done)
 }
 
 func (s *Server) kickIdleConnection() {
@@ -397,7 +496,7 @@ func (s *Server) kickIdleConnection() {
 	for _, cc := range conns {
 		err := cc.Close()
 		if err != nil {
-			log.Error("close connection error:", err)
+			log.Errorf("close connection error: %s", err)
 		}
 	}
 }

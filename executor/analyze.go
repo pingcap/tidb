@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"runtime"
 	"strconv"
 
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -51,7 +51,7 @@ const (
 )
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -175,6 +175,9 @@ func (e *AnalyzeIndexExec) open() error {
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	ctx := context.TODO()
 	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {

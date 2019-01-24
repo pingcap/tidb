@@ -153,6 +153,12 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "1.23")
+
+	year := types.NewIntDatum(0)
+	columns[0].Type = mysql.TypeYear
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{year}).ToRow())
+	c.Assert(err, IsNil)
+	c.Assert(mustDecodeStr(c, bs), Equals, "0000")
 }
 
 func mustDecodeStr(c *C, b []byte) string {

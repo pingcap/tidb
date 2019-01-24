@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -27,10 +29,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/net/context"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
+	startTS, err := b.getStartTS()
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 	return &PointGetExecutor{
 		ctx:     b.ctx,
 		schema:  p.Schema(),
@@ -38,7 +44,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		idxInfo: p.IndexInfo,
 		idxVals: p.IndexValues,
 		handle:  p.Handle,
-		startTS: b.getStartTS(),
+		startTS: startTS,
 	}
 }
 
@@ -67,8 +73,8 @@ func (e *PointGetExecutor) Close() error {
 }
 
 // Next implements the Executor interface.
-func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
@@ -107,7 +113,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		return nil
 	}
-	return e.decodeRowValToChunk(val, chk)
+	return e.decodeRowValToChunk(val, req.Chunk)
 }
 
 func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
@@ -127,7 +133,10 @@ func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
 }
 
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
-	txn := e.ctx.Txn()
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
 		return txn.Get(key)
 	}
