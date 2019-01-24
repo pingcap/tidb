@@ -23,15 +23,14 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testDDLSuite{})
@@ -41,7 +40,6 @@ type testDDLSuite struct{}
 const testLease = 5 * time.Millisecond
 
 func (s *testDDLSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	WaitTimeWhenErrorOccured = 1 * time.Microsecond
 
 	// We hope that this test is serially executed. So put it here.
@@ -49,7 +47,6 @@ func (s *testDDLSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDDLSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {
@@ -520,8 +517,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
 		Options: []*ast.ColumnOption{},
 	}
-	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil)
+	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, mysql.DefaultCharset, mysql.DefaultCharset)
 	c.Assert(err, IsNil)
+
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
