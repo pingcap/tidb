@@ -195,6 +195,9 @@ func setupBinlogClient() {
 
 	terror.MustNil(err)
 
+	err = pumpcli.InitLogger(cfg.Log.ToLogConfig())
+	terror.MustNil(err)
+
 	binloginfo.SetPumpsClient(client)
 	log.Infof("create pumps client success, ignore binlog error %v", cfg.Binlog.IgnoreError)
 }

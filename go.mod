@@ -50,7 +50,7 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929
 	github.com/pingcap/parser v0.0.0-20190118033454-a52e5bde3bd2
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
-	github.com/pingcap/tidb-tools v2.1.1-0.20181218072513-b2235d442b06+incompatible
+	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
 	github.com/pingcap/tipb v0.0.0-20180910045846-371b48b15d93
 	github.com/pkg/errors v0.8.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
