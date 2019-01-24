@@ -834,6 +834,11 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 		buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogIndexNamesStr, index_IDs))
 	}
 	buf.WriteString(fmt.Sprintf("# %v: %v\n", SlowLogIsInternalStr, s.InRestrictedSQL))
-	buf.WriteString(sql)
+	if len(sql) > 0 {
+		buf.WriteString(sql)
+		if sql[len(sql)-1] != ';' {
+			buf.WriteString(";")
+		}
+	}
 	return buf.String()
 }
