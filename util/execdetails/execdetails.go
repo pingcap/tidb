@@ -185,10 +185,10 @@ func (e *RuntimeStatsColl) CopSummary(planID string) string {
 		return ""
 	}
 	var totalRows, totalIters, totalTasks uint64
-	procTimes := make([]uint64, 0, 32)
+	procTimes := make([]time.Duration, 0, 32)
 	for _, instanceStats := range stats {
 		for _, stat := range instanceStats {
-			procTimes = append(procTimes, stat.timeProcessedNs)
+			procTimes = append(procTimes, time.Duration(stat.timeProcessedNs)*time.Nanosecond)
 			totalRows += stat.numProducedRows
 			totalIters += stat.numIterations
 			totalTasks++
@@ -197,7 +197,7 @@ func (e *RuntimeStatsColl) CopSummary(planID string) string {
 
 	n := len(procTimes)
 	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("procNs max:%v, min:%v, p80:%v, p95:%v, rows:%v, iters:%v, tasks:%v",
+	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, rows:%v, iters:%v, tasks:%v",
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
 }
 

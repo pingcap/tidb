@@ -55,10 +55,10 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask("table_scan", "8.8.8.9", 2, 2, 2)
 	stats.RecordOneCopTask("agg", "8.8.8.8", 3, 3, 3)
 	stats.RecordOneCopTask("agg", "8.8.8.9", 4, 4, 4)
-	if stats.CopSummary("table_scan") != "procNs max:2, min:1, p80:2, p95:2, rows:3, iters:3, tasks:2" {
+	if stats.CopSummary("table_scan") != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, rows:3, iters:3, tasks:2" {
 		t.Fatal("table_scan")
 	}
-	if stats.CopSummary("agg") != "procNs max:4, min:3, p80:4, p95:4, rows:7, iters:7, tasks:2" {
+	if stats.CopSummary("agg") != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, rows:7, iters:7, tasks:2" {
 		t.Fatal("agg")
 	}
 }
