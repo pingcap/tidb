@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"strconv"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 )
@@ -798,4 +800,40 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+}
+
+const (
+	SlowLogTxnStartTSStr = "Txn_start_ts"
+	SlowLogUserStr       = "User"
+	SlowLogConnIDStr     = "Conn_ID"
+	SlowLogQueryTimeStr  = "Query_time"
+	SlowLogDBStr         = "DB"
+	SlowLogIsInternalStr = "Is_internal"
+	SlowLogIndexNamesStr = "Index_names"
+)
+
+// SlowLogFormat uses for formatting slow log.
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, index_IDs string, sql string) string {
+	var buf bytes.Buffer
+	execDetailStr := execDetail.String()
+	buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogTxnStartTSStr, txnTS))
+	if s.User != nil {
+		buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogUserStr, s.User))
+	}
+	if s.ConnectionID != 0 {
+		buf.WriteString(fmt.Sprintf("# %v: %v\n", SlowLogConnIDStr, s.ConnectionID))
+	}
+	buf.WriteString(fmt.Sprintf("# %s: %f\n", SlowLogQueryTimeStr, costTime.Seconds()))
+	if len(execDetailStr) > 0 {
+		buf.WriteString(fmt.Sprintf("# %s\n", execDetailStr))
+	}
+	if len(s.CurrentDB) > 0 {
+		buf.WriteString(fmt.Sprintf("# %s: %s\n", SlowLogDBStr, s.CurrentDB))
+	}
+	if len(index_IDs) > 0 {
+		buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogIndexNamesStr, index_IDs))
+	}
+	buf.WriteString(fmt.Sprintf("# %v: %v\n", SlowLogIsInternalStr, s.InRestrictedSQL))
+	buf.WriteString(sql)
+	return buf.String()
 }

@@ -192,6 +192,21 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+type slowLogFormatter struct{}
+
+func (f *slowLogFormatter) Format(entry *log.Entry) ([]byte, error) {
+	var b *bytes.Buffer
+	if entry.Buffer != nil {
+		b = entry.Buffer
+	} else {
+		b = &bytes.Buffer{}
+	}
+
+	fmt.Fprintf(b, "# Time: %s\n", entry.Time.Format("2006-01-02-15:04:05.999999999 -0700"))
+	fmt.Fprintf(b, "%s\n", entry.Message)
+	return b.Bytes(), nil
+}
+
 func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 	switch strings.ToLower(format) {
 	case "text":
@@ -274,15 +289,7 @@ func InitLogger(cfg *LogConfig) error {
 		if err := initFileLog(&tmp, SlowQueryLogger); err != nil {
 			return errors.Trace(err)
 		}
-		hooks := make(log.LevelHooks)
-		hooks.Add(&contextHook{})
-		SlowQueryLogger.Hooks = hooks
-		slowQueryFormatter := stringToLogFormatter(cfg.Format, cfg.DisableTimestamp)
-		ft, ok := slowQueryFormatter.(*textFormatter)
-		if ok {
-			ft.EnableEntryOrder = true
-		}
-		SlowQueryLogger.Formatter = slowQueryFormatter
+		SlowQueryLogger.Formatter = &slowLogFormatter{}
 	}
 
 	return nil
