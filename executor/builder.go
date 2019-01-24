@@ -1616,7 +1616,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	sctx.TableNames = append(sctx.TableNames, ts.Table.Name.O)
 	return ret
 }
 
@@ -1674,7 +1674,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.IndexNames = append(sctx.IndexNames, is.Index.Name.O)
 	return ret
 }
 
@@ -1754,8 +1754,8 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	ret.ranges = is.Ranges
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor").Inc()
 	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
-	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	sctx.IndexNames = append(sctx.IndexNames, is.Index.Name.O)
+	sctx.TableNames = append(sctx.TableNames, ts.Table.Name.O)
 	return ret
 }
 
