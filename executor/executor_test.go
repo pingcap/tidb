@@ -2249,6 +2249,12 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	err = tIn8To0.ConvertTimeZone(timeZoneIn8, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(timeIn0 == tIn8To0.String(), IsTrue, Commentf("%v != %v", timeIn0, tIn8To0.String()))
+
+	// test add index.
+	tk.MustExec(`alter table t add index(b);`)
+	tk.MustExec("admin check table t")
+	tk.MustExec(`set time_zone = '+05:00'`)
+	tk.MustExec("admin check table t")
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {
