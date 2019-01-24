@@ -88,7 +88,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 			c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
 		} else { // cop task
 			execInfo := row[4].(string)
-			c.Assert(strings.Contains(execInfo, "procNs"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "proc"), Equals, true)
 			c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
 			c.Assert(strings.Contains(execInfo, "iters"), Equals, true)
 			c.Assert(strings.Contains(execInfo, "tasks"), Equals, true)
