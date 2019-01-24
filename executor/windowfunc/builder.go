@@ -14,10 +14,10 @@
 package windowfuncs
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pkg/errors"
 )
 
 // Build builds window functions according to the window functions description.
