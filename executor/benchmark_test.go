@@ -98,10 +98,8 @@ func (mds *mockDataSource) genColDatums(ordinal int) (results []interface{}) {
 
 func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 	switch typ.Tp {
-	case mysql.TypeLonglong:
+	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
-	case mysql.TypeLong:
-		return int32(rand.Int())
 	case mysql.TypeDouble:
 		return rand.Float64()
 	default:
@@ -112,7 +110,7 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 func (mds *mockDataSource) prepareChunks() {
 	mds.chunks = make([]*chunk.Chunk, (mds.p.rows+mds.initCap-1)/mds.initCap)
 	for i := range mds.chunks {
-		mds.chunks[i] = mds.newFirstChunk()
+		mds.chunks[i] = chunk.NewChunkWithCapacity(mds.retTypes(), mds.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	for i := 0; i < mds.p.rows; i++ {
@@ -120,9 +118,7 @@ func (mds *mockDataSource) prepareChunks() {
 		types := mds.retTypes()
 		for colIdx := 0; colIdx < len(types); colIdx++ {
 			switch types[colIdx].Tp {
-			case mysql.TypeLong:
-				mds.chunks[idx].AppendInt64(colIdx, int64(mds.colData[colIdx][i].(int32)))
-			case mysql.TypeLonglong:
+			case mysql.TypeLong, mysql.TypeLonglong:
 				mds.chunks[idx].AppendInt64(colIdx, mds.colData[colIdx][i].(int64))
 			case mysql.TypeDouble:
 				mds.chunks[idx].AppendFloat64(colIdx, mds.colData[colIdx][i].(float64))
