@@ -53,6 +53,16 @@ type TxnState struct {
 	doNotCommit error
 }
 
+var _ kv.StoreContract = &TxnState{}
+
+func (st *TxnState) SetContract(key kv.Key, contract kv.ContractType) {
+	if st.Transaction != nil {
+		if raw, ok := st.Transaction.(kv.StoreContract); ok {
+			raw.SetContract(key, contract)
+		}
+	}
+}
+
 func (st *TxnState) init() {
 	st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
 	st.mutations = make(map[int64]*binlog.TableMutation)

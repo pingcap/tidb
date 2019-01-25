@@ -45,6 +45,8 @@ type tikvTxn struct {
 	dirty     bool
 	setCnt    int64
 	vars      *kv.Variables
+
+	contracts []contractPair // for data consistency check
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -69,6 +71,17 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 		valid:     true,
 		vars:      kv.DefaultVars,
 	}, nil
+}
+
+type contractPair struct {
+	key      kv.Key
+	contract kv.ContractType
+}
+
+// SetContract sets the contract for the key operation.
+func (txn *tikvTxn) SetContract(key kv.Key, contract kv.ContractType) {
+	fmt.Println("!!!! SetContract is called!!!")
+	txn.contracts = append(txn.contracts, contractPair{key, contract})
 }
 
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {

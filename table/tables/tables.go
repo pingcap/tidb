@@ -353,6 +353,14 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 }
 
 func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
+	var contract kv.StoreContract
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	if tmp, ok := txn.(kv.StoreContract); ok {
+		contract = tmp
+	}
 	for _, idx := range t.DeletableIndices() {
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
@@ -362,7 +370,7 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx); err != nil {
+			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx, contract); err != nil {
 				return errors.Trace(err)
 			}
 			break
@@ -758,7 +766,12 @@ func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = txn.Delete([]byte(t.RecordKey(h)))
+
+	key := t.RecordKey(h)
+	if contract, ok := txn.(kv.StoreContract); ok {
+		contract.SetContract(key, kv.MustExist)
+	}
+	err = txn.Delete([]byte(key))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -771,6 +784,10 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	if err != nil {
 		return errors.Trace(err)
 	}
+	var contract kv.StoreContract
+	if tmp, ok := txn.(kv.StoreContract); ok {
+		contract = tmp
+	}
 
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
@@ -778,7 +795,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, txn.StartTS(), h, rec)
 			return errors.Trace(err)
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h, contract); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -792,8 +809,8 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 }
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
-	if err := idx.Delete(sc, rm, vals, h); err != nil {
+func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, contract kv.StoreContract) error {
+	if err := idx.Delete(sc, rm, vals, h, contract); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

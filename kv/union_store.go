@@ -49,8 +49,8 @@ const (
 	MustNotExist
 )
 
-// StoreContract is a defined interface for stores that support contract checking.
-// contracts are some conditions that an operation must meet.
+// // StoreContract is a defined interface for stores that support contract checking.
+// // contracts are some conditions that an operation must meet.
 type StoreContract interface {
 	// SetContract sets the contract for the key operation.
 	SetContract(key Key, contract ContractType)
@@ -73,14 +73,6 @@ type conditionPair struct {
 	err   error
 }
 
-type contractPair struct {
-	key      Key
-	contract Contract
-}
-
-// unionStore implements the StoreContract interface.
-var _ StoreContract = &unionStore{}
-
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
@@ -88,7 +80,6 @@ type unionStore struct {
 	snapshot           Snapshot                  // for read
 	lazyConditionPairs map[string]*conditionPair // for delay check
 	opts               options
-	contracts          []contractPair // for data consistency check
 }
 
 // NewUnionStore builds a new UnionStore.
