@@ -546,6 +546,17 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// Check contract.
+	if preCond := mutation.Precondition; preCond != nil {
+		if ok && preCond.ShouldNotExist {
+			log.Error(" prewrite contract fail!! must not exist, but exists ...")
+		} else if !ok && preCond.MustExist {
+			log.Error(" prewrite contract fail!! must exist, but not exist ...")
+		}
+		log.Info(" !!! yeah, check precondition ")
+	}
+
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if ok && dec1.value.commitTS >= startTS {
 		return ErrRetryable("write conflict")

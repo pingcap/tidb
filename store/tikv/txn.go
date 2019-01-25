@@ -70,6 +70,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 		startTime: time.Now(),
 		valid:     true,
 		vars:      kv.DefaultVars,
+		contracts: make([]contractPair, 0, 16),
 	}, nil
 }
 
@@ -80,7 +81,7 @@ type contractPair struct {
 
 // SetContract sets the contract for the key operation.
 func (txn *tikvTxn) SetContract(key kv.Key, contract kv.ContractType) {
-	fmt.Println("!!!! SetContract is called!!!")
+	fmt.Println("!!!! SetContract is called!!!", key, contract)
 	txn.contracts = append(txn.contracts, contractPair{key, contract})
 }
 
