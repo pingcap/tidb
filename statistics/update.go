@@ -632,24 +632,25 @@ func withinTimePeriod(start, end, now time.Time) bool {
 // 1. If the table has never been analyzed, we need to analyze it when it has
 //    not been modified for a while.
 // 2. If the table had been analyzed before, we need to analyze it when
-//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
-// 3. The current time is between `start` and `end`.
-func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) bool {
+//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
+//    between `start` and `end`.
+func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-		return time.Since(t) >= limit
+		dur := time.Since(t)
+		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %vs", dur)
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
-		return false
+		return false, ""
 	}
 	// No need to analyze it.
 	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
-		return false
+		return false, ""
 	}
 	// Tests if current time is within the time period.
-	return withinTimePeriod(start, end, now)
+	return withinTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
 }
 
 const (
@@ -742,8 +743,8 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 		return false
 	}
-	if NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()) {
-		log.Infof("[stats] auto %s now", sql)
+	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()); needAnalyze {
+		log.Infof("[stats] %s, auto %s now", sql, reason)
 		h.execAutoAnalyze(sql)
 		return true
 	}
@@ -753,7 +754,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		}
 		if _, ok := statsTbl.Indices[idx.ID]; !ok {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
-			log.Infof("[stats] auto %s now", sql)
+			log.Infof("[stats] index unanalyzed, auto %s now", sql)
 			h.execAutoAnalyze(sql)
 			return true
 		}

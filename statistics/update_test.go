@@ -1119,6 +1119,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		end    string
 		now    string
 		result bool
+		reason string
 	}{
 		// table was never analyzed and has reach the limit
 		{
@@ -1129,6 +1130,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: true,
+			reason: "table unanalyzed",
 		},
 		// table was never analyzed but has not reach the limit
 		{
@@ -1139,6 +1141,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
@@ -1149,6 +1152,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but modify count is small
 		{
@@ -1159,6 +1163,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but not within time period
 		{
@@ -1169,6 +1174,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:02 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but not within time period
 		{
@@ -1179,6 +1185,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "06:00 +0800",
 			now:    "10:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and within time period
 		{
@@ -1189,6 +1196,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: true,
+			reason: "too many modifications",
 		},
 		// table was already analyzed and within time period
 		{
@@ -1199,6 +1207,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "06:00 +0800",
 			now:    "23:00 +0800",
 			result: true,
+			reason: "too many modifications",
 		},
 	}
 	for _, test := range tests {
@@ -1208,7 +1217,9 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 		c.Assert(err, IsNil)
 		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
 		c.Assert(err, IsNil)
-		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
+		needAnalyze, reason := statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now)
+		c.Assert(needAnalyze, Equals, test.result)
+		c.Assert(strings.HasPrefix(reason, test.reason), IsTrue)
 	}
 }
 
