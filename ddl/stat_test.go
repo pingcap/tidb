@@ -33,7 +33,7 @@ func (s *testStatSuite) SetUpSuite(c *C) {
 }
 
 func (s *testStatSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {

@@ -16,6 +16,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 
 	"github.com/opentracing/opentracing-go"
@@ -46,10 +47,6 @@ type TxnState struct {
 	buf          kv.MemBuffer
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
-
-	// If StmtCommit meets error (which should not happen, just in case), mark it.
-	// And rollback the whole transaction when it commit.
-	fail error
 }
 
 func (st *TxnState) init() {
@@ -99,10 +96,6 @@ func (st *TxnState) GoString() string {
 		s.WriteString("state=invalid")
 	}
 
-	if st.fail != nil {
-		s.WriteString(", fail=")
-		s.WriteString(st.fail.Error())
-	}
 	s.WriteString("}")
 	return s.String()
 }
@@ -151,22 +144,17 @@ type dirtyTableOperation struct {
 
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
-	if st.fail != nil {
-		// If any error happen during StmtCommit, don't commit this transaction.
-		err := st.fail
-		st.fail = nil
-		return errors.Trace(err)
+	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
+		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
+			st,
+			st.mutations,
+			st.dirtyTableOP,
+			st.buf,
+			debug.Stack())
+		st.cleanup()
+		return errors.New("invalid transaction")
 	}
 	return errors.Trace(st.Transaction.Commit(ctx))
-}
-
-// Rollback overrides the Transaction interface.
-func (st *TxnState) Rollback() error {
-	if st.fail != nil {
-		log.Error(errors.Trace(st.fail))
-		st.fail = nil
-	}
-	return errors.Trace(st.Transaction.Rollback())
 }
 
 // Get overrides the Transaction interface.
@@ -273,9 +261,28 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 type txnFuture struct {
 	future oracle.Future
 	store  kv.Storage
+
+	mockFail bool
 }
 
+// mockGetTSErrorInRetryOnce use to make sure gofail mockGetTSErrorInRetry only mock get TS error once.
+var mockGetTSErrorInRetryOnce = true
+
 func (tf *txnFuture) wait() (kv.Transaction, error) {
+	if tf.mockFail {
+		return nil, errors.New("mock get timestamp fail")
+	}
+
+	// mockGetTSErrorInRetry should wait mockCommitErrorOnce first, then will run into retry() logic.
+	// Then mockGetTSErrorInRetry will return retryable error when first retry.
+	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
+	// This may cause duplicate data to be written.
+	// gofail: var mockGetTSErrorInRetry bool
+	// if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
+	//	 mockGetTSErrorInRetryOnce = false
+	//	 return nil, errors.Errorf("PD server timeout[try again later]")
+	// }
+
 	startTS, err := tf.future.Wait()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
@@ -293,15 +300,15 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 
 	oracleStore := s.store.GetOracle()
 	tsFuture := oracleStore.GetTimestampAsync(ctx)
-	return &txnFuture{tsFuture, s.store}
+	ret := &txnFuture{future: tsFuture, store: s.store}
+	if x := ctx.Value("mockGetTSFail"); x != nil {
+		ret.mockFail = true
+	}
+	return ret
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() {
-	if s.txn.fail != nil {
-		return
-	}
-
+func (s *session) StmtCommit() error {
 	defer s.txn.cleanup()
 	st := &s.txn
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
@@ -315,8 +322,7 @@ func (s *session) StmtCommit() {
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
 	if err != nil {
-		s.txn.fail = errors.Trace(err)
-		return
+		return errors.Trace(err)
 	}
 
 	// Need to flush binlog.
@@ -331,6 +337,7 @@ func (s *session) StmtCommit() {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.

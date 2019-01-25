@@ -513,7 +513,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
 func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
-	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
+	if astCol, ok := getInnerFromParenthesesAndUnaryPlus(field.Expr).(*ast.ColumnNameExpr); ok {
 		origColName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
 	}
 	if field.AsName.L != "" {
@@ -537,7 +537,7 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
 	}
 
-	innerExpr := getInnerFromParentheses(field.Expr)
+	innerExpr := getInnerFromParenthesesAndUnaryPlus(field.Expr)
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
@@ -1902,6 +1902,10 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
+	if tableInfo.IsView() {
+		return b.buildDataSourceFromView(dbName, tableInfo)
+	}
+
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
 	}
@@ -1970,7 +1974,11 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	// If this SQL is executed in a non-readonly transaction, we need a
 	// "UnionScan" operator to read the modifications of former SQLs, which is
 	// buffered in tidb-server memory.
-	if b.ctx.Txn(false).Valid() && !b.ctx.Txn(false).IsReadOnly() {
+	txn, err := b.ctx.Txn(false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if txn.Valid() && !txn.IsReadOnly() {
 		us := LogicalUnionScan{}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
@@ -1988,6 +1996,42 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 		result = proj
 	}
 	return result, nil
+}
+
+func (b *PlanBuilder) buildDataSourceFromView(dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	selectNode, err := parser.New().ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
+	if err != nil {
+		return nil, err
+	}
+	selectLogicalPlan, err := b.Build(selectNode)
+	if err != nil {
+		return nil, err
+	}
+
+	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
+	projExprs := make([]expression.Expression, 0, len(tableInfo.View.Cols))
+	for i := range tableInfo.View.Cols {
+		col := selectLogicalPlan.Schema().FindColumnByName(tableInfo.View.Cols[i].L)
+		if col == nil {
+			return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		}
+		projSchema.Append(&expression.Column{
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			TblName:     col.TblName,
+			OrigTblName: col.OrigTblName,
+			ColName:     tableInfo.Cols()[i].Name,
+			OrigColName: tableInfo.View.Cols[i],
+			DBName:      col.DBName,
+			RetType:     col.GetType(),
+		})
+		projExprs = append(projExprs, col)
+	}
+
+	projUponView := LogicalProjection{Exprs: projExprs}.Init(b.ctx)
+	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
+	projUponView.SetSchema(projSchema)
+	return projUponView, nil
 }
 
 // projectVirtualColumns is only for DataSource. If some table has virtual generated columns,
@@ -2008,6 +2052,7 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		Exprs:            make([]expression.Expression, 0, len(columns)),
 		calculateGenCols: true,
 	}.Init(b.ctx)
+
 	for i, colExpr := range ds.Schema().Columns {
 		var exprIsGen = false
 		var expr expression.Expression
@@ -2029,6 +2074,18 @@ func (b *PlanBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
+
+	// Re-iterate expressions to handle those virtual generated columns that refers to the other generated columns, for
+	// example, given:
+	//  column a, column b as (a * 2), column c as (b + 1)
+	// we'll get:
+	//  column a, column b as (a * 2), column c as ((a * 2) + 1)
+	// A generated column definition can refer to only generated columns occurring earlier in the table definition, so
+	// it's safe to iterate in index-ascending order.
+	for i, expr := range proj.Exprs {
+		proj.Exprs[i] = expression.ColumnSubstitute(expr, ds.Schema(), proj.Exprs)
+	}
+
 	proj.SetSchema(ds.Schema().Clone())
 	return proj, nil
 }
@@ -2290,15 +2347,27 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
 		}
 	case *LogicalProjection:
-		if x.calculateGenCols {
-			ds := x.Children()[0].(*DataSource)
-			alias := extractTableAlias(x)
-			if alias != nil {
-				if _, ok := asNames[ds.tableInfo]; !ok {
-					asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
-				}
-				asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
+		if !x.calculateGenCols {
+			return
+		}
+
+		ds, isDS := x.Children()[0].(*DataSource)
+		if !isDS {
+			// try to extract the DataSource below a LogicalUnionScan.
+			if us, isUS := x.Children()[0].(*LogicalUnionScan); isUS {
+				ds, isDS = us.Children()[0].(*DataSource)
 			}
+		}
+		if !isDS {
+			return
+		}
+
+		alias := extractTableAlias(x)
+		if alias != nil {
+			if _, ok := asNames[ds.tableInfo]; !ok {
+				asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
+			}
+			asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
 		}
 	default:
 		for _, child := range p.Children() {
@@ -2324,6 +2393,8 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	oldSchema := p.Schema()
+	oldLen := oldSchema.Len()
 
 	if sel.Where != nil {
 		p, err = b.buildSelection(p, sel.Where, nil)
@@ -2344,6 +2415,15 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+	}
+
+	// Add a projection for the following case, otherwise the final schema will be the schema of the join.
+	// delete from t where a in (select ...) or b in (select ...)
+	if !delete.IsMultiTable && oldLen != p.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx)
+		proj.SetChildren(p)
+		proj.SetSchema(oldSchema.Clone())
+		p = proj
 	}
 
 	var tables []*ast.TableName
@@ -2468,9 +2548,12 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 	})
 }
 
-func getInnerFromParentheses(expr ast.ExprNode) ast.ExprNode {
+func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 	if pexpr, ok := expr.(*ast.ParenthesesExpr); ok {
-		return getInnerFromParentheses(pexpr.Expr)
+		return getInnerFromParenthesesAndUnaryPlus(pexpr.Expr)
+	}
+	if uexpr, ok := expr.(*ast.UnaryOperationExpr); ok && uexpr.Op == opcode.Plus {
+		return getInnerFromParenthesesAndUnaryPlus(uexpr.V)
 	}
 	return expr
 }

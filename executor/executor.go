@@ -144,6 +144,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		cols := schema.Columns
 		e.retFieldTypes = make([]*types.FieldType, len(cols))
 		for i := range cols {
+			log.Warnf("------- new executor, id %s, col %v", id, cols[i])
 			e.retFieldTypes[i] = cols[i].RetType
 		}
 	}
@@ -298,11 +299,15 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true), admin.DefNumHistoryJobs)
+	jobs, err := admin.GetDDLJobs(txn)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -339,14 +344,18 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn(true))
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobs, err := admin.GetDDLJobs(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(true), int(e.jobNumber))
+	historyJobs, err := admin.GetHistoryDDLJobs(txn, int(e.jobNumber))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -462,7 +471,9 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, num int, src *Ind
 	var err error
 	handles := make(map[int64]struct{}, 1024)
 	for {
+		log.Infof("====================== check idnex handle. 0")
 		err = src.Next(ctx, chk)
+		log.Infof("====================== check idnex handle. 1")
 		if err != nil {
 			break
 		}
@@ -505,13 +516,12 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
 	if err != nil {
-		log.Warnf("check table %v, greater %v index %s err: %v", e.tblInfo.Name, greater, idxNames[idxOffset], errors.ErrorStack(err))
+		log.Warnf("check table %v, greater %v index %s err: %v", e.tblInfo.Name, greater, idxNames[idxOffset], err)
 		tbl := e.srcs[idxOffset].table
-		txn := e.ctx.Txn(true)
 		if greater == admin.IdxCntGreater {
 			err = e.checkIndexHandle(ctx, idxOffset, e.srcs[idxOffset])
 		} else if greater == admin.TblCntGreater {
-			err = e.checkTableRecord(txn, tbl, e.indices[idxOffset])
+			err = e.checkTableRecord(tbl, e.indices[idxOffset])
 		}
 		if err != nil && admin.ErrDataInConsistent.Equal(err) {
 			return ErrAdminCheckTable.GenWithStack("%v err:%v", tbl.Meta().Name, err)
@@ -535,7 +545,11 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *CheckTableExec) checkTableRecord(txn kv.Transaction, tbl table.Table, idx table.Index) error {
+func (e *CheckTableExec) checkTableRecord(tbl table.Table, idx table.Index) error {
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if tbl.Meta().GetPartitionInfo() == nil {
 		return admin.CheckRecordAndIndex(e.ctx, txn, tbl, idx, e.genExprs)
 	}
@@ -705,7 +719,10 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
-	txn := e.ctx.Txn(true)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
@@ -1142,6 +1159,9 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	childChunk := e.children[0].newFirstChunk()
 	err = e.children[0].Next(ctx, childChunk)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if childChunk.NumRows() != 0 {
 		return errors.New("subquery returns more than 1 row")
 	}

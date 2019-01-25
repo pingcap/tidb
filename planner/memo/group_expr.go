@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cascades
+package memo
 
 import (
 	"fmt"
@@ -21,13 +21,13 @@ import (
 
 // GroupExpr is used to store all the logically equivalent expressions which
 // have the same root operator. Different from a normal expression, the
-// children of a group expression are expression Groups, not expressions.
-// Another property of group expression is that the child group references will
-// never be changed once the group expression is created.
+// Children of a Group expression are expression Groups, not expressions.
+// Another property of Group expression is that the child Group references will
+// never be changed once the Group expression is created.
 type GroupExpr struct {
-	exprNode plannercore.LogicalPlan
-	children []*Group
-	explored bool
+	ExprNode plannercore.LogicalPlan
+	Children []*Group
+	Explored bool
 
 	selfFingerprint string
 }
@@ -35,18 +35,18 @@ type GroupExpr struct {
 // NewGroupExpr creates a GroupExpr based on a logical plan node.
 func NewGroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 	return &GroupExpr{
-		exprNode: node,
-		children: nil,
-		explored: false,
+		ExprNode: node,
+		Children: nil,
+		Explored: false,
 	}
 }
 
-// FingerPrint gets the unique fingerprint of the group expression.
+// FingerPrint gets the unique fingerprint of the Group expression.
 func (e *GroupExpr) FingerPrint() string {
 	if e.selfFingerprint == "" {
-		e.selfFingerprint = fmt.Sprintf("%v", e.exprNode.ID())
-		for i := range e.children {
-			e.selfFingerprint += e.children[i].FingerPrint()
+		e.selfFingerprint = fmt.Sprintf("%v", e.ExprNode.ID())
+		for i := range e.Children {
+			e.selfFingerprint += e.Children[i].FingerPrint()
 		}
 	}
 	return e.selfFingerprint

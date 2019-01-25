@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	// "fmt"
 	"math"
 	"runtime"
 	"sort"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
@@ -59,6 +61,7 @@ type lookupTableTask struct {
 	handles []int64
 	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
 	rows    []chunk.Row
+	idxRows *chunk.Chunk
 	cursor  int
 
 	doneCh chan error
@@ -344,7 +347,7 @@ type IndexLookUpExecutor struct {
 	memTracker *memory.Tracker
 
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
-	isCheckOp bool
+	checkIndexValue
 
 	corColInIdxSide bool
 	idxPlans        []plannercore.PhysicalPlan
@@ -353,6 +356,15 @@ type IndexLookUpExecutor struct {
 	corColInAccess  bool
 	idxCols         []*expression.Column
 	colLens         []int
+}
+
+type checkIndexValue struct {
+	isCheckOp bool
+	tps       []*types.FieldType
+	tbl       table.Table
+	idxInfo   *model.IndexInfo
+	cols      []*table.Column
+	genExprs  map[model.TableColumnID]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -426,20 +438,27 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	if err != nil {
 		return errors.Trace(err)
 	}
+	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	if e.isCheckOp {
+		tps = e.tps
+	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.Select(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback)
+	// result, err := distsql.Select(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback)
+	log.Warnf(".......................... dag req:%v, len %v", e.dagPB.Executors[0].IdxScan, len(tps))
+	result, err := distsql.Select(ctx, e.ctx, kvReq, tps, e.feedback)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	result.Fetch(ctx)
 	worker := &indexWorker{
-		workCh:       workCh,
-		finished:     e.finished,
-		resultCh:     e.resultCh,
-		keepOrder:    e.keepOrder,
-		batchSize:    e.maxChunkSize,
-		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
-		maxChunkSize: e.maxChunkSize,
+		workCh:          workCh,
+		finished:        e.finished,
+		resultCh:        e.resultCh,
+		keepOrder:       e.keepOrder,
+		batchSize:       e.maxChunkSize,
+		maxBatchSize:    e.ctx.GetSessionVars().IndexLookupSize,
+		maxChunkSize:    e.maxChunkSize,
+		checkIndexValue: e.checkIndexValue,
 	}
 	if worker.batchSize > worker.maxBatchSize {
 		worker.batchSize = worker.maxBatchSize
@@ -475,13 +494,13 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		worker := &tableWorker{
-			workCh:         workCh,
-			finished:       e.finished,
-			buildTblReader: e.buildTableReader,
-			keepOrder:      e.keepOrder,
-			handleIdx:      e.handleIdx,
-			isCheckOp:      e.isCheckOp,
-			memTracker:     memory.NewTracker("tableWorker", -1),
+			workCh:          workCh,
+			finished:        e.finished,
+			buildTblReader:  e.buildTableReader,
+			keepOrder:       e.keepOrder,
+			handleIdx:       e.handleIdx,
+			checkIndexValue: e.checkIndexValue,
+			memTracker:      memory.NewTracker("tableWorker", -1),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
@@ -594,6 +613,9 @@ type indexWorker struct {
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
+
+	// isCheckOp is used to determine whether we need to check the consistency of the index data.
+	checkIndexValue
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -619,7 +641,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	}()
 	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
 	for {
-		handles, err := w.extractTaskHandles(ctx, chk, result)
+		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- errors.Trace(err)
@@ -632,7 +654,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			return count, nil
 		}
 		count += int64(len(handles))
-		task := w.buildTableTask(handles)
+		task := w.buildTableTask(handles, retChunk)
 		select {
 		case <-ctx.Done():
 			return count, nil
@@ -644,28 +666,45 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	}
 }
 
-func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
+func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
+	handles []int64, retChk *chunk.Chunk, err error) {
+	if w.isCheckOp {
+		chk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
+	}
 	handles = make([]int64, 0, w.batchSize)
 	for len(handles) < w.batchSize {
 		err = errors.Trace(idxResult.Next(ctx, chk))
+		log.Warnf("===================================================== extract task handles, batch size: %v, rows: %v", w.batchSize, chk.NumRows())
 		if err != nil {
-			return handles, err
+			return handles, nil, err
 		}
 		if chk.NumRows() == 0 {
-			return handles, nil
+			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			handles = append(handles, chk.GetRow(i).GetInt64(0))
+			h := chk.GetRow(i).GetInt64(chk.NumCols() - 1)
+			handles = append(handles, h)
+
+			if w.isCheckOp {
+				if retChk == nil {
+					retChk = chunk.NewChunkWithCapacity(w.tps, w.maxChunkSize)
+				}
+				retChk.AppendRow(chunk.MutRowFromDatums(chk.GetRow(i).GetDatumRow(w.tps)).ToRow())
+			}
+			if len(w.tps) > 1 {
+				log.Infof("xxx ..... cols len %v, tps len %v, datum1: %v, datum2: %v, handle: %v",
+					chk.NumCols(), len(w.tps), chk.GetRow(i).GetDatum(0, w.tps[0]), chk.GetRow(i).GetDatum(1, w.tps[1]), h)
+			}
 		}
 	}
 	w.batchSize *= 2
 	if w.batchSize > w.maxBatchSize {
 		w.batchSize = w.maxBatchSize
 	}
-	return handles, nil
+	return handles, retChk, nil
 }
 
-func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {
+func (w *indexWorker) buildTableTask(handles []int64, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder map[int64]int
 	if w.keepOrder {
 		// Save the index order.
@@ -677,6 +716,7 @@ func (w *indexWorker) buildTableTask(handles []int64) *lookupTableTask {
 	task := &lookupTableTask{
 		handles:    handles,
 		indexOrder: indexOrder,
+		idxRows:    retChk,
 	}
 	task.doneCh = make(chan error, 1)
 	return task
@@ -694,22 +734,22 @@ type tableWorker struct {
 	memTracker *memory.Tracker
 
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
-	isCheckOp bool
+	checkIndexValue
 }
 
 // pickAndExecTask picks tasks from workCh, and execute them.
 func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	var task *lookupTableTask
 	var ok bool
-	defer func() {
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			log.Errorf("tableWorker panic stack is:\n%s", buf)
-			task.doneCh <- errors.Errorf("%v", r)
-		}
-	}()
+	// 	defer func() {
+	// 		if r := recover(); r != nil {
+	// 			buf := make([]byte, 4096)
+	// 			stackSize := runtime.Stack(buf, false)
+	// 			buf = buf[:stackSize]
+	// 			log.Errorf("tableWorker panic stack is:\n%s", buf)
+	// 			task.doneCh <- errors.Errorf("%v", r)
+	// 		}
+	// 	}()
 	for {
 		// Don't check ctx.Done() on purpose. If background worker get the signal and all
 		// exit immediately, session's goroutine doesn't know this and still calling Next(),
@@ -727,6 +767,107 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	}
 }
 
+func adjustDatumKind(vals1, vals2 []types.Datum) {
+	if len(vals1) != len(vals2) {
+		return
+	}
+
+	for i, val1 := range vals1 {
+		val2 := vals2[i]
+		if val1.Kind() != val2.Kind() {
+			if (val1.Kind() == types.KindBytes || val1.Kind() == types.KindString) &&
+				(val2.Kind() == types.KindBytes || val2.Kind() == types.KindString) {
+				vals1[i].SetBytes(val1.GetBytes())
+				vals2[i].SetBytes(val2.GetBytes())
+			}
+		}
+	}
+}
+
+func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
+	for {
+		chk := tableReader.newFirstChunk()
+		err := tableReader.Next(ctx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if chk.NumRows() == 0 {
+			for h := range task.indexOrder {
+				idxRow := task.idxRows.GetRow(task.indexOrder[h])
+				return errors.Errorf("handle %#v, index:%#v != record:%#v", h, idxRow.GetDatum(0, w.tps[0]), nil)
+			}
+			break
+		}
+
+		tblReaderExec := tableReader.(*TableReaderExecutor)
+		//	str := ""
+		//	for i := 0; i < chk.NumRows(); i++ {
+		//		str += fmt.Sprintf("no.%d, row %v", i, chk.GetRow(i).GetDatumRow(w.tps))
+		//	}
+		//	log.Warnf("rows %v, cnt %v", str, chk.NumRows())
+		i := 0
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			handle := row.GetInt64(row.Len() - 1)
+			offset := task.indexOrder[handle]
+			delete(task.indexOrder, handle)
+			idxRow := task.idxRows.GetRow(offset)
+			vals := make([]types.Datum, 0, len(w.cols))
+			for j, col := range w.cols {
+				if col.IsGenerated() && !col.GeneratedStored {
+					expr := w.genExprs[model.TableColumnID{TableID: w.tbl.Meta().ID, ColumnID: col.ID}]
+					// Eval the column value
+					val, err := expr.Eval(row)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					val, err = table.CastValue(tblReaderExec.ctx, val, col.ColumnInfo)
+					if err != nil {
+						return errors.Trace(err)
+					}
+
+					//	if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
+					//		t := val.GetMysqlTime()
+					//		if t.Type == mysql.TypeTimestamp {
+					//			err := t.ConvertTimeZone(sysLoc, time.UTC)
+					//			if err != nil {
+					//				return errors.Trace(err)
+					//			}
+					//			val.SetMysqlTime(t)
+					//		}
+					//	}
+					vals = append(vals, val)
+					log.Infof("xxx ------------------------------------------- col %v, val %v", col, val)
+				} else {
+					vals = append(vals, row.GetDatum(j, &col.FieldType))
+					log.Infof("xxx ------------------------------------------- j %v, row len %v, cols len %v, col %v, rows %v, handles %v, val %v",
+						j, row.Len(), len(w.cols), col, chk.NumRows(), len(task.handles), vals[j])
+				}
+			}
+			vals = tables.TruncateIndexValuesIfNeeded(w.tbl.Meta(), w.idxInfo, vals)
+			for j, val := range vals {
+				col := w.cols[j]
+				tp := &col.FieldType
+				log.Infof("xxx ------------------------------------------- i:%v, j:%v, idx cols %v, tbl cols %d, col %v, idx %v, tbl %v, tp %v",
+					i, j, idxRow.Len(), len(tableReader.Schema().Columns), col, idxRow.GetDatum(j, tp), val, tp)
+				ret := chunk.Compare(idxRow, j, &val)
+
+				log.Warnf("xxx no.%v, order %v, j %v, row handle: %v, idx handle: %v, name:%v, tbl d:%v, idx d:%v",
+					i, offset, j, idxRow.GetInt64(idxRow.Len()-1), handle,
+					tableReader.Schema().Columns[j].ColName, val, idxRow.GetDatum(j, tp))
+				if ret != 0 {
+					log.Errorf("handle %#v, index:%#v != record:%#v", handle, idxRow.GetDatum(j, tp), vals[j])
+					// panic("xxx")
+					return errors.Errorf("handle %#v, index:%#v != record:%#v", handle, idxRow.GetDatum(j, tp), vals[j])
+				}
+			}
+			i++
+		}
+	}
+
+	return nil
+}
+
 // executeTask executes the table look up tasks. We will construct a table reader and send request by handles.
 // Then we hold the returning rows and finish this task.
 func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) error {
@@ -736,6 +877,17 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		return errors.Trace(err)
 	}
 	defer terror.Call(tableReader.Close)
+
+	if w.isCheckOp {
+		//		str := ""
+		//		for i, row := range task.idxRows {
+		//			str += fmt.Sprintf("no.%d row %v  ", i, row.GetDatumRow(w.tps))
+		//		}
+		//		log.Errorf("======= execute task. rows %v\n handles: %v", str, task.handles)
+		tblReaderExec := tableReader.(*TableReaderExecutor)
+		log.Errorf("======= execute task. handles: %v, order %v, tps %v", task.handles, tblReaderExec.keepOrder, w.tps)
+		return w.compareData(ctx, task, tableReader)
+	}
 
 	task.memTracker = w.memTracker
 	memUsage := int64(cap(task.handles) * 8)
@@ -776,15 +928,15 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if w.isCheckOp && handleCnt != len(task.rows) {
-		obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
-		for _, row := range task.rows {
-			handle := row.GetInt64(w.handleIdx)
-			obtainedHandlesMap[handle] = struct{}{}
-		}
-		return errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
-			handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
-	}
+	// if w.isCheckOp && handleCnt != len(task.rows) {
+	// 	obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
+	// 	for _, row := range task.rows {
+	// 		handle := row.GetInt64(w.handleIdx)
+	// 		obtainedHandlesMap[handle] = struct{}{}
+	// 	}
+	// 	return errors.Errorf("handle count %d isn't equal to value count %d, missing handles %v in a batch",
+	// 		handleCnt, len(task.rows), GetLackHandles(task.handles, obtainedHandlesMap))
+	// }
 
 	return nil
 }

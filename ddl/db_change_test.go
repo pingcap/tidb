@@ -75,7 +75,7 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
+	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
@@ -602,17 +602,19 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
-func (s *testStateChangeSuite) TestParallelColumnModifyingDefinition(c *C) {
-	sql1 := "insert into t(b) values (null);"
-	sql2 := "alter table t change b b2 bigint not null;"
-	f := func(c *C, err1, err2 error) {
-		c.Assert(err1, IsNil)
-		if err2 != nil {
-			c.Assert(err2.Error(), Equals, "[ddl:1265]Data truncated for column 'b2' at row 1")
-		}
-	}
-	s.testControlParallelExecSQL(c, sql1, sql2, f)
-}
+// TODO: This test is not a test that performs two DDLs in parallel.
+// So we should not use the function of testControlParallelExecSQL. We will handle this test in the next PR.
+// func (s *testStateChangeSuite) TestParallelColumnModifyingDefinition(c *C) {
+// 	sql1 := "insert into t(b) values (null);"
+// 	sql2 := "alter table t change b b2 bigint not null;"
+// 	f := func(c *C, err1, err2 error) {
+// 		c.Assert(err1, IsNil)
+// 		if err2 != nil {
+// 			c.Assert(err2.Error(), Equals, "[ddl:1265]Data truncated for column 'b2' at row 1")
+// 		}
+// 	}
+// 	s.testControlParallelExecSQL(c, sql1, sql2, f)
+// }
 
 func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 	sql1 := "ALTER TABLE t CHANGE a aa int;"
@@ -640,6 +642,17 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist index_b")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
+	sql1 := `alter table t_part add partition (
+    partition p2 values less than (30)
+   );`
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql1, f)
 }
 
 func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
@@ -670,6 +683,14 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table t")
+
+	_, err = s.se.Execute(context.Background(), "drop database if exists t_part")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table t_part (a int key)
+	 partition by range(a) (
+	 partition p0 values less than (10),
+	 partition p1 values less than (20)
+	 );`)
 
 	callback := &ddl.TestDDLCallback{}
 	times := 0
@@ -710,16 +731,33 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	c.Assert(err, IsNil)
 	wg.Add(2)
 	ch := make(chan struct{})
+	// Make sure the sql1 is put into the DDLJobQueue.
+	go func() {
+		var qLen int
+		for {
+			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				jobs, err3 := admin.GetDDLJobs(txn)
+				if err3 != nil {
+					return err3
+				}
+				qLen = len(jobs)
+				return nil
+			})
+			if qLen == 1 {
+				// Make sure sql2 is executed after the sql1.
+				close(ch)
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
 	go func() {
 		defer wg.Done()
-		close(ch)
 		_, err1 = se.Execute(context.Background(), sql1)
 	}()
 	go func() {
 		defer wg.Done()
 		<-ch
-		// Make sure sql2 is executed after the sql1.
-		time.Sleep(time.Millisecond * 10)
 		_, err2 = se1.Execute(context.Background(), sql2)
 	}()
 

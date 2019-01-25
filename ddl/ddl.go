@@ -54,21 +54,21 @@ const (
 	ddlPrompt   = "ddl"
 
 	shardRowIDBitsMax = 15
-)
-
-var (
-	// TableColumnCountLimit is limit of the number of columns in a table.
-	// It's exported for testing.
-	TableColumnCountLimit = 512
-	// EnableSplitTableRegion is a flag to decide whether to split a new region for
-	// a newly created table. It takes effect only if the Storage supports split
-	// region.
-	EnableSplitTableRegion = false
 
 	// PartitionCountLimit is limit of the number of partitions in a table.
 	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
 	PartitionCountLimit = 1024
+)
+
+var (
+	// TableColumnCountLimit is limit of the number of columns in a table.
+	// It's exported for testing.
+	TableColumnCountLimit = uint32(512)
+	// EnableSplitTableRegion is a flag to decide whether to split a new region for
+	// a newly created table. It takes effect only if the Storage supports split
+	// region.
+	EnableSplitTableRegion = uint32(0)
 )
 
 var (
@@ -83,6 +83,7 @@ var (
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
 	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
 
+	errUnknownPartition = terror.ClassDDL.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex     = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn     = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
@@ -200,6 +201,8 @@ var (
 	ErrWarnDataTruncated = terror.ClassDDL.New(codeWarnDataTruncated, mysql.MySQLErrName[mysql.WarnDataTruncated])
 	// ErrCoalesceOnlyOnHashPartition returns coalesce partition can only be used on hash/key partitions.
 	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
+	// ErrViewWrongList returns create view must include all columns in the select clause
+	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -207,6 +210,7 @@ type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
@@ -214,7 +218,7 @@ type DDL interface {
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
-	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
+	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -236,6 +240,8 @@ type DDL interface {
 	GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (int64, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
+	// GetHook gets the hook. It's exported for testing.
+	GetHook() Callback
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -245,7 +251,9 @@ type ddl struct {
 	quitCh     chan struct{}
 
 	*ddlCtx
-	workers map[workerType]*worker
+	workers     map[workerType]*worker
+	sessPool    *sessionPool
+	delRangeMgr delRangeManager
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -363,6 +371,19 @@ func (d *ddl) Stop() error {
 	return nil
 }
 
+func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
+	var delRangeMgr delRangeManager
+	if !mock {
+		delRangeMgr = newDelRangeManager(d.store, d.sessPool)
+		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !d.store.SupportDeleteRange())
+	} else {
+		delRangeMgr = newMockDelRangeManager()
+	}
+
+	delRangeMgr.start()
+	return delRangeMgr
+}
+
 // start campaigns the owner and starts workers.
 // ctxPool is used for the worker's delRangeManager and creates sessions.
 func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
@@ -376,8 +397,10 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		terror.Log(errors.Trace(err))
 
 		d.workers = make(map[workerType]*worker, 2)
-		d.workers[generalWorker] = newWorker(generalWorker, d.store, ctxPool)
-		d.workers[addIdxWorker] = newWorker(addIdxWorker, d.store, ctxPool)
+		d.sessPool = newSessionPool(ctxPool)
+		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
+		d.workers[generalWorker] = newWorker(generalWorker, d.store, d.sessPool, d.delRangeMgr)
+		d.workers[addIdxWorker] = newWorker(addIdxWorker, d.store, d.sessPool, d.delRangeMgr)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
@@ -414,6 +437,13 @@ func (d *ddl) close() {
 	for _, worker := range d.workers {
 		worker.close()
 	}
+	if d.sessPool != nil {
+		d.sessPool.close()
+	}
+	if d.delRangeMgr != nil {
+		d.delRangeMgr.clear()
+	}
+
 	log.Infof("[ddl] closing DDL:%s takes time %v", d.uuid, time.Since(startTime))
 }
 
@@ -531,7 +561,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			continue
 		}
 
-		// If a job is a history job, the state must be JobSynced or JobCancel.
+		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
 			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
 			return nil
@@ -540,7 +570,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		if historyJob.Error != nil {
 			return errors.Trace(historyJob.Error)
 		}
-		panic("When the state is JobCancel, historyJob.Error should never be nil")
+		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
 }
 
@@ -555,6 +585,14 @@ func (d *ddl) callHookOnChanged(err error) error {
 // SetBinlogClient implements DDL.SetBinlogClient interface.
 func (d *ddl) SetBinlogClient(binlogCli *pumpcli.PumpsClient) {
 	d.binlogCli = binlogCli
+}
+
+// GetHook implements DDL.GetHook interface.
+func (d *ddl) GetHook() Callback {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.mu.hook
 }
 
 // DDL error codes.
@@ -610,6 +648,7 @@ const (
 	codeWrongKeyColumn                         = 1167
 	codeBlobKeyWithoutLength                   = 1170
 	codeInvalidOnUpdate                        = 1294
+	codeViewWrongList                          = 1353
 	codeUnsupportedOnGeneratedColumn           = 3106
 	codeGeneratedColumnNonPrior                = 3107
 	codeDependentByGeneratedColumn             = 3108
@@ -636,6 +675,7 @@ const (
 	codeWrongExprInPartitionFunc               = terror.ErrCode(mysql.ErrWrongExprInPartitionFunc)
 	codeWarnDataTruncated                      = terror.ErrCode(mysql.WarnDataTruncated)
 	codeCoalesceOnlyOnHashPartition            = terror.ErrCode(mysql.ErrCoalesceOnlyOnHashPartition)
+	codeUnknownPartition                       = terror.ErrCode(mysql.ErrUnknownPartition)
 )
 
 func init() {
@@ -667,6 +707,7 @@ func init() {
 		codeTableMustHaveColumns:                   mysql.ErrTableMustHaveColumns,
 		codeTooManyFields:                          mysql.ErrTooManyFields,
 		codeErrTooLongIndexComment:                 mysql.ErrTooLongIndexComment,
+		codeViewWrongList:                          mysql.ErrViewWrongList,
 		codeUnknownCharacterSet:                    mysql.ErrUnknownCharacterSet,
 		codePartitionsMustBeDefined:                mysql.ErrPartitionsMustBeDefined,
 		codePartitionMgmtOnNonpartitioned:          mysql.ErrPartitionMgmtOnNonpartitioned,
@@ -685,6 +726,7 @@ func init() {
 		codeWrongExprInPartitionFunc:               mysql.ErrWrongExprInPartitionFunc,
 		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
 		codeCoalesceOnlyOnHashPartition:            mysql.ErrCoalesceOnlyOnHashPartition,
+		codeUnknownPartition:                       mysql.ErrUnknownPartition,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

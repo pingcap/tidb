@@ -120,7 +120,7 @@ type PlanBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
-	// Collect the visit information for privilege check.
+	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
@@ -197,9 +197,9 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt:
-		return b.buildSimple(node.(ast.StmtNode)), nil
+		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
-		return b.buildDDL(x), nil
+		return b.buildDDL(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -276,7 +276,7 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	return p, nil
 }
 
-// Detect aggregate function or groupby clause.
+// detectSelectAgg detects an aggregate function or GROUP BY clause.
 func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
@@ -430,42 +430,46 @@ func (b *PlanBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
 	}
 
-	id := 1
-	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
-	for _, idxCol := range idx.Columns {
-		for _, col := range tblInfo.Columns {
-			if idxCol.Name.L == col.Name.L {
-				columns = append(columns, col)
-				schema.Append(&expression.Column{
-					ColName:  col.Name,
-					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-					RetType:  &col.FieldType,
-				})
-			}
-		}
-	}
-	is := PhysicalIndexScan{
-		Table:            tblInfo,
-		TableAsName:      &tblName.Name,
-		DBName:           dbName,
-		Columns:          columns,
-		Index:            idx,
-		dataSourceSchema: schema,
-		Ranges:           ranger.FullRange(),
-		KeepOrder:        false,
-	}.Init(b.ctx)
-	is.stats = property.NewSimpleStats(0)
-	cop := &copTask{indexPlan: is}
-	// It's double read case.
-	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.Init(b.ctx)
-	ts.SetSchema(is.dataSourceSchema)
-	cop.tablePlan = ts
-	is.initSchema(id, idx, true)
-	t := finishCopTask(b.ctx, cop)
-
-	rootT := t.(*rootTask)
-	return rootT.p, nil
+	// TODO: Handle generated column.
+	genExprs := make(map[model.TableColumnID]expression.Expression)
+	reader := b.buildPhysicalIndexLookUpReader(dbName, tbl, idx, 1, genExprs)
+	return reader, nil
+	//	id := 1
+	//	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
+	//	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
+	//	for _, idxCol := range idx.Columns {
+	//		for _, col := range tblInfo.Columns {
+	//			if idxCol.Name.L == col.Name.L {
+	//				columns = append(columns, col)
+	//				schema.Append(&expression.Column{
+	//					ColName:  col.Name,
+	//					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+	//					RetType:  &col.FieldType,
+	//				})
+	//			}
+	//		}
+	//	}
+	//	is := PhysicalIndexScan{
+	//		Table:            tblInfo,
+	//		TableAsName:      &tblName.Name,
+	//		DBName:           dbName,
+	//		Columns:          columns,
+	//		Index:            idx,
+	//		dataSourceSchema: schema,
+	//		Ranges:           ranger.FullRange(),
+	//		KeepOrder:        false,
+	//	}.Init(b.ctx)
+	//	is.stats = property.NewSimpleStats(0)
+	//	cop := &copTask{indexPlan: is}
+	//	// It's double read case.
+	//	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.Init(b.ctx)
+	//	ts.SetSchema(is.dataSourceSchema)
+	//	cop.tablePlan = ts
+	//	is.initSchema(id, idx, true)
+	//	t := finishCopTask(b.ctx, cop)
+	//
+	//	rootT := t.(*rootTask)
+	//	return rootT.p, nil
 }
 
 func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
@@ -543,10 +547,80 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 	return ret, nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexScan(dbName model.CIStr, tblInfo *model.TableInfo, idx *model.IndexInfo, id int) Plan {
-	columns := make([]*model.ColumnInfo, 0, 1)
-	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
-	columns = append(columns, model.NewExtraHandleColInfo())
+func getGenColumns(expr expression.Expression) []*expression.Column {
+	col, ok := expr.(*expression.Column)
+	if ok {
+		return []*expression.Column{col}
+	}
+
+	scalaFunc, isScalaFunc := expr.(*expression.ScalarFunction)
+	if !isScalaFunc {
+		return nil
+	}
+	cols := make([]*expression.Column, 0, len(scalaFunc.GetArgs()))
+	for _, arg := range scalaFunc.GetArgs() {
+		retCols := getGenColumns(arg)
+		if retCols != nil {
+			log.Infof("get gen col %#v", col)
+			cols = append(cols, retCols...)
+		}
+	}
+	return cols
+}
+
+func (b *PlanBuilder) buildPhysicalIndexLookUpReader(dbName model.CIStr, tbl table.Table, idx *model.IndexInfo, id int,
+	genExprs map[model.TableColumnID]expression.Expression) Plan {
+	tblInfo := tbl.Meta()
+	columns := make([]*model.ColumnInfo, 0, len(idx.Columns))
+	tblColumns := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
+	str := ""
+	str2 := ""
+	var genCols []*expression.Column
+	colsMap := make(map[int64]struct{})
+	for _, idxCol := range idx.Columns {
+		for _, col := range tblInfo.Columns {
+			if idxCol.Name.L == col.Name.L {
+				columns = append(columns, col)
+				tblColumns = append(tblColumns, col)
+				schema.Append(&expression.Column{
+					ColName:  col.Name,
+					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  &col.FieldType,
+				})
+				colsMap[col.ID] = struct{}{}
+				str += fmt.Sprintf("col %v, field tp %v ", col.Name, col.FieldType)
+				str2 += fmt.Sprintf("col %v, field tp %v ", col.Name, col.FieldType)
+			}
+			genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
+			if expr, ok := genExprs[genColumnID]; ok {
+				cols := getGenColumns(expr)
+				if cols != nil {
+					genCols = append(genCols, cols...)
+				}
+			}
+		}
+	}
+
+	tblSchema := schema.Clone()
+	for _, col := range genCols {
+		if _, ok := colsMap[col.ID]; !ok {
+			c := table.FindCol(tbl.Cols(), col.ColName.O)
+			if c != nil {
+				log.Infof("222 gen col %v, field tp %v; ", col.ColName, col.RetType)
+				col.Index = len(tblColumns)
+				tblColumns = append(tblColumns, c.ColumnInfo)
+				tblSchema.Append(&expression.Column{
+					ColName:  c.Name,
+					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  &c.FieldType,
+				})
+				str2 += fmt.Sprintf("col %v, field tp %v; ", c.Name, c.FieldType)
+				colsMap[c.ID] = struct{}{}
+			}
+		}
+	}
+	tblColumns = append(tblColumns, model.NewExtraHandleColInfo())
 	handleCol := &expression.Column{
 		DBName:   dbName,
 		TblName:  tblInfo.Name,
@@ -555,7 +629,9 @@ func (b *PlanBuilder) buildPhysicalIndexScan(dbName model.CIStr, tblInfo *model.
 		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 	}
-	schema.Append(handleCol)
+	str2 += fmt.Sprintf("col %v", tblColumns[len(tblColumns)-1].Name)
+	tblSchema.Append(handleCol)
+	log.Warnf("table %v, idx:%v, columns %#v, tbl columns %#v, len %v", tblInfo.Name, idx.Name, str, str2, len(tblColumns))
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
 		TableAsName:      &tblInfo.Name,
@@ -569,8 +645,10 @@ func (b *PlanBuilder) buildPhysicalIndexScan(dbName model.CIStr, tblInfo *model.
 	is.stats = property.NewSimpleStats(0)
 	cop := &copTask{indexPlan: is}
 	// It's double read case.
-	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.Init(b.ctx)
-	ts.SetSchema(is.dataSourceSchema)
+	// ts := PhysicalTableScan{Columns: columns, Table: is.Table}.Init(b.ctx)
+	// ts.SetSchema(is.dataSourceSchema)
+	ts := PhysicalTableScan{Columns: tblColumns, Table: is.Table}.Init(b.ctx)
+	ts.SetSchema(tblSchema)
 	cop.tablePlan = ts
 	is.initSchema(id, idx, true)
 	t := finishCopTask(b.ctx, cop)
@@ -578,7 +656,8 @@ func (b *PlanBuilder) buildPhysicalIndexScan(dbName model.CIStr, tblInfo *model.
 	return rootT.p
 }
 
-func (b *PlanBuilder) buildPhysicalIndexScans(dbName model.CIStr, tbl table.Table) ([]Plan, []table.Index, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(dbName model.CIStr, tbl table.Table,
+	genExprs map[model.TableColumnID]expression.Expression) ([]Plan, []table.Index, error) {
 	tblInfo := tbl.Meta()
 	// get index information
 	indices := make([]table.Index, 0, len(tblInfo.Indices))
@@ -589,7 +668,7 @@ func (b *PlanBuilder) buildPhysicalIndexScans(dbName model.CIStr, tbl table.Tabl
 			log.Warnf("index %s state %s isn't public in table %s", idxInfo.Name, idxInfo.State, tblInfo.Name)
 		} else {
 			indices = append(indices, idx)
-			reader := b.buildPhysicalIndexScan(dbName, tblInfo, idxInfo, i)
+			reader := b.buildPhysicalIndexLookUpReader(dbName, tbl, idxInfo, i, genExprs)
 			indexLookUpReaders = append(indexLookUpReaders, reader)
 		}
 	}
@@ -640,7 +719,7 @@ func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, erro
 		p.GenExprs[genColumnID] = expr
 	}
 
-	readerPlans, indices, err := b.buildPhysicalIndexScans(tbl.Schema, table)
+	readerPlans, indices, err := b.buildPhysicalIndexLookUpReaders(tbl.Schema, table, p.GenExprs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -820,6 +899,10 @@ const (
 )
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	for _, tbl := range as.TableNames {
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "")
+	}
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
 	} else {
@@ -1021,7 +1104,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildSimple(node ast.StmtNode) Plan {
+func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
@@ -1044,8 +1127,12 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) Plan {
 				}
 			}
 		}
+	case *ast.UseStmt:
+		if raw.DBName == "" {
+			return nil, ErrNoDB
+		}
 	}
-	return p
+	return p, nil
 }
 
 func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
@@ -1463,7 +1550,7 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
+func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
@@ -1493,6 +1580,30 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 				privilege: mysql.SelectPriv,
 				db:        v.ReferTable.Schema.L,
 				table:     v.ReferTable.Name.L,
+			})
+		}
+	case *ast.CreateViewStmt:
+		plan, err := b.Build(v.Select)
+		if err != nil {
+			return nil, err
+		}
+		schema := plan.Schema()
+		if v.Cols != nil && len(v.Cols) != schema.Len() {
+			return nil, ddl.ErrViewWrongList
+		}
+		// we use fieldList to store schema.Columns temporary
+		var fieldList = make([]*ast.SelectField, schema.Len())
+		for i, col := range schema.Columns {
+			fieldList[i] = &ast.SelectField{AsName: col.ColName}
+		}
+		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
+		if _, ok := plan.(LogicalPlan); ok {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				// TODO: We should check CreateViewPriv instead of CreatePriv.
+				// See https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_create-view.
+				privilege: mysql.CreatePriv,
+				db:        v.ViewName.Schema.L,
+				table:     v.ViewName.Name.L,
 			})
 		}
 	case *ast.DropDatabaseStmt:
@@ -1534,7 +1645,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 	}
 
 	p := &DDL{Statement: node}
-	return p
+	return p, nil
 }
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the
@@ -1747,7 +1858,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
 	case ast.ShowMasterStatus:
-		names = []string{"File", "UniqueID", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
+		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPrivileges:
 		names = []string{"Privilege", "Context", "Comment"}

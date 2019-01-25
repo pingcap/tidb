@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"time"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -556,6 +557,7 @@ func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
 // DecodeOne decodes one value to chunk and returns the remained bytes.
 func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (remain []byte, err error) {
 	if len(b) < 1 {
+		log.Errorf("-------- idx %d, fp %v", colIdx, ft)
 		return nil, errors.New("invalid encoded key")
 	}
 	chk := decoder.chk

@@ -18,17 +18,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ngaut/log"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestAdminCheckIndexRange(c *C) {
+func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists check_index_test;`)
@@ -54,7 +54,7 @@ func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInf
 	return nil
 }
 
-func (s *testSuite) TestAdminRecoverIndex(c *C) {
+func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -168,7 +168,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminRecoverIndex1(c *C) {
+func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
@@ -219,7 +219,7 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tk.MustExec("admin check index admin_test `primary`")
 }
 
-func (s *testSuite) TestAdminCleanupIndex(c *C) {
+func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -298,7 +298,7 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
+func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -346,7 +346,7 @@ func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
+func (s *testSuite2) TestAdminCleanupIndexMore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -409,12 +409,15 @@ func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCheckTableFailed(c *C) {
+func (s *testSuite2) TestAdminCheckTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key(c1), key(c3), unique key(c2), key(c2, c3))")
-	tk.MustExec("insert admin_test (c1, c2, c3) values (1, 11, 21), (2, 12, 22), (5, 15, 23), (10, 20, 30), (20, 30, 40)")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 varchar(255) default '1', primary key(c1), key(c3), unique key(c2), key(c2, c3))")
+	// tk.MustExec("create table admin_test (c1 int, c2 int, c3 varchar(255) default '1', primary key(c1), key(c3))")
+	// tk.MustExec("create table admin_test (c1 int, c2 int, c3 varchar(255) default '1', primary key(c1), unique key(c2))")
+	// tk.MustExec("insert admin_test (c1, c2, c3) values (1, 11, 'a'), (2, 12, 'b'), (5, 15, 'c'), (10, 20, 'd'), (20, 30, 'e')")
+	tk.MustExec("insert admin_test (c1, c2, c3) values (1, 11, '1'), (2, 12, '2'), (5, 15, '3'), (10, 20, '4'), (20, 30, '5')")
 
 	// Make some corrupted index. Build the index information.
 	s.ctx = mock.NewContext()
@@ -425,6 +428,7 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 	tbl, err := is.TableByName(dbName, tblName)
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
+	// idxInfo := findIndexByName("c3", tblInfo.Indices)
 	idxInfo := findIndexByName("c2", tblInfo.Indices)
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
@@ -433,58 +437,80 @@ func (s *testSuite) TestAdminCheckTableFailed(c *C) {
 
 	// Reduce one row of index.
 	// Table count > index count.
+	// Index c2 is missing 11.
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(11), 1)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
+	log.Errorf("...................................................................................... 00")
 	_, err = tk.Exec("admin check table admin_test")
 	c.Assert(err.Error(), Equals,
 		"[executor:8003]admin_test err:[admin:1]index:<nil> != record:&admin.RecordData{Handle:1, Values:[]types.Datum{types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:11, b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 5"))
+	log.Errorf("...................................................................................... 01")
 	tk.MustExec("admin check table admin_test")
+	log.Errorf("...................................................................................... 1")
 
 	// Add one row of index.
 	// Table count < index count.
+	// Index c2 has two more values ​​than table data: 21, 13.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(21), 1)
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(13), 2)
-	c.Assert(err, IsNil)
+	//	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(13), 2)
+	//	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "admin check table admin_test, index c2, at least two indices have the same handle 2 more than one")
+	c.Assert(err.Error(), Equals, "handle 1, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:21, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:11, b:[]uint8(nil), x:interface {}(nil)}")
+	log.Errorf("...................................................................................... 2")
 
 	// Table count = index count.
+	// Two indices have the same handle.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2)
-	c.Assert(err, IsNil)
+	// err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2)
+	// c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), 2)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
-	c.Assert(err.Error(), Equals, "admin check table admin_test, index c2, at least two indices have the same handle 1 more than one")
+	// c.Assert(err.Error(), Equals, "admin check table admin_test, index c2, at least two indices have the same handle 1 more than one")
+	c.Assert(err.Error(), Equals, "handle 1, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:21, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:11, b:[]uint8(nil), x:interface {}(nil)}")
+
+	// Table count = index count.
+	// Index c2 has one line of data is 21, the corresponding table data is 11.
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(12), 2)
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(11), 1)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("admin check table admin_test")
+	// c.Assert(err.Error(), Equals, "admin check table admin_test, index c2, at least two indices have the same handle 1 more than one")
+	c.Assert(err.Error(), Equals, "handle 1, index:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:21, b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, collation:0x0, decimal:0x0, length:0x0, i:11, b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Recover records.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(21), 1)
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(12), 2)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(11), 1)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	tk.MustExec("admin check table admin_test")
 }
 
-func (s *testSuite) TestAdminCheckTable(c *C) {
+func (s *testSuite1) TestAdminCheckTablex(c *C) {
 	// test NULL value.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -540,16 +566,16 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 
 	// Test index in virtual generated column.
 	tk.MustExec(`drop table if exists test`)
-	tk.MustExec(`create table test ( b json , c int as (JSON_EXTRACT(b,'$.d')) , index idxc(c));`)
+	tk.MustExec(`create table test ( b json , c int as (JSON_EXTRACT(b,'$.d')), index idxc(c));`)
 	tk.MustExec(`INSERT INTO test set b='{"d": 100}';`)
 	tk.MustExec(`admin check table test;`)
 	// Test prefix index.
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`CREATE TABLE t (
-  			ID CHAR(32) NOT NULL,
-  			name CHAR(32) NOT NULL,
-  			value CHAR(255),
-  			INDEX indexIDname (ID(8),name(8)));`)
+	  			ID CHAR(32) NOT NULL,
+	  			name CHAR(32) NOT NULL,
+	  			value CHAR(255),
+	  			INDEX indexIDname (ID(8),name(8)));`)
 	tk.MustExec(`INSERT INTO t VALUES ('keyword','urlprefix','text/ /text');`)
 	tk.MustExec(`admin check table t;`)
 
@@ -584,7 +610,7 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`ADMIN CHECK TABLE td1;`)
 }
 
-func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
+func (s *testSuite1) TestAdminCheckPrimaryIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
@@ -592,49 +618,7 @@ func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
 	tk.MustExec("admin check index t idx;")
 }
 
-func (s *testSuite) TestAdminShowNextID(c *C) {
-	step := int64(10)
-	autoIDStep := autoid.GetStep()
-	autoid.SetStep(step)
-	defer autoid.SetStep(autoIDStep)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, c int)")
-	// Start handle is 1.
-	r := tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1"))
-	// Row ID is step + 1.
-	tk.MustExec("insert into t values(1, 1)")
-	r = tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11"))
-	// Row ID is original + step.
-	for i := 0; i < int(step); i++ {
-		tk.MustExec("insert into t values(10000, 1)")
-	}
-	r = tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21"))
-
-	// test for a table with the primary key
-	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
-	// Start handle is 1.
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1"))
-	// After rebasing auto ID, row ID is 20 + step + 1.
-	tk.MustExec("insert into tt values(20, 1)")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31"))
-	// test for renaming the table
-	tk.MustExec("create database test1")
-	tk.MustExec("rename table test.tt to test1.tt")
-	tk.MustExec("use test1")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31"))
-	tk.MustExec("insert test1.tt values ()")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41"))
-}
-
-func (s *testSuite) TestAdminCheckWithSnapshot(c *C) {
+func (s *testSuite2) TestAdminCheckWithSnapshot(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_t_s")
@@ -669,7 +653,7 @@ func (s *testSuite) TestAdminCheckWithSnapshot(c *C) {
 
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
-	safePointValue := "20060102-15:04:05 -0700 MST"
+	safePointValue := "20060102-15:04:05 -0700"
 	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
 	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY

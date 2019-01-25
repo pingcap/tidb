@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -59,7 +60,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if EnableSplitTableRegion {
+		if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			// TODO: Add restrictions to this operation.
 			go splitTableRegion(d.store, tbInfo.ID)
 		}
@@ -72,10 +73,45 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 }
 
+func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	schemaID := job.SchemaID
+	tbInfo := &model.TableInfo{}
+	var orReplace bool
+	if err := job.DecodeArgs(tbInfo, &orReplace); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tbInfo.State = model.StateNone
+	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	switch tbInfo.State {
+	case model.StateNone:
+		// none -> public
+		tbInfo.State = model.StatePublic
+		tbInfo.UpdateTS = t.StartTS
+		err = t.CreateTable(schemaID, tbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateView, TableInfo: tbInfo})
+		return ver, nil
+	default:
+		return ver, ErrInvalidTableState.GenWithStack("invalid view state %v", tbInfo.State)
+	}
+}
+
 func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
-
 	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
@@ -95,6 +131,16 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		))
+	}
+
+	if job.IsRollingback() {
+		// To simplify the rollback logic, cannot be canceled after job start to run.
+		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+		if tblInfo.State == model.StatePublic {
+			job.State = model.JobStateCancelled
+			return ver, errCancelledDDLJob
+		}
+		job.State = model.JobStateRunning
 	}
 
 	originalState := job.SchemaState
@@ -146,7 +192,7 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 }
 
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
-	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID))
+	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	return tbl, errors.Trace(err)
 }
@@ -459,6 +505,13 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	err = checkAddPartitionValue(tblInfo, partInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	err = checkPartitionNameUnique(tblInfo, partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled

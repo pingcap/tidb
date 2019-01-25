@@ -16,6 +16,7 @@ package chunk
 import (
 	"sort"
 
+	"github.com/ngaut/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -185,6 +186,7 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 	case types.KindFloat64:
 		return types.CompareFloat64(row.GetFloat64(colIdx), ad.GetFloat64())
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
+		log.Errorf("compare idx %v, len %v, ad kind %d", colIdx, row.Len(), ad.Kind())
 		return types.CompareString(row.GetString(colIdx), ad.GetString())
 	case types.KindMysqlDecimal:
 		l, r := row.GetMyDecimal(colIdx), ad.GetMysqlDecimal()

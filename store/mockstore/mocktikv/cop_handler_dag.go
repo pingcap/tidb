@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -67,6 +68,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		rowCnt int
 	)
 	ctx := context.TODO()
+	log.Errorf("tp: %v, offsets:%v", dagReq.Executors[0].Tp, dagReq.OutputOffsets)
 	for {
 		var row [][]byte
 		row, err = e.Next(ctx)
@@ -185,6 +187,7 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 
 func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*tableScanExec, error) {
 	columns := executor.TblScan.Columns
+	log.Infof("table scan, columns %v, col %v", len(columns), columns[0])
 	ctx.evalCtx.setColumnInfo(columns)
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
 	if err != nil {
@@ -208,6 +211,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*indexScanExec, error) {
 	var err error
 	columns := executor.IdxScan.Columns
+	log.Warnf("index scan 111, columns %v", len(executor.IdxScan.Columns))
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
 	pkStatus := pkColNotExists
@@ -223,6 +227,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		pkStatus = pkColIsSigned
 		columns = columns[:length-1]
 	}
+	log.Warnf("index scan 222, columns %v, col %#v, pk status:%v", len(columns), columns[0], pkStatus)
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
 	if err != nil {
 		return nil, errors.Trace(err)

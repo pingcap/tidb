@@ -315,7 +315,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
 		}
-		return value, nil
+		_, err := parseTimeZone(value)
+		return value, err
 	case ValidatePasswordLength, ValidatePasswordNumberCount:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case WarningCount, ErrorCount:

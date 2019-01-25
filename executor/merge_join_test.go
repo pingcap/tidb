@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -215,18 +214,18 @@ const plan3 = `[[TableScan_12 {
 } ]]`
 
 func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
-	explainedSql := "explain " + sql
-	result := tk.MustQuery(explainedSql)
+	explainedSQL := "explain " + sql
+	result := tk.MustQuery(explainedSQL)
 	resultStr := fmt.Sprintf("%v", result.Rows())
 	if !strings.ContainsAny(resultStr, "MergeJoin") {
-		c.Error("Expected MergeJoin in plannercore.")
+		c.Error("Expected MergeJoin in plan.")
 	}
 	return tk.MustQuery(sql)
 }
 
 func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testkit.Result {
-	explainedSql := "explain " + sql
-	result := tk.MustQuery(explainedSql)
+	explainedSQL := "explain " + sql
+	result := tk.MustQuery(explainedSQL)
 	resultStr := fmt.Sprintf("%v", result.Rows())
 	if plan != resultStr {
 		// TODO: Reopen it after refactoring explain.
@@ -235,7 +234,7 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 	return tk.MustQuery(sql)
 }
 
-func (s *testSuite) TestMergeJoin(c *C) {
+func (s *testSuite1) TestMergeJoin(c *C) {
 	// FIXME: the TIDB_SMJ hint does not really work when there is no index on join onCondition.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -302,14 +301,6 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
 	tk.MustExec("rollback;")
 
-	plannercore.AllowCartesianProduct = false
-	_, err := tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t, t1")
-	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t left join t1 on 1")
-	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t right join t1 on 1")
-	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	plannercore.AllowCartesianProduct = true
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int)")
@@ -333,7 +324,7 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	tk.MustQuery("select /*+ TIDB_SMJ(t, s) */ count(*) from t join s on t.a = s.a").Check(testkit.Rows("4"))
 }
 
-func (s *testSuite) Test3WaysMergeJoin(c *C) {
+func (s *testSuite1) Test3WaysMergeJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 

@@ -21,6 +21,9 @@ import (
 	"time"
 )
 
+// CommitDetailCtxKey presents CommitDetail info key in context.
+const CommitDetailCtxKey = "commitDetail"
+
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	ProcessTime   time.Duration
@@ -29,6 +32,21 @@ type ExecDetails struct {
 	RequestCount  int
 	TotalKeys     int64
 	ProcessedKeys int64
+	CommitDetail  *CommitDetails
+}
+
+// CommitDetails contains commit detail information.
+type CommitDetails struct {
+	GetCommitTsTime   time.Duration
+	PrewriteTime      time.Duration
+	CommitTime        time.Duration
+	LocalLatchTime    time.Duration
+	TotalBackoffTime  time.Duration
+	ResolveLockTime   int64
+	WriteKeys         int
+	WriteSize         int
+	PrewriteRegionNum int32
+	TxnRetry          int
 }
 
 // String implements the fmt.Stringer interface.
@@ -51,6 +69,41 @@ func (d ExecDetails) String() string {
 	}
 	if d.ProcessedKeys > 0 {
 		parts = append(parts, fmt.Sprintf("processed_keys:%d", d.ProcessedKeys))
+	}
+	commitDetails := d.CommitDetail
+	if commitDetails != nil {
+		if commitDetails.PrewriteTime > 0 {
+			parts = append(parts, fmt.Sprintf("prewrite_time:%v", commitDetails.PrewriteTime))
+		}
+		if commitDetails.CommitTime > 0 {
+			parts = append(parts, fmt.Sprintf("commit_time:%v", commitDetails.CommitTime))
+		}
+		if commitDetails.GetCommitTsTime > 0 {
+			parts = append(parts, fmt.Sprintf("get_commit_ts_time:%v", commitDetails.GetCommitTsTime))
+		}
+		if commitDetails.TotalBackoffTime > 0 {
+			parts = append(parts, fmt.Sprintf("total_backoff_time:%v", commitDetails.TotalBackoffTime))
+		}
+		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
+		if resolveLockTime > 0 {
+			parts = append(parts, fmt.Sprintf("resolve_lock_time:%d", time.Duration(resolveLockTime)))
+		}
+		if commitDetails.LocalLatchTime > 0 {
+			parts = append(parts, fmt.Sprintf("local_latch_wait_time:%v", commitDetails.LocalLatchTime))
+		}
+		if commitDetails.WriteKeys > 0 {
+			parts = append(parts, fmt.Sprintf("write_keys:%d", commitDetails.WriteKeys))
+		}
+		if commitDetails.WriteSize > 0 {
+			parts = append(parts, fmt.Sprintf("write_size:%d", commitDetails.WriteSize))
+		}
+		prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum)
+		if prewriteRegionNum > 0 {
+			parts = append(parts, fmt.Sprintf("prewrite_region:%d", prewriteRegionNum))
+		}
+		if commitDetails.TxnRetry > 0 {
+			parts = append(parts, fmt.Sprintf("txn_retry:%d", commitDetails.TxnRetry))
+		}
 	}
 	return strings.Join(parts, " ")
 }

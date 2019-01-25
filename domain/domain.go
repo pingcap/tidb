@@ -37,11 +37,13 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -393,7 +395,9 @@ func (do *Domain) infoSyncerKeeper() {
 		select {
 		case <-do.info.Done():
 			log.Info("[ddl] server info syncer need to restart")
-			do.info.Restart(context.Background())
+			if err := do.info.Restart(context.Background()); err != nil {
+				log.Error(err)
+			}
 			log.Info("[ddl] server info syncer restarted.")
 		case <-do.exit:
 			return
@@ -430,7 +434,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
-			// The etcd is responsible for schema synchronization, we should ensure there is at most two diffrent schema version
+			// The etcd is responsible for schema synchronization, we should ensure there is at most two different schema version
 			// in the TiDB cluster, to make the data/schema be consistent. If we lost connection/session to etcd, the cluster
 			// will treats this TiDB as a down instance, and etcd will remove the key of `/tidb/ddl/all_schema_versions/tidb-id`.
 			// Say the schema version now is 1, the owner is changing the schema version to 2, it will not wait for this down TiDB syncing the schema,
@@ -480,7 +484,7 @@ func (do *Domain) mustRestartSyncer() error {
 }
 
 // mustReload tries to Reload the schema, it returns until it's successful or the domain is closed.
-// it returns false when it is sucessful, returns true when the domain is closed.
+// it returns false when it is successful, returns true when the domain is closed.
 func (do *Domain) mustReload() (exitLoop bool) {
 	for {
 		err := do.Reload()
@@ -584,6 +588,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
+	perfschema.Init()
 	if ebd, ok := do.store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
@@ -952,6 +957,11 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 		if err != nil {
 			log.Warn("notify update privilege failed:", err)
 		}
+	}
+	// update locally
+	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, `FLUSH PRIVILEGES`)
+	if err != nil {
+		log.Errorf("Unable to update privileges: %s", err)
 	}
 }
 

@@ -54,7 +54,12 @@ func (e *DDLExec) toErr(err error) error {
 	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
-	schemaInfoErr := checker.Check(e.ctx.Txn(true).StartTS())
+	txn, err1 := e.ctx.Txn(true)
+	if err1 != nil {
+		log.Error(err)
+		return errors.Trace(err1)
+	}
+	schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
@@ -81,6 +86,8 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
 		err = e.executeCreateTable(x)
+	case *ast.CreateViewStmt:
+		err = e.executeCreateView(x)
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -122,7 +129,8 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	}
 	oldIdent := ast.Ident{Schema: s.OldTable.Schema, Name: s.OldTable.Name}
 	newIdent := ast.Ident{Schema: s.NewTable.Schema, Name: s.NewTable.Name}
-	err := domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent)
+	isAlterTable := false
+	err := domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
 	return errors.Trace(err)
 }
 
@@ -150,6 +158,11 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 
 func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
 	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
+	return errors.Trace(err)
+}
+
+func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().CreateView(e.ctx, s)
 	return errors.Trace(err)
 }
 
@@ -235,6 +248,8 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 		}
 
 		if config.CheckTableBeforeDrop {
+			log.Info("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+			log.Info("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 			log.Warnf("admin check table `%s`.`%s` before drop.", fullti.Schema.O, fullti.Name.O)
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)

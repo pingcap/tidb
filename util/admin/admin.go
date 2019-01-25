@@ -91,6 +91,16 @@ func isJobRollbackable(job *model.Job, id int64) error {
 			job.SchemaState == model.StateDeleteReorganization {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
+	case model.ActionDropColumn:
+		if job.SchemaState != model.StateNone {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
+	case model.ActionDropSchema, model.ActionDropTable:
+		// To simplify the rollback logic, cannot be canceled in the following states.
+		if job.SchemaState == model.StateWriteOnly ||
+			job.SchemaState == model.StateDeleteOnly {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
 	}
 	return nil
 }
@@ -587,7 +597,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	return nil
 }
 
-func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) decoder.RowDecoder {
+func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
 	cols := t.Cols()
 	tblInfo := t.Meta()
 	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
@@ -612,7 +622,7 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 }
 
 // genExprs use to calculate generated column value.
-func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder decoder.RowDecoder) ([]types.Datum, error) {
+func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder *decoder.RowDecoder) ([]types.Datum, error) {
 	key := t.RecordKey(h)
 	value, err := txn.Get(key)
 	if err != nil {

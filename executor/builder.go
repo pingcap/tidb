@@ -25,6 +25,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
+	"github.com/ngaut/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -179,7 +180,13 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		jobIDs:       v.JobIDs,
 	}
-	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(true), e.jobIDs)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+
+	e.errs, b.err = admin.CancelJobs(txn, e.jobIDs)
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
@@ -212,8 +219,13 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 
-	ddlInfo, err := admin.GetDDLInfo(e.ctx.Txn(true))
+	ddlInfo, err := admin.GetDDLInfo(txn)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -254,8 +266,9 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	readerExec.ranges = ranger.FullRange()
-	readerExec.isCheckOp = true
+
+	genExprs := make(map[model.TableColumnID]expression.Expression)
+	buildIndexLookUpChecker(b, v.IndexLookUpReader, readerExec, genExprs)
 
 	e := &CheckIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -268,6 +281,45 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 	return e
 }
 
+func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
+	readerExec *IndexLookUpExecutor, genExprs map[model.TableColumnID]expression.Expression) {
+	readerExec.keepOrder = true
+	is := readerPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	readerExec.dagPB.OutputOffsets = make([]uint32, 0, len(is.Index.Columns))
+	for i := 0; i <= len(is.Index.Columns); i++ {
+		readerExec.dagPB.OutputOffsets = append(readerExec.dagPB.OutputOffsets, uint32(i))
+	}
+	// set tps
+	tps := make([]*types.FieldType, 0, len(is.Columns)+1)
+	for _, col := range is.Columns {
+		tps = append(tps, &col.FieldType)
+	}
+	//	tblTps := make([]*types.FieldType, 0, len(readerExec.columns)+1)
+	//	for _, col := range readerExec.columns {
+	//		tblTps = append(tblTps, &col.FieldType)
+	//	}
+	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+	readerExec.tps = tps
+	// readerExec.tblTps = tblTps
+	readerExec.tbl = readerExec.table
+	readerExec.idxInfo = readerExec.index
+
+	colNames := make([]string, 0, len(is.Columns))
+	for _, col := range is.Columns {
+		colNames = append(colNames, col.Name.O)
+	}
+
+	var err error
+	readerExec.cols, err = table.FindCols(readerExec.table.Cols(), colNames, true)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return
+	}
+	readerExec.genExprs = genExprs
+	readerExec.isCheckOp = true
+	readerExec.ranges = ranger.FullRange()
+}
+
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	readerExecs := make([]*IndexLookUpExecutor, 0, len(v.IndexLookUpReaders))
 	for _, readerPlan := range v.IndexLookUpReaders {
@@ -276,8 +328,8 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		readerExec.ranges = ranger.FullRange()
-		readerExec.isCheckOp = true
+		buildIndexLookUpChecker(b, readerPlan, readerExec, v.GenExprs)
+
 		readerExecs = append(readerExecs, readerExec)
 	}
 
@@ -516,6 +568,12 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 	}
 	if e.Tp == ast.ShowGrants && e.User == nil {
 		e.User = e.ctx.GetSessionVars().User
+	}
+	if e.Tp == ast.ShowMasterStatus {
+		// show master status need start ts.
+		if _, err := e.ctx.Txn(true); err != nil {
+			b.err = errors.Trace(err)
+		}
 	}
 	if len(v.Conditions) == 0 {
 		return e
@@ -1206,12 +1264,15 @@ func (b *executorBuilder) getStartTS() (uint64, error) {
 	}
 
 	startTS := b.ctx.GetSessionVars().SnapshotTS
-	if startTS == 0 && b.ctx.Txn(true).Valid() {
-		startTS = b.ctx.Txn(true).StartTS()
+	txn, err := b.ctx.Txn(true)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if startTS == 0 && txn.Valid() {
+		startTS = txn.StartTS()
 	}
 	b.startTS = startTS
 	if b.startTS == 0 {
-		// It may happen when getting start ts from PD fail, and Txn() is not valid.
 		return 0, errors.Trace(ErrGetStartTS)
 	}
 	return startTS, nil
@@ -1795,11 +1856,15 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	}
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
+	log.Warnf(".......................... dag req:%v, output offsets %v, cols %v",
+		indexReq.Executors[0].IdxScan, indexReq.OutputOffsets, is.Index.Columns)
 	table, _ := b.is.TableByID(is.Table.ID)
 
 	for i := 0; i < v.Schema().Len(); i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
+	log.Warnf(".......................... dag req:%v, output offsets %v, cols %v, len %v",
+		tableReq.Executors[0].TblScan, tableReq.OutputOffsets, v.Schema(), len(tableReq.Executors[0].TblScan.Columns))
 
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 

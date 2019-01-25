@@ -251,6 +251,8 @@ type Binlog struct {
 	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
+	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
+	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 }
 
 var defaultConf = Config{
