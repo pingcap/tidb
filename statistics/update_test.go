@@ -1135,7 +1135,7 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: true,
-			reason: "first analyze",
+			reason: "table unanalyzed",
 		},
 		// table was never analyzed but has not reach the limit
 		{

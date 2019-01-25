@@ -638,7 +638,8 @@ func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64,
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-		return time.Since(t) >= limit, "first analyze table"
+		dur := time.Since(t)
+		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %vs", dur)
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
@@ -751,7 +752,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		}
 		if _, ok := statsTbl.Indices[idx.ID]; !ok {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
-			log.Infof("[stats] first analyze index, auto %s now", sql)
+			log.Infof("[stats] index unanalyzed, auto %s now", sql)
 			return true, h.execAutoAnalyze(sql)
 		}
 	}
