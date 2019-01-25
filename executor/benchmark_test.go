@@ -176,8 +176,8 @@ func (a aggTestCase) String() string {
 
 func defaultAggTestCase(exec string) *aggTestCase {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = 1024
-	ctx.GetSessionVars().MaxChunkSize = 1024
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, ctx}
 }
 
@@ -211,27 +211,27 @@ func buildStreamAggExecutor(ctx sessionctx.Context, src Executor, schema *expres
 	return exec
 }
 
-func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
-	ctx := cas.ctx
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", cas.concurrency)); err != nil {
+func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Executor {
+	ctx := testCase.ctx
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", testCase.concurrency)); err != nil {
 		b.Fatal(err)
 	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", cas.concurrency)); err != nil {
+	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.concurrency)); err != nil {
 		b.Fatal(err)
 	}
 
-	childCols := cas.columns()
+	childCols := testCase.columns()
 	schema := expression.NewSchema(childCols...)
 	groupBy := []expression.Expression{childCols[1]}
-	aggFunc := aggregation.NewAggFuncDesc(cas.ctx, cas.aggFunc, []expression.Expression{childCols[0]}, cas.hasDistinct)
+	aggFunc := aggregation.NewAggFuncDesc(testCase.ctx, testCase.aggFunc, []expression.Expression{childCols[0]}, testCase.hasDistinct)
 	aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 
 	var aggExec Executor
-	switch cas.execType {
+	switch testCase.execType {
 	case "hash":
-		aggExec = buildHashAggExecutor(cas.ctx, child, schema, aggFuncs, groupBy)
+		aggExec = buildHashAggExecutor(testCase.ctx, child, schema, aggFuncs, groupBy)
 	case "stream":
-		aggExec = buildStreamAggExecutor(cas.ctx, child, schema, aggFuncs, groupBy)
+		aggExec = buildStreamAggExecutor(testCase.ctx, child, schema, aggFuncs, groupBy)
 	default:
 		b.Fatal("not implement")
 	}
@@ -261,8 +261,9 @@ func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
 		if err := aggExec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
 		}
+		batch := chunk.NewRecordBatch(chk)
 		for {
-			if err := aggExec.Next(tmpCtx, chunk.NewRecordBatch(chk)); err != nil {
+			if err := aggExec.Next(tmpCtx, batch); err != nil {
 				b.Fatal(b)
 			}
 			if chk.NumRows() == 0 {
@@ -270,10 +271,10 @@ func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
 			}
 		}
 
-		b.StopTimer()
 		if err := aggExec.Close(); err != nil {
 			b.Fatal(err)
 		}
+		b.StopTimer()
 	}
 }
 
