@@ -165,7 +165,7 @@ type HashAggExec struct {
 	childResult *chunk.Chunk
 }
 
-// HashAggInput indicates the input of hash agg exec.
+// HashAggInput indicates the input of hash agg execType.
 type HashAggInput struct {
 	chk *chunk.Chunk
 	// giveBackCh is bound with specific partial worker,

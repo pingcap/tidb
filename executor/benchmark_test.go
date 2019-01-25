@@ -16,8 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math/rand"
 	"sort"
 	"testing"
@@ -26,7 +24,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -37,10 +37,10 @@ var (
 )
 
 type mockDataSourceParameters struct {
-	schema *expression.Schema // schema
-	ndvs   []int              // number of distinct values on columns[i] and zero represents no limit
-	orders []bool             // columns[i] should be ordered if orders[i] is true
-	rows   int                // number of rows the DataSource should output
+	schema *expression.Schema
+	ndvs   []int  // number of distinct values on columns[i] and zero represents no limit
+	orders []bool // columns[i] should be ordered if orders[i] is true
+	rows   int    // number of rows the DataSource should output
 	ctx    sessionctx.Context
 }
 
@@ -154,7 +154,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 
 type aggTestCase struct {
 	// The test table's schema is fixed (aggCol Double, groupBy LongLong).
-	exec        string // "hash" or "stream"
+	execType    string // "hash" or "stream"
 	aggFunc     string // sum, avg, count ....
 	groupByNDV  int    // the number of distinct group-by keys
 	hasDistinct bool
@@ -171,7 +171,7 @@ func (a aggTestCase) columns() []*expression.Column {
 
 func (a aggTestCase) String() string {
 	return fmt.Sprintf("(%v|%v|%v|%v|%v|%v)",
-		a.exec, a.aggFunc, a.hasDistinct, a.rows, a.groupByNDV, a.concurrency)
+		a.execType, a.aggFunc, a.hasDistinct, a.rows, a.groupByNDV, a.concurrency)
 }
 
 func defaultAggTestCase(exec string) *aggTestCase {
@@ -227,7 +227,7 @@ func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
 	aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
 
 	var aggExec Executor
-	switch cas.exec {
+	switch cas.execType {
 	case "hash":
 		aggExec = buildHashAggExecutor(cas.ctx, child, schema, aggFuncs, groupBy)
 	case "stream":
@@ -240,7 +240,7 @@ func buildAggExecutor(b *testing.B, cas *aggTestCase, child Executor) Executor {
 
 func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
 	cols := cas.columns()
-	orders := []bool{false, cas.exec == "stream"}
+	orders := []bool{false, cas.execType == "stream"}
 	dataSource := buildMockDataSource(mockDataSourceParameters{
 		schema: expression.NewSchema(cols...),
 		ndvs:   []int{0, cas.groupByNDV},
