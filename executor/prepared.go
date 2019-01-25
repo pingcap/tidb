@@ -27,7 +27,8 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -117,11 +118,11 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		var warns []error
 		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
 		for _, warn := range warns {
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
 		return ErrPrepareMulti
@@ -282,8 +283,8 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 }
 
 func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
+	var ok bool
 	execID := stmt.ExecID
-	ok := false
 	if stmt.Name != "" {
 		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
 			return nil, plannercore.ErrStmtNotFound

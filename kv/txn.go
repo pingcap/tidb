@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -122,4 +123,22 @@ func BatchGetValues(txn Transaction, keys []Key) (map[string][]byte, error) {
 		storageValues[string(key)] = bufferValues[i]
 	}
 	return storageValues, nil
+}
+
+// mockCommitErrorEnable uses to enable `mockCommitError` and only mock error once.
+var mockCommitErrorEnable = int64(0)
+
+// MockCommitErrorEnable exports for gofail testing.
+func MockCommitErrorEnable() {
+	atomic.StoreInt64(&mockCommitErrorEnable, 1)
+}
+
+// MockCommitErrorDisable exports for gofail testing.
+func MockCommitErrorDisable() {
+	atomic.StoreInt64(&mockCommitErrorEnable, 0)
+}
+
+// IsMockCommitErrorEnable exports for gofail testing.
+func IsMockCommitErrorEnable() bool {
+	return atomic.LoadInt64(&mockCommitErrorEnable) == 1
 }

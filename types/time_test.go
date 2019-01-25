@@ -456,13 +456,13 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 	t, err = types.ParseTimestamp(sc, "2010-10-10 10:11:11")
 	c.Assert(err, IsNil)
-	packed, err := t.ToPackedUint()
+	_, err = t.ToPackedUint()
 	c.Assert(err, IsNil)
 
 	var t1 types.Time
 	t1.Type = mysql.TypeTimestamp
 	t1.Time = types.FromGoTime(time.Now())
-	packed, err = t1.ToPackedUint()
+	packed, err := t1.ToPackedUint()
 	c.Assert(err, IsNil)
 
 	var t2 types.Time
