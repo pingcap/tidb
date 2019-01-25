@@ -14,7 +14,6 @@
 package binloginfo
 
 import (
-	"io/ioutil"
 	"regexp"
 	"strings"
 	"sync"
@@ -35,8 +34,6 @@ import (
 
 func init() {
 	grpc.EnableTracing = false
-	// don't need output pumps client's log
-	pumpcli.Logger.Out = ioutil.Discard
 }
 
 // pumpsClient is the client to write binlog, it is opened on server start and never close,
@@ -173,8 +170,7 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 			NodeID: nodeID,
 			State:  node.Online,
 		},
-		IsAvaliable: true,
-		Client:      client,
+		Client: client,
 	}
 
 	pumpInfos := &pumpcli.PumpInfos{
@@ -189,8 +185,7 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 		ClusterID:          1,
 		Pumps:              pumpInfos,
 		Selector:           pumpcli.NewSelector(pumpcli.Range),
-		RetryTime:          1,
-		BinlogWriteTimeout: 15 * time.Second,
+		BinlogWriteTimeout: time.Second,
 	}
 	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
 
