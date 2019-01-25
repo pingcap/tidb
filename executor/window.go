@@ -182,8 +182,15 @@ func (e *WindowExec) copyChk(chk *chunk.Chunk) {
 
 // windowProcessor is the interface for processing different kinds of window functions.
 type windowProcessor interface {
+	// consumeGroupRows updates the result for an window function using the input rows
+	// which belong to the same partition. If it can produces final results and
+	// there are remaining slots in chunk, it will also write results to the result chunk.
 	consumeGroupRows(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained int) ([]chunk.Row, int, error)
+	// appendResult2Chunk appends the remaining results to chunk.
+	// It is called when there are no more rows in current partition.
 	appendResult2Chunk(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained int) ([]chunk.Row, int, error)
+	// resetPartialResult resets the partial result to the original state for a
+	// specific window function.
 	resetPartialResult()
 }
 
