@@ -700,13 +700,14 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
-func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
+func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
-		return errors.Trace(err)
+		log.Errorf("[stats] parse auto analyze period failed: %v", errors.ErrorStack(err))
+		return
 	}
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
@@ -717,33 +718,34 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := fmt.Sprintf("analyze table %s", tblName)
-				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
-					return err
+					return
 				}
 				continue
 			}
 			for _, def := range pi.Definitions {
 				sql := fmt.Sprintf("analyze table %s partition `%s`", tblName, def.Name.O)
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
-					return err
+					return
 				}
 				continue
 			}
 		}
 	}
-	return nil
+	return
 }
 
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, start, end time.Time, ratio float64, sql string) (bool, error) {
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, start, end time.Time, ratio float64, sql string) bool {
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
-		return false, nil
+		return false
 	}
 	if NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()) {
 		log.Infof("[stats] auto %s now", sql)
-		return true, h.execAutoAnalyze(sql)
+		h.execAutoAnalyze(sql)
+		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic {
@@ -752,20 +754,22 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		if _, ok := statsTbl.Indices[idx.ID]; !ok {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
 			log.Infof("[stats] auto %s now", sql)
-			return true, h.execAutoAnalyze(sql)
+			h.execAutoAnalyze(sql)
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
-func (h *Handle) execAutoAnalyze(sql string) error {
+func (h *Handle) execAutoAnalyze(sql string) {
 	startTime := time.Now()
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
-	metrics.AutoAnalyzeHistogram.Observe(time.Since(startTime).Seconds())
+	dur := time.Since(startTime)
+	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
+		log.Errorf("[stats] auto %v failed: %v, cost_time:%vs", sql, errors.ErrorStack(err), dur.Seconds())
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
 	}
-	return errors.Trace(err)
 }
