@@ -638,7 +638,7 @@ func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64,
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-		return time.Since(t) >= limit, fmt.Sprintf("first analyze table(%vs)", time.Since(t).Seconds())
+		return time.Since(t) >= limit, "first analyze table"
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
