@@ -1473,7 +1473,69 @@ type UpdateStmt struct {
 
 // Restore implements Node interface.
 func (n *UpdateStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("UPDATE ")
+
+	if n.TableHints != nil && len(n.TableHints) != 0 {
+		ctx.WritePlain("/*+ ")
+		for i, tableHint := range n.TableHints {
+			if err := tableHint.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore UpdateStmt.TableHints[%d]", i)
+			}
+		}
+		ctx.WritePlain("*/ ")
+	}
+
+	switch n.Priority {
+	case mysql.LowPriority:
+		ctx.WriteKeyWord("LOW_PRIORITY ")
+	}
+	if n.IgnoreErr {
+		ctx.WriteKeyWord("IGNORE ")
+	}
+
+	if err := n.TableRefs.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occur while restore UpdateStmt.TableRefs")
+	}
+
+	ctx.WriteKeyWord(" SET ")
+	for i, assignment := range n.List {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+
+		if err := assignment.Column.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occur while restore UpdateStmt.List[%d].Column", i)
+		}
+
+		ctx.WritePlain("=")
+
+		if err := assignment.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occur while restore UpdateStmt.List[%d].Expr", i)
+		}
+	}
+
+	if n.Where != nil {
+		ctx.WriteKeyWord(" WHERE ")
+		if err := n.Where.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occur while restore UpdateStmt.Where")
+		}
+	}
+
+	if n.Order != nil {
+		ctx.WritePlain(" ")
+		if err := n.Order.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occur while restore UpdateStmt.Order")
+		}
+	}
+
+	if n.Limit != nil {
+		ctx.WritePlain(" ")
+		if err := n.Limit.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occur while restore UpdateStmt.Limit")
+		}
+	}
+
+	return nil
 }
 
 // Accept implements Node Accept interface.
