@@ -170,7 +170,7 @@ func (a aggTestCase) columns() []*expression.Column {
 }
 
 func (a aggTestCase) String() string {
-	return fmt.Sprintf("(%v|%v|%v|%v|%v|%v)",
+	return fmt.Sprintf("(execType:%v, aggFunc:%v, groupByNDV:%v, hasDistinct:%v, rows:%v, concruuency:%v)",
 		a.execType, a.aggFunc, a.hasDistinct, a.rows, a.groupByNDV, a.concurrency)
 }
 
