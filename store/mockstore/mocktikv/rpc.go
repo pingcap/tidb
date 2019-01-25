@@ -61,6 +61,11 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			Retryable: retryable.Error(),
 		}
 	}
+	if preCond, ok := errors.Cause(err).(*preconditionErr); ok {
+		return &kvrpcpb.KeyError{
+			PreconditionErr: &preCond.PreconditionError,
+		}
+	}
 	return &kvrpcpb.KeyError{
 		Abort: err.Error(),
 	}

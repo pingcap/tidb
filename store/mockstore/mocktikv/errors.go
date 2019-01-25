@@ -13,7 +13,10 @@
 
 package mocktikv
 
-import "fmt"
+import (
+	"fmt"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+)
 
 // ErrLocked is returned when trying to Read/Write on a locked key. Client should
 // backoff or cleanup the lock then retry.
@@ -48,5 +51,13 @@ func (e ErrAbort) Error() string {
 type ErrAlreadyCommitted uint64
 
 func (e ErrAlreadyCommitted) Error() string {
-	return fmt.Sprint("txn already committed")
+	return "txn already committed"
+}
+
+type preconditionErr struct {
+	kvrpcpb.PreconditionError
+}
+
+func (e *preconditionErr) Error() string {
+	return "precondition error"
 }

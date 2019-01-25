@@ -66,7 +66,7 @@ type twoPhaseCommitter struct {
 	txn       *tikvTxn
 	startTS   uint64
 	keys      [][]byte
-	mutations map[string]*pb.Mutation
+	mutations map[string]*mutationEx
 	lockTTL   uint64
 	commitTS  uint64
 	mu        struct {
@@ -85,6 +85,11 @@ type twoPhaseCommitter struct {
 	detail        *execdetails.CommitDetails
 }
 
+type mutationEx struct {
+	pb.Mutation
+	hasContract bool
+}
+
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	var (
@@ -94,19 +99,23 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		delCnt  int
 		lockCnt int
 	)
-	mutations := make(map[string]*pb.Mutation)
+	mutations := make(map[string]*mutationEx)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
-			mutations[string(k)] = &pb.Mutation{
-				Op:    pb.Op_Put,
-				Key:   k,
-				Value: v,
+			mutations[string(k)] = &mutationEx{
+				Mutation: pb.Mutation{
+					Op:    pb.Op_Put,
+					Key:   k,
+					Value: v,
+				},
 			}
 			putCnt++
 		} else {
-			mutations[string(k)] = &pb.Mutation{
-				Op:  pb.Op_Del,
-				Key: k,
+			mutations[string(k)] = &mutationEx{
+				Mutation: pb.Mutation{
+					Op:  pb.Op_Del,
+					Key: k,
+				},
 			}
 			delCnt++
 		}
@@ -121,6 +130,24 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	for _, lockKey := range txn.lockKeys {
+		if _, ok := mutations[string(lockKey)]; !ok {
+			mutations[string(lockKey)] = &mutationEx{
+				Mutation: pb.Mutation{
+					Op:  pb.Op_Lock,
+					Key: lockKey,
+				},
+			}
+			lockCnt++
+			keys = append(keys, lockKey)
+			size += len(lockKey)
+		}
+	}
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
 	for _, pair := range txn.contracts {
 		mutation, ok := mutations[string(pair.key)]
 		if !ok {
@@ -131,7 +158,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		if mutation.Precondition != nil {
 			continue
 		}
-
+		mutation.hasContract = true
 		mutation.Precondition = &pb.Precondition{}
 		switch pair.contract {
 		case kv.MustExist:
@@ -141,20 +168,6 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		}
 	}
 
-	for _, lockKey := range txn.lockKeys {
-		if _, ok := mutations[string(lockKey)]; !ok {
-			mutations[string(lockKey)] = &pb.Mutation{
-				Op:  pb.Op_Lock,
-				Key: lockKey,
-			}
-			lockCnt++
-			keys = append(keys, lockKey)
-			size += len(lockKey)
-		}
-	}
-	if len(keys) == 0 {
-		return nil, nil
-	}
 	entrylimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	if len(keys) > int(entrylimit) || size > kv.TxnTotalSizeLimit {
 		return nil, kv.ErrTxnTooLarge
@@ -358,7 +371,8 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
-		mutations[i] = c.mutations[string(k)]
+		embed := c.mutations[string(k)]
+		mutations[i] = &embed.Mutation
 	}
 
 	req := &tikvrpc.Request{
@@ -407,6 +421,22 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			}
 			log.Debugf("con:%d 2PC prewrite encounters lock: %v", c.connID, lock)
 			locks = append(locks, lock)
+
+			if keyErr.PreconditionErr != nil {
+				preCond := keyErr.PreconditionErr
+				if notExist := preCond.GetNotExist(); notExist != nil {
+					ex := c.mutations[string(notExist.Key)]
+					if ex.hasContract {
+						log.Info(" run here means ==== the code has bug!")
+					}
+				}
+				if exist := preCond.AlreadyExist; exist != nil {
+					ex := c.mutations[string(exist.Key)]
+					if ex.hasContract {
+						log.Info(" run here means the code has bug! tidb think key should exist, but not")
+					}
+				}
+			}
 		}
 		start := time.Now()
 		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)

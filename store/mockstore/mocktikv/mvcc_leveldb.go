@@ -551,8 +551,22 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	if preCond := mutation.Precondition; preCond != nil {
 		if ok && preCond.ShouldNotExist {
 			log.Error(" prewrite contract fail!! must not exist, but exists ...")
+			return &preconditionErr{
+				PreconditionError: kvrpcpb.PreconditionError{
+					NotExist: &kvrpcpb.NotExist{
+						Key: mutation.Key,
+					},
+				},
+			}
 		} else if !ok && preCond.MustExist {
 			log.Error(" prewrite contract fail!! must exist, but not exist ...")
+			return &preconditionErr{
+				PreconditionError: kvrpcpb.PreconditionError{
+					AlreadyExist: &kvrpcpb.AlreadyExist{
+						Key: mutation.Key,
+					},
+				},
+			}
 		}
 		log.Info(" !!! yeah, check precondition ")
 	}
