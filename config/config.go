@@ -73,6 +73,7 @@ type Config struct {
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	CheckMb4ValueInUtf8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 }
 
 // Log is the log section of config.
@@ -251,18 +252,19 @@ type Binlog struct {
 }
 
 var defaultConf = Config{
-	Host:             "0.0.0.0",
-	AdvertiseAddress: "",
-	Port:             4000,
-	Store:            "mocktikv",
-	Path:             "/tmp/tidb",
-	RunDDL:           true,
-	SplitTable:       true,
-	Lease:            "45s",
-	TokenLimit:       1000,
-	OOMAction:        "log",
-	MemQuotaQuery:    32 << 30,
-	EnableStreaming:  false,
+	Host:                "0.0.0.0",
+	AdvertiseAddress:    "",
+	Port:                4000,
+	Store:               "mocktikv",
+	Path:                "/tmp/tidb",
+	RunDDL:              true,
+	SplitTable:          true,
+	Lease:               "45s",
+	TokenLimit:          1000,
+	OOMAction:           "log",
+	MemQuotaQuery:       32 << 30,
+	EnableStreaming:     false,
+	CheckMb4ValueInUtf8: true,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 10240000,
