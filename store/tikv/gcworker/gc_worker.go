@@ -230,7 +230,7 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 	return ver > notBootstrappedVer
 }
 
-// Leader of GC worker checks if it should start a GC job every tick.
+// leaderTick of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
 		log.Infof("[gc worker] leaderTick on %s: there's already a gc job running. skipped.", w.uuid)
@@ -437,7 +437,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 	w.done <- nil
 }
 
-// `deleteRanges` processes all delete range records whose ts < safePoint in table `gc_delete_range`
+// deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
 func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	metrics.GCWorkerCounter.WithLabelValues("delete_range").Inc()
 
@@ -470,7 +470,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	return nil
 }
 
-// `redoDeleteRanges` checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
+// redoDeleteRanges checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
 func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error {
 	metrics.GCWorkerCounter.WithLabelValues("redo_delete_range").Inc()
 
@@ -729,7 +729,7 @@ type gcTaskWorker struct {
 	store      tikv.Storage
 	taskCh     chan *gcTask
 	wg         *sync.WaitGroup
-	// use atomic to read and set
+	// successRegions and failedRegions use atomic to read and set
 	successRegions *int32
 	failedRegions  *int32
 }
@@ -801,6 +801,7 @@ func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint ui
 	return nil
 }
 
+// doGCForRegion used for gc for region.
 // these two errors should not return together, for more, see the func 'doGC'
 func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
 	req := &tikvrpc.Request{
