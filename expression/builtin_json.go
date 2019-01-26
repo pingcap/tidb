@@ -950,22 +950,14 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 
 	// result
 	result := make([]interface{}, 0)
-	resultSet := make(map[string]bool)
 
 	// walk json_doc
 	walkFn := func(fullpath json.PathExpression, bj json.BinaryJSON) (stop bool, err error) {
-		pathStr := fullpath.String()
-		if _, ok := resultSet[pathStr]; ok {
-			return false, nil
-		}
 		if bj.TypeCode == json.TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
-			resultSet[pathStr] = true
-			result = append(result, pathStr)
+			result = append(result, fullpath.String())
 			if containType == json.ContainsPathOne {
 				return true, nil
 			}
-		} else {
-			resultSet[pathStr] = false
 		}
 		return false, nil
 	}

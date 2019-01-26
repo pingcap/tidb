@@ -519,10 +519,10 @@ func (s *testJSONSuite) TestBinaryJSONWalk(c *C) {
 	}
 	var tests = []struct {
 		bj       BinaryJSON
-		pathExpr string
+		paths    []string
 		expected []ExpectedPair
 	}{
-		{bj1, ``, []ExpectedPair{
+		{bj1, []string{}, []ExpectedPair{
 			{`$`, mustParseBinaryFromString(c, `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`)},
 			{`$[0]`, mustParseBinaryFromString(c, `"abc"`)},
 			{`$[1]`, mustParseBinaryFromString(c, `[{"k": "10"}, "def"]`)},
@@ -534,14 +534,20 @@ func (s *testJSONSuite) TestBinaryJSONWalk(c *C) {
 			{`$[3]`, mustParseBinaryFromString(c, `{"y":"bcd"}`)},
 			{`$[3].y`, mustParseBinaryFromString(c, `"bcd"`)},
 		}},
-		{bj1, `$[1]`, []ExpectedPair{
+		{bj1, []string{`$[1]`}, []ExpectedPair{
 			{`$[1]`, mustParseBinaryFromString(c, `[{"k": "10"}, "def"]`)},
 			{`$[1][0]`, mustParseBinaryFromString(c, `{"k": "10"}`)},
 			{`$[1][0].k`, mustParseBinaryFromString(c, `"10"`)},
 			{`$[1][1]`, mustParseBinaryFromString(c, `"def"`)},
 		}},
-		{bj1, `$.m`, []ExpectedPair{}},
-		{bj2, ``, []ExpectedPair{
+		{bj1, []string{`$[1]`, `$[1]`}, []ExpectedPair{ // test for unique
+			{`$[1]`, mustParseBinaryFromString(c, `[{"k": "10"}, "def"]`)},
+			{`$[1][0]`, mustParseBinaryFromString(c, `{"k": "10"}`)},
+			{`$[1][0].k`, mustParseBinaryFromString(c, `"10"`)},
+			{`$[1][1]`, mustParseBinaryFromString(c, `"def"`)},
+		}},
+		{bj1, []string{`$.m`}, []ExpectedPair{}},
+		{bj2, []string{}, []ExpectedPair{
 			{`$`, mustParseBinaryFromString(c, `{}`)},
 		}},
 	}
@@ -559,11 +565,14 @@ func (s *testJSONSuite) TestBinaryJSONWalk(c *C) {
 		}
 
 		var err error
-		if len(tt.pathExpr) > 0 {
-			pe, errPath := ParseJSONPathExpr(tt.pathExpr)
-			c.Assert(errPath, IsNil)
-
-			err = tt.bj.Walk(cb, pe)
+		if len(tt.paths) > 0 {
+			peList := make([]PathExpression, 0, len(tt.paths))
+			for _, path := range tt.paths {
+				pe, errPath := ParseJSONPathExpr(path)
+				c.Assert(errPath, IsNil)
+				peList = append(peList, pe)
+			}
+			err = tt.bj.Walk(cb, peList...)
 		} else {
 			err = tt.bj.Walk(cb)
 		}

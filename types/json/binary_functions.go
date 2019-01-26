@@ -935,9 +935,17 @@ type BinaryJSONWalkFunc func(fullpath PathExpression, bj BinaryJSON) (stop bool,
 
 // Walk traverse BinaryJSON objects
 func (bj BinaryJSON) Walk(walkFn BinaryJSONWalkFunc, pathExprList ...PathExpression) (err error) {
+	pathSet := make(map[string]bool)
+
 	var doWalk extractCallbackFn
 	doWalk = func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error) {
+		pathStr := fullpath.String()
+		if _, ok := pathSet[pathStr]; ok {
+			return false, nil
+		}
+
 		stop, err = walkFn(fullpath, bj)
+		pathSet[pathStr] = true
 		if stop || err != nil {
 			return
 		}
