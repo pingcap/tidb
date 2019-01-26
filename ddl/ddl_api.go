@@ -1208,10 +1208,6 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
 		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
 
-	if s.Definer.CurrentUser {
-		viewInfo.Definer = ctx.GetSessionVars().User
-	}
-
 	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
 	viewInfo.Cols = make([]model.CIStr, len(schemaCols))
 	for i, v := range schemaCols {

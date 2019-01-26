@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -1332,7 +1333,7 @@ func (s *testSuite) TestUpdate(c *C) {
 
 	tk.MustExec("create view v as select * from t")
 	_, err = tk.Exec("update v set a = '2000-11-11'")
-	c.Assert(err.Error(), Equals, "update view v is not supported now.")
+	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 }
 
@@ -1594,7 +1595,7 @@ func (s *testSuite) TestDelete(c *C) {
 
 	tk.MustExec("create view v as select * from delete_test")
 	_, err = tk.Exec("delete from v where name = 'aaa'")
-	c.Assert(err.Error(), Equals, "delete view v is not supported now.")
+	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 }
 
