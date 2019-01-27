@@ -729,7 +729,7 @@ type gcTaskWorker struct {
 	store      tikv.Storage
 	taskCh     chan *gcTask
 	wg         *sync.WaitGroup
-	// successRegions and failedRegions use atomic to read and set
+	// successRegions and failedRegions use atomic to read and set.
 	successRegions *int32
 	failedRegions  *int32
 }

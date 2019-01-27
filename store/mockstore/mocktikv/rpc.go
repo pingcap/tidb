@@ -103,13 +103,13 @@ type rpcHandler struct {
 
 	// storeID stores id for current request
 	storeID uint64
-	// startKey used for handling normal request.
+	// startKey is used for handling normal request.
 	startKey []byte
 	endKey   []byte
-	// rawStartKey used for handling coprocessor request.
+	// rawStartKey is used for handling coprocessor request.
 	rawStartKey []byte
 	rawEndKey   []byte
-	// isolationLevel used for current request.
+	// isolationLevel is used for current request.
 	isolationLevel kvrpcpb.IsolationLevel
 }
 
