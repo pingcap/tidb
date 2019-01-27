@@ -416,8 +416,7 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 			join, ok = p.(LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
 			c.Assert(ok, IsTrue, comment)
 		}
-		joinType := fmt.Sprintf("%s", join.JoinType.String())
-		c.Assert(joinType, Equals, ca.joinType, comment)
+		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
 	}
 }
 
@@ -444,8 +443,7 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 		c.Assert(err, IsNil, comment)
 		c.Assert(ToString(p), Equals, ca.best, comment)
 		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
-		joinType := fmt.Sprintf("%s", join.JoinType.String())
-		c.Assert(joinType, Equals, ca.joinType, comment)
+		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
 	}
 }
 
@@ -1354,130 +1352,137 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", ""},
+				{mysql.InsertPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
+			},
+		},
+		{
+			sql: "update t a1 set a1.a = a1.a + 1",
+			ans: []visitInfo{
+				{mysql.UpdatePriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", ""},
+				{mysql.DeletePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", ""},
+				{mysql.DropPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t", ""},
+				{mysql.CreatePriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create table t1 like t",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t1", ""},
-				{mysql.SelectPriv, "test", "t", ""},
+				{mysql.CreatePriv, "test", "t1", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "", ""},
+				{mysql.CreatePriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "", ""},
+				{mysql.DropPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", ""},
+				{mysql.IndexPriv, "test", "t", "", nil},
 			},
 		},
 		{
 			sql: `create user 'test'@'%' identified by '123456'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
 			},
 		},
 		{
 			sql: `drop user 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", ""},
+				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
 			},
 		},
 		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", ""},
-				{mysql.InsertPriv, "test", "", ""},
-				{mysql.UpdatePriv, "test", "", ""},
-				{mysql.DeletePriv, "test", "", ""},
-				{mysql.CreatePriv, "test", "", ""},
-				{mysql.DropPriv, "test", "", ""},
-				{mysql.GrantPriv, "test", "", ""},
-				{mysql.AlterPriv, "test", "", ""},
-				{mysql.ExecutePriv, "test", "", ""},
-				{mysql.IndexPriv, "test", "", ""},
+				{mysql.SelectPriv, "test", "", "", nil},
+				{mysql.InsertPriv, "test", "", "", nil},
+				{mysql.UpdatePriv, "test", "", "", nil},
+				{mysql.DeletePriv, "test", "", "", nil},
+				{mysql.CreatePriv, "test", "", "", nil},
+				{mysql.DropPriv, "test", "", "", nil},
+				{mysql.GrantPriv, "test", "", "", nil},
+				{mysql.AlterPriv, "test", "", "", nil},
+				{mysql.ExecutePriv, "test", "", "", nil},
+				{mysql.IndexPriv, "test", "", "", nil},
 			},
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", ""},
-				{mysql.GrantPriv, "test", "ttt", ""},
+				{mysql.SelectPriv, "test", "ttt", "", nil},
+				{mysql.GrantPriv, "test", "ttt", "", nil},
 			},
 		},
 		{
 			sql: `revoke all privileges on *.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SuperPriv, "", "", ""},
+				{mysql.SuperPriv, "", "", "", nil},
 			},
 		},
 		{
@@ -1487,7 +1492,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", ""},
+				{mysql.AllPrivMask, "test", "ttt", "", nil},
 			},
 		},
 	}
@@ -1557,6 +1562,10 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 
 	c.Assert(len(v1), Equals, len(v2), comment)
 	for i := 0; i < len(v1); i++ {
+		// loose compare errors for code match
+		c.Assert(terror.ErrorEqual(v1[i].err, v2[i].err), IsTrue, Commentf("err1 %v, err2 %v for %s", v1[i].err, v2[i].err, comment))
+		// compare remainder
+		v1[i].err = v2[i].err
 		c.Assert(v1[i], Equals, v2[i], comment)
 	}
 }
@@ -1895,5 +1904,183 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestWindowFunction(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{
+			sql:    "select a, avg(a) over(partition by a) from t",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(partition by b) from t",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)))->Projection",
+		},
+		{
+			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
+			result: "TableReader(Table(t))->Projection->Sort->Window(avg(cast(2_proj_window_3)))->Projection",
+		},
+		{
+			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)))->Projection",
+		},
+		{
+			sql:    "select a, b as a, avg(a) over(partition by a) from t",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)))->Projection",
+		},
+		{
+			sql:    "select a, b as z, sum(z) over() from t",
+			result: "[planner:1054]Unknown column 'z' in 'field list'",
+		},
+		{
+			sql:    "select a, b as z from t order by (sum(z) over())",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.z)))->Sort->Projection",
+		},
+		{
+			sql:    "select sum(avg(a)) over() from t",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over())",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(a) over(partition by a))",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+		},
+		{
+			sql:    "select b from t order by(sum(avg(a)) over())",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Sort->Projection",
+		},
+		{
+			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
+			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(cast(tt.a)))->MaxOneRow->Sel([w])}->Projection",
+		},
+		{
+			sql:    "select avg(a) over() as w from t having w > 1",
+			result: "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
+		},
+		{
+			sql:    "select sum(a) over() as sum_a from t group by sum_a",
+			result: "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (w2)",
+			result: "[planner:3579]Window name 'w2' is not defined.",
+		},
+		{
+			sql:    "select sum(a) over(w) from t",
+			result: "[planner:3579]Window name 'w' is not defined.",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (w2), w2 as (w1)",
+			result: "[planner:3580]There is a circularity in the window dependency graph.",
+		},
+		{
+			sql:    "select sum(a) over(w partition by a) from t window w as ()",
+			result: "[planner:3581]A window which depends on another cannot define partitioning.",
+		},
+		{
+			sql:    "select sum(a) over(w) from t window w as (rows between 1 preceding AND 1 following)",
+			result: "[planner:3582]Window 'w' has a frame definition, so cannot be referenced by another window.",
+		},
+		{
+			sql:    "select sum(a) over(w order by b) from t window w as (order by a)",
+			result: "[planner:3583]Window '<unnamed window>' cannot inherit 'w' since both contain an ORDER BY clause.",
+		},
+		{
+			sql:    "select sum(a) over() from t window w1 as (), w1 as ()",
+			result: "[planner:3591]Window 'w1' is defined twice.",
+		},
+		{
+			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Window(avg(cast(test.t.a)))->Projection",
+		},
+		{
+			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+		},
+		{
+			sql:    "select sum(a) over(groups 1 preceding) from t",
+			result: "[planner:1235]This version of TiDB doesn't yet support 'GROUPS'",
+		},
+		{
+			sql:    "select sum(a) over(rows between unbounded following and 1 preceding) from t",
+			result: "[planner:3584]Window '<unnamed window>': frame start cannot be UNBOUNDED FOLLOWING.",
+		},
+		{
+			sql:    "select sum(a) over(rows between current row and unbounded preceding) from t",
+			result: "[planner:3585]Window '<unnamed window>': frame end cannot be UNBOUNDED PRECEDING.",
+		},
+		{
+			sql:    "select sum(a) over(rows interval 1 MINUTE_SECOND preceding) from t",
+			result: "[planner:3596]Window '<unnamed window>': INTERVAL can only be used with RANGE frames.",
+		},
+		{
+			sql:    "select sum(a) over(rows between 1.0 preceding and 1 following) from t",
+			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "select sum(a) over(range between 1 preceding and 1 following) from t",
+			result: "[planner:3587]Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
+			sql:    "select sum(a) over(order by c_str range between 1 preceding and 1 following) from t",
+			result: "[planner:3587]Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
+			sql:    "select sum(a) over(order by a range interval 1 MINUTE_SECOND preceding) from t",
+			result: "[planner:3589]Window '<unnamed window>' with RANGE frame has ORDER BY expression of numeric type, INTERVAL bound value not allowed.",
+		},
+		{
+			sql:    "select sum(a) over(order by i_date range interval a MINUTE_SECOND preceding) from t",
+			result: "[planner:3590]Window '<unnamed window>' has a non-constant frame bound.",
+		},
+		{
+			sql:    "select sum(a) over(order by i_date range interval -1 MINUTE_SECOND preceding) from t",
+			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "select sum(a) over(order by i_date range 1 preceding) from t",
+			result: "[planner:3588]Window '<unnamed window>' with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed.",
+		},
+		{
+			sql:    "select sum(a) over(order by a range between 1.0 preceding and 1 following) from t",
+			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+		},
+	}
+
+	s.Parser.EnableWindowFunc(true)
+	defer func() {
+		s.Parser.EnableWindowFunc(false)
+	}()
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		lp, ok := p.(LogicalPlan)
+		c.Assert(ok, IsTrue)
+		p, err = physicalOptimize(lp)
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.result, comment)
 	}
 }

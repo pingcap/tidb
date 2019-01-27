@@ -474,18 +474,20 @@ func (t *Time) FromPackedUint(packed uint64) error {
 // FIXME: See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_no_zero_in_date
 func (t *Time) check(sc *stmtctx.StatementContext) error {
 	allowZeroInDate := false
+	allowInvalidDate := false
 	// We should avoid passing sc as nil here as far as possible.
 	if sc != nil {
 		allowZeroInDate = sc.IgnoreZeroInDate
+		allowInvalidDate = sc.AllowInvalidDate
 	}
 	var err error
 	switch t.Type {
 	case mysql.TypeTimestamp:
 		err = checkTimestampType(sc, t.Time)
 	case mysql.TypeDatetime:
-		err = checkDatetimeType(t.Time, allowZeroInDate)
+		err = checkDatetimeType(t.Time, allowZeroInDate, allowInvalidDate)
 	case mysql.TypeDate:
-		err = checkDateType(t.Time, allowZeroInDate)
+		err = checkDateType(t.Time, allowZeroInDate, allowInvalidDate)
 	}
 	return errors.Trace(err)
 }
@@ -1344,7 +1346,7 @@ func TimeFromDays(num int64) Time {
 	}
 }
 
-func checkDateType(t MysqlTime, allowZeroInDate bool) error {
+func checkDateType(t MysqlTime, allowZeroInDate, allowInvalidDate bool) error {
 	year, month, day := t.Year(), t.Month(), t.Day()
 	if year == 0 && month == 0 && day == 0 {
 		return nil
@@ -1358,7 +1360,7 @@ func checkDateType(t MysqlTime, allowZeroInDate bool) error {
 		return errors.Trace(err)
 	}
 
-	if err := checkMonthDay(year, month, day); err != nil {
+	if err := checkMonthDay(year, month, day, allowInvalidDate); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1377,17 +1379,19 @@ func checkDateRange(t MysqlTime) error {
 	return nil
 }
 
-func checkMonthDay(year, month, day int) error {
+func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 	if month < 0 || month > 12 {
 		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(month))
 	}
 
 	maxDay := 31
-	if month > 0 {
-		maxDay = maxDaysInMonth[month-1]
-	}
-	if month == 2 && year%4 != 0 {
-		maxDay = 28
+	if !allowInvalidDate {
+		if month > 0 {
+			maxDay = maxDaysInMonth[month-1]
+		}
+		if month == 2 && year%4 != 0 {
+			maxDay = 28
+		}
 	}
 
 	if day < 0 || day > maxDay {
@@ -1427,8 +1431,8 @@ func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
 	return nil
 }
 
-func checkDatetimeType(t MysqlTime, allowZeroInDate bool) error {
-	if err := checkDateType(t, allowZeroInDate); err != nil {
+func checkDatetimeType(t MysqlTime, allowZeroInDate, allowInvalidDate bool) error {
+	if err := checkDateType(t, allowZeroInDate, allowInvalidDate); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2027,10 +2031,7 @@ func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool
 
 	t.Time = tm
 	t.Type = mysql.TypeDatetime
-	if t.check(sc) != nil {
-		return false
-	}
-	return true
+	return t.check(sc) == nil
 }
 
 // mysqlTimeFix fixes the MysqlTime use the values in the context.
@@ -2165,6 +2166,8 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%S": secondsNumeric,        // Seconds (00..59)
 	"%T": time24Hour,            // Time, 24-hour (hh:mm:ss)
 	"%Y": yearNumericFourDigits, // Year, numeric, four digits
+	// Deprecated since MySQL 5.7.5
+	"%y": yearNumericTwoDigits, // Year, numeric (two digits)
 	// TODO: Add the following...
 	// "%a": abbreviatedWeekday,         // Abbreviated weekday name (Sun..Sat)
 	// "%D": dayOfMonthWithSuffix,       // Day of the month with English suffix (0th, 1st, 2nd, 3rd)
@@ -2176,8 +2179,6 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	// "%w": dayOfWeek,                  // Day of the week (0=Sunday..6=Saturday)
 	// "%X": yearOfWeek,                 // Year for the week where Sunday is the first day of the week, numeric, four digits; used with %V
 	// "%x": yearOfWeek,                 // Year for the week, where Monday is the first day of the week, numeric, four digits; used with %v
-	// Deprecated since MySQL 5.7.5
-	// "%y": yearTwoDigits,         // Year, numeric (two digits)
 }
 
 // GetFormatType checks the type(Duration, Date or Datetime) of a format string.
@@ -2235,7 +2236,7 @@ func matchDateWithToken(t *MysqlTime, date string, token string, ctx map[string]
 }
 
 func parseDigits(input string, count int) (int, bool) {
-	if len(input) < count {
+	if count <= 0 || len(input) < count {
 		return 0, false
 	}
 
@@ -2432,12 +2433,31 @@ func microSeconds(t *MysqlTime, input string, ctx map[string]int) (string, bool)
 }
 
 func yearNumericFourDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 4)
-	if !succ {
+	return yearNumericNDigits(t, input, ctx, 4)
+}
+
+func yearNumericTwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
+	return yearNumericNDigits(t, input, ctx, 2)
+}
+
+func yearNumericNDigits(t *MysqlTime, input string, ctx map[string]int, n int) (string, bool) {
+	effectiveCount, effectiveValue := 0, 0
+	for effectiveCount+1 <= n {
+		value, succeed := parseDigits(input, effectiveCount+1)
+		if !succeed {
+			break
+		}
+		effectiveCount++
+		effectiveValue = value
+	}
+	if effectiveCount == 0 {
 		return input, false
 	}
-	t.year = uint16(v)
-	return input[4:], true
+	if effectiveCount <= 2 {
+		effectiveValue = adjustYear(effectiveValue)
+	}
+	t.year = uint16(effectiveValue)
+	return input[effectiveCount:], true
 }
 
 func dayOfYearThreeDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {

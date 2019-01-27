@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -225,7 +226,7 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	mustExec(c, se, `DROP USER 'show'@'localhost'`)
 
 	// This should now return an error
-	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
+	_, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, NotNil)
 	// cant show grants for non-existent
 	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
@@ -323,7 +324,53 @@ func (s *testPrivilegeSuite) TestUseDb(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "usenobody", Hostname: "localhost", AuthUsername: "usenobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "use mysql")
 	c.Assert(err, IsNil)
+}
 
+func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER setglobal_a@localhost`)
+	mustExec(c, se, `CREATE USER setglobal_b@localhost`)
+	mustExec(c, se, `GRANT SUPER ON *.* to setglobal_a@localhost`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "setglobal_a", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `set global innodb_commit_concurrency=16`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "setglobal_b", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `set global innodb_commit_concurrency=16`)
+	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+}
+
+func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER tcd1, tcd2`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd2`)
+
+	// should fail
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `CREATE USER acdc`)
+	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+	_, err = se.Execute(context.Background(), `DROP USER tcd2`)
+	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+
+	// should pass
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthUsername: "tcd2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `DROP USER tcd1`)
+	mustExec(c, se, `CREATE USER tcd1`)
+}
+
+func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER tsct1, tsct2`)
+	mustExec(c, se, `GRANT select ON mysql.* to tsct2`)
+
+	// should fail
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tsct1", Hostname: "localhost", AuthUsername: "tsct1", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `SHOW CREATE TABLE mysql.user`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+
+	// should pass
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `SHOW CREATE TABLE mysql.user`)
 }
 
 func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
@@ -333,7 +380,6 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	mustExec(c, se, "CREATE USER 'asuper'")
 	mustExec(c, se, "CREATE USER 'anobody'")
 	mustExec(c, se, "GRANT ALL ON *.* TO 'asuper'")
-	mustExec(c, se, "FLUSH PRIVILEGES")
 	mustExec(c, se, "CREATE DATABASE atest")
 	mustExec(c, se, "use atest")
 	mustExec(c, se, "CREATE TABLE t1 (a int)")
@@ -343,20 +389,17 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	// low privileged user
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), "analyze table t1")
-	c.Assert(err, NotNil) // fails
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 
 	// try again after SELECT privilege granted
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "GRANT SELECT ON atest.* TO 'anobody'")
-	mustExec(c, se, "FLUSH PRIVILEGES")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "analyze table t1")
-	c.Assert(err, NotNil) // stll fails (only select)
-
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
 	// Add INSERT privilege and it should work.
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
 	mustExec(c, se, "GRANT INSERT ON atest.* TO 'anobody'")
-	mustExec(c, se, "FLUSH PRIVILEGES")
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "anobody", Hostname: "localhost", AuthUsername: "anobody", AuthHostname: "%"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "analyze table t1")
 	c.Assert(err, IsNil)

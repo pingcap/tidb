@@ -277,9 +277,13 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
+	}
+	switch job.Type {
+	case model.ActionRestoreTable:
+		err = finishRestoreTable(w, t, job)
+	}
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	_, err = t.DeQueueDDLJob()
@@ -291,6 +295,23 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	log.Infof("[ddl-%s] finish DDL job %v", w, job)
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
+}
+
+func finishRestoreTable(w *worker, t *meta.Meta, job *model.Job) error {
+	tbInfo := &model.TableInfo{}
+	var autoID, dropJobID, restoreTableCheckFlag int64
+	var snapshotTS uint64
+	err := job.DecodeArgs(tbInfo, &autoID, &dropJobID, &snapshotTS, &restoreTableCheckFlag)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if restoreTableCheckFlag == restoreTableCheckFlagEnableGC {
+		err = enableGC(w)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
@@ -459,8 +480,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onCreateTable(d, t, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
-	case model.ActionDropTable:
-		ver, err = onDropTable(t, job)
+	case model.ActionDropTable, model.ActionDropView:
+		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = onDropTablePartition(t, job)
 	case model.ActionTruncateTablePartition:
@@ -497,6 +518,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAddTablePartition(t, job)
 	case model.ActionModifyTableCharsetAndCollate:
 		ver, err = onModifyTableCharsetAndCollate(t, job)
+	case model.ActionRestoreTable:
+		ver, err = w.onRestoreTable(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -578,7 +601,6 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		}
 	}
 	log.Infof("[ddl-%s] wait latest schema version %d changed, take time %v, job %s", w, latestSchemaVersion, time.Since(timeStart), job)
-	return
 }
 
 // waitSchemaSynced handles the following situation:

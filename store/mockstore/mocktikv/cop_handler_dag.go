@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -468,7 +468,6 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	}
 
 	var resp coprocessor.Response
-	counts := make([]int64, len(mock.req.Executors))
 	chunk, finish, ran, counts, warnings, err := mock.readBlockFromExecutor()
 	resp.Range = ran
 	if err != nil {
