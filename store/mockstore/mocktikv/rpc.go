@@ -106,15 +106,15 @@ type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore MVCCStore
 
-	// store id for current request
+	// storeID stores id for current request
 	storeID uint64
-	// Used for handling normal request.
+	// startKey is used for handling normal request.
 	startKey []byte
 	endKey   []byte
-	// Used for handling coprocessor request.
+	// rawStartKey is used for handling coprocessor request.
 	rawStartKey []byte
 	rawEndKey   []byte
-	// Used for current request.
+	// isolationLevel is used for current request.
 	isolationLevel kvrpcpb.IsolationLevel
 }
 
