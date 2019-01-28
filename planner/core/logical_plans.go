@@ -142,7 +142,7 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 
 		// If the columns used in the new filter all come from the left child,
 		// we can push this filter to it.
-		if expression.CoveredBySchema(newCond, p.children[0].Schema()) {
+		if expression.ExprFromSchema(newCond, p.children[0].Schema()) {
 			p.LeftConditions = append(p.LeftConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
 			continue
@@ -150,7 +150,7 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 
 		// If the columns used in the new filter all come from the right
 		// child, we can push this filter to it.
-		if expression.CoveredBySchema(newCond, p.children[1].Schema()) {
+		if expression.ExprFromSchema(newCond, p.children[1].Schema()) {
 			p.RightConditions = append(p.RightConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
 			continue

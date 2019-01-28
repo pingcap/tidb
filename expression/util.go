@@ -587,20 +587,3 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 	}
 	return intNum, false, nil
 }
-
-func CoveredBySchema(expr Expression, schema *Schema) bool {
-	switch v := expr.(type) {
-	case *Column:
-		return schema.ColumnIndex(v) != -1
-	case *CorrelatedColumn:
-		return schema.ColumnIndex(&v.Column) != -1
-	case *ScalarFunction:
-		for _, arg := range v.GetArgs() {
-			if !CoveredBySchema(arg, schema) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
