@@ -61,7 +61,7 @@ type Config struct {
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames int   `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
 	Log                 Log               `toml:"log" json:"log"`
 	Security            Security          `toml:"security" json:"security"`
@@ -145,7 +145,7 @@ type Status struct {
 	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
-	RecordQPSbyDB   bool `toml:"record-db-qps" json:"record-db-qps"`
+	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
 }
 
 // Performance is the performance section of the config.
