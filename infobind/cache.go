@@ -190,8 +190,9 @@ func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparse
 				return nil
 			}
 			for idx, v := range bindArr {
-				if v.Db == value.Db {
+				if v.OriginalSQL == value.OriginalSQL && v.Db == value.Db {
 					b.Cache[hash] = append(b.Cache[hash][:idx], b.Cache[hash][idx+1:]...)
+					break
 				}
 			}
 		}

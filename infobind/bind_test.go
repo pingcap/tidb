@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -122,7 +122,6 @@ func (s *testSuite) TestBindParse(c *C) {
 	}
 
 	err := hu.Update(true)
-	fmt.Println("errdejwijdiowe=", err)
 	c.Check(err, IsNil)
 
 	c.Check(len(bindHandle.Get().Cache), Equals, 1)

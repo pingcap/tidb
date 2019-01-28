@@ -19,10 +19,10 @@ import (
 
 var _ Manager = (*BindManager)(nil)
 
-// BindManager use to manage both global bind info and session bind info.
+// BindManager is used to manage both global bind info and session bind info.
 type BindManager struct {
-	SessionHandle *Handle //session handle
-	*Handle               //global handle
+	SessionHandle *Handle // session handle.
+	*Handle               // global handle.
 }
 
 type keyType int
@@ -37,7 +37,7 @@ type Manager interface {
 
 const key keyType = 0
 
-//BindBinderManager binds Manager to context.
+// BindBinderManager binds Manager to context.
 func BindBinderManager(ctx sessionctx.Context, pc Manager) {
 	ctx.SetValue(key, pc)
 }
