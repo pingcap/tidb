@@ -318,24 +318,25 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	return hasDefaultValue, value, nil
 }
 
-func convertTimestampDelfaultValToUTC(ctx sessionctx.Context, defaultVal interface{}, col *table.Column) (interface{}, error) {
-	if defaultVal != nil && col.Tp == mysql.TypeTimestamp {
-		if vv, ok := defaultVal.(string); ok {
-			if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
-				t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, col.Decimal)
-				if err != nil {
-					return defaultVal, errors.Trace(err)
-				}
-				err = t.ConvertTimeZone(ctx.GetSessionVars().Location(), time.UTC)
-				if err != nil {
-					return defaultVal, errors.Trace(err)
-				}
-				defaultVal = t.String()
-				// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
-				//              This will fix bug in version 0.
-				// TODO: remove this version field after there is no old version 0.
-				col.Version = model.ColumnInfoVersion1
+func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interface{}, col *table.Column) (interface{}, error) {
+	if defaultVal == nil || col.Tp != mysql.TypeTimestamp {
+		return defaultVal, nil
+	}
+	if vv, ok := defaultVal.(string); ok {
+		if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, col.Decimal)
+			if err != nil {
+				return defaultVal, errors.Trace(err)
 			}
+			err = t.ConvertTimeZone(ctx.GetSessionVars().Location(), time.UTC)
+			if err != nil {
+				return defaultVal, errors.Trace(err)
+			}
+			defaultVal = t.String()
+			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
+			//              This will fix bug in version 0.
+			// TODO: remove this version field after there is no old version 0.
+			col.Version = model.ColumnInfoVersion1
 		}
 	}
 	return defaultVal, nil
@@ -407,7 +408,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
-				value, err = convertTimestampDelfaultValToUTC(ctx, value, col)
+				value, err = convertTimestampDefaultValToUTC(ctx, value, col)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 
@@ -1968,7 +1969,7 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	if _, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 		return errors.Trace(err)
 	}
-	value, err = convertTimestampDelfaultValToUTC(ctx, value, col)
+	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
 	if err != nil {
 		return errors.Trace(err)
 
@@ -2005,7 +2006,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 				return errors.Trace(err)
 			}
-			value, err = convertTimestampDelfaultValToUTC(ctx, value, col)
+			value, err = convertTimestampDefaultValToUTC(ctx, value, col)
 			if err != nil {
 				return errors.Trace(err)
 
