@@ -803,6 +803,10 @@ type BatchSize struct {
 }
 
 const (
+	SlowLogPrefixStr     = "# "
+	SlowLogSpaceMarkStr  = ": "
+	SlowLogSQLSuffixStr  = ";"
+	SlowLogTimeStr       = "Time"
 	SlowLogTxnStartTSStr = "Txn_start_ts"
 	SlowLogUserStr       = "User"
 	SlowLogConnIDStr     = "Conn_ID"
@@ -810,6 +814,7 @@ const (
 	SlowLogDBStr         = "DB"
 	SlowLogIsInternalStr = "Is_internal"
 	SlowLogIndexNamesStr = "Index_names"
+	SlowLogQuerySQLStr   = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
 )
 
 // SlowLogFormat uses for formatting slow log.

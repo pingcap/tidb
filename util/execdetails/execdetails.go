@@ -49,6 +49,15 @@ type CommitDetails struct {
 	TxnRetry          int
 }
 
+const (
+	ProcessTimeStr   = "Process_time"
+	WaitTimeStr      = "Wait_time"
+	BackoffTimeStr   = "Backoff_time"
+	RequestCountStr  = "Request_count"
+	TotalKeysStr     = "Total_keys"
+	ProcessedKeysStr = "Processed_keys"
+)
+
 // String implements the fmt.Stringer interface.
 func (d ExecDetails) String() string {
 	parts := make([]string, 0, 6)

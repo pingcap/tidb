@@ -192,6 +192,10 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+const (
+	SlowLogTimeFormat = "2006-01-02-15:04:05.999999999 -0700"
+)
+
 type slowLogFormatter struct{}
 
 func (f *slowLogFormatter) Format(entry *log.Entry) ([]byte, error) {
@@ -202,7 +206,7 @@ func (f *slowLogFormatter) Format(entry *log.Entry) ([]byte, error) {
 		b = &bytes.Buffer{}
 	}
 
-	fmt.Fprintf(b, "# Time: %s\n", entry.Time.Format("2006-01-02-15:04:05.999999999 -0700"))
+	fmt.Fprintf(b, "# Time: %s\n", entry.Time.Format(SlowLogTimeFormat))
 	fmt.Fprintf(b, "%s\n", entry.Message)
 	return b.Bytes(), nil
 }
