@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/grpc-ecosystem/go-grpc-middleware"
-	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -40,19 +40,6 @@ import (
 	"google.golang.org/grpc/keepalive"
 	gstatus "google.golang.org/grpc/status"
 )
-
-// MaxConnectionCount is the max gRPC connections that will be established with
-// each tikv-server.
-var MaxConnectionCount uint = 16
-
-// GrpcKeepAliveTime is the duration of time after which if the client doesn't see
-// any activity it pings the server to see if the transport is still alive.
-var GrpcKeepAliveTime = time.Duration(10) * time.Second
-
-// GrpcKeepAliveTimeout is the duration of time for which the client waits after having
-// pinged for keepalive check and if no activity is seen even after that the connection
-// is closed.
-var GrpcKeepAliveTimeout = time.Duration(3) * time.Second
 
 // MaxSendMsgSize set max gRPC request message size sent to server. If any request message size is larger than
 // current value, an error will be reported from gRPC.
@@ -87,10 +74,10 @@ type Client interface {
 type connArray struct {
 	index uint32
 	v     []*grpc.ClientConn
-	// Bind with a background goroutine to process coprocessor streaming timeout.
+	// streamTimeout binds with a background goroutine to process coprocessor streaming timeout.
 	streamTimeout chan *tikvrpc.Lease
 
-	// For batch commands.
+	// batchCommandsCh used for batch commands.
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
@@ -103,9 +90,9 @@ type batchCommandsClient struct {
 	idAlloc                uint64
 	tikvTransportLayerLoad *uint64
 
-	// Indicates the batch client is closed explicitly or not.
+	// closed indicates the batch client is closed explicitly or not.
 	closed int32
-	// Protect client when re-create the streaming.
+	// clientLock protects client when re-create the streaming.
 	clientLock sync.Mutex
 }
 
@@ -231,6 +218,8 @@ func (a *connArray) Init(addr string, security config.Security) error {
 	}
 
 	allowBatch := cfg.TiKVClient.MaxBatchSize > 0
+	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime
+	keepAliveTimeout := cfg.TiKVClient.GrpcKeepAliveTimeout
 	for i := range a.v {
 		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 		conn, err := grpc.DialContext(
@@ -245,8 +234,8 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(MaxSendMsgSize)),
 			grpc.WithBackoffMaxDelay(time.Second*3),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                GrpcKeepAliveTime,
-				Timeout:             GrpcKeepAliveTimeout,
+				Time:                time.Duration(keepAlive) * time.Second,
+				Timeout:             time.Duration(keepAliveTimeout) * time.Second,
 				PermitWithoutStream: true,
 			}),
 		)
@@ -313,7 +302,7 @@ type batchCommandsEntry struct {
 	req *tikvpb.BatchCommandsRequest_Request
 	res chan *tikvpb.BatchCommandsResponse_Response
 
-	// Indicated the request is canceled or not.
+	// canceled indicated the request is canceled or not.
 	canceled int32
 	err      error
 }
@@ -501,7 +490,8 @@ func (c *rpcClient) createConnArray(addr string) (*connArray, error) {
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		array, err = newConnArray(MaxConnectionCount, addr, c.security)
+		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
+		array, err = newConnArray(connCount, addr, c.security)
 		if err != nil {
 			return nil, err
 		}
@@ -589,9 +579,9 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	// Coprocessor streaming request.
 	// Use context to support timeout for grpc streaming client.
 	ctx1, cancel := context.WithCancel(ctx)
+	defer cancel()
 	resp, err := tikvrpc.CallRPC(ctx1, client, req)
 	if err != nil {
-		cancel() // This line stops the silly lint tool from complaining.
 		return nil, errors.Trace(err)
 	}
 

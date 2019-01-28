@@ -294,7 +294,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	}
 	total := 0
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	min, max := getMinValue(h.tp), getMaxValue(h.tp)
+	min, max := getMinValue(h.Tp), getMaxValue(h.Tp)
 	for _, fb := range feedback.feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
@@ -606,7 +606,7 @@ func UpdateCMSketch(c *CMSketch, eqFeedbacks []feedback) *CMSketch {
 }
 
 func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
-	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets), h.TotColSize)
+	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.Tp, len(buckets), h.TotColSize)
 	preCount := int64(0)
 	for _, bkt := range buckets {
 		hist.AppendBucket(bkt.lower, bkt.upper, bkt.count+preCount, bkt.repeat)
@@ -622,7 +622,7 @@ type queryFeedback struct {
 	HashValues  []uint64
 	IndexRanges [][]byte
 	// Counts is the number of scan keys in each range. It first stores the count for `IntRanges`, `IndexRanges` or `ColumnRanges`.
-	// After that, it stores the ranges for `HashValues`.
+	// After that, it stores the Ranges for `HashValues`.
 	Counts       []int64
 	ColumnRanges [][]byte
 }
@@ -793,10 +793,10 @@ func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
 				return false
 			}
 		} else {
-			if bytes.Compare(fb.lower.GetBytes(), rfb.lower.GetBytes()) != 0 {
+			if !bytes.Equal(fb.lower.GetBytes(), rfb.lower.GetBytes()) {
 				return false
 			}
-			if bytes.Compare(fb.upper.GetBytes(), rfb.upper.GetBytes()) != 0 {
+			if !bytes.Equal(fb.upper.GetBytes(), rfb.upper.GetBytes()) {
 				return false
 			}
 		}
@@ -811,15 +811,15 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 		return nil
 	}
 	tablePseudo := t.Pseudo || t.IsOutdated()
-	if tablePseudo == false {
+	if !tablePseudo {
 		return nil
 	}
-	isIndex := q.hist.tp.Tp == mysql.TypeBlob
+	isIndex := q.hist.Tp.Tp == mysql.TypeBlob
 	id := q.hist.ID
-	if isIndex && (t.Indices[id] == nil || t.Indices[id].NotAccurate() == false) {
+	if isIndex && (t.Indices[id] == nil || !t.Indices[id].NotAccurate()) {
 		return nil
 	}
-	if !isIndex && (t.Columns[id] == nil || t.Columns[id].NotAccurate() == false) {
+	if !isIndex && (t.Columns[id] == nil || !t.Columns[id].NotAccurate()) {
 		return nil
 	}
 
@@ -1056,7 +1056,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.Count), float64(q.feedback[i].count))
 		value := types.NewBytesDatum(bytes)
 		q.feedback[i] = feedback{lower: &value, upper: &value, count: int64(equalityCount)}
-		err = rangeFB.dumpRangeFeedback(h, &rang, rangeCount)
+		err = rangeFB.dumpRangeFeedback(sc, h, &rang, rangeCount)
 		if err != nil {
 			log.Debug("dump range feedback failed:", err)
 			continue
@@ -1065,9 +1065,8 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 	return errors.Trace(h.dumpFeedbackToKV(q))
 }
 
-func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCount float64) error {
+func (q *QueryFeedback) dumpRangeFeedback(sc *stmtctx.StatementContext, h *Handle, ran *ranger.Range, rangeCount float64) error {
 	if q.tp == indexType {
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
 		if err != nil {
 			return errors.Trace(err)
@@ -1079,17 +1078,17 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 		ran.LowVal[0].SetBytes(lower)
 		ran.HighVal[0].SetBytes(upper)
 	} else {
-		if !supportColumnType(q.hist.tp) {
+		if !supportColumnType(q.hist.Tp) {
 			return nil
 		}
 		if ran.LowVal[0].Kind() == types.KindMinNotNull {
-			ran.LowVal[0] = getMinValue(q.hist.tp)
+			ran.LowVal[0] = getMinValue(q.hist.Tp)
 		}
 		if ran.HighVal[0].Kind() == types.KindMaxValue {
-			ran.HighVal[0] = getMaxValue(q.hist.tp)
+			ran.HighVal[0] = getMaxValue(q.hist.Tp)
 		}
 	}
-	ranges := q.hist.SplitRange([]*ranger.Range{ran})
+	ranges := q.hist.SplitRange(sc, []*ranger.Range{ran}, q.tp == indexType)
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for _, r := range ranges {

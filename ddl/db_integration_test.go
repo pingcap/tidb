@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testIntegrationSuite{})
@@ -68,7 +67,6 @@ func (s *testIntegrationSuite) TearDownTest(c *C) {
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
 	var err error
-	testleak.BeforeTest()
 	s.lease = 50 * time.Millisecond
 
 	s.cluster = mocktikv.NewCluster()
@@ -95,7 +93,20 @@ func (s *testIntegrationSuite) SetUpSuite(c *C) {
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
+}
+
+func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	defer tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+
+	tk.MustExec("use test;")
+	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION';")
+	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time date NOT NULL DEFAULT '0000-00-00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default '0000-00-00 00');", mysql.ErrInvalidDefault)
+	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default 0);", mysql.ErrInvalidDefault)
 }
 
 func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
@@ -376,7 +387,7 @@ func (s *testIntegrationSuite) TestMySQLErrorCode(c *C) {
 	// add index
 	sql = "alter table test_error_code_succ add index idx (c_not_exist)"
 	s.testErrorCode(c, tk, sql, tmysql.ErrKeyColumnDoesNotExits)
-	tk.Exec("alter table test_error_code_succ add index idx (c1)")
+	tk.MustExec("alter table test_error_code_succ add index idx (c1)")
 	sql = "alter table test_error_code_succ add index idx (c1)"
 	s.testErrorCode(c, tk, sql, tmysql.ErrDupKeyName)
 	// drop index
@@ -513,24 +524,47 @@ func (s *testIntegrationSuite) TestNullGeneratedColumn(c *C) {
 func (s *testIntegrationSuite) TestChangingCharsetToUtf8(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("USE test")
-	tk.MustExec("create table t(a char(10) charset latin1)")
-	tk.MustExec("alter table t modify column a char(10) charset latin1")
-	tk.MustExec("alter table t modify column a char(10) charset utf8")
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4")
-	rs, err := tk.Exec("alter table t modify column a char(10) charset utf8mb4 collate utf8bin")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(err, NotNil)
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_bin")
-	rs, err = tk.Exec("alter table t modify column a char(10) charset utf8 collate utf8_bin")
-	if rs != nil {
-		rs.Close()
-	}
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a varchar(20) charset utf8)")
+	tk.MustExec("insert into t1 values (?)", "t1_value")
 
+	tk.MustExec("alter table t1 modify column a varchar(20) charset utf8mb4")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("t1_value"))
+
+	tk.MustExec("create table t(a varchar(20) charset latin1)")
+	tk.MustExec("insert into t values (?)", "t_value")
+
+	tk.MustExec("alter table t modify column a varchar(20) charset latin1")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("t_value"))
+
+	rs, err := tk.Exec("alter table t modify column a varchar(20) charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
 	c.Assert(err, NotNil)
-	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_general_ci")
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8 collate utf8_bin")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
+	rs, err = tk.Exec("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
@@ -543,20 +577,24 @@ func (s *testIntegrationSuite) TestChangingTableCharset(c *C) {
 		rs.Close()
 	}
 	c.Assert(err.Error(), Equals, "Unknown charset gbk")
-	tk.MustExec("alter table t charset utf8")
-	tk.MustExec("alter table t charset utf8 collate utf8_bin")
+	rs, err = tk.Exec("alter table t charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8")
+
 	rs, err = tk.Exec("alter table t charset utf8 collate latin1_bin")
 	if rs != nil {
 		rs.Close()
 	}
 	c.Assert(err, NotNil)
-	tk.MustExec("alter table t charset utf8mb4")
-	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
-
-	rs, err = tk.Exec("alter table t charset utf8 collate utf8_bin")
+	rs, err = tk.Exec("alter table t charset utf8mb4")
 	if rs != nil {
 		rs.Close()
 	}
+	c.Assert(err.Error(), Equals, "[ddl:210]unsupported modify charset from latin1 to utf8mb4")
+
+	rs, err = tk.Exec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	c.Assert(err, NotNil)
 }
 
@@ -976,6 +1014,36 @@ func (s *testIntegrationSuite) TestAddIndexAfterAddColumn(c *C) {
 	s.testErrorCode(c, s.tk, sql, tmysql.ErrTooManyKeyParts)
 }
 
+func (s *testIntegrationSuite) TestResolveCharset(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists resolve_charset")
+	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	s.tk.MustExec("INSERT INTO resolve_charset VALUES('鰈')")
+
+	s.tk.MustExec("create database resolve_charset charset binary")
+	s.tk.MustExec("use resolve_charset")
+	s.tk.MustExec(`CREATE TABLE resolve_charset (a varchar(255) DEFAULT NULL) DEFAULT CHARSET=latin1`)
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "latin1")
+	c.Assert(tbl.Meta().Charset, Equals, "latin1")
+
+	s.tk.MustExec(`CREATE TABLE resolve_charset1 (a varchar(255) DEFAULT NULL)`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("resolve_charset"), model.NewCIStr("resolve_charset1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Charset, Equals, "binary")
+	c.Assert(tbl.Meta().Charset, Equals, "binary")
+}
+
 func (s *testIntegrationSuite) TestAddAnonymousIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
@@ -1133,6 +1201,7 @@ func (s *testIntegrationSuite) TestAlterColumn(c *C) {
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]
 	expected = "CREATE TABLE `mc` (\n  `a` bigint(20) NOT NULL AUTO_INCREMENT,\n  `b` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	c.Assert(createSQL, Equals, expected)
 	s.tk.MustExec("alter table mc modify column a bigint") // Drops auto_increment
 	result = s.tk.MustQuery("show create table mc")
 	createSQL = result.Rows()[0][1]

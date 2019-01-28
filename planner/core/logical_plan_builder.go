@@ -37,8 +37,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -879,10 +880,10 @@ func (b *PlanBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper 
 	return sort, nil
 }
 
-// getUintForLimitOffset gets uint64 value for limit/offset.
-// For ordinary statement, limit/offset should be uint64 constant value.
-// For prepared statement, limit/offset is string. We should convert it to uint64.
-func getUintForLimitOffset(ctx sessionctx.Context, n ast.Node) (uint64, error) {
+// getUintFromNode gets uint64 value from ast.Node.
+// For ordinary statement, node should be uint64 constant value.
+// For prepared statement, node is string. We should convert it to uint64.
+func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bool, isExpectedType bool) {
 	var val interface{}
 	switch v := n.(type) {
 	case *driver.ValueExpr:
@@ -890,45 +891,49 @@ func getUintForLimitOffset(ctx sessionctx.Context, n ast.Node) (uint64, error) {
 	case *driver.ParamMarkerExpr:
 		param, err := expression.GetParamExpression(ctx, v)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, false, false
 		}
 		str, isNull, err := expression.GetStringFromConstant(ctx, param)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, false, false
 		}
 		if isNull {
-			return 0, nil
+			return 0, true, true
 		}
 		val = str
 	default:
-		return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", v)
+		return 0, false, false
 	}
 	switch v := val.(type) {
 	case uint64:
-		return v, nil
+		return v, false, true
 	case int64:
 		if v >= 0 {
-			return uint64(v), nil
+			return uint64(v), false, true
 		}
 	case string:
 		sc := ctx.GetSessionVars().StmtCtx
 		uVal, err := types.StrToUint(sc, v)
-		return uVal, errors.Trace(err)
+		if err != nil {
+			return 0, false, false
+		}
+		return uVal, false, true
 	}
-	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
+	return 0, false, false
 }
 
 func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count uint64,
 	offset uint64, err error) {
+	var isExpectedType bool
 	if limit.Count != nil {
-		count, err = getUintForLimitOffset(ctx, limit.Count)
-		if err != nil {
+		count, _, isExpectedType = getUintFromNode(ctx, limit.Count)
+		if !isExpectedType {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
 	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(ctx, limit.Offset)
-		if err != nil {
+		offset, _, isExpectedType = getUintFromNode(ctx, limit.Offset)
+		if !isExpectedType {
 			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
@@ -1111,7 +1116,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				}
 			}
 		}
-		index := -1
+		var index int
 		if resolveFieldsFirst {
 			index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 			if a.err != nil {
@@ -1282,7 +1287,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	case *ast.ColumnNameExpr:
 		col, err := g.schema.FindColumn(v.Name)
 		if col == nil || !g.inExpr {
-			var index = -1
+			var index int
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
 				return inNode, false
@@ -1670,7 +1675,6 @@ func allColFromExprNode(p LogicalPlan, n ast.Node, cols map[*expression.Column]s
 		cols: cols,
 	}
 	n.Accept(extractor)
-	return
 }
 
 func (b *PlanBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (LogicalPlan, []expression.Expression, error) {
@@ -1994,6 +1998,15 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
+		// check partition by name.
+		for _, name := range tn.PartitionNames {
+			_, err = tables.FindPartitionByName(tableInfo, name.L)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	} else if len(tn.PartitionNames) != 0 {
+		return nil, ErrPartitionClauseOnNonpartitioned
 	}
 
 	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
@@ -2027,6 +2040,7 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 		indexHints:          tn.IndexHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
+		partitionNames:      tn.PartitionNames,
 	}.Init(b.ctx)
 
 	var handleCol *expression.Column
@@ -2346,8 +2360,8 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	updt.ResolveIndices()
-	return updt, nil
+	err = updt.ResolveIndices()
+	return updt, err
 }
 
 func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.Assignment, p LogicalPlan) ([]*expression.Assignment, LogicalPlan, error) {
@@ -2606,7 +2620,7 @@ func (b *PlanBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 
 // buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
 // so after the projection, window functions only needs to deal with columns.
-func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []expression.Expression, error) {
+func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []property.Item, []expression.Expression, error) {
 	b.optFlag |= flagEliminateProjection
 
 	var items []*ast.ByItem
@@ -2614,15 +2628,17 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 	if spec.Ref.L != "" {
 		ref, ok := b.windowSpecs[spec.Ref.L]
 		if !ok {
-			return nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
+			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
 		}
 		err := mergeWindowSpec(&spec, &ref)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
+	lenPartition := 0
 	if spec.PartitionBy != nil {
 		items = append(items, spec.PartitionBy.Items...)
+		lenPartition = len(spec.PartitionBy.Items)
 	}
 	if spec.OrderBy != nil {
 		items = append(items, spec.OrderBy.Items...)
@@ -2642,7 +2658,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewrite(item.Expr, p, aggMap, true)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		p = np
 		if col, ok := it.(*expression.Column); ok {
@@ -2663,7 +2679,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 	for _, arg := range expr.Args {
 		newArg, np, err := b.rewrite(arg, p, aggMap, true)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		p = np
 		if col, ok := newArg.(*expression.Column); ok {
@@ -2682,19 +2698,131 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 
 	proj.SetSchema(schema)
 	proj.SetChildren(p)
-	return proj, propertyItems, newArgList, nil
+	return proj, propertyItems[:lenPartition], propertyItems[lenPartition:], newArgList, nil
 }
 
-func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
-	p, byItems, args, err := b.buildProjectionForWindow(p, expr, aggMap)
+// buildWindowFunctionFrameBound builds the bounds of window function frames.
+// For type `Rows`, the bound expr must be an unsigned integer.
+// For type `Range`, the bound expr must be temporal or numeric types.
+func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
+	frameType := spec.Frame.Type
+	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
+	if bound.UnBounded || boundClause.Type == ast.CurrentRow {
+		return bound, nil
+	}
+
+	if frameType == ast.Rows {
+		// Rows type does not support interval range.
+		if boundClause.Unit != nil {
+			return nil, ErrWindowRowsIntervalUse.GenWithStackByArgs(spec.Name)
+		}
+		numRows, isNull, isExpectedType := getUintFromNode(b.ctx, boundClause.Expr)
+		if isNull || !isExpectedType {
+			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+		}
+		bound.Num = numRows
+		return bound, nil
+	}
+
+	if len(orderByItems) != 1 {
+		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
+	}
+	col := orderByItems[0].Col
+	isNumeric, isTemporal := types.IsTypeNumeric(col.RetType.Tp), types.IsTypeTemporal(col.RetType.Tp)
+	if !isNumeric && !isTemporal {
+		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
+	}
+	if boundClause.Unit != nil {
+		// Interval bounds only support order by temporal types.
+		if isNumeric {
+			return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
+		}
+
+		// TODO: We also need to raise error for non-deterministic expressions, like rand().
+		val, err := evalAstExpr(b.ctx, boundClause.Expr)
+		if err != nil {
+			return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
+		}
+		expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
+		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
+		if uVal < 0 || isNull || err != nil {
+			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+		}
+		// It can be guaranteed by the parser.
+		unitVal := boundClause.Unit.(*driver.ValueExpr)
+		unit := expression.Constant{Value: unitVal.Datum, RetType: unitVal.GetType()}
+
+		funcName := ast.DateAdd
+		if bound.Type == ast.Preceding {
+			funcName = ast.DateSub
+		}
+		bound.DateCalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
+		if err != nil {
+			return nil, err
+		}
+		return bound, nil
+	}
+	// Non-interval bound only support order by numeric types.
+	if isTemporal {
+		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+	}
+	num, isNull, isExpectedType := getUintFromNode(b.ctx, boundClause.Expr)
+	if isNull || !isExpectedType {
+		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	}
+	bound.Num = num
+	return bound, nil
+}
+
+// buildWindowFunctionFrame builds the window function frames.
+// See https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
+func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItems []property.Item) (*WindowFrame, error) {
+	frameClause := spec.Frame
+	if frameClause == nil {
+		return nil, nil
+	}
+	if frameClause.Type == ast.Groups {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("GROUPS")
+	}
+	frame := &WindowFrame{Type: frameClause.Type}
+	start := frameClause.Extent.Start
+	if start.Type == ast.Following && start.UnBounded {
+		return nil, ErrWindowFrameStartIllegal.GenWithStackByArgs(spec.Name)
+	}
+	var err error
+	frame.Start, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &start)
 	if err != nil {
 		return nil, err
 	}
 
+	end := frameClause.Extent.End
+	if end.Type == ast.Preceding && end.UnBounded {
+		return nil, ErrWindowFrameEndIllegal.GenWithStackByArgs(spec.Name)
+	}
+	frame.End, err = b.buildWindowFunctionFrameBound(spec, orderByItems, &end)
+	return frame, err
+}
+
+func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
+	if expr.Spec.Name.O == "" {
+		expr.Spec.Name = model.NewCIStr("<unnamed window>")
+	}
+	p, partitionBy, orderBy, args, err := b.buildProjectionForWindow(p, expr, aggMap)
+	if err != nil {
+		return nil, err
+	}
+	frame, err := b.buildWindowFunctionFrame(&expr.Spec, orderBy)
+	if err != nil {
+		return nil, err
+	}
 	desc := aggregation.NewWindowFuncDesc(b.ctx, expr.F, args)
+	// TODO: Check if the function is aggregation function after we support more functions.
+	desc.WrapCastForAggArgs(b.ctx)
 	window := LogicalWindow{
 		WindowFuncDesc: desc,
-		ByItems:        byItems,
+		PartitionBy:    partitionBy,
+		OrderBy:        orderBy,
+		Frame:          frame,
 	}.Init(b.ctx)
 	schema := p.Schema().Clone()
 	schema.Append(&expression.Column{
@@ -2736,11 +2864,7 @@ func mergeWindowSpec(spec, ref *ast.WindowSpec) error {
 	}
 	if ref.OrderBy != nil {
 		if spec.OrderBy != nil {
-			name := spec.Name.O
-			if name == "" {
-				name = "<unnamed window>"
-			}
-			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(name, ref.Name.O)
+			return ErrWindowNoRedefineOrderBy.GenWithStackByArgs(spec.Name.O, ref.Name.O)
 		}
 		spec.OrderBy = ref.OrderBy
 	}

@@ -88,7 +88,7 @@ type mergeJoinInnerTable struct {
 }
 
 func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
-	if t.reader == nil || t.joinKeys == nil || len(t.joinKeys) == 0 || ctx == nil {
+	if t.reader == nil || ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
 	}
 	t.ctx = ctx
@@ -265,7 +265,7 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if !e.prepared {
@@ -330,6 +330,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 				e.joiner.onMissMatch(e.outerTable.row, chk)
 			}
 			e.outerTable.row = e.outerTable.iter.Next()
+			e.outerTable.hasMatch = false
 			e.innerIter4Row.Begin()
 		}
 

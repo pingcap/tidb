@@ -24,11 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/systimemon"
-	"github.com/pingcap/tidb/x-server"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
@@ -127,7 +126,6 @@ var (
 	storage  kv.Storage
 	dom      *domain.Domain
 	svr      *server.Server
-	xsvr     *xserver.Server
 	graceful bool
 )
 
@@ -206,6 +204,9 @@ func setupBinlogClient() {
 
 	terror.MustNil(err)
 
+	err = pumpcli.InitLogger(cfg.Log.ToLogConfig())
+	terror.MustNil(err)
+
 	binloginfo.SetPumpsClient(client)
 	log.Infof("create pumps client success, ignore binlog error %v", cfg.Binlog.IgnoreError)
 }
@@ -266,7 +267,7 @@ func hasRootPrivilege() bool {
 }
 
 func flagBoolean(name string, defaultVal bool, usage string) *bool {
-	if defaultVal == false {
+	if !defaultVal {
 		// Fix #4125, golang do not print default false value in usage, so we append it.
 		usage = fmt.Sprintf("%s (default false)", usage)
 		return flag.Bool(name, defaultVal, usage)
@@ -386,16 +387,12 @@ func validateConfig() {
 		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
 		os.Exit(-1)
 	}
-	if cfg.Store == "mocktikv" && cfg.RunDDL == false {
+	if cfg.Store == "mocktikv" && !cfg.RunDDL {
 		log.Errorf("can't disable DDL on mocktikv")
 		os.Exit(-1)
 	}
 	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
 		log.Errorf("log max-size should not be larger than %d MB", config.MaxLogFileSize)
-		os.Exit(-1)
-	}
-	if cfg.XProtocol.XServer {
-		log.Error("X Server is not available")
 		os.Exit(-1)
 	}
 	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
@@ -408,6 +405,16 @@ func validateConfig() {
 
 	if cfg.TxnLocalLatches.Enabled && cfg.TxnLocalLatches.Capacity == 0 {
 		log.Errorf("txn-local-latches.capacity can not be 0")
+		os.Exit(-1)
+	}
+
+	// For tikvclient.
+	if cfg.TiKVClient.GrpcConnectionCount == 0 {
+		log.Errorf("grpc-connection-count should be greater than 0")
+		os.Exit(-1)
+	}
+	if cfg.TiKVClient.MaxTxnTimeUse == 0 {
+		log.Errorf("max-txn-time-use should be greater than 0")
 		os.Exit(-1)
 	}
 }
@@ -449,12 +456,6 @@ func setGlobalVars() {
 		}
 	}
 
-	if cfg.TiKVClient.GrpcConnectionCount > 0 {
-		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
-	}
-	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
-	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
-
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
 
@@ -472,29 +473,16 @@ func printInfo() {
 }
 
 func createServer() {
-	var driver server.IDriver
-	driver = server.NewTiDBDriver(storage)
+	driver := server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
-	if cfg.XProtocol.XServer {
-		xcfg := &xserver.Config{
-			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
-			Socket:     cfg.XProtocol.XSocket,
-			TokenLimit: cfg.TokenLimit,
-		}
-		xsvr, err = xserver.NewServer(xcfg)
-		terror.MustNil(err, closeDomainAndStorage)
-	}
 }
 
 func serverShutdown(isgraceful bool) {
 	if isgraceful {
 		graceful = true
-	}
-	if xsvr != nil {
-		xsvr.Close() // Should close xserver before server.
 	}
 	svr.Close()
 }
@@ -540,10 +528,6 @@ func setupTracing() {
 func runServer() {
 	err := svr.Run()
 	terror.MustNil(err)
-	if cfg.XProtocol.XServer {
-		err := xsvr.Run()
-		terror.MustNil(err)
-	}
 }
 
 func closeDomainAndStorage() {

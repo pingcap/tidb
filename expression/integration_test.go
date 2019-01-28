@@ -2840,6 +2840,10 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	// for coalesce
 	result = tk.MustQuery("select coalesce(NULL), coalesce(NULL, NULL), coalesce(NULL, NULL, NULL);")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery(`select coalesce(cast(1 as json), cast(2 as json));`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select coalesce(NULL, cast(2 as json));`).Check(testkit.Rows(`2`))
+	tk.MustQuery(`select coalesce(cast(1 as json), NULL);`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select coalesce(NULL, NULL);`).Check(testkit.Rows(`<nil>`))
 
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b double, c datetime, d time, e char(20), f bit(10))")
@@ -3356,8 +3360,7 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 		tk.MustExec(fmt.Sprintf(`INSERT INTO table_json values('%s', '%s')`, j, j))
 	}
 
-	var r *testkit.Result
-	r = tk.MustQuery(`select json_type(a), json_type(b) from table_json`)
+	r := tk.MustQuery(`select json_type(a), json_type(b) from table_json`)
 	r.Check(testkit.Rows("OBJECT OBJECT", "ARRAY ARRAY"))
 
 	r = tk.MustQuery(`select json_unquote('hello'), json_unquote('world')`)
@@ -3482,6 +3485,7 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 
 	var r *testkit.Result
 	_, err = tk.Exec("set @@session.sql_mode=',NO_ZERO_DATE,ANSI,ANSI_QUOTES';")
+	c.Assert(err, IsNil)
 	r = tk.MustQuery(`select @@session.sql_mode`)
 	r.Check(testkit.Rows("NO_ZERO_DATE,REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"))
 	r = tk.MustQuery(`show variables like 'sql_mode'`)
@@ -3504,7 +3508,9 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 
 	// issue #5478
 	_, err = tk.Exec("set session transaction read write;")
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("set global transaction read write;")
+	c.Assert(err, IsNil)
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("0 0 0 0"))
 
@@ -3513,11 +3519,14 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("1 0 1 0"))
 	_, err = tk.Exec("set global transaction read only;")
+	c.Assert(err, IsNil)
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("1 1 1 1"))
 
 	_, err = tk.Exec("set session transaction read write;")
+	c.Assert(err, IsNil)
 	_, err = tk.Exec("set global transaction read write;")
+	c.Assert(err, IsNil)
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("0 0 0 0"))
 }
@@ -3732,7 +3741,7 @@ func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 line 1 column 29 near \"select /*+ unknown_hint(c1)*/ 1\" (total length 31)"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 29 near \"unknown_hint(c1)*/ 1\" "))
 	_, err := tk.Exec("select 1 from /*+ test1() */ t")
 	c.Assert(err, NotNil)
 }
