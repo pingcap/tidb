@@ -217,7 +217,7 @@ func (bj BinaryJSON) objectSearchKey(key []byte) (BinaryJSON, bool) {
 	idx := sort.Search(elemCount, func(i int) bool {
 		return bytes.Compare(bj.objectGetKey(i), key) >= 0
 	})
-	if idx < elemCount && bytes.Compare(bj.objectGetKey(idx), key) == 0 {
+	if idx < elemCount && bytes.Equal(bj.objectGetKey(idx), key) {
 		return bj.objectGetVal(idx), true
 	}
 	return BinaryJSON{}, false

@@ -324,6 +324,9 @@ type DataSource struct {
 
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
+	// allConds contains all the filters on this table. For now it's maintained
+	// in predicate push down and used only in partition pruning.
+	allConds []expression.Expression
 
 	// relevantIndices means the indices match the push down conditions
 	relevantIndices []bool
@@ -645,13 +648,30 @@ type LogicalLock struct {
 	Lock ast.SelectLockType
 }
 
+// WindowFrame represents a window function frame.
+type WindowFrame struct {
+	Type  ast.FrameType
+	Start *FrameBound
+	End   *FrameBound
+}
+
+// FrameBound is the boundary of a frame.
+type FrameBound struct {
+	Type      ast.BoundType
+	UnBounded bool
+	Num       uint64
+	// For `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`, we will build the date_add or date_sub functions.
+	DateCalcFunc expression.Expression
+}
+
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
 	logicalSchemaProducer
 
 	WindowFuncDesc *aggregation.WindowFuncDesc
-	ByItems        []property.Item // ByItems is composed of `PARTITION BY` and `ORDER BY` items.
-	// TODO: add frame clause
+	PartitionBy    []property.Item
+	OrderBy        []property.Item
+	Frame          *WindowFrame
 }
 
 // GetWindowResultColumn returns the column storing the result of the window function.
