@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/grpc-ecosystem/go-grpc-middleware"
-	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -74,10 +74,10 @@ type Client interface {
 type connArray struct {
 	index uint32
 	v     []*grpc.ClientConn
-	// Bind with a background goroutine to process coprocessor streaming timeout.
+	// streamTimeout binds with a background goroutine to process coprocessor streaming timeout.
 	streamTimeout chan *tikvrpc.Lease
 
-	// For batch commands.
+	// batchCommandsCh used for batch commands.
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
@@ -90,9 +90,9 @@ type batchCommandsClient struct {
 	idAlloc                uint64
 	tikvTransportLayerLoad *uint64
 
-	// Indicates the batch client is closed explicitly or not.
+	// closed indicates the batch client is closed explicitly or not.
 	closed int32
-	// Protect client when re-create the streaming.
+	// clientLock protects client when re-create the streaming.
 	clientLock sync.Mutex
 }
 
@@ -302,7 +302,7 @@ type batchCommandsEntry struct {
 	req *tikvpb.BatchCommandsRequest_Request
 	res chan *tikvpb.BatchCommandsResponse_Response
 
-	// Indicated the request is canceled or not.
+	// canceled indicated the request is canceled or not.
 	canceled int32
 	err      error
 }
@@ -579,9 +579,9 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	// Coprocessor streaming request.
 	// Use context to support timeout for grpc streaming client.
 	ctx1, cancel := context.WithCancel(ctx)
+	defer cancel()
 	resp, err := tikvrpc.CallRPC(ctx1, client, req)
 	if err != nil {
-		cancel() // This line stops the silly lint tool from complaining.
 		return nil, errors.Trace(err)
 	}
 
