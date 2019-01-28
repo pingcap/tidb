@@ -47,16 +47,16 @@ type mockDataSourceParameters struct {
 type mockDataSource struct {
 	baseExecutor
 	p        mockDataSourceParameters
-	colData  [][]interface{}
+	genData  []*chunk.Chunk
 	chunks   []*chunk.Chunk
 	chunkPtr int
 }
 
-func (mds *mockDataSource) genColDatums(ordinal int) (results []interface{}) {
-	typ := mds.retFieldTypes[ordinal]
-	order := mds.p.orders[ordinal]
+func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
+	typ := mds.retFieldTypes[col]
+	order := mds.p.orders[col]
 	rows := mds.p.rows
-	NDV := mds.p.ndvs[ordinal]
+	NDV := mds.p.ndvs[col]
 	results = make([]interface{}, 0, rows)
 	if NDV == 0 {
 		for i := 0; i < rows; i++ {
@@ -108,24 +108,9 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 }
 
 func (mds *mockDataSource) prepareChunks() {
-	mds.chunks = make([]*chunk.Chunk, (mds.p.rows+mds.initCap-1)/mds.initCap)
+	mds.chunks = make([]*chunk.Chunk, len(mds.genData))
 	for i := range mds.chunks {
-		mds.chunks[i] = chunk.NewChunkWithCapacity(mds.retTypes(), mds.ctx.GetSessionVars().MaxChunkSize)
-	}
-
-	for i := 0; i < mds.p.rows; i++ {
-		idx := i / mds.initCap
-		types := mds.retTypes()
-		for colIdx := 0; colIdx < len(types); colIdx++ {
-			switch types[colIdx].Tp {
-			case mysql.TypeLong, mysql.TypeLonglong:
-				mds.chunks[idx].AppendInt64(colIdx, mds.colData[colIdx][i].(int64))
-			case mysql.TypeDouble:
-				mds.chunks[idx].AppendFloat64(colIdx, mds.colData[colIdx][i].(float64))
-			default:
-				panic("not implement")
-			}
-		}
+		mds.chunks[i] = mds.genData[i].CopyTo(mds.chunks[i])
 	}
 	mds.chunkPtr = 0
 }
@@ -145,9 +130,29 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	baseExec := newBaseExecutor(opt.ctx, opt.schema, "")
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
 	types := m.retTypes()
-	m.colData = make([][]interface{}, len(types))
+	colData := make([][]interface{}, len(types))
 	for i := 0; i < len(types); i++ {
-		m.colData[i] = m.genColDatums(i)
+		colData[i] = m.genColDatums(i)
+	}
+
+	m.genData = make([]*chunk.Chunk, (m.p.rows+m.initCap-1)/m.initCap)
+	for i := range m.genData {
+		m.genData[i] = chunk.NewChunkWithCapacity(m.retTypes(), m.ctx.GetSessionVars().MaxChunkSize)
+	}
+
+	for i := 0; i < m.p.rows; i++ {
+		idx := i / m.initCap
+		retTypes := m.retTypes()
+		for colIdx := 0; colIdx < len(types); colIdx++ {
+			switch retTypes[colIdx].Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				m.genData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
+			case mysql.TypeDouble:
+				m.genData[idx].AppendFloat64(colIdx, colData[colIdx][i].(float64))
+			default:
+				panic("not implement")
+			}
+		}
 	}
 	return m
 }

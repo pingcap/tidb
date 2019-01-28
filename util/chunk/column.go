@@ -72,6 +72,19 @@ func (c *column) isNull(rowIdx int) bool {
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
+func (c *column) copyTo(other *column) *column {
+	if other == nil {
+		other = new(column)
+	}
+	other.length = c.length
+	other.nullCount = c.nullCount
+	other.nullBitmap = append(other.nullBitmap[:0], c.nullBitmap...)
+	other.offsets = append(other.offsets[:0], c.offsets...)
+	other.data = append(other.data[:0], c.data...)
+	other.elemBuf = append(other.elemBuf[:0], c.elemBuf...)
+	return other
+}
+
 func (c *column) appendNullBitmap(notNull bool) {
 	idx := c.length >> 3
 	if idx >= len(c.nullBitmap) {

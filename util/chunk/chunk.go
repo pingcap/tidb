@@ -210,6 +210,26 @@ func (c *Chunk) Reset() {
 	c.numVirtualRows = 0
 }
 
+// CopyTo copies this chunk to other.
+// If other is nil, create a new chunk.
+func (c *Chunk) CopyTo(other *Chunk) *Chunk {
+	if other == nil {
+		other = new(Chunk)
+	}
+	other.numVirtualRows = c.numVirtualRows
+	other.capacity = c.capacity
+	if len(other.columns) < len(c.columns) {
+		other.columns = append(other.columns, make([]*column, len(c.columns)-len(other.columns))...)
+	} else if len(other.columns) > len(c.columns) {
+		other.columns = other.columns[:len(c.columns)]
+	}
+
+	for i := range other.columns {
+		other.columns[i] = c.columns[i].copyTo(other.columns[i])
+	}
+	return other
+}
+
 // GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
 // The doubled capacity should not be larger than maxChunkSize.
 // TODO: this method will be used in following PR.
