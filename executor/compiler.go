@@ -52,7 +52,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	CountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
-	DbCountStmtNode(stmtNode, c.Ctx.GetSessionVars().InRestrictedSQL)
 	isExpensive := logExpensiveQuery(stmtNode, finalPlan)
 
 	return &ExecStmt{
@@ -123,20 +122,15 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	if inRestrictedSQL {
 		return
 	}
-	metrics.StmtNodeCounter.WithLabelValues(GetStmtLabel(stmtNode)).Inc()
-}
 
-// DbCountStmtNode records the number of statements with the same type and db.
-func DbCountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
-	cfg := config.GetGlobalConfig()
+	typeLabel := GetStmtLabel(stmtNode)
+	metrics.StmtNodeCounter.WithLabelValues(typeLabel).Inc()
 
-	if inRestrictedSQL || cfg.DbQPSMetricSwitch != 1 {
+	if !config.GetGlobalConfig().Status.RecordQPSbyDB {
 		return
 	}
 
 	dbLabels := getStmtDbLabel(stmtNode)
-	typeLabel := GetStmtLabel(stmtNode)
-
 	for _, dbLabel := range dbLabels {
 		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
 	}

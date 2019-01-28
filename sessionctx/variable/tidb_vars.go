@@ -185,9 +185,6 @@ const (
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
 
-	// tidb_db_qps_metric_switch is used to control whether db qps monitoring data needs to recorded.
-	TiDBEnableDbQPSMetric = "tidb_enable_db_qps_metric"
-
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
@@ -281,7 +278,6 @@ const (
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
-	DefEnableDbQPSMetric             = 1
 )
 
 // Process global variables.

@@ -35,9 +35,6 @@ token-limit = 1000
 # Valid options: ["log", "cancel"]
 oom-action = "log"
 
-# whether tidb enable db qps metric
-db-qps-metric-switch = 1
-
 # Set the memory quota for a query in bytes. Default: 32GB
 mem-quota-query = 34359738368
 
@@ -121,6 +118,9 @@ metrics-addr = ""
 
 # Prometheus client push interval in second, set \"0\" to disable prometheus push.
 metrics-interval = 15
+
+# if enable tidb record db qps
+record-db-qps = true
 
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
