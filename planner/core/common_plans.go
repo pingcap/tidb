@@ -84,6 +84,14 @@ type RecoverIndex struct {
 	IndexName string
 }
 
+// RestoreTable is used for recover deleted files by mistake.
+type RestoreTable struct {
+	baseSchemaProducer
+	JobID  int64
+	Table  *ast.TableName
+	JobNum int64
+}
+
 // CleanupIndex is used to delete dangling index data.
 type CleanupIndex struct {
 	baseSchemaProducer
