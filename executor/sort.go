@@ -98,7 +98,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 			return nil
 		}
 		rowPtr := e.rowPtrs[e.Idx]
-		req.AppendPartialRow(0, e.rowChunks.GetRow(rowPtr))
+		req.AppendRow(e.rowChunks.GetRow(rowPtr))
 		e.Idx++
 	}
 	return nil
@@ -277,7 +277,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 	for req.NumRows() < e.maxChunkSize && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		req.AppendPartialRow(0, row)
+		req.AppendRow(row)
 		e.Idx++
 	}
 	return nil
