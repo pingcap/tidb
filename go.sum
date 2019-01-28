@@ -74,6 +74,12 @@ github.com/grpc-ecosystem/grpc-gateway v1.5.1 h1:3scN4iuXkNOyP98jF55Lv8a9j1o/Iwv
 github.com/grpc-ecosystem/grpc-gateway v1.5.1/go.mod h1:RSKVYQBd5MCa4OVpNdGskqpgL2+G+NZTnrVHpWWfpdw=
 github.com/hpcloud/tail v1.0.0 h1:nfCOvKYfkgYP8hkirhJocXT2+zOD8yUNjXaWfTlyFKI=
 github.com/hpcloud/tail v1.0.0/go.mod h1:ab1qPbhIpdTxEkNHXyeSf5vhxWSCs/tWer42PpOxQnU=
+github.com/imtbkcat/parser v0.0.0-20181211072423-79b42ecfaf70 h1:iv7nF3ajlKXKJLnGXJ3++BeuetP1PLcKuSxKtjgskuk=
+github.com/imtbkcat/parser v0.0.0-20181211072423-79b42ecfaf70/go.mod h1:qupHD3o7J0aBb3bbVyXRnxe9kKy2MTY/6POS6NO/Ei8=
+github.com/imtbkcat/parser v0.0.0-20190128030351-c53dbedfa330 h1:6PqjFVQFcUbf59tZ6hLReAKExq3QJB8Xhg17h6I4C6A=
+github.com/imtbkcat/parser v0.0.0-20190128030351-c53dbedfa330/go.mod h1:qupHD3o7J0aBb3bbVyXRnxe9kKy2MTY/6POS6NO/Ei8=
+github.com/imtbkcat/parser v0.0.0-20190128051815-db8939f8a2f5 h1:kS9jQdJzSWOdq9PULP6sWmO6bgvZPIRwwAs7TZHxoow=
+github.com/imtbkcat/parser v0.0.0-20190128051815-db8939f8a2f5/go.mod h1:qupHD3o7J0aBb3bbVyXRnxe9kKy2MTY/6POS6NO/Ei8=
 github.com/jonboulle/clockwork v0.1.0 h1:VKV+ZcuP6l3yW9doeqz6ziZGgcynBVQO+obU0+0hcPo=
 github.com/jonboulle/clockwork v0.1.0/go.mod h1:Ii8DK3G1RaLaWxj9trq07+26W01tbo22gdxWY5EU2bo=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
