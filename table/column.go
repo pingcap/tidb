@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -188,7 +189,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 			}
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
-		} else if width > 3 && utf8Charset {
+		} else if width > 3 && utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUtf8 {
 			// Handle non-BMP characters.
 			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
