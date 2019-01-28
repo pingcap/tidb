@@ -67,7 +67,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	} else if s.Partition.ColumnNames != nil {
 		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
 		if enable && len(s.Partition.ColumnNames) != 1 {
-			return nil, errors.Trace(errUnsupportedPartitionByRangeColumn)
+			return nil, errors.Trace(ErrUnsupportedPartitionByRangeColumns)
 		}
 		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
 		for _, cn := range s.Partition.ColumnNames {

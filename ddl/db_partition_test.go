@@ -200,7 +200,7 @@ func (s *testIntegrationSuite) TestCreateTableWithPartition(c *C) {
 			  partition p1 values less than (to_seconds('2005-01-01')));`)
 	tk.MustQuery("show create table t26").Check(
 		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( to_seconds(`a`) ) (\n  PARTITION p0 VALUES LESS THAN (63240134400),\n  PARTITION p1 VALUES LESS THAN (63271756800)\n)"))
-	tk.MustExec(`create table t27 (a bigint unsigned not null) 	
+	tk.MustExec(`create table t27 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
 		  partition p1 values less than (100),
@@ -208,7 +208,7 @@ func (s *testIntegrationSuite) TestCreateTableWithPartition(c *C) {
 		  partition p3 values less than (18446744073709551000),
 		  partition p4 values less than (18446744073709551614)
 		);`)
-	tk.MustExec(`create table t28 (a bigint unsigned not null) 	
+	tk.MustExec(`create table t28 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
 		  partition p1 values less than (100),
@@ -224,6 +224,15 @@ func (s *testIntegrationSuite) TestCreateTableWithPartition(c *C) {
 	)
 	partition by range columns (a)
 	(partition p0 values less than (0));`)
+
+	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	_, err = tk.Exec(`create table t30 (
+		  a int,
+		  b float,
+		  c varchar(30))
+		  partition by range columns (a, b)
+		  (partition p0 values less than (10, 10.0))`)
+	c.Assert(ddl.ErrUnsupportedPartitionByRangeColumns.Equal(err), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestCreateTableWithHashPartition(c *C) {
