@@ -342,7 +342,7 @@ func (b *builtinCoalesceDurationSig) evalDuration(row chunk.Row) (res types.Dura
 	return res, isNull, err
 }
 
-// builtinCoalesceJSONSig is buitin function coalesce signature which return type time
+// builtinCoalesceJSONSig is buitin function coalesce signature which return type json.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
 type builtinCoalesceJSONSig struct {
 	baseBuiltinFunc
