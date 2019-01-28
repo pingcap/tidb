@@ -203,7 +203,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCoalesceDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	case types.ETJson:
-		sig = &builtinCoalesceJsonSig{bf}
+		sig = &builtinCoalesceJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceJson)
 	}
 
@@ -342,19 +342,19 @@ func (b *builtinCoalesceDurationSig) evalDuration(row chunk.Row) (res types.Dura
 	return res, isNull, err
 }
 
-// builtinCoalesceJsonSig is buitin function coalesce signature which return type time
+// builtinCoalesceJSONSig is buitin function coalesce signature which return type time
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_coalesce
-type builtinCoalesceJsonSig struct {
+type builtinCoalesceJSONSig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinCoalesceJsonSig) Clone() builtinFunc {
-	newSig := &builtinCoalesceJsonSig{}
+func (b *builtinCoalesceJSONSig) Clone() builtinFunc {
+	newSig := &builtinCoalesceJSONSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-func (b *builtinCoalesceJsonSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCoalesceJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	for _, a := range b.getArgs() {
 		res, isNull, err = a.EvalJSON(b.ctx, row)
 		if err != nil || !isNull {
