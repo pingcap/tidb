@@ -334,8 +334,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(1))
@@ -353,8 +352,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(2))
@@ -364,8 +362,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(3))
@@ -375,8 +372,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(4))
@@ -437,8 +433,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdatePartition(c *C) {
 	testKit.MustExec("insert into t values (1)")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	c.Assert(stats.Count, Equals, int64(1))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
@@ -987,6 +982,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 		end    string
 		now    string
 		result bool
+		reason string
 	}{
 		// table was never analyzed and has reach the limit
 		{
@@ -997,6 +993,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: true,
+			reason: "table unanalyzed",
 		},
 		// table was never analyzed but has not reach the limit
 		{
@@ -1007,6 +1004,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
@@ -1017,6 +1015,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but modify count is small
 		{
@@ -1027,6 +1026,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but not within time period
 		{
@@ -1037,6 +1037,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:02 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but not within time period
 		{
@@ -1047,6 +1048,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "06:00 +0800",
 			now:    "10:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and within time period
 		{
@@ -1057,6 +1059,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: true,
+			reason: "too many modifications",
 		},
 		// table was already analyzed and within time period
 		{
@@ -1067,6 +1070,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "06:00 +0800",
 			now:    "23:00 +0800",
 			result: true,
+			reason: "too many modifications",
 		},
 	}
 	for _, test := range tests {
@@ -1076,7 +1080,9 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 		c.Assert(err, IsNil)
 		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
 		c.Assert(err, IsNil)
-		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
+		needAnalyze, reason := statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now)
+		c.Assert(needAnalyze, Equals, test.result)
+		c.Assert(strings.HasPrefix(reason, test.reason), IsTrue)
 	}
 }
 

@@ -37,7 +37,7 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.IgnoreError = true
 	conf.Binlog.BinlogSocket = "/tmp/socket"
 	conf.TiKVClient.CommitTimeout = "10s"
-
+	conf.CheckMb4ValueInUtf8 = true
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
 	configFile = path.Join(path.Dir(localFile), configFile)
