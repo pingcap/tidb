@@ -17,7 +17,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -151,7 +151,7 @@ func (e *ProjectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {

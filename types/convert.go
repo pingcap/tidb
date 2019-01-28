@@ -329,14 +329,12 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	if intCnt <= 0 {
 		intStr = "0"
 		if intCnt == 0 && len(digits) > 0 {
-			dotIdx = -1
 			intStr = roundIntStr(digits[0], intStr)
 		}
 		return intStr, nil
 	}
 	if intCnt == 1 && (digits[0] == '-' || digits[0] == '+') {
 		intStr = "0"
-		dotIdx = 0
 		if len(digits) > 1 {
 			intStr = roundIntStr(digits[1], intStr)
 		}

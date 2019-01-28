@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 )
 
 // Preprocess resolves table names of the node, and checks some statements validation.
 func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
-	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare, tableAliasInJoin: make([]map[string]interface{}, 0, 0)}
+	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare, tableAliasInJoin: make([]map[string]interface{}, 0)}
 	node.Accept(&v)
 	return errors.Trace(v.err)
 }
@@ -84,6 +84,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
+	case *ast.AdminStmt:
+		// The specified table in admin restore syntax maybe already been dropped.
+		// So skip check table name here, otherwise, admin restore table [table_name] syntax will return
+		// table not exists error. But admin restore is use to restore the dropped table. So skip children here.
+		return in, node.Tp == ast.AdminRestoreTable
 	default:
 		p.parentIsJoin = false
 	}
@@ -326,7 +331,6 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 			return
 		}
 	}
-	return
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {

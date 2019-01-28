@@ -277,7 +277,7 @@ func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string,
 
 		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
 			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && isNull == false {
+			if err2 == nil && !isNull {
 				return uint64(res), true, nil
 			}
 		}
@@ -291,7 +291,7 @@ func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string,
 		// PARTITION p0 VALUES LESS THAN (63340531200)
 		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
 			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && isNull == false {
+			if err2 == nil && !isNull {
 				return res, true, nil
 			}
 		}

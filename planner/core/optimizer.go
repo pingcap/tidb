@@ -114,9 +114,7 @@ func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 
 func postOptimize(plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
-
-	// build projection below aggregation
-	plan = buildProjBelowAgg(plan)
+	plan = injectExtraProjection(plan)
 	return plan
 }
 
