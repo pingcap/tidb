@@ -2490,31 +2490,3 @@ func (s *testSessionSuite) TestTxnGoString(c *C) {
 	c.Assert(fmt.Sprintf("%#v", txn), Equals, "Txn{state=invalid}")
 }
 
-func (s *testSessionSuite) TestPrepareInRetry(c *C) {
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	orgCapacity := plannercore.PreparedPlanCacheCapacity
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-		plannercore.PreparedPlanCacheCapacity = orgCapacity
-	}()
-	plannercore.SetPreparedPlanCache(true)
-	plannercore.PreparedPlanCacheCapacity = 100
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists prepare_retry")
-	tk.MustExec("create table prepare_retry (c1 int)")
-	tk.MustExec("insert into prepare_retry values (1)")
-	tk.MustExec("prepare stmt1 from 'update prepare_retry set c1 = 3'")
-
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test")
-
-	tk.MustExec("begin")
-	tk.MustExec("execute stmt1")
-	tk1.MustExec("update prepare_retry set c1 = 4")
-	tk.MustExec("deallocate prepare stmt1")
-	tk.MustExec("commit")
-
-	tk.MustQuery("select * from prepare_retry").Check(testkit.Rows("3"))
-}
