@@ -53,11 +53,12 @@ type TxnState struct {
 	doNotCommit error
 }
 
-var _ kv.StoreContract = &TxnState{}
+var _ kv.SafeStore = &TxnState{}
 
+// SetContract implement the kv.SafeStore interface.
 func (st *TxnState) SetContract(key kv.Key, contract kv.ContractType) {
 	if st.Transaction != nil {
-		if raw, ok := st.Transaction.(kv.StoreContract); ok {
+		if raw, ok := st.Transaction.(kv.SafeStore); ok {
 			raw.SetContract(key, contract)
 		}
 	}

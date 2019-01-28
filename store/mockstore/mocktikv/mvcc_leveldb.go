@@ -550,30 +550,6 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		return errors.Trace(err)
 	}
 
-	// Check contract.
-	if preCond := mutation.Precondition; preCond != nil {
-		if ok && preCond.ShouldNotExist {
-			log.Error(" prewrite contract fail!! must not exist, but exists ...")
-			return &preconditionErr{
-				PreconditionError: kvrpcpb.PreconditionError{
-					NotExist: &kvrpcpb.NotExist{
-						Key: mutation.Key,
-					},
-				},
-			}
-		} else if !ok && preCond.MustExist {
-			log.Error(" prewrite contract fail!! must exist, but not exist ...")
-			return &preconditionErr{
-				PreconditionError: kvrpcpb.PreconditionError{
-					AlreadyExist: &kvrpcpb.AlreadyExist{
-						Key: mutation.Key,
-					},
-				},
-			}
-		}
-		log.Info(" !!! yeah, check precondition ")
-	}
-
 	// Note that it's a write conflict here, even if the value is a rollback one.
 	if ok && dec1.value.commitTS >= startTS {
 		return ErrRetryable("write conflict")
@@ -592,7 +568,31 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		return errors.Trace(err)
 	}
 	batch.Put(writeKey, writeValue)
-	return nil
+
+	// Check precondition.
+	// Due to false positive may happen, don't return when a contract error is meet.
+	if preCond := mutation.Precondition; preCond != nil {
+		if ok && preCond.ShouldNotExist {
+			log.Debug("prewrite contract fail! must not exist, but exists key:", mutation.Key)
+			err = errors.Trace(&preconditionErr{
+				PreconditionError: kvrpcpb.PreconditionError{
+					AlreadyExist: &kvrpcpb.AlreadyExist{
+						Key: mutation.Key,
+					},
+				},
+			})
+		} else if !ok && preCond.MustExist {
+			log.Debug("prewrite contract fail! must exist, but not exist key:", mutation.Key)
+			err = errors.Trace(&preconditionErr{
+				PreconditionError: kvrpcpb.PreconditionError{
+					NotExist: &kvrpcpb.NotExist{
+						Key: mutation.Key,
+					},
+				},
+			})
+		}
+	}
+	return err
 }
 
 // Commit implements the MVCCStore interface.

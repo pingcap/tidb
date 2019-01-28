@@ -39,20 +39,22 @@ type UnionStore interface {
 	GetMemBuffer() MemBuffer
 }
 
-// ContractType is the type of a contract
+// ContractType is the type of a contract.
 type ContractType int
 
 const (
-	// MustExist is a kind of ContractType
-	MustExist ContractType = 1 + iota
-	// MustNotExist is a kind of ContractType
+	// NoContractCheck is a kind of Contract.
+	NoContractCheck ContractType = iota
+	// MustExist is a kind of Contract.
+	MustExist
+	// MustNotExist is a kind of Contract.
 	MustNotExist
 )
 
-// // StoreContract is a defined interface for stores that support contract checking.
-// // contracts are some conditions that an operation must meet.
-type StoreContract interface {
-	// SetContract sets the contract for the key operation.
+// SafeStore is store that support contract checking.
+// contracts are some conditions that an operation must meet.
+type SafeStore interface {
+	// SetContract sets a contract for an operation on the key.
 	SetContract(key Key, contract ContractType)
 }
 

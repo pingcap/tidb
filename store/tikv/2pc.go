@@ -420,24 +420,34 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				return errors.Trace(err1)
 			}
 			log.Debugf("con:%d 2PC prewrite encounters lock: %v", c.connID, lock)
-			locks = append(locks, lock)
+			if lock != nil {
+				locks = append(locks, lock)
+			}
 
-			if keyErr.PreconditionErr != nil {
-				preCond := keyErr.PreconditionErr
-				if notExist := preCond.GetNotExist(); notExist != nil {
-					ex := c.mutations[string(notExist.Key)]
-					if ex.hasContract {
-						log.Info(" run here means ==== the code has bug!")
-					}
+			preCond := keyErr.PreconditionErr
+			if preCond == nil {
+				continue
+			}
+
+			// If there is any contract error, it must be bugs in TiDB!
+			// TODO: Add prometheus metrics and alert here?
+			if notExist := preCond.GetNotExist(); notExist != nil {
+				ex := c.mutations[string(notExist.Key)]
+				if ex.hasContract {
+					log.Error(errors.ErrorStack(errors.Trace(errors.Errorf("CONTRACT BUG!!! The key %v should have value, but not found\n", notExist.Key))))
 				}
-				if exist := preCond.AlreadyExist; exist != nil {
-					ex := c.mutations[string(exist.Key)]
-					if ex.hasContract {
-						log.Info(" run here means the code has bug! tidb think key should exist, but not")
-					}
+			}
+			if exist := preCond.AlreadyExist; exist != nil {
+				ex := c.mutations[string(exist.Key)]
+				if ex.hasContract {
+					log.Error(errors.ErrorStack(errors.Trace(errors.Errorf("CONTRACT BUG!!! The key %v must not have value, but value found\n", exist.Key))))
 				}
 			}
 		}
+		if len(locks) == 0 {
+			return nil
+		}
+
 		start := time.Now()
 		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
