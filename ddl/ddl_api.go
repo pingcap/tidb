@@ -368,7 +368,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			col.Flag |= mysql.NotNullFlag
 		}
 	}
-
+	var err error
 	setOnUpdateNow := false
 	hasDefaultValue := false
 	hasNullFlag := false
@@ -401,19 +401,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:
-				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
+				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
-					return nil, nil, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
-				}
-				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
-					return nil, nil, errors.Trace(err)
-				}
-				value, err = convertTimestampDefaultValToUTC(ctx, value, col)
-				if err != nil {
-					return nil, nil, errors.Trace(err)
-
-				}
-				if err = col.SetDefaultValue(value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
 				removeOnUpdateNowFlag(col)
@@ -470,7 +459,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if mysql.HasZerofillFlag(col.Flag) {
 		col.Flag |= mysql.UnsignedFlag
 	}
-	err := checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
+	err = checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1961,24 +1950,26 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 }
 
-func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
+func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
+	hasDefaultValue := false
 	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
 	if err != nil {
-		return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
+		return hasDefaultValue, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 	}
-	if _, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
-		return errors.Trace(err)
+
+	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+		return hasDefaultValue, errors.Trace(err)
 	}
 	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
 	if err != nil {
-		return errors.Trace(err)
+		return hasDefaultValue, errors.Trace(err)
 
 	}
 	err = col.SetDefaultValue(value)
 	if err != nil {
-		return errors.Trace(err)
+		return hasDefaultValue, errors.Trace(err)
 	}
-	return errors.Trace(checkDefaultValue(ctx, col, true))
+	return hasDefaultValue, errors.Trace(checkDefaultValue(ctx, col, hasDefaultValue))
 }
 
 func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
@@ -1996,22 +1987,12 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		return nil
 	}
 	var hasDefaultValue, setOnUpdateNow bool
+	var err error
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			value, err := getDefaultValue(ctx, opt, col.Tp, col.Decimal)
+			hasDefaultValue, err = setDefaultValue(ctx, col, opt)
 			if err != nil {
-				return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
-			}
-			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
-				return errors.Trace(err)
-			}
-			value, err = convertTimestampDefaultValToUTC(ctx, value, col)
-			if err != nil {
-				return errors.Trace(err)
-
-			}
-			if err = col.SetDefaultValue(value); err != nil {
 				return errors.Trace(err)
 			}
 		case ast.ColumnOptionComment:
@@ -2251,7 +2232,7 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		}
 		setNoDefaultValueFlag(col, false)
 	} else {
-		err = setDefaultValue(ctx, col, specNewColumn.Options[0])
+		_, err = setDefaultValue(ctx, col, specNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
 		}
