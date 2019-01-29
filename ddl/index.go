@@ -541,8 +541,15 @@ func (w *addIndexWorker) close() {
 	}
 }
 
+var gofailMocketIndexRecordErrOnceGuard bool
+
 // getIndexRecord gets index columns values from raw binary value row.
 func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecord []byte) (*indexRecord, error) {
+	// gofail: var mockGetIndexRecordPanic bool
+	// if mockGetIndexRecordPanic && !gofailMocketIndexRecordErrOnceGuard {
+	//	gofailMocketIndexRecordErrOnceGuard = true
+	// 		panic("panic test")
+	// }
 	t := w.table
 	cols := t.Cols()
 	idxInfo := w.index.Meta()

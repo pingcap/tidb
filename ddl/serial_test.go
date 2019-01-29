@@ -458,3 +458,56 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
+
+func (s *testSerialSuite) TestDropSchemaFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_schema")
+	tk.MustExec("use test_schema")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1),(2),(3)")
+
+	gofail.Enable("github.com/pingcap/tidb/ddl/dropSchemaErr", `return(true)`)
+	_, err := tk.Exec("drop database test_schema;")
+	c.Assert(err, NotNil)
+	gofail.Disable("github.com/pingcap/tidb/ddl/dropSchemaErr")
+	tk.MustExec("drop database test_schema;")
+}
+
+func (s *testSerialSuite) TestDropColumnFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_column")
+	tk.MustExec("use test_column")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int);")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	}
+
+	gofail.Enable("github.com/pingcap/tidb/ddl/dropColumnErr", `return(true)`)
+	_, err := tk.Exec("alter table t drop column a")
+	c.Assert(err, NotNil)
+	gofail.Disable("github.com/pingcap/tidb/ddl/dropColumnErr")
+	tk.MustExec("alter table t drop column a;")
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_column"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Cols()[0].Name.O, Equals, "b")
+}
+
+func (s *testSerialSuite) TestDropTableOrViewFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_drop_table")
+	tk.MustExec("use test_drop_table")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1);")
+
+	gofail.Enable("github.com/pingcap/tidb/ddl/dropTableOrViewErr", `return(true)`)
+	_, err := tk.Exec("drop table t;")
+	c.Assert(err, NotNil)
+	gofail.Disable("github.com/pingcap/tidb/ddl/dropTableOrViewErr")
+	tk.MustExec("admin check table t")
+	tk.MustExec("drop table t;")
+}

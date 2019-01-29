@@ -127,6 +127,12 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
+	// gofail: var dropTableOrViewErr bool
+	// if dropTableOrViewErr {
+	// job.State = model.JobStateCancelled
+	// return ver, errors.New("occur an error after table or view.")
+	// }
+
 	originalState := job.SchemaState
 	switch tblInfo.State {
 	case model.StatePublic:

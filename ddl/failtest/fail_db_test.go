@@ -377,3 +377,28 @@ LOOP:
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
 }
+
+func (s *testFailDBSuite) TestAddIndexGetIndexRecordPanic(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/ddl/mockGetIndexRecordPanic", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockGetIndexRecordPanic")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_add_index")
+	defer tk.MustExec("drop database test_add_index")
+	tk.MustExec("use test_add_index")
+
+	tk.MustExec("create table t(a bigint primary key, b int)")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	}
+
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_add_index"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+
+	tk.MustExec("alter table t add index idx_b(b)")
+	tk.MustExec("admin check index t idx_b")
+	tk.MustExec("admin check table t")
+}

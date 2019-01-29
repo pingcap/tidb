@@ -230,6 +230,12 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
+	// gofail: var dropColumnErr bool
+	// if dropColumnErr {
+	// job.State = model.JobStateCancelled
+	// return ver, errors.New("occur an error after drop column.")
+	// }
+
 	originalState := colInfo.State
 	switch colInfo.State {
 	case model.StatePublic:

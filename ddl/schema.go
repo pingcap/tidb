@@ -76,6 +76,12 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
+	// gofail: var dropSchemaErr bool
+	// if dropSchemaErr {
+	// job.State = model.JobStateCancelled
+	// return ver, errors.New("occur an error after drop schema.")
+	// }
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
