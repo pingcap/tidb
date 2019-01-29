@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -817,7 +818,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.ctx, arg, v.Tp)
 	case *ast.PatternLikeExpr:
-		er.likeToScalarFunc(v)
+		er.patternLikeToExpression(v)
 	case *ast.PatternRegexpExpr:
 		er.regexpToScalarFunc(v)
 	case *ast.RowExpr:
@@ -1140,16 +1141,44 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
+func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[l-2:]...)
 	if er.err != nil {
 		return
 	}
-	escapeTp := &types.FieldType{}
-	types.DefaultTypeForValue(int(v.Escape), escapeTp)
-	function := er.notToExpression(v.Not, ast.Like, &v.Type,
-		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: escapeTp})
+
+	var function expression.Expression
+	fieldType := &types.FieldType{}
+	isPatternExactMatch := false
+	// Treat predicate 'like' the same way as predicate '=' when it is an exact match.
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
+		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
+		if !isNull {
+			patValue, patTypes := stringutil.CompilePattern(patString, v.Escape)
+			if stringutil.IsExactMatch(patTypes) {
+				op := ast.EQ
+				if v.Not {
+					op = ast.NE
+				}
+				types.DefaultTypeForValue(string(patValue), fieldType)
+				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
+					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
+					op)
+				isPatternExactMatch = true
+			}
+		}
+	}
+	if !isPatternExactMatch {
+		types.DefaultTypeForValue(int(v.Escape), fieldType)
+		function = er.notToExpression(v.Not, ast.Like, &v.Type,
+			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
+	}
+
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
 }
