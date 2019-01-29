@@ -112,15 +112,15 @@ func (d ExecDetails) String() string {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	mu    sync.Mutex
-	stats map[string]*RuntimeStats
+	mu        sync.Mutex
+	rootStats map[string]*RuntimeStats
 	// Usually, CopTasks are executed on TiKV cluster consist of multiple instances,
 	// so coprocessors' addresses must be taken into account.
 	// And Sometimes, several cop tasks of one operator can be executed in a same TiKV instance,
 	// which depend on how we split cop tasks and the distribution of data regions.
 	// So we have to use a list to maintain all tasks executed on each instance.
 	// Then the type is map[operator ID]map[TiKV instance address][all tasks executed on this instance].
-	copStats map[string]map[string][]*CopRuntimeStats
+	copStats map[string]map[string][]*RuntimeStats
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -133,64 +133,52 @@ type RuntimeStats struct {
 	rows int64
 }
 
-// CopRuntimeStats collects info of one executor executed on TiKV.
-type CopRuntimeStats struct {
-	// Total time cost in this executor. Includes self time cost and children time cost.
-	timeProcessedNs uint64
-	// How many rows this executor produced totally.
-	numProducedRows uint64
-	// How many times executor's `next()` is called.
-	numIterations uint64
-}
-
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{stats: make(map[string]*RuntimeStats),
-		copStats: make(map[string]map[string][]*CopRuntimeStats)}
+	return &RuntimeStatsColl{rootStats: make(map[string]*RuntimeStats),
+		copStats: make(map[string]map[string][]*RuntimeStats)}
 }
 
-// Get gets execStat for a executor.
-func (e *RuntimeStatsColl) Get(planID string) *RuntimeStats {
+// GetRootStats gets execStat for a executor.
+func (e *RuntimeStatsColl) GetRootStats(planID string) *RuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	runtimeStats, exists := e.stats[planID]
+	runtimeStats, exists := e.rootStats[planID]
 	if !exists {
 		runtimeStats = &RuntimeStats{}
-		e.stats[planID] = runtimeStats
+		e.rootStats[planID] = runtimeStats
 	}
 	return runtimeStats
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
 func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string,
-	timeProcessedNs, numProducedRows, numIterations uint64) {
+	timeProcessedNs, numProducedRows int64, numIterations int32) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
 	_, ok := e.copStats[planID]
 	if !ok {
-		e.copStats[planID] = make(map[string][]*CopRuntimeStats, 8)
+		e.copStats[planID] = make(map[string][]*RuntimeStats, 8)
 	}
 
 	e.copStats[planID][address] = append(e.copStats[planID][address],
-		&CopRuntimeStats{timeProcessedNs, numProducedRows, numIterations})
+		&RuntimeStats{numIterations, timeProcessedNs, numProducedRows})
 }
 
 // CopSummary gets a summary of the cop task's execution information.
 func (e *RuntimeStatsColl) CopSummary(planID string) string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
 	stats, ok := e.copStats[planID]
 	if !ok {
 		return ""
 	}
-	var totalRows, totalIters, totalTasks uint64
+	var totalRows, totalTasks int64
+	var totalIters int32
 	procTimes := make([]time.Duration, 0, 32)
 	for _, instanceStats := range stats {
 		for _, stat := range instanceStats {
-			procTimes = append(procTimes, time.Duration(stat.timeProcessedNs)*time.Nanosecond)
-			totalRows += stat.numProducedRows
-			totalIters += stat.numIterations
+			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
+			totalRows += stat.rows
+			totalIters += stat.loop
 			totalTasks++
 		}
 	}
@@ -201,11 +189,11 @@ func (e *RuntimeStatsColl) CopSummary(planID string) string {
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
 }
 
-// Exists checks if the planID exists in the stats collection.
-func (e *RuntimeStatsColl) Exists(planID string) bool {
+// ExistsRootStats checks if the planID exists in the rootStats collection.
+func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	_, exists := e.stats[planID]
+	_, exists := e.rootStats[planID]
 	return exists
 }
 

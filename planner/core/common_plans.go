@@ -534,8 +534,8 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
 		if copTaskExecDetail != "" {
 			row = append(row, copTaskExecDetail)
-		} else if runtimeStatsColl.Exists(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.Get(p.ExplainID()).String())
+		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
+			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
 		} else {
 			row = append(row, "")
 		}

@@ -240,7 +240,7 @@ func (e *IndexReaderExecutor) Close() error {
 	err := e.result.Close()
 	e.result = nil
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.plans[0].ExplainID())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -466,9 +466,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 			log.Error("close Select result failed:", errors.ErrorStack(err))
 		}
 		if e.runtimeStats != nil {
-			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.idxPlans[len(e.idxPlans)-1].ExplainID())
+			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ExplainID())
 			copStats.SetRowNum(count)
-			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.tblPlans[0].ExplainID())
+			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID())
 			copStats.SetRowNum(count)
 		}
 		e.ctx.StoreQueryFeedback(e.feedback)
@@ -542,7 +542,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.idxPlans[0].ExplainID())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ExplainID())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	return nil

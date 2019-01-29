@@ -128,7 +128,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 func (e *TableReaderExecutor) Close() error {
 	err := e.resultHandler.Close()
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.plans[0].ExplainID())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)

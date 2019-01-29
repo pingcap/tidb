@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -173,8 +174,12 @@ func (r *selectResult) getSelectResp() error {
 }
 
 func (r *selectResult) updateCopRuntimeStats(callee string) {
-	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil ||
-		callee == "" || len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+		return
+	}
+	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+		log.Errorf("invalid cop task execution summaries length, expected: %v, received: %v",
+			len(r.copPlanIDs), len(r.selectResp.GetExecutionSummaries()))
 		return
 	}
 
@@ -183,7 +188,7 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, callee, *detail.TimeProcessedNs, *detail.NumProducedRows, *detail.NumIterations)
+				RecordOneCopTask(planID, callee, int64(*detail.TimeProcessedNs), int64(*detail.NumProducedRows), int32(*detail.NumIterations))
 		}
 	}
 }
