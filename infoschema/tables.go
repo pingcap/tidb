@@ -1010,7 +1010,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					nil,           // CHECKSUM
 					nil,           // CREATE_OPTIONS
 					"VIEW",        // TABLE_COMMENT
-					nil,           // TIDB_TABLE_ID
+					table.ID,      // TIDB_TABLE_ID
 				)
 				rows = append(rows, record)
 			}
