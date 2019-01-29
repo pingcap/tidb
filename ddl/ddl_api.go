@@ -2711,9 +2711,8 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 					buf.Reset()
 					return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(buf.String(), "partition function")
 				}
-			} else {
-				// Partition by range column.
 			}
+			// Partition by range columns if len(part.Columns) != 0.
 		}
 		pid, err1 := d.genGlobalID()
 		if err1 != nil {
