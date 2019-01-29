@@ -2978,12 +2978,16 @@ func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool
 }
 
 func roundingNum(xStr, dStr string) (string, error) {
-
 	if strings.Contains(xStr, ".") {
 		sign := false
+		// xStr can not has '+' prefix now.
+		// It is built in `evalNumDecArgsFormat` after evaluating `Evalxxx` method.
 		if strings.HasPrefix(xStr, "-") {
 			xStr = strings.Trim(xStr, "-")
 			sign = true
+		}
+		if strings.HasPrefix(xStr, "+") {
+			return "", errors.Errorf("xStr can not has `+` prefix")
 		}
 
 		xArr := strings.Split(xStr, ".")
@@ -3000,28 +3004,24 @@ func roundingNum(xStr, dStr string) (string, error) {
 				carry = true
 			}
 			if carry {
-				for i := digit - 1; i >= 0; i-- {
-					if t[i] == '9' && carry == true {
+				for i := digit - 1; i >= 0 && carry; i-- {
+					if t[i] == '9' {
 						t[i] = '0'
-						carry = true
-					} else if carry == true {
+					} else {
 						t[i] = t[i] + 1
 						carry = false
-						break
 					}
 				}
 			}
 			x2 = string(t)
 			t = []byte(x1)
 			if carry {
-				for i := len(x1) - 1; i >= 0; i-- {
-					if t[i] == '9' && carry == true {
+				for i := len(x1) - 1; i >= 0 && carry; i-- {
+					if t[i] == '9' {
 						t[i] = '0'
-						carry = true
-					} else if carry == true {
+					} else {
 						t[i] = t[i] + 1
 						carry = false
-						break
 					}
 				}
 			}
