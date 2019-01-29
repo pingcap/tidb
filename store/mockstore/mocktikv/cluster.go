@@ -336,7 +336,7 @@ func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int)
 	c.createNewRegions(regionPairs, start, end)
 }
 
-// getPairsGroupByRegions groups the key value pairs into splitted regions.
+// getEntriesGroupByRegions groups the key value pairs into splitted regions.
 func (c *Cluster) getEntriesGroupByRegions(mvccStore MVCCStore, start, end MvccKey, count int) [][]Pair {
 	startTS := uint64(math.MaxUint64)
 	limit := int(math.MaxInt32)

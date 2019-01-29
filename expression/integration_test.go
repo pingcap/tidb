@@ -2840,6 +2840,10 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	// for coalesce
 	result = tk.MustQuery("select coalesce(NULL), coalesce(NULL, NULL), coalesce(NULL, NULL, NULL);")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery(`select coalesce(cast(1 as json), cast(2 as json));`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select coalesce(NULL, cast(2 as json));`).Check(testkit.Rows(`2`))
+	tk.MustQuery(`select coalesce(cast(1 as json), NULL);`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select coalesce(NULL, NULL);`).Check(testkit.Rows(`<nil>`))
 
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b double, c datetime, d time, e char(20), f bit(10))")
@@ -3737,7 +3741,7 @@ func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 line 1 column 29 near \"select /*+ unknown_hint(c1)*/ 1\" (total length 31)"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 29 near \"unknown_hint(c1)*/ 1\" "))
 	_, err := tk.Exec("select 1 from /*+ test1() */ t")
 	c.Assert(err, NotNil)
 }

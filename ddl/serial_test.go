@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = SerialSuites(&testSerialSuite{})
@@ -44,7 +43,6 @@ type testSerialSuite struct {
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.SetStatsLease(0)
 
@@ -64,7 +62,6 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 	if s.store != nil {
 		s.store.Close()
 	}
-	testleak.AfterTest(c)()
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
