@@ -2644,21 +2644,6 @@ func (du *baseDateArithmitical) getIntervalFromInt(ctx sessionctx.Context, args 
 	return strconv.FormatInt(interval, 10), false, nil
 }
 
-func getFixDays(year, month, day int, o time.Time) int {
-	if (year != 0 || month != 0) && day == 0 {
-		od := o.Day()
-		t := o.AddDate(year, month, day)
-		td := t.Day()
-		if od != td {
-			tm := int(t.Month()) - 1
-			tMax := types.GetLastDay(t.Year(), tm)
-			dd := tMax - od
-			return dd
-		}
-	}
-	return 0
-}
-
 func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, interval string, unit string) (types.Time, bool, error) {
 	year, month, day, dur, err := types.ExtractTimeValue(unit, interval)
 	if err != nil {
@@ -2672,17 +2657,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 	duration := time.Duration(dur)
 	goTime = goTime.Add(duration)
-	// When we execute select date_add('2018-01-31',interval 1 month) in mysql we got 2018-02-28
-	// but in tidb we got 2018-03-03.
-	// Dig it and we found it's caused by golang api time.DateDate(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time ,
-	// it says October 32 converts to November 1 ,it conflits with mysql.
-	// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-	df := getFixDays(int(year), int(month), int(day), goTime)
-	if df != 0 {
-		goTime = goTime.AddDate(int(year), int(month), df)
-	} else {
-		goTime = goTime.AddDate(int(year), int(month), int(day))
-	}
+	goTime = types.AddDate(year, month, day, goTime)
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
@@ -2708,12 +2683,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 
 	duration := time.Duration(dur)
 	goTime = goTime.Add(duration)
-	df := getFixDays(int(year), int(month), int(day), goTime)
-	if df != 0 {
-		goTime = goTime.AddDate(int(year), int(month), df)
-	} else {
-		goTime = goTime.AddDate(int(year), int(month), int(day))
-	}
+	goTime = types.AddDate(year, month, day, goTime)
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0

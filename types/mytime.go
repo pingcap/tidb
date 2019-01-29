@@ -140,6 +140,37 @@ func GetLastDay(year, month int) int {
 	return day
 }
 
+func getFixDays(year, month, day int, ot gotime.Time) int {
+	if (year != 0 || month != 0) && day == 0 {
+		od := ot.Day()
+		t := ot.AddDate(year, month, day)
+		td := t.Day()
+		if od != td {
+			tm := int(t.Month()) - 1
+			tMax := GetLastDay(t.Year(), tm)
+			dd := tMax - od
+			return dd
+		}
+	}
+	return 0
+}
+
+// AddDate fix gap between mysql and golang api
+// When we execute select date_add('2018-01-31',interval 1 month) in mysql we got 2018-02-28
+// but in tidb we got 2018-03-03.
+// Dig it and we found it's caused by golang api time.Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time ,
+// it says October 32 converts to November 1 ,it conflits with mysql.
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
+func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time) {
+	df := getFixDays(int(year), int(month), int(day), ot)
+	if df != 0 {
+		nt = ot.AddDate(int(year), int(month), df)
+	} else {
+		nt = ot.AddDate(int(year), int(month), int(day))
+	}
+	return nt
+}
+
 func calcTimeFromSec(to *MysqlTime, seconds, microseconds int) {
 	to.hour = seconds / 3600
 	seconds = seconds % 3600
