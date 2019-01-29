@@ -221,6 +221,6 @@ func (s *testSuite) TestTableIDAndIndexID(c *C) {
 	defer do.Close()
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("create table test.t (a int, b int, primary key(a), key k1(b))")
-	tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("31"))
+	c.Assert(tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 't'").Rows()[0][0], Greater, 0)
 	tk.MustQuery("select * from information_schema.tidb_indexes where table_schema = 'test' and table_name = 't'").Check(testkit.Rows("test t 0 PRIMARY 1 a <nil>  0", "test t 1 k1 1 b <nil>  1"))
 }
