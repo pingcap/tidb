@@ -225,12 +225,13 @@ func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
 
 func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testkit.Result {
 	explainedSQL := "explain " + sql
-	result := tk.MustQuery(explainedSQL)
-	resultStr := fmt.Sprintf("%v", result.Rows())
-	if plan != resultStr {
-		// TODO: Reopen it after refactoring explain.
-		//c.Errorf("Plan not match. Obtained:\n %s\nExpected:\n %s\n", resultStr, plan)
-	}
+	tk.MustQuery(explainedSQL)
+
+	// TODO: Reopen it after refactoring explain.
+	// resultStr := fmt.Sprintf("%v", result.Rows())
+	// if plan != resultStr {
+	//     c.Errorf("Plan not match. Obtained:\n %s\nExpected:\n %s\n", resultStr, plan)
+	// }
 	return tk.MustQuery(sql)
 }
 

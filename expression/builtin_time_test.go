@@ -1228,7 +1228,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 		}
 	}
 
-	f, err := fc.getFunction(s.ctx, make([]Expression, 0, 0))
+	f, err := fc.getFunction(s.ctx, make([]Expression, 0))
 	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)

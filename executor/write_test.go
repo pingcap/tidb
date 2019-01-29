@@ -682,7 +682,6 @@ commit;`
 	tk.MustExec(testSQL)
 	tk.CheckLastMessage("")
 	testSQL = `SELECT LAST_INSERT_ID();`
-	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
 
