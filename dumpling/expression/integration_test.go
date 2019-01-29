@@ -573,6 +573,12 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select concat(null, a, b) from t")
 	result.Check(testkit.Rows("<nil>"))
+	tk.MustExec("drop table if exists t")
+	// Fix issue 9123
+	tk.MustExec("create table t(a char(32) not null, b float default '0') engine=innodb default charset=utf8mb4")
+	tk.MustExec("insert into t value('0a6f9d012f98467f8e671e9870044528', 208.867)")
+	result = tk.MustQuery("select concat_ws( ',', b) from t where a = '0a6f9d012f98467f8e671e9870044528';")
+	result.Check(testkit.Rows("208.867"))
 
 	// for concat_ws
 	tk.MustExec("drop table if exists t")
