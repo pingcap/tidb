@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"fmt"
+
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 

@@ -52,7 +52,7 @@ const (
 )
 
 // SafeStore is store that support contract checking.
-// contracts are some conditions that an operation must meet.
+// Contracts are some conditions that an operation must meet.
 type SafeStore interface {
 	// SetContract sets a contract for an operation on the key.
 	SetContract(key Key, contract ContractType)

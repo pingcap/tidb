@@ -55,7 +55,7 @@ type TxnState struct {
 
 var _ kv.SafeStore = &TxnState{}
 
-// SetContract implement the kv.SafeStore interface.
+// SetContract implements the kv.SafeStore interface.
 func (st *TxnState) SetContract(key kv.Key, contract kv.ContractType) {
 	if st.Transaction != nil {
 		if raw, ok := st.Transaction.(kv.SafeStore); ok {
