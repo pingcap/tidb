@@ -1969,7 +1969,7 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
 	}
-	return hasDefaultValue, errors.Trace(checkDefaultValue(ctx, col, hasDefaultValue))
+	return hasDefaultValue, nil
 }
 
 func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
@@ -2232,8 +2232,11 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		}
 		setNoDefaultValueFlag(col, false)
 	} else {
-		_, err = setDefaultValue(ctx, col, specNewColumn.Options[0])
+		hasDefaultValue, err := setDefaultValue(ctx, col, specNewColumn.Options[0])
 		if err != nil {
+			return errors.Trace(err)
+		}
+		if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
 			return errors.Trace(err)
 		}
 	}
