@@ -45,14 +45,15 @@ type latch struct {
 // Lock is the locks' information required for a transaction.
 type Lock struct {
 	keys [][]byte
+	// requiredSlots represents required slots.
 	// The slot IDs of the latches(keys) that a startTS must acquire before being able to processed.
 	requiredSlots []int
-	// The number of latches that the transaction has acquired. For status is stale, it include the
-	// latch whose front is current lock already.
+	// acquiredCount represents the number of latches that the transaction has acquired.
+	// For status is stale, it include the latch whose front is current lock already.
 	acquiredCount int
-	// Current transaction's startTS.
+	// startTS represents current transaction's.
 	startTS uint64
-	// Current transaction's commitTS.
+	// commitTS represents current transaction's.
 	commitTS uint64
 
 	wg      sync.WaitGroup
