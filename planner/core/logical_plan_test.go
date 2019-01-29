@@ -82,7 +82,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])->DataScan(t2)->Sel([like(cast(t2.d), abc, 92)])}(t1.a,t2.b)(t1.d,t2.d)->Projection",
+			best: "Join{DataScan(t1)->Sel([eq(cast(t1.d), cast(abc))])->DataScan(t2)->Sel([eq(cast(t2.d), cast(abc))])}(t1.a,t2.b)(t1.d,t2.d)->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -1582,13 +1582,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `create user 'test'@'%' identified by '123456'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", nil},
+				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
 			},
 		},
 		{
 			sql: `drop user 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", nil},
+				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied},
 			},
 		},
 		{
@@ -1696,6 +1696,10 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 
 	c.Assert(len(v1), Equals, len(v2), comment)
 	for i := 0; i < len(v1); i++ {
+		// loose compare errors for code match
+		c.Assert(terror.ErrorEqual(v1[i].err, v2[i].err), IsTrue, Commentf("err1 %v, err2 %v for %s", v1[i].err, v2[i].err, comment))
+		// compare remainder
+		v1[i].err = v2[i].err
 		c.Assert(v1[i], Equals, v2[i], comment)
 	}
 }
@@ -2134,6 +2138,54 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		{
 			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
 			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+		},
+		{
+			sql:    "select sum(a) over(groups 1 preceding) from t",
+			result: "[planner:1235]This version of TiDB doesn't yet support 'GROUPS'",
+		},
+		{
+			sql:    "select sum(a) over(rows between unbounded following and 1 preceding) from t",
+			result: "[planner:3584]Window '<unnamed window>': frame start cannot be UNBOUNDED FOLLOWING.",
+		},
+		{
+			sql:    "select sum(a) over(rows between current row and unbounded preceding) from t",
+			result: "[planner:3585]Window '<unnamed window>': frame end cannot be UNBOUNDED PRECEDING.",
+		},
+		{
+			sql:    "select sum(a) over(rows interval 1 MINUTE_SECOND preceding) from t",
+			result: "[planner:3596]Window '<unnamed window>': INTERVAL can only be used with RANGE frames.",
+		},
+		{
+			sql:    "select sum(a) over(rows between 1.0 preceding and 1 following) from t",
+			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "select sum(a) over(range between 1 preceding and 1 following) from t",
+			result: "[planner:3587]Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
+			sql:    "select sum(a) over(order by c_str range between 1 preceding and 1 following) from t",
+			result: "[planner:3587]Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
+		},
+		{
+			sql:    "select sum(a) over(order by a range interval 1 MINUTE_SECOND preceding) from t",
+			result: "[planner:3589]Window '<unnamed window>' with RANGE frame has ORDER BY expression of numeric type, INTERVAL bound value not allowed.",
+		},
+		{
+			sql:    "select sum(a) over(order by i_date range interval a MINUTE_SECOND preceding) from t",
+			result: "[planner:3590]Window '<unnamed window>' has a non-constant frame bound.",
+		},
+		{
+			sql:    "select sum(a) over(order by i_date range interval -1 MINUTE_SECOND preceding) from t",
+			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+		},
+		{
+			sql:    "select sum(a) over(order by i_date range 1 preceding) from t",
+			result: "[planner:3588]Window '<unnamed window>' with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed.",
+		},
+		{
+			sql:    "select sum(a) over(order by a range between 1.0 preceding and 1 following) from t",
+			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
 		},
 	}
 

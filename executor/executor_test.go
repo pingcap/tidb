@@ -65,10 +65,6 @@ import (
 	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
-// TestLeakCheckCnt is the check count in the package of executor.
-// In this package CustomParallelSuiteFlag is true, so we need to increase check count.
-const TestLeakCheckCnt = 1000
-
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
@@ -77,7 +73,9 @@ func TestT(t *testing.T) {
 		Level: logLevel,
 	})
 	autoid.SetStep(5000)
+	testleak.BeforeTest()
 	TestingT(t)
+	testleak.AfterTestT(t)()
 }
 
 var _ = Suite(&testSuite{})
@@ -99,7 +97,6 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -125,7 +122,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
@@ -157,13 +153,14 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.GetString(0), Equals, "1")
 	c.Assert(row.GetString(1), Equals, "error: [admin:4]DDL Job:1 not found")
 
+	// show ddl test;
 	r, err = tk.Exec("admin show ddl")
 	c.Assert(err, IsNil)
 	req = r.NewRecordBatch()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 4)
+	c.Assert(row.Len(), Equals, 6)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	ddlInfo, err := admin.GetDDLInfo(txn)
@@ -173,7 +170,12 @@ func (s *testSuite) TestAdmin(c *C) {
 	// rowOwnerInfos := strings.Split(row.Data[1].GetString(), ",")
 	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
 	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
-	c.Assert(row.GetString(2), Equals, "")
+	do := domain.GetDomain(tk.Se.(sessionctx.Context))
+	serverInfo, err := do.InfoSyncer().GetServerInfoByID(ctx, row.GetString(1))
+	c.Assert(err, IsNil)
+	c.Assert(row.GetString(2), Equals, serverInfo.IP+":"+
+		strconv.FormatUint(uint64(serverInfo.Port), 10))
+	c.Assert(row.GetString(3), Equals, "")
 	req = r.NewRecordBatch()
 	err = r.Next(ctx, req)
 	c.Assert(err, IsNil)
@@ -3416,7 +3418,6 @@ type testSuite2 struct {
 }
 
 func (s *testSuite2) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -3442,7 +3443,6 @@ func (s *testSuite2) SetUpSuite(c *C) {
 func (s *testSuite2) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testSuite2) TearDownTest(c *C) {
@@ -3469,7 +3469,6 @@ type testSuite3 struct {
 }
 
 func (s *testSuite3) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -3495,16 +3494,19 @@ func (s *testSuite3) SetUpSuite(c *C) {
 func (s *testSuite3) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testSuite3) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
+	r := tk.MustQuery("show full tables")
 	for _, tb := range r.Rows() {
 		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
 	}
 }
 
