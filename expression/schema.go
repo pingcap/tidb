@@ -93,8 +93,6 @@ func ExprFromSchema(expr Expression, schema *Schema) bool {
 	switch v := expr.(type) {
 	case *Column:
 		return schema.Contains(v)
-	case *CorrelatedColumn:
-		return schema.Contains(&v.Column)
 	case *ScalarFunction:
 		for _, arg := range v.GetArgs() {
 			if !ExprFromSchema(arg, schema) {
@@ -102,7 +100,7 @@ func ExprFromSchema(expr Expression, schema *Schema) bool {
 			}
 		}
 		return true
-	case *Constant:
+	case *CorrelatedColumn, *Constant:
 		return true
 	}
 	return false
