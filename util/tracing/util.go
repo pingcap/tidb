@@ -23,7 +23,7 @@ import (
 // TiDBTrace is set as Baggage on traces which are used for tidb tracing.
 const TiDBTrace = "tr"
 
-// A CallbackRecorder immediately invokes itself on received trace spans.
+// CallbackRecorder immediately invokes itself on received trace spans.
 type CallbackRecorder func(sp basictracer.RawSpan)
 
 // RecordSpan implements basictracer.SpanRecorder.

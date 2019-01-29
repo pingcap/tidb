@@ -35,6 +35,7 @@ type streamResult struct {
 	fieldTypes []*types.FieldType
 	ctx        sessionctx.Context
 
+	// curr represents current chunck of stream.
 	// NOTE: curr == nil means stream finish, while len(curr.RowsData) == 0 doesn't.
 	curr         *tipb.Chunk
 	partialCount int64

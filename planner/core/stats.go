@@ -320,6 +320,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo) (*property
 	return la.stats, nil
 }
 
+// getSingletonStats returns StatsInfo.
 // Exists and MaxOneRow produce at most one row, so we set the RowCount of stats one.
 func getSingletonStats(len int) *property.StatsInfo {
 	ret := &property.StatsInfo{

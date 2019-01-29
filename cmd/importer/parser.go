@@ -83,7 +83,7 @@ func (col *column) parseRule(kvs []string) {
 	}
 }
 
-// parse the data rules.
+// parseColumnComment parses the data rules.
 // rules like `a int unique comment '[[range=1,10;step=1]]'`,
 // then we will get value from 1,2...10
 func (col *column) parseColumnComment() {

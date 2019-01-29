@@ -64,17 +64,17 @@ type tester struct {
 
 	buf bytes.Buffer
 
-	// enable query log will output origin statement into result file too
+	// enableQueryLog will output origin statement into result file too
 	// use --disable_query_log or --enable_query_log to control it
 	enableQueryLog bool
 
 	singleQuery bool
 
-	// check expected error, use --error before the statement
+	// expectedErrs check expected error, use --error before the statement
 	// see http://dev.mysql.com/doc/mysqltest/2.0/en/writing-tests-expecting-errors.html
 	expectedErrs []string
 
-	// only for test, not record, every time we execute a statement, we should read the result
+	// resultFD uses only for test, not record, every time we execute a statement, we should read the result
 	// data to check correction.
 	resultFD *os.File
 	// ctx is used for Compile sql statement

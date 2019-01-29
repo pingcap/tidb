@@ -59,7 +59,7 @@ type Config struct {
 	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
 	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
-	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
+	// LowerCaseTableNames sets sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
@@ -79,11 +79,11 @@ type Config struct {
 
 // Log is the log section of config.
 type Log struct {
-	// Log level.
+	// Level represents log level.
 	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
+	// Format represents log format. one of json, text, or console.
 	Format string `toml:"format" json:"format"`
-	// Disable automatic timestamps in output.
+	// DisableTimestamp disable automatic timestamps in output.
 	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
@@ -212,11 +212,11 @@ type OpenTracingReporter struct {
 
 // ProxyProtocol is the PROXY protocol section of the config.
 type ProxyProtocol struct {
-	// PROXY protocol acceptable client networks.
+	// Networks represents PROXY protocol acceptable client networks.
 	// Empty string means disable PROXY protocol,
 	// * means all networks.
 	Networks string `toml:"networks" json:"networks"`
-	// PROXY protocol header read timeout, Unit is second.
+	// HeaderTimeout represents PROXY protocol header read timeout, Unit is second.
 	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
 }
 
@@ -225,9 +225,11 @@ type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
 	GrpcConnectionCount uint `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	// GrpcKeepAliveTime represents grpc keep alive time.
 	// After a duration of this time in seconds if the client doesn't see any activity it pings
 	// the server to see if the transport is still alive.
 	GrpcKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
+	// GrpcKeepAliveTimeout is grpc keep alive timeout.
 	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
 	// and if no activity is seen even after that the connection is closed.
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
@@ -239,6 +241,7 @@ type TiKVClient struct {
 
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
+	// OverloadThreshold is overload threshold of TiKV load.
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
 	OverloadThreshold uint `toml:"overload-threshold" json:"overload-threshold"`
 	// MaxBatchWaitTime in nanosecond is the max wait time for batch.
@@ -251,10 +254,11 @@ type TiKVClient struct {
 type Binlog struct {
 	Enable       bool   `toml:"enable" json:"enable"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
-	// If IgnoreError is true, when writing binlog meets error, TiDB would
-	// ignore the error.
+	// IgnoreError is used for ignore error.
+	// If IgnoreError is true, when writing binlog meets error, TiDB would ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
-	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
+	// BinlogSocket represents socket file to write binlog,
+	// for compatible with kafka version tidb-binlog.
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 }
 

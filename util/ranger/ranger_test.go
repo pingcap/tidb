@@ -603,6 +603,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	}
 }
 
+// TestIndexRangeForUnsignedInt tests index range for unsigned int.
 // for issue #6661
 func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 	defer testleak.AfterTest(c)()

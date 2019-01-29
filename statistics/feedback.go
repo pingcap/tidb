@@ -37,7 +37,7 @@ import (
 	"github.com/spaolacci/murmur3"
 )
 
-// `feedback` represents the total scan count in range [lower, upper).
+// feedback represents the total scan count in range [lower, upper).
 type feedback struct {
 	lower  *types.Datum
 	upper  *types.Datum
@@ -384,6 +384,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	return vals[:total]
 }
 
+// bucket represents bucket of datum.
 // There are only two types of datum in bucket: one is `Blob`, which is for index; the other one
 // is `Int`, which is for primary key.
 type bucket = feedback
@@ -845,7 +846,7 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	return nil
 }
 
-// splitFeedback splits the feedbacks into equality feedbacks and range feedbacks.
+// splitFeedbackByQueryType splits the feedbacks into equality feedbacks and range feedbacks.
 func splitFeedbackByQueryType(feedbacks []feedback) ([]feedback, []feedback) {
 	var eqFB, ranFB []feedback
 	for _, fb := range feedbacks {
@@ -991,7 +992,7 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 	}
 }
 
-// getNewCount adjust the estimated `eqCount` and `rangeCount` according to the real count.
+// getNewCountForIndex adjust the estimated `eqCount` and `rangeCount` according to the real count.
 // We assumes that `eqCount` and `rangeCount` contribute the same error rate.
 func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (float64, float64) {
 	estimate := (eqCount / totalCount) * (rangeCount / totalCount) * totalCount

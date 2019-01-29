@@ -604,6 +604,7 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 	return decoder.NewRowDecoder(cols, decodeColsMap)
 }
 
+// rowWithCols returns rows with columns.
 // genExprs use to calculate generated column value.
 func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder *decoder.RowDecoder) ([]types.Datum, error) {
 	key := t.RecordKey(h)
@@ -663,6 +664,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 	return v, nil
 }
 
+// iterRecords iterates records.
 // genExprs use to calculate generated column value.
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc, genExprs map[model.TableColumnID]expression.Expression) error {

@@ -170,7 +170,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan LogicalPlan, e
 	return join, err
 }
 
-// Make cartesian join as bushy tree.
+// makeBushyJoin makes cartesian join as bushy tree.
 func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) LogicalPlan {
 	for len(cartesianJoinGroup) > 1 {
 		resultJoinGroup := make([]LogicalPlan, 0, len(cartesianJoinGroup))

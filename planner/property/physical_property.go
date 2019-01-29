@@ -49,7 +49,7 @@ type PhysicalProperty struct {
 	// calculated when function "HashCode()" being called.
 	hashcode []byte
 
-	// whether need to enforce property.
+	// Enforced represents whether the need to enforce property.
 	Enforced bool
 }
 

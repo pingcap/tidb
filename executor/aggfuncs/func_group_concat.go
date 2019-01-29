@@ -30,9 +30,9 @@ type baseGroupConcat4String struct {
 
 	sep    string
 	maxLen uint64
+	// truncated acts as a sentinel to indicate whether this warning has already been generated.
 	// According to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
-	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
-	// generated.
+	// how many group actually truncated.
 	truncated *int32
 }
 

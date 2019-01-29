@@ -46,6 +46,7 @@ func randInt64(min int64, max int64) int64 {
 	return min + rand.Int63n(max-min+1)
 }
 
+// randString generates random string.
 // reference: http://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-golang
 func randString(n int) string {
 	b := make([]byte, n)

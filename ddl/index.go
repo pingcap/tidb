@@ -472,7 +472,7 @@ type addIndexWorker struct {
 	closed    bool
 	priority  int
 
-	// The following attributes are used to reduce memory allocation.
+	// defaultVals and the following attributes are used to reduce memory allocation.
 	defaultVals        []types.Datum
 	idxRecords         []*indexRecord
 	rowMap             map[int64]types.Datum

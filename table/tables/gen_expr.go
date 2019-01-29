@@ -55,7 +55,7 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	return inNode, true
 }
 
-// ParseExpression parses an ExprNode from a string.
+// parseExpression parses an ExprNode from a string.
 // When TiDB loads infoschema from TiKV, `GeneratedExprString`
 // of `ColumnInfo` is a string field, so we need to parse
 // it into ast.ExprNode. This function is for that.
@@ -69,7 +69,7 @@ func parseExpression(expr string) (node ast.ExprNode, err error) {
 	return node, util.SyntaxError(err)
 }
 
-// SimpleResolveName resolves all column names in the expression node.
+// simpleResolveName resolves all column names in the expression node.
 func simpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
 	nr := nameResolver{tblInfo, nil}
 	if _, ok := node.Accept(&nr); !ok {

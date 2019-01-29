@@ -107,7 +107,7 @@ type TransactionContext struct {
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
 
-	// For metrics.
+	// CreateTime and follows are for metrics.
 	CreateTime     time.Time
 	StatementCount int
 }
@@ -186,12 +186,12 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
-	// params for prepared statements
+	// PreparedParams is used for prepared statements
 	PreparedParams []types.Datum
 
-	// retry information
+	// RetryInfo represents retry information
 	RetryInfo *RetryInfo
-	// Should be reset on transaction finished.
+	// TxnCtx should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
 	// KVVars is the variables for KV storage.
@@ -199,6 +199,7 @@ type SessionVars struct {
 
 	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	TxnIsolationLevelOneShot struct {
+		// State represents state.
 		// state 0 means default
 		// state 1 means it's set in current transaction.
 		// state 2 means it should be used in current transaction.
@@ -754,7 +755,7 @@ type Concurrency struct {
 	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
 	HashAggPartialConcurrency int
 
-	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.

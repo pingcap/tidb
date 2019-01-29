@@ -67,7 +67,7 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 	removeStore(c, s.dbName)
 }
 
-// Testcase for arg type.
+// TestCheckArgs for arg type.
 func (s *testMainSuite) TestCheckArgs(c *C) {
 	checkArgs(nil, true, false, int8(1), int16(1), int32(1), int64(1), 1,
 		uint8(1), uint16(1), uint32(1), uint64(1), uint(1), float32(1), float64(1),

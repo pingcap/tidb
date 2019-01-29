@@ -155,6 +155,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 
 type tableResultHandler struct {
 	// If the pk is unsigned and we have KeepOrder=true.
+
 	// optionalResult handles the request whose range is in signed int range.
 	// result handles the request whose range is exceed signed int range.
 	// Otherwise, we just set optionalFinished true and the result handles the whole ranges.

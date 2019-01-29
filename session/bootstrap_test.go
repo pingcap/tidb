@@ -133,7 +133,7 @@ func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
 	// Leave dml unfinished.
 }
 
-// testBootstrapWithError :
+// TestBootstrapWithError :
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
 func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {

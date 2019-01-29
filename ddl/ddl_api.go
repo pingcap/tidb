@@ -263,7 +263,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 	return nil
 }
 
-// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
+// buildColumnAndConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, tblCharset, dbCharset); err != nil {
@@ -2255,7 +2255,7 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	return errors.Trace(err)
 }
 
-// AlterTableCharset changes the table charset and collate.
+// AlterTableCharsetAndCollate changes the table charset and collate.
 func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string) error {
 	// use the last one.
 	if toCharset == "" && toCollate == "" {

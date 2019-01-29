@@ -29,18 +29,18 @@ import (
 // It is created from ast.Node first, then optimized by the optimizer,
 // finally used by the executor to create a Cursor which executes the statement.
 type Plan interface {
-	// Get the schema.
+	// Schema returns schema.
 	Schema() *expression.Schema
-	// Get the ID.
+	// ID returns ID.
 	ID() int
-	// Get the ID in explain statement
+	// ExplainID returns explain statement ID.
 	ExplainID() string
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() sessionctx.Context
 
-	// property.StatsInfo will return the property.StatsInfo for this plan.
+	// statsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
 }
 
@@ -106,7 +106,7 @@ type LogicalPlan interface {
 	// If the column is not in the schema, returns an error.
 	findColumn(*ast.ColumnName) (*expression.Column, int, error)
 
-	// Get all the children.
+	// Children returns all the children.
 	Children() []LogicalPlan
 
 	// SetChildren sets the children for the plan.
@@ -127,13 +127,13 @@ type PhysicalPlan interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
-	// getChildReqProps gets the required property by child index.
+	// GetChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
 
 	// StatsCount returns the count of property.StatsInfo for this plan.
 	StatsCount() float64
 
-	// Get all the children.
+	// Children returns all the children.
 	Children() []PhysicalPlan
 
 	// SetChildren sets the children for the plan.
@@ -253,7 +253,7 @@ func (p *basePlan) ID() int {
 	return p.id
 }
 
-// property.StatsInfo implements the Plan interface.
+// statsInfo returns property.StatsInfo.
 func (p *basePlan) statsInfo() *property.StatsInfo {
 	return p.stats
 }

@@ -47,7 +47,7 @@ type Histogram struct {
 
 	Tp *types.FieldType
 
-	// Histogram elements.
+	// Bounds and belows are histogram elements.
 	//
 	// A bucket bound is the smallest and greatest values stored in the bucket. The lower and upper bound
 	// are stored in one column.
@@ -59,7 +59,7 @@ type Histogram struct {
 	Bounds  *chunk.Chunk
 	Buckets []Bucket
 
-	// Used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
+	// scalars is used for estimating fraction of the interval [lower, upper] that lies within the [lower, value].
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	scalars []scalar
 	// TotColSize is the total column size for the histogram.
@@ -417,7 +417,7 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 	return hg.totalRowCount() - hg.lessRowCount(value)
 }
 
-// lessRowCount estimates the row count where the column less than value.
+// lessRowCountWithBktIdx estimates the row count where the column less than value.
 func (hg *Histogram) lessRowCountWithBktIdx(value types.Datum) (float64, int) {
 	// all the values is null
 	if hg.Bounds.NumRows() == 0 {

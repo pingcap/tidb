@@ -83,7 +83,7 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 	return otherConds
 }
 
-// Only if the input required prop is the prefix fo join keys, we can pass through this property.
+// tryToGetChildReqProp does only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty) ([]*property.PhysicalProperty, bool) {
 	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftKeys, false, math.MaxFloat64, false)
 	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightKeys, false, math.MaxFloat64, false)
@@ -151,7 +151,7 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 	return joins
 }
 
-// Change JoinKeys order, by offsets array
+// getNewJoinKeysByOffsets changes JoinKeys order, by offsets array
 // offsets array is generate by prop check
 func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []*expression.Column {
 	newKeys := make([]*expression.Column, 0, len(oldJoinKeys))
@@ -291,6 +291,7 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 	return keyOff2IdxOff
 }
 
+// constructIndexJoin construct index join.
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int,
@@ -644,6 +645,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]Phys
 	return plans, false
 }
 
+// exhaustPhysicalPlans generates physical plans.
 // LogicalJoin can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
@@ -734,7 +736,7 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	return ret
 }
 
-// Check if this prop's columns can match by items totally.
+// matchItems checks if this prop's columns can match by items totally.
 func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
 	if len(items) < len(p.Items) {
 		return false

@@ -366,7 +366,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-// onDropTablePartition truncates old partition meta.
+// onTruncateTablePartition truncates old partition meta.
 func onTruncateTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
 	var oldID int64

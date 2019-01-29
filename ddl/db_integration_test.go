@@ -123,6 +123,7 @@ func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }
 
+// TestInvalidNameWhenCreateTable tests invalid name when create table.
 // for issue #3848
 func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -142,6 +143,7 @@ func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
 	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue, Commentf("err %v", err))
 }
 
+// TestCreateTableIfNotExists tests create table if not exists.
 // for issue #6879
 func (s *testIntegrationSuite) TestCreateTableIfNotExists(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

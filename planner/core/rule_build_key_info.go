@@ -55,8 +55,8 @@ func (la *LogicalAggregation) buildKeyInfo() {
 	}
 }
 
+// checkMaxOneRowCond checks below.
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
-// This function will check it.
 func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression) bool {
 	col, ok := unique.(*expression.Column)
 	if !ok {
@@ -92,6 +92,7 @@ func (p *LogicalLimit) buildKeyInfo() {
 	}
 }
 
+// buildSchemaByExprs builds schema.
 // A bijection exists between columns of a projection's schema and this projection's Exprs.
 // Sometimes we need a schema made by expr of Exprs to convert a column in child's schema to a column in this projection's Schema.
 func (p *LogicalProjection) buildSchemaByExprs() *expression.Schema {

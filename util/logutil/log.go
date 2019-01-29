@@ -41,25 +41,25 @@ const (
 
 // FileLogConfig serializes file log related config in toml/json.
 type FileLogConfig struct {
-	// Log filename, leave empty to disable file log.
+	// Filename represents log filename, leave empty to disable file log.
 	Filename string `toml:"filename" json:"filename"`
-	// Is log rotate enabled. TODO.
+	// LogRotate represents log rotate enabled. TODO.
 	LogRotate bool `toml:"log-rotate" json:"log-rotate"`
-	// Max size for a single file, in MB.
+	// MaxSize represensts max size for a single file, in MB.
 	MaxSize uint `toml:"max-size" json:"max-size"`
-	// Max log keep days, default is never deleting.
+	// MaxDays represensts max log keep days, default is never deleting.
 	MaxDays uint `toml:"max-days" json:"max-days"`
-	// Maximum number of old log files to retain.
+	// MaxBackups represents maximum number of old log files to retain.
 	MaxBackups uint `toml:"max-backups" json:"max-backups"`
 }
 
 // LogConfig serializes log related config in toml/json.
 type LogConfig struct {
-	// Log level.
+	// Level represensts log level.
 	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
+	// Format represents log format. one of json, text, or console.
 	Format string `toml:"format" json:"format"`
-	// Disable automatic timestamps in output.
+	// DisableTimestamp represents disable automatic timestamps in output.
 	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
 	// File log config.
 	File FileLogConfig `toml:"file" json:"file"`
@@ -67,13 +67,13 @@ type LogConfig struct {
 	SlowQueryFile string
 }
 
-// isSKippedPackageName tests wether path name is on log library calling stack.
+// isSkippedPackageName tests wether path name is on log library calling stack.
 func isSkippedPackageName(name string) bool {
 	return strings.Contains(name, "github.com/sirupsen/logrus") ||
 		strings.Contains(name, "github.com/coreos/pkg/capnslog")
 }
 
-// modifyHook injects file name and line pos into log entry.
+// contextHook injects file name and line pos into log entry.
 type contextHook struct{}
 
 // Fire implements logrus.Hook interface

@@ -37,6 +37,7 @@ import (
 // so if execute statement meets error, the txn won't be made dirty.
 // 2. It's a lazy transaction, that means it's a txnFuture before StartTS() is really need.
 type TxnState struct {
+	// kv and belows represents states of transaction.
 	// States of a TxnState should be one of the followings:
 	// Invalid: kv.Transaction == nil && txnFuture == nil
 	// Pending: kv.Transaction == nil && txnFuture != nil
@@ -48,8 +49,8 @@ type TxnState struct {
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
 
-	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	// doNotCommit flag may be set when StmtCommit fail.
+	// If doNotCommit is not nil, Commit() will not commit the transaction.
 	doNotCommit error
 }
 

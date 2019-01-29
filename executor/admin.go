@@ -179,7 +179,7 @@ type RecoverIndexExec struct {
 	colFieldTypes []*types.FieldType
 	srcChunk      *chunk.Chunk
 
-	// below buf is used to reduce allocations.
+	// recoverRows and below buf is used to reduce allocations.
 	recoverRows []recoverRows
 	idxValsBufs [][]types.Datum
 	idxKeyBufs  [][]byte

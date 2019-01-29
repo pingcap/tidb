@@ -25,8 +25,8 @@ import (
 
 // All the following avg function implementations return the decimal result,
 // which store the partial results in "partialResult4AvgDecimal".
-//
-// "baseAvgDecimal" is wrapped by:
+
+// baseAvgDecimal is wrapped by:
 // - "avgOriginal4Decimal"
 // - "avgPartial4Decimal"
 type baseAvgDecimal struct {
@@ -224,8 +224,8 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 
 // All the following avg function implementations return the float64 result,
 // which store the partial results in "partialResult4AvgFloat64".
-//
-// "baseAvgFloat64" is wrapped by:
+
+// baseAvgFloat64 is wrapped by:
 // - "avgOriginal4Float64"
 // - "avgPartial4Float64"
 type baseAvgFloat64 struct {

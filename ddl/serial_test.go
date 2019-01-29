@@ -64,7 +64,7 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 	}
 }
 
-// TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
+// TestCancelAddIndexPanic tests canceling ddl job when the add index worker is not started.
 func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 	gofail.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorMockPanic")

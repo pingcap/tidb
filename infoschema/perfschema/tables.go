@@ -68,7 +68,7 @@ func (vt *perfSchemaTable) WritableCols() []*table.Column {
 	return vt.cols
 }
 
-// GetID implements table.Table GetID interface.
+// GetPhysicalID implements table.Table GetID interface.
 func (vt *perfSchemaTable) GetPhysicalID() int64 {
 	return vt.meta.ID
 }

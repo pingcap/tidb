@@ -28,6 +28,7 @@ type GlobalVariableCache struct {
 	rows       []chunk.Row
 	fields     []*ast.ResultField
 
+	// disable represents the disable state of GlobalVariableCache.
 	// Unit test may like to disable it.
 	disable bool
 }

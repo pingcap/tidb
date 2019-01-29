@@ -324,7 +324,7 @@ type Show struct {
 
 	Conditions []expression.Expression
 
-	// Used by show variables
+	// GlobalScope is used by show variables.
 	GlobalScope bool
 }
 

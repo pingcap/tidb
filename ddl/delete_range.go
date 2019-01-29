@@ -341,7 +341,7 @@ func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, end
 	return errors.Trace(err)
 }
 
-// getNowTS gets the current timestamp, in TSO.
+// getNowTSO gets the current timestamp, in TSO.
 func getNowTSO(ctx sessionctx.Context) (uint64, error) {
 	currVer, err := ctx.GetStore().CurrentVersion()
 	if err != nil {

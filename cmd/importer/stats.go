@@ -48,6 +48,7 @@ type histogram struct {
 	avgLen int
 }
 
+// getRandomBoundIdx returns random bound index.
 // When the randCnt falls in the middle of bucket, we return the idx of lower bound which is an even number.
 // When the randCnt falls in the end of bucket, we return the upper bound which is odd.
 func (h *histogram) getRandomBoundIdx() int {

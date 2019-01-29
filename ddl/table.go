@@ -629,6 +629,7 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
 
+// onAddTablePartition called when table partitions.
 // TODO: It may have the issue when two clients concurrently add partitions to a table.
 func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	partInfo := &model.PartitionInfo{}

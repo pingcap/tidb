@@ -455,6 +455,7 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	checkResult(result, testkit.Rows(expected...))
 }
 
+// TestWriteOnlyWriteNULL tests write only write null.
 // https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
 func (s *testStateChangeSuite) TestWriteOnlyWriteNULL(c *C) {
 	sqls := make([]sqlWithErr, 1)
@@ -486,7 +487,7 @@ func (s *testStateChangeSuite) TestWriteOnly(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, "", addColumnSQL, sqls, nil)
 }
 
-// TestDeletaOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+// TestDeleteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	sqls := make([]sqlWithErr, 1)
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",

@@ -66,7 +66,7 @@ type dbRecord struct {
 	User       string
 	Privileges mysql.PrivilegeType
 
-	// patChars is compiled from Host and DB, cached for pattern match performance.
+	// hostPatChars is compiled from Host and DB, cached for pattern match performance.
 	hostPatChars []byte
 	hostPatTypes []byte
 

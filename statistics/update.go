@@ -310,7 +310,7 @@ func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
 	return nil
 }
 
-// dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
+// dumpTableStatCountToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
 	if delta.Count == 0 {
 		return true, nil

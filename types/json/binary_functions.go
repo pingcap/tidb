@@ -517,7 +517,7 @@ func (bm *binaryModifier) rebuildTo(buf []byte) ([]byte, TypeCode) {
 // floatEpsilon is the acceptable error quantity when comparing two float numbers.
 const floatEpsilon = 1.e-8
 
-// compareFloat64 returns an integer comparing the float64 x to y,
+// compareFloat64PrecisionLoss returns an integer comparing the float64 x to y,
 // allowing precision loss.
 func compareFloat64PrecisionLoss(x, y float64) int {
 	if x-y < floatEpsilon && y-x < floatEpsilon {
