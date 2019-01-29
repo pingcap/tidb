@@ -209,7 +209,7 @@ func (s *testSuite) TestViews(c *C) {
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
 }
 
-func (s *testSuite) TestTableIdAndIndexId(c *C) {
+func (s *testSuite) TestTableIDAndIndexID(c *C) {
 	testleak.BeforeTest()
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockTikvStore()
