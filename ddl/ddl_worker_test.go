@@ -450,6 +450,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		if job.State == model.JobStateSynced || job.State == model.JobStateCancelled || job.State == model.JobStateCancelling {
 			return
 		}
+		// This hook only valid for the related test job.
+		// This is use to avoid parallel test fail.
 		if len(test.jobIDs) > 0 && test.jobIDs[0] != job.ID {
 			return
 		}
