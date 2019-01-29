@@ -2970,7 +2970,74 @@ func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool
 		d = formatMaxDecimals
 	}
 	dStr := strconv.FormatInt(d, 10)
+	xStr, err = roundingNum(xStr, dStr)
+	if err != nil {
+		return "", "", isNull, err
+	}
 	return xStr, dStr, false, nil
+}
+
+func roundingNum(xStr, dStr string) (string, error) {
+
+	if strings.Contains(xStr, ".") {
+		sign := false
+		if strings.HasPrefix(xStr, "-") {
+			xStr = strings.Trim(xStr, "-")
+			sign = true
+		}
+
+		xArr := strings.Split(xStr, ".")
+		x1 := xArr[0]
+		x2 := xArr[1]
+		digit, err := strconv.Atoi(dStr)
+		if err != nil {
+			return "", err
+		}
+		if len(x2) > digit {
+			t := []byte(x2)
+			carry := false
+			if t[digit] >= '5' {
+				carry = true
+			}
+			if carry {
+				for i := digit - 1; i >= 0; i-- {
+					if t[i] == '9' && carry == true {
+						t[i] = '0'
+						carry = true
+					} else if carry == true {
+						t[i] = t[i] + 1
+						carry = false
+						break
+					}
+				}
+			}
+			x2 = string(t)
+			t = []byte(x1)
+			if carry {
+				for i := len(x1) - 1; i >= 0; i-- {
+					if t[i] == '9' && carry == true {
+						t[i] = '0'
+						carry = true
+					} else if carry == true {
+						t[i] = t[i] + 1
+						carry = false
+						break
+					}
+				}
+			}
+			if carry {
+				x1 = "1" + string(t)
+			} else {
+				x1 = string(t)
+			}
+		}
+
+		xStr = x1 + "." + x2
+		if sign {
+			xStr = "-" + xStr
+		}
+	}
+	return xStr, nil
 }
 
 type builtinFormatWithLocaleSig struct {
@@ -3019,54 +3086,6 @@ func (b *builtinFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	if strings.Contains(x, ".") {
-		xArr := strings.Split(x, ".")
-		x1 := xArr[0]
-		x2 := xArr[1]
-		digit, err := strconv.Atoi(d)
-		if err != nil {
-			return "", isNull, err
-		}
-		if len(x2) > digit {
-			t := []byte(x2)
-			carry := false
-			if t[digit] >= '5' {
-				carry = true
-			}
-			if carry == true {
-				for i := digit - 1; i >= 0; i-- {
-					if t[i] == '9' && carry == true {
-						t[i] = '0'
-						carry = true
-					} else if carry == true {
-						t[i] = t[i] + 1
-						carry = false
-					}
-				}
-			}
-			x2 = string(t)
-			t = []byte(x1)
-			if carry == true {
-				for i := len(x1) - 1; i >= 0; i-- {
-					if t[i] == '9' && carry == true {
-						t[i] = '0'
-						carry = true
-					} else if carry == true {
-						t[i] = t[i] + 1
-						carry = false
-					}
-				}
-			}
-			if carry == true {
-				x1 = "1" + string(t)
-			} else {
-				x1 = string(t)
-			}
-		}
-
-		x = x1 + "." + x2
-	}
-
 	formatString, err := mysql.GetLocaleFormatFunction("en_US")(x, d)
 	return formatString, false, err
 }
