@@ -450,6 +450,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		if job.State == model.JobStateSynced || job.State == model.JobStateCancelled || job.State == model.JobStateCancelling {
 			return
 		}
+		if len(test.jobIDs) > 0 && test.jobIDs[0] != job.ID {
+			return
+		}
 		if checkErr != nil {
 			return
 		}
