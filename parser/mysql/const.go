@@ -218,6 +218,10 @@ const (
 	ExecutePriv
 	// IndexPriv is the privilege to create/drop index.
 	IndexPriv
+	// CreateViewPriv is the privilege to create view.
+	CreateViewPriv
+	// ShowViewPriv is the privilege to show create view.
+	ShowViewPriv
 	// AllPriv is the privilege for all actions.
 	AllPriv
 )
@@ -277,6 +281,8 @@ var Priv2UserCol = map[PrivilegeType]string{
 	AlterPriv:      "Alter_priv",
 	ExecutePriv:    "Execute_priv",
 	IndexPriv:      "Index_priv",
+	CreateViewPriv: "Create_view_priv",
+	ShowViewPriv:   "Show_view_priv",
 }
 
 // Command2Str is the command information to command name.
@@ -333,10 +339,12 @@ var Col2PrivType = map[string]PrivilegeType{
 	"Alter_priv":       AlterPriv,
 	"Execute_priv":     ExecutePriv,
 	"Index_priv":       IndexPriv,
+	"Create_view_priv": CreateViewPriv,
+	"Show_view_priv":   ShowViewPriv,
 }
 
 // AllGlobalPrivs is all the privileges in global scope.
-var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv}
+var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv, CreateViewPriv, ShowViewPriv}
 
 // Priv2Str is the map for privilege to string.
 var Priv2Str = map[PrivilegeType]string{
@@ -356,38 +364,44 @@ var Priv2Str = map[PrivilegeType]string{
 	AlterPriv:      "Alter",
 	ExecutePriv:    "Execute",
 	IndexPriv:      "Index",
+	CreateViewPriv: "Create View",
+	ShowViewPriv:   "Show View",
 }
 
 // Priv2SetStr is the map for privilege to string.
 var Priv2SetStr = map[PrivilegeType]string{
-	CreatePriv:  "Create",
-	SelectPriv:  "Select",
-	InsertPriv:  "Insert",
-	UpdatePriv:  "Update",
-	DeletePriv:  "Delete",
-	DropPriv:    "Drop",
-	GrantPriv:   "Grant",
-	AlterPriv:   "Alter",
-	ExecutePriv: "Execute",
-	IndexPriv:   "Index",
+	CreatePriv:     "Create",
+	SelectPriv:     "Select",
+	InsertPriv:     "Insert",
+	UpdatePriv:     "Update",
+	DeletePriv:     "Delete",
+	DropPriv:       "Drop",
+	GrantPriv:      "Grant",
+	AlterPriv:      "Alter",
+	ExecutePriv:    "Execute",
+	IndexPriv:      "Index",
+	CreateViewPriv: "Create View",
+	ShowViewPriv:   "Show View",
 }
 
 // SetStr2Priv is the map for privilege set string to privilege type.
 var SetStr2Priv = map[string]PrivilegeType{
-	"Create":  CreatePriv,
-	"Select":  SelectPriv,
-	"Insert":  InsertPriv,
-	"Update":  UpdatePriv,
-	"Delete":  DeletePriv,
-	"Drop":    DropPriv,
-	"Grant":   GrantPriv,
-	"Alter":   AlterPriv,
-	"Execute": ExecutePriv,
-	"Index":   IndexPriv,
+	"Create":      CreatePriv,
+	"Select":      SelectPriv,
+	"Insert":      InsertPriv,
+	"Update":      UpdatePriv,
+	"Delete":      DeletePriv,
+	"Drop":        DropPriv,
+	"Grant":       GrantPriv,
+	"Alter":       AlterPriv,
+	"Execute":     ExecutePriv,
+	"Index":       IndexPriv,
+	"Create View": CreateViewPriv,
+	"Show View":   ShowViewPriv,
 }
 
 // AllDBPrivs is all the privileges in database scope.
-var AllDBPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ExecutePriv, IndexPriv}
+var AllDBPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, ExecutePriv, IndexPriv, CreateViewPriv, ShowViewPriv}
 
 // AllTablePrivs is all the privileges in table scope.
 var AllTablePrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, GrantPriv, AlterPriv, IndexPriv}
