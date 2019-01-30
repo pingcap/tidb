@@ -639,10 +639,23 @@ func checkDuplicateColumn(cols []interface{}) error {
 	return nil
 }
 
+func checkIsAutoIncrementColumn(colDefs *ast.ColumnDef) bool {
+	for _, option := range colDefs.Options {
+		if option.Tp == ast.ColumnOptionAutoIncrement {
+			return true
+		}
+	}
+	return false
+}
+
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
+	autoIncrementColumns := make(map[string]interface{})
 	for i, colDef := range colDefs {
 		generated, depCols := findDependedColumnNames(colDef)
+		if checkIsAutoIncrementColumn(colDef) {
+			autoIncrementColumns[colDef.Name.Name.L] = nil
+		}
 		if !generated {
 			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
 				position:  i,
@@ -656,9 +669,17 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 			}
 		}
 	}
+
+	for colName, generated := range colName2Generation {
+		for dep := range generated.dependences {
+			if _, ok := autoIncrementColumns[dep]; ok {
+				return errGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
+			}
+		}
+	}
 	for _, colDef := range colDefs {
 		colName := colDef.Name.Name.L
-		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
+		if err := verifyColumnGeneration(colName3Generation, colName); err != nil {
 			return errors.Trace(err)
 		}
 	}
