@@ -1,33 +1,33 @@
 CREATE TABLE `pay_daily` (
 `id` varchar(50) NOT NULL DEFAULT '',
-`tenant_id` bigint(11) NOT NULL DEFAULT '0',
-`poi_id` bigint(11) NOT NULL DEFAULT '0',
+`a_id` bigint(11) NOT NULL DEFAULT '0',
+`b_id` bigint(11) NOT NULL DEFAULT '0',
 `time_stamp` bigint(11) DEFAULT NULL,
-`datekey` int(20) DEFAULT NULL,
+`date_key` int(20) DEFAULT NULL,
 `hour` int(11) DEFAULT NULL,
-`meal_type` int(11) DEFAULT NULL,
-`cashier_id` bigint(11) DEFAULT NULL,
-`cashier_name` varchar(50) DEFAULT NULL,
-`pay_type_id` bigint(11) DEFAULT NULL,
-`pay_type_name` varchar(32) DEFAULT NULL,
+`m_type` int(11) DEFAULT NULL,
+`c_id` bigint(11) DEFAULT NULL,
+`c_name` varchar(50) DEFAULT NULL,
+`d_id` bigint(11) DEFAULT NULL,
+`d_name` varchar(32) DEFAULT NULL,
 `is_custom` varchar(32) DEFAULT NULL,
-`account_io_type` int(11) DEFAULT NULL,
-`pay_cnt` bigint(11) DEFAULT NULL,
-`pay_amt` bigint(11) DEFAULT NULL,
+`io_type` int(11) DEFAULT NULL,
+`p_cnt` bigint(11) DEFAULT NULL,
+`p_amt` bigint(11) DEFAULT NULL,
 `update_source` int(11) DEFAULT NULL,
 `update_time` timestamp DEFAULT NULL,
-PRIMARY KEY (`id`, `tenant_id`, `poi_id`),
-KEY `IDX_ID` (`tenant_id`, `poi_id`, `time_stamp`),
-KEY `IDX_DK` (`datekey`),
-KEY `IDX_TENANT_POI_DATEKEY` (`tenant_id`, `poi_id`, `datekey`),
-KEY `IDX_US` (`update_source`, `tenant_id`)
+PRIMARY KEY (`id`, `a_id`, `b_id`),
+KEY `IDX_ID` (`a_id`, `b_id`, `time_stamp`),
+KEY `IDX_DK` (`date_key`),
+KEY `IDX_TENANT_POI_DATEKEY` (`a_id`, `b_id`, `date_key`),
+KEY `IDX_US` (`update_source`, `a_id`)
 );
-explain select id, tenant_id, poi_id, time_stamp, datekey, hour, meal_type, cashier_id, cashier_name, pay_type_id, is_custom, account_io_type, pay_cnt, pay_amt, update_source from pay_daily where tenant_id=12565 and poi_id=159298363 and datekey=20180731;
-explain select id from pay_daily where tenant_id=12565 and poi_id=159298363 and time_stamp=10000;
-explain select id from pay_daily where update_source>12565 and tenant_id<159298363;
-explain select id from pay_daily where datekey>12565;
-explain select id from pay_daily where datekey>12565 and account_io_type=1;
-explain select id from pay_daily where datekey>12565 and tenant_id<159298363;
+explain select id, a_id, b_id, time_stamp, date_key, hour, m_type, c_id, c_name, d_id, is_custom, io_type, p_cnt, p_amt, update_source from pay_daily where a_id=12565 and b_id=159298363 and date_key=20180731;
+explain select id from pay_daily where a_id=12565 and b_id=159298363 and time_stamp=10000;
+explain select id from pay_daily where update_source>12565 and a_id<159298363;
+explain select id from pay_daily where date_key>12565;
+explain select id from pay_daily where date_key>12565 and io_type=1;
+explain select id from pay_daily where date_key>12565 and a_id<159298363;
 
 CREATE TABLE `access_path_selection` (
 `a` int,
