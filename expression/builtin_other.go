@@ -615,13 +615,27 @@ func (b *builtinValuesStringSig) evalString(_ chunk.Row) (string, bool, error) {
 	if row.IsEmpty() {
 		return "", true, errors.New("Session current insert values is nil")
 	}
-	if b.offset < row.Len() {
-		if row.IsNull(b.offset) {
+	if b.offset >= row.Len() {
+		return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+	}
+
+	if retType := b.getRetTp(); retType.Hybrid() {
+		val := row.GetDatum(b.offset, b.getRetTp())
+		if val.IsNull() {
 			return "", true, nil
 		}
-		return row.GetString(b.offset), false, nil
+		res, err := val.ToString()
+		resLen := len([]rune(res))
+		if b.ctx.GetSessionVars().StmtCtx.PadCharToFullLength && retType.Tp == mysql.TypeString && resLen < retType.Flen {
+			res = res + strings.Repeat(" ", retType.Flen-resLen)
+		}
+		return res, err != nil, err
 	}
-	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+
+	if row.IsNull(b.offset) {
+		return "", true, nil
+	}
+	return row.GetString(b.offset), false, nil
 }
 
 type builtinValuesTimeSig struct {
