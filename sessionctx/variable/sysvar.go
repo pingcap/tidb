@@ -440,7 +440,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "version", mysql.ServerVersion},
 	{ScopeGlobal | ScopeSession, "transaction_alloc_block_size", "8192"},
 	{ScopeGlobal, "sql_slave_skip_counter", "0"},
-	{ScopeGlobal, "innodb_large_prefix", "OFF"},
+	{ScopeGlobal, "innodb_large_prefix", "ON"},
 	{ScopeNone, "performance_schema_max_cond_classes", "80"},
 	{ScopeGlobal, "innodb_io_capacity", "200"},
 	{ScopeGlobal, "max_binlog_cache_size", "18446744073709547520"},
