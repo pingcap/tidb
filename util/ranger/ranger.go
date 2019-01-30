@@ -463,7 +463,7 @@ func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) bool {
 	return false
 }
 
-// newFieldType returns field type.
+// newFieldType creates a new field type.
 // We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
 // Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldType of column a.
 func newFieldType(tp *types.FieldType) *types.FieldType {

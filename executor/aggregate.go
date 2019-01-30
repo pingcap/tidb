@@ -147,7 +147,7 @@ type HashAggExec struct {
 	groupKeyBuffer   []byte
 	groupValDatums   []types.Datum
 
-	// isUnparallelExec represents unparallel execute.
+	// isUnparallelExec indicates whether this hash aggregate is executed unparallelly.
 	// After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
 	isUnparallelExec bool
@@ -602,7 +602,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	go e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 }
 
-// parallelExec makes HashAggExec employs one input reader, M partial workers and N final workers to execute parallelly.
+// parallelExec executes hash aggregate algorithm parallelly.
+// HashAggExec employs one input reader, M partial workers and N final workers to execute parallelly.
 // The parallel execution flow is:
 // 1. input reader reads data from child executor and send them to partial workers.
 // 2. partial worker receives the input data, updates the partial results, and shuffle the partial results to the final workers.

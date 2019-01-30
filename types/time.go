@@ -813,7 +813,7 @@ type Duration struct {
 	Fsp int
 }
 
-// Add adds d to d, returns a duration value.
+// Add adds v to d, returns a duration value.
 func (d Duration) Add(v Duration) (Duration, error) {
 	if &v == nil {
 		return d, nil

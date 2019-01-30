@@ -47,7 +47,7 @@ type SortExec struct {
 	keyChunks *chunk.List
 	// rowChunks is the chunks to store row values.
 	rowChunks *chunk.List
-	// rowPtrs store the chunk index and row index for each row.
+	// rowPtrs stores the chunk index and row index for each row.
 	rowPtrs []chunk.RowPtr
 
 	memTracker *memory.Tracker

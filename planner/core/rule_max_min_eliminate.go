@@ -30,7 +30,7 @@ func (a *maxMinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	return p, nil
 }
 
-// eliminateMaxMin try to convert max/min to Limit+Sort operators.
+// eliminateMaxMin tries to convert max/min to Limit+Sort operators.
 func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) {
 	// We don't need to guarantee that the child of it is a data source. This transformation won't be worse than previous.
 	if agg, ok := p.(*LogicalAggregation); ok {

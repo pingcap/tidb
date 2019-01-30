@@ -418,7 +418,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	return task, nil
 }
 
-// initSchema initialize schema.
+// initSchema initializes schema.
 // TODO: refactor this part, we should not call Clone in fact.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))

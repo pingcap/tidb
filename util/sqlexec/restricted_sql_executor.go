@@ -88,7 +88,7 @@ type RecordSet interface {
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.RecordBatch) error
 
-	// NewRecordBatch create a recordBatch.
+	// NewRecordBatch creates a recordBatch.
 	NewRecordBatch() *chunk.RecordBatch
 
 	// Close closes the underlying iterator, call Next after Close will

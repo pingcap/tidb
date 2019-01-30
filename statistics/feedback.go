@@ -992,7 +992,7 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 	}
 }
 
-// getNewCountForIndex adjust the estimated `eqCount` and `rangeCount` according to the real count.
+// getNewCountForIndex adjusts the estimated `eqCount` and `rangeCount` according to the real count.
 // We assumes that `eqCount` and `rangeCount` contribute the same error rate.
 func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (float64, float64) {
 	estimate := (eqCount / totalCount) * (rangeCount / totalCount) * totalCount

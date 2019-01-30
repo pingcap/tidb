@@ -33,14 +33,14 @@ type Plan interface {
 	Schema() *expression.Schema
 	// ID returns ID.
 	ID() int
-	// ExplainID returns explain statement ID.
+	// ExplainID returns the plan identifier for explain statement.
 	ExplainID() string
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() sessionctx.Context
 
-	// statsInfo will return the property.StatsInfo for this plan.
+	// statsInfo returns the statistics information in the logical property for this plan.
 	statsInfo() *property.StatsInfo
 }
 
@@ -106,7 +106,7 @@ type LogicalPlan interface {
 	// If the column is not in the schema, returns an error.
 	findColumn(*ast.ColumnName) (*expression.Column, int, error)
 
-	// Children returns all the children.
+	// Children returns all the children LogicalPlans.
 	Children() []LogicalPlan
 
 	// SetChildren sets the children for the plan.
@@ -127,13 +127,13 @@ type PhysicalPlan interface {
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
 
-	// GetChildReqProps gets the required property by child index.
+	// GetChildReqProps gets the required physical property property of child by its index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
 
 	// StatsCount returns the count of property.StatsInfo for this plan.
 	StatsCount() float64
 
-	// Children returns all the children.
+	// Children returns all the children PhysicalPlans.
 	Children() []PhysicalPlan
 
 	// SetChildren sets the children for the plan.

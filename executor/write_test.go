@@ -1957,7 +1957,7 @@ func (s *testSuite2) TestLoadDataIgnoreLines(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-// TestLoadDataOverflowBigintUnsigned tests load data overflow big int unsigned.
+// TestLoadDataOverflowBigintUnsigned tests load data overflow bigint unsigned.
 // related to issue 6360
 func (s *testSuite2) TestLoadDataOverflowBigintUnsigned(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

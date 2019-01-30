@@ -24,11 +24,11 @@ import (
 )
 
 // All the following avg function implementations return the decimal result,
-// which store the partial results in "partialResult4AvgDecimal".
+// which store the partial results in partialResult4AvgDecimal.
 
 // baseAvgDecimal is wrapped by:
-// - "avgOriginal4Decimal"
-// - "avgPartial4Decimal"
+// - avgOriginal4Decimal
+// - avgPartial4Decimal
 type baseAvgDecimal struct {
 	baseAggFunc
 }

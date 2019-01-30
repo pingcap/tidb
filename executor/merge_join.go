@@ -73,7 +73,6 @@ type mergeJoinInnerTable struct {
 	joinKeys []*expression.Column
 	ctx      context.Context
 
-	// sameKeyRows and belows for chunk executions.
 	sameKeyRows    []chunk.Row
 	compareFuncs   []chunk.CompareFunc
 	firstRow4Key   chunk.Row
