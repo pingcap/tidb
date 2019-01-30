@@ -10,7 +10,9 @@ func TestParseSlowLogFile(t *testing.T) {
 	if err != nil {
 		fmt.Println(err)
 	}
-	fmt.Println(rowMap)
+	for k, v := range rowMap {
+		fmt.Println(k, v)
+	}
 }
 
 func BenchmarkCopyString(b *testing.B) {
