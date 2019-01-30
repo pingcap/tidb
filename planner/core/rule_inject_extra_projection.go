@@ -42,38 +42,17 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 		pe.inject(child)
 	}
 
-
-	var origSchema *expression.Schema
-	needProj2PruneColumns := false
 	switch p := plan.(type) {
 	case *PhysicalHashAgg:
 		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalStreamAgg:
 		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalSort:
-		origSchema = plan.Schema().Clone()
-		plan, needProj2PruneColumns = injectProjBelowSort(p, p.ByItems)
+		plan = injectProjBelowSort(p, p.ByItems)
 	case *PhysicalTopN:
-		origSchema = plan.Schema().Clone()
-		plan, needProj2PruneColumns = injectProjBelowSort(p, p.ByItems)
+		plan = injectProjBelowSort(p, p.ByItems)
 	}
-	if !needProj2PruneColumns {
-		return plan
-	}
-	prop := plan.GetChildReqProps(0).Clone()
-	projExprs := make([]expression.Expression, 0, origSchema.Len())
-	for i := 0; i < origSchema.Len(); i++ {
-		col := plan.Schema().Columns[i]
-		col.Index = i
-		projExprs = append(projExprs, col)
-	}
-	proj := PhysicalProjection{
-		Exprs:                projExprs,
-		AvoidColumnEvaluator: false,
-	}.Init(plan.context(), plan.statsInfo().ScaleByExpectCnt(prop.ExpectedCnt), prop)
-	proj.SetSchema(origSchema)
-	proj.SetChildren(plan)
-	return proj
+	return plan
 }
 
 // injectProjBelowAgg injects a ProjOperator below AggOperator. If all the args
@@ -158,28 +137,33 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 // PhysicalSort and PhysicalTopN, some extra columns will be added into the
 // schema of the Projection, thus we need to add another Projection upon
 // them to prune the redundant columns.
-func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) (PhysicalPlan, bool) {
+func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 	hasScalarFunc, numOrderByItems := false, len(orderByItems)
 	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
 		_, isScalarFunc := orderByItems[i].Expr.(*expression.ScalarFunction)
 		hasScalarFunc = hasScalarFunc || isScalarFunc
 	}
 	if !hasScalarFunc {
-		return p, false
+		return p
 	}
 
-
-	projExprs := make([]*expression.Expression, 0, p.Schema().Len())
-
-
+	childPlan := p.Children()[0]
+	if childProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
+		childProj.AvoidColumnEvaluator = true
+	}
+	projExprs := make([]expression.Expression, 0, p.Schema().Len())
+	for i := range p.Schema().Columns {
+		col := p.Schema().Columns[i]
+		col.Index = i
+		projExprs = append(projExprs, col)
+	}
 	topProj := PhysicalProjection{
 		Exprs:                projExprs,
 		AvoidColumnEvaluator: false,
-	}.Init(p.context(), nil, nil)
+	}.Init(p.context(), p.statsInfo(), nil)
 	topProj.SetSchema(p.Schema().Clone())
 	topProj.SetChildren(p)
 
-	childPlan := p.Children()[0]
 	projSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns)+numOrderByItems)
 	projExprs = make([]expression.Expression, 0, len(childPlan.Schema().Columns)+numOrderByItems)
 	for i, col := range childPlan.Schema().Columns {
@@ -212,5 +196,5 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) (PhysicalPlan,
 	bottomProj.SetChildren(childPlan)
 	p.SetChildren(bottomProj)
 
-	return topProj, true
+	return topProj
 }
