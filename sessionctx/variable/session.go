@@ -334,6 +334,9 @@ type SessionVars struct {
 
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
+
+	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
+	SlowQueryFile string
 }
 
 // NewSessionVars creates a session vars object.
@@ -359,6 +362,7 @@ func NewSessionVars() *SessionVars {
 		EnableRadixJoin:           false,
 		L2CacheSize:               cpuid.CPU.Cache.L2,
 		CommandValue:              uint32(mysql.ComSleep),
+		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -691,6 +695,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBSlowQueryFile:
+		s.SlowQueryFile = val
 	}
 	s.systems[name] = val
 	return nil

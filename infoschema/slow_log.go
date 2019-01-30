@@ -2,7 +2,6 @@ package infoschema
 
 import (
 	"bufio"
-	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -18,7 +17,7 @@ import (
 	"time"
 )
 
-var slowLogCols = []columnInfo{
+var slowQueryCols = []columnInfo{
 	{variable.SlowLogTimeStr, mysql.TypeDatetime, -1, 0, nil, nil},
 	{variable.SlowLogTxnStartTSStr, mysql.TypeLonglong, 20, mysql.UnsignedFlag, nil, nil},
 	{variable.SlowLogUserStr, mysql.TypeVarchar, 64, 0, nil, nil},
@@ -36,14 +35,14 @@ var slowLogCols = []columnInfo{
 }
 
 func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
-	rowsMap, err := parseSlowLogFile("/Users/cs/code/goread/src/github.com/pingcap/tidb/slow2.log")
+	rowsMap, err := parseSlowLogFile(ctx.GetSessionVars().SlowQueryFile)
 	if err != nil {
-		fmt.Println(err)
+		return nil, errors.Trace(err)
 	}
 	var rows [][]types.Datum
 	for _, row := range rowsMap {
-		record := make([]types.Datum, 0, len(slowLogCols))
-		for _, col := range slowLogCols {
+		record := make([]types.Datum, 0, len(slowQueryCols))
+		for _, col := range slowQueryCols {
 			if v, ok := row[col.name]; ok {
 				record = append(record, v)
 			} else {
@@ -63,7 +62,7 @@ func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
 	defer file.Close()
 
 	rows := make([]map[string]types.Datum, 0)
-	rowMap := make(map[string]types.Datum, len(slowLogCols))
+	rowMap := make(map[string]types.Datum, len(slowQueryCols))
 	startFlag := false
 	startPrefix := variable.SlowLogPrefixStr + variable.SlowLogTimeStr + variable.SlowLogSpaceMarkStr
 	scanner := bufio.NewScanner(file)
@@ -96,7 +95,7 @@ func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
 					if strings.HasSuffix(field, ":") {
 						field = field[:len(field)-1]
 					}
-					col := findColumnByName(slowLogCols, field)
+					col := findColumnByName(slowQueryCols, field)
 					if col == nil {
 						continue
 					}
@@ -129,7 +128,7 @@ func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
 				// get the sql string, and mark the start flag to false.
 				rowMap[variable.SlowLogQuerySQLStr] = types.NewStringDatum(copyStringHack(line))
 				rows = append(rows, rowMap)
-				rowMap = make(map[string]types.Datum, len(slowLogCols))
+				rowMap = make(map[string]types.Datum, len(slowQueryCols))
 				startFlag = false
 			}
 		}

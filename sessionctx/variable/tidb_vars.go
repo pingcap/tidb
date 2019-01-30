@@ -228,6 +228,9 @@ const (
 
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
+
+	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
+	TiDBSlowQueryFile = "tidb_slow_query_file"
 )
 
 // Default TiDB system variable values.
