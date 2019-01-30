@@ -14,9 +14,11 @@ package core
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 )
 
@@ -37,9 +39,6 @@ import (
 type partitionProcessor struct{}
 
 func (s *partitionProcessor) optimize(lp LogicalPlan) (LogicalPlan, error) {
-	// NOTE: partitionProcessor will assume all filter conditions are pushed down to
-	// DataSource, there will not be a Selection->DataSource case, so the rewrite just
-	// handle the DataSource node.
 	return s.rewriteDataSource(lp)
 }
 
@@ -82,18 +81,23 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
 	}
+	partitionDefs := ds.table.Meta().Partition.Definitions
 
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
 	for i, expr := range partitionExprs {
-		if col != nil {
-			// If the selection condition would never be satisified, prune that partition.
-			prune, err := s.canBePrune(ds.context(), col, expr, ds.pushedDownConds)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if prune {
+		// If the select condition would never be satisified, prune that partition.
+		pruned, err := s.canBePruned(ds.context(), col, expr, ds.allConds)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if pruned {
+			continue
+		}
+		// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
+		if len(ds.partitionNames) != 0 {
+			if !s.findByName(ds.partitionNames, partitionDefs[i].Name.L) {
 				continue
 			}
 		}
@@ -126,19 +130,53 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	return unionAll, nil
 }
 
-// canBePrune checks if partition expression will never meets the selection condition.
-// For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
-func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.Column, partitionCond expression.Expression, copConds []expression.Expression) (bool, error) {
-	conds := make([]expression.Expression, 0, 1+len(copConds))
-	conds = append(conds, partitionCond)
-	conds = append(conds, copConds...)
-	conds = expression.PropagateConstant(ctx, conds)
+var solver = expression.NewPartitionPruneSolver()
 
-	// Calculate the column range to prune.
-	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
-	r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
+// canBePruned checks if partition expression will never meets the selection condition.
+// For example, partition by column a > 3, and select condition is a < 3, then canBePrune returns true.
+func (s *partitionProcessor) canBePruned(sctx sessionctx.Context, partCol *expression.Column, partExpr expression.Expression, filterExprs []expression.Expression) (bool, error) {
+	conds := make([]expression.Expression, 0, 1+len(filterExprs))
+	conds = append(conds, partExpr)
+	conds = append(conds, filterExprs...)
+	conds = expression.PropagateConstant(sctx, conds)
+	conds = solver.Solve(sctx, conds)
+
+	if len(conds) == 1 {
+		// Constant false.
+		if con, ok := conds[0].(*expression.Constant); ok && con.DeferredExpr == nil {
+			ret, err := expression.EvalBool(sctx, expression.CNFExprs{con}, chunk.Row{})
+			if err == nil && ret == false {
+				return true, nil
+			}
+		}
+		// Not a constant false, but this is the only condition, it can't be pruned.
+		return false, nil
+	}
+
+	// Calculates the column range to prune.
+	if partCol == nil {
+		// If partition column is nil, we can't calculate range, so we can't prune
+		// partition by range.
+		return false, nil
+	}
+
+	// TODO: Remove prune by calculating range. Current constraint propagate doesn't
+	// handle the null condition, while calculate range can prune something like:
+	// "select * from t where t is null"
+	accessConds := ranger.ExtractAccessConditionsForColumn(conds, partCol.UniqueID)
+	r, err := ranger.BuildColumnRange(accessConds, sctx.GetSessionVars().StmtCtx, partCol.RetType)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	return len(r) == 0, nil
+}
+
+// findByName checks whether object name exists in list.
+func (s *partitionProcessor) findByName(partitionNames []model.CIStr, partitionName string) bool {
+	for _, s := range partitionNames {
+		if s.L == partitionName {
+			return true
+		}
+	}
+	return false
 }

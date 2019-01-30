@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -52,7 +52,6 @@ type testStateChangeSuite struct {
 }
 
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -75,7 +74,6 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
@@ -106,11 +104,68 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 		}
 	}
 	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 	tk.MustExec("alter table t add index idx1(id)")
 	c.Assert(checkErr, IsNil)
 	tk.MustExec("alter table t add column c int")
 	c.Assert(checkErr, IsNil)
+}
+
+// TestDropNotNullColumn is used to test issue #8654.
+func (s *testStateChangeSuite) TestDropNotNullColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, a int not null default 11)")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("create table t1 (id int, b varchar(255) not null)")
+	tk.MustExec("insert into t1 values(2, '')")
+	tk.MustExec("create table t2 (id int, c time not null)")
+	tk.MustExec("insert into t2 values(3, '11:22:33')")
+	tk.MustExec("create table t3 (id int, d json not null)")
+	tk.MustExec("insert into t3 values(4, d)")
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+
+	var checkErr error
+	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &ddl.TestDDLCallback{}
+	sqlNum := 0
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		originalCallback.OnChanged(nil)
+		if job.SchemaState == model.StateWriteOnly {
+			switch sqlNum {
+			case 0:
+				_, checkErr = tk1.Exec("insert into t set id = 1")
+			case 1:
+				_, checkErr = tk1.Exec("insert into t1 set id = 2")
+			case 2:
+				_, checkErr = tk1.Exec("insert into t2 set id = 3")
+			case 3:
+				_, checkErr = tk1.Exec("insert into t3 set id = 4")
+			}
+		}
+	}
+
+	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t drop column a")
+	c.Assert(checkErr, IsNil)
+	sqlNum++
+	tk.MustExec("alter table t1 drop column b")
+	c.Assert(checkErr, IsNil)
+	sqlNum++
+	tk.MustExec("alter table t2 drop column c")
+	c.Assert(checkErr, IsNil)
+	sqlNum++
+	tk.MustExec("alter table t3 drop column d")
+	c.Assert(checkErr, IsNil)
+	d.(ddl.DDLForTest).SetHook(originalCallback)
+	tk.MustExec("drop table t, t1, t2, t3")
 }
 
 func (s *testStateChangeSuite) TestTwoStates(c *C) {
@@ -212,6 +267,8 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 		}
 	}
 	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -223,8 +280,6 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	err = testInfo.execSQL(3)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
-	callback = &ddl.TestDDLCallback{}
-	d.(ddl.DDLForTest).SetHook(callback)
 }
 
 type stateCase struct {
@@ -481,12 +536,12 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 		}
 	}
 	d := s.dom.DDL()
+	originalCallback := d.GetHook()
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
 	c.Assert(errors.ErrorStack(checkErr), Equals, "")
-	callback = &ddl.TestDDLCallback{}
-	d.(ddl.DDLForTest).SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(originalCallback)
 
 	if expectQuery != nil {
 		tk := testkit.NewTestKit(c, s.store)
@@ -554,6 +609,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	}
 
 	d := s.dom.DDL()
+	originalCallback := d.GetHook()
 	d.(ddl.DDLForTest).SetHook(callback)
 	alterTableSQL := `alter table t add index c2(c2)`
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
@@ -564,8 +620,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	err = checkResult(result, testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
 	c.Assert(err, IsNil)
-	callback = &ddl.TestDDLCallback{}
-	d.(ddl.DDLForTest).SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(originalCallback)
 
 	c.Assert(err, IsNil)
 
@@ -644,6 +699,17 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
+	sql1 := `alter table t_part add partition (
+    partition p2 values less than (30)
+   );`
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql1, f)
+}
+
 func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
 	sql := "ALTER TABLE t drop COLUMN c ;"
 	f := func(c *C, err1, err2 error) {
@@ -673,6 +739,14 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table t")
 
+	_, err = s.se.Execute(context.Background(), "drop database if exists t_part")
+	c.Assert(err, IsNil)
+	s.se.Execute(context.Background(), `create table t_part (a int key)
+	 partition by range(a) (
+	 partition p0 values less than (10),
+	 partition p1 values less than (20)
+	 );`)
+
 	callback := &ddl.TestDDLCallback{}
 	times := 0
 	callback.OnJobUpdatedExported = func(job *model.Job) {
@@ -697,6 +771,8 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 		times++
 	}
 	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 
 	wg := sync.WaitGroup{}
@@ -744,9 +820,6 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 
 	wg.Wait()
 	f(c, err1, err2)
-
-	callback = &ddl.TestDDLCallback{}
-	d.(ddl.DDLForTest).SetHook(callback)
 }
 
 func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
@@ -773,6 +846,8 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	}
 
 	d := s.dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
 
 	wg.Add(2)
@@ -788,8 +863,6 @@ func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
 	wg.Wait()
 	c.Assert(err2, IsNil)
 	c.Assert(err3, IsNil)
-	callback = &ddl.TestDDLCallback{}
-	d.(ddl.DDLForTest).SetHook(callback)
 }
 
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
@@ -842,6 +915,8 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 				info = is
 				break
 			}
+			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
+			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
 			time.Sleep(interval)
 		}
 
@@ -853,6 +928,8 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 			if currID == firstConnID || seCnt == finishedCnt {
 				break
 			}
+			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
+			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
 			time.Sleep(interval)
 		}
 

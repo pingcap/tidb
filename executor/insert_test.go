@@ -14,13 +14,15 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
+func (s *testSuite3) TestInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -184,7 +186,7 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.CheckLastMessage("Records: 5  Duplicates: 2  Warnings: 0")
 }
 
-func (s *testSuite) TestUpdateDuplicateKey(c *C) {
+func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -196,7 +198,7 @@ func (s *testSuite) TestUpdateDuplicateKey(c *C) {
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
 }
 
-func (s *testSuite) TestInsertWrongValueForField(c *C) {
+func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
@@ -205,7 +207,7 @@ func (s *testSuite) TestInsertWrongValueForField(c *C) {
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
 }
 
-func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
+func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`use test;`)
@@ -220,7 +222,7 @@ func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
 	))
 }
 
-func (s *testSuite) TestInsertZeroYear(c *C) {
+func (s *testSuite3) TestInsertZeroYear(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
@@ -232,4 +234,39 @@ func (s *testSuite) TestInsertZeroYear(c *C) {
 		`2000`,
 		`2000`,
 	))
+}
+
+func (s *testSuite3) TestAllowInvalidDates(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1, t2, t3, t4;`)
+	tk.MustExec(`create table t1(d date);`)
+	tk.MustExec(`create table t2(d datetime);`)
+	tk.MustExec(`create table t3(d date);`)
+	tk.MustExec(`create table t4(d datetime);`)
+
+	runWithMode := func(mode string) {
+		inputs := []string{"0000-00-00", "2019-00-00", "2019-01-00", "2019-00-01", "2019-02-31"}
+		results := testkit.Rows(`0 0 0`, `2019 0 0`, `2019 1 0`, `2019 0 1`, `2019 2 31`)
+		oldMode := tk.MustQuery(`select @@sql_mode`).Rows()[0][0]
+		defer func() {
+			tk.MustExec(fmt.Sprintf(`set sql_mode='%s'`, oldMode))
+		}()
+
+		tk.MustExec(`truncate t1;truncate t2;truncate t3;truncate t4;`)
+		tk.MustExec(fmt.Sprintf(`set sql_mode='%s';`, mode))
+		for _, input := range inputs {
+			tk.MustExec(fmt.Sprintf(`insert into t1 values ('%s')`, input))
+			tk.MustExec(fmt.Sprintf(`insert into t2 values ('%s')`, input))
+		}
+		tk.MustQuery(`select year(d), month(d), day(d) from t1;`).Check(results)
+		tk.MustQuery(`select year(d), month(d), day(d) from t2;`).Check(results)
+		tk.MustExec(`insert t3 select d from t1;`)
+		tk.MustQuery(`select year(d), month(d), day(d) from t3;`).Check(results)
+		tk.MustExec(`insert t4 select d from t2;`)
+		tk.MustQuery(`select year(d), month(d), day(d) from t4;`).Check(results)
+	}
+
+	runWithMode("STRICT_TRANS_TABLES,ALLOW_INVALID_DATES")
+	runWithMode("ALLOW_INVALID_DATES")
 }

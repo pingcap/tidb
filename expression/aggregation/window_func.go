@@ -11,9 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package hack
+package aggregation
 
 import (
-	// Imported for go.mod to cache package to accelerate CI.
-	_ "github.com/mgechev/revive/lint"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 )
+
+// WindowFuncDesc describes a window function signature, only used in planner.
+type WindowFuncDesc struct {
+	baseFuncDesc
+}
+
+// NewWindowFuncDesc creates a window function signature descriptor.
+func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) *WindowFuncDesc {
+	return &WindowFuncDesc{newBaseFuncDesc(ctx, name, args)}
+}

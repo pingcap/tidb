@@ -358,14 +358,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc'",
-			accessConds: "[like(test.t.a, abc, 92)]",
+			accessConds: "[eq(test.t.a, abc)]",
 			filterConds: "[]",
 			resultStr:   "[[\"abc\",\"abc\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "ab\_c"`,
-			accessConds: "[like(test.t.a, ab\\_c, 92)]",
+			accessConds: "[eq(test.t.a, ab_c)]",
 			filterConds: "[]",
 			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
 		},
@@ -379,14 +379,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE '\%a'`,
-			accessConds: "[like(test.t.a, \\%a, 92)]",
+			accessConds: "[eq(test.t.a, %a)]",
 			filterConds: "[]",
 			resultStr:   `[["%a","%a"]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\"`,
-			accessConds: "[like(test.t.a, \\, 92)]",
+			accessConds: "[eq(test.t.a, \\)]",
 			filterConds: "[]",
 			resultStr:   "[[\"\\\",\"\\\"]]",
 		},
@@ -543,6 +543,34 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			accessConds: "[eq(test.t.e, 你好啊)]",
 			filterConds: "[eq(test.t.e, 你好啊)]",
 			resultStr:   "[[\"[228 189]\",\"[228 189]\"]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d in ("你好啊")`,
+			accessConds: "[in(test.t.d, 你好啊)]",
+			filterConds: "[in(test.t.d, 你好啊)]",
+			resultStr:   "[[\"你好\",\"你好\"]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d not in ("你好啊")`,
+			accessConds: "[not(in(test.t.d, 你好啊))]",
+			filterConds: "[not(in(test.t.d, 你好啊))]",
+			resultStr:   "[(NULL,+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d < "你好" || d > "你好"`,
+			accessConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
+			filterConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
+			resultStr:   "[[-inf,\"你好\") (\"你好\",+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `not(d < "你好" || d > "你好")`,
+			accessConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
+			filterConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
+			resultStr:   "[[\"你好\",\"你好\"]]",
 		},
 	}
 

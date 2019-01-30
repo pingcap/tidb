@@ -82,7 +82,6 @@ func (q *slowQueryQueue) Enqueue(info *SlowQueryInfo) {
 	}
 
 	q.data = append(q.data, info)[1:]
-	return
 }
 
 func (q *slowQueryQueue) Query(count int) []*SlowQueryInfo {
@@ -158,6 +157,10 @@ func (q *topNSlowQueries) Append(info *SlowQueryInfo) {
 		heap.Pop(h)
 		heap.Push(h, info)
 	}
+}
+
+func (q *topNSlowQueries) QueryAll() []*SlowQueryInfo {
+	return q.recent.data
 }
 
 func (q *topNSlowQueries) RemoveExpired(now time.Time) {
