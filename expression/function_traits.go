@@ -63,3 +63,44 @@ var DeferredFunctions = map[string]struct{}{
 var inequalFunctions = map[string]struct{}{
 	ast.IsNull: {},
 }
+
+// mutableEffectsFunctions stores functions which are mutable or have side effects, specifically,
+// we cannot remove them from filter even if they have duplicates.
+var mutableEffectsFunctions = map[string]struct{}{
+	// Time related functions in MySQL have various behaviors when executed multiple times in a single SQL,
+	// for example:
+	// mysql> select current_timestamp(), sleep(5), current_timestamp();
+	// +---------------------+----------+---------------------+
+	// | current_timestamp() | sleep(5) | current_timestamp() |
+	// +---------------------+----------+---------------------+
+	// | 2018-12-18 17:55:39 |        0 | 2018-12-18 17:55:39 |
+	// +---------------------+----------+---------------------+
+	// while:
+	// mysql> select sysdate(), sleep(5), sysdate();
+	// +---------------------+----------+---------------------+
+	// | sysdate()           | sleep(5) | sysdate()           |
+	// +---------------------+----------+---------------------+
+	// | 2018-12-18 17:57:38 |        0 | 2018-12-18 17:57:43 |
+	// +---------------------+----------+---------------------+
+	// for safety consideration, treat them all as mutable.
+	ast.Now:              {},
+	ast.CurrentTimestamp: {},
+	ast.UTCTime:          {},
+	ast.Curtime:          {},
+	ast.CurrentTime:      {},
+	ast.UTCTimestamp:     {},
+	ast.UnixTimestamp:    {},
+	ast.Sysdate:          {},
+	ast.Curdate:          {},
+	ast.CurrentDate:      {},
+	ast.UTCDate:          {},
+
+	ast.Rand:        {},
+	ast.RandomBytes: {},
+	ast.UUID:        {},
+	ast.UUIDShort:   {},
+	ast.Sleep:       {},
+	ast.SetVar:      {},
+	ast.GetVar:      {},
+	ast.AnyValue:    {},
+}
