@@ -2970,17 +2970,17 @@ func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool
 		d = formatMaxDecimals
 	}
 	dStr := strconv.FormatInt(d, 10)
-	xStr, err = roundingNum(xStr, dStr)
+	xStr, err = roundFormatArgs(xStr, dStr)
 	if err != nil {
 		return "", "", isNull, err
 	}
 	return xStr, dStr, false, nil
 }
 
-func roundingNum(xStr, dStr string) (string, error) {
+func roundFormatArgs(xStr, dStr string) (string, error) {
 	if strings.Contains(xStr, ".") {
 		sign := false
-		// xStr can not has '+' prefix now.
+		// xStr cannot have '+' prefix now.
 		// It is built in `evalNumDecArgsFormat` after evaluating `Evalxxx` method.
 		if strings.HasPrefix(xStr, "-") {
 			xStr = strings.Trim(xStr, "-")
@@ -3003,26 +3003,22 @@ func roundingNum(xStr, dStr string) (string, error) {
 			if t[digit] >= '5' {
 				carry = true
 			}
-			if carry {
-				for i := digit - 1; i >= 0 && carry; i-- {
-					if t[i] == '9' {
-						t[i] = '0'
-					} else {
-						t[i] = t[i] + 1
-						carry = false
-					}
+			for i := digit - 1; i >= 0 && carry; i-- {
+				if t[i] == '9' {
+					t[i] = '0'
+				} else {
+					t[i] = t[i] + 1
+					carry = false
 				}
 			}
 			x2 = string(t)
 			t = []byte(x1)
-			if carry {
-				for i := len(x1) - 1; i >= 0 && carry; i-- {
-					if t[i] == '9' {
-						t[i] = '0'
-					} else {
-						t[i] = t[i] + 1
-						carry = false
-					}
+			for i := len(x1) - 1; i >= 0 && carry; i-- {
+				if t[i] == '9' {
+					t[i] = '0'
+				} else {
+					t[i] = t[i] + 1
+					carry = false
 				}
 			}
 			if carry {
