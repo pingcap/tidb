@@ -536,8 +536,6 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 			row = append(row, copTaskExecDetail)
 		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
 			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
-		} else {
-			row = append(row, "")
 		}
 	}
 	e.Rows = append(e.Rows, row)

@@ -14,6 +14,7 @@
 package execdetails
 
 import (
+	"github.com/pingcap/tipb/go-tipb"
 	"testing"
 	"time"
 )
@@ -49,12 +50,16 @@ func TestString(t *testing.T) {
 	}
 }
 
+func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {
+	return &tipb.ExecutorExecutionSummary{&TimeProcessedNs, &NumProducedRows, &NumIterations, nil}
+}
+
 func TestCopRuntimeStats(t *testing.T) {
 	stats := NewRuntimeStatsColl()
-	stats.RecordOneCopTask("table_scan", "8.8.8.8", 1, 1, 1)
-	stats.RecordOneCopTask("table_scan", "8.8.8.9", 2, 2, 2)
-	stats.RecordOneCopTask("agg", "8.8.8.8", 3, 3, 3)
-	stats.RecordOneCopTask("agg", "8.8.8.9", 4, 4, 4)
+	stats.RecordOneCopTask("table_scan", "8.8.8.8", mockExecutorExecutionSummary(1, 1, 1))
+	stats.RecordOneCopTask("table_scan", "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
+	stats.RecordOneCopTask("agg", "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
+	stats.RecordOneCopTask("agg", "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
 	if stats.CopSummary("table_scan") != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, rows:3, iters:3, tasks:2" {
 		t.Fatal("table_scan")
 	}

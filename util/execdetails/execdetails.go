@@ -15,6 +15,7 @@ package execdetails
 
 import (
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"sort"
 	"strings"
 	"sync"
@@ -110,17 +111,28 @@ func (d ExecDetails) String() string {
 	return strings.Join(parts, " ")
 }
 
+// Usually, CopTasks are executed on TiKV cluster consist of multiple instances,
+// so coprocessors' addresses must be taken into account.
+// And Sometimes, several cop tasks of one operator can be executed in a same TiKV instance,
+// which depend on how we split cop tasks and the distribution of data regions.
+// So we have to use a list to maintain all tasks executed on each instance.
+type CopRuntimeStats struct {
+	sync.Mutex
+	stats map[string][]*RuntimeStats
+}
+
+func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
+	crs.Lock()
+	defer crs.Unlock()
+	crs.stats[address] = append(crs.stats[address],
+		&RuntimeStats{int32(*summary.NumIterations), int64(*summary.TimeProcessedNs), int64(*summary.NumProducedRows)})
+}
+
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
 	mu        sync.Mutex
 	rootStats map[string]*RuntimeStats
-	// Usually, CopTasks are executed on TiKV cluster consist of multiple instances,
-	// so coprocessors' addresses must be taken into account.
-	// And Sometimes, several cop tasks of one operator can be executed in a same TiKV instance,
-	// which depend on how we split cop tasks and the distribution of data regions.
-	// So we have to use a list to maintain all tasks executed on each instance.
-	// Then the type is map[operator ID]map[TiKV instance address][all tasks executed on this instance].
-	copStats map[string]map[string][]*RuntimeStats
+	copStats  map[string]*CopRuntimeStats
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -136,7 +148,7 @@ type RuntimeStats struct {
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
 	return &RuntimeStatsColl{rootStats: make(map[string]*RuntimeStats),
-		copStats: make(map[string]map[string][]*RuntimeStats)}
+		copStats: make(map[string]*CopRuntimeStats)}
 }
 
 // GetRootStats gets execStat for a executor.
@@ -151,30 +163,33 @@ func (e *RuntimeStatsColl) GetRootStats(planID string) *RuntimeStats {
 	return runtimeStats
 }
 
-// RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string,
-	timeProcessedNs, numProducedRows int64, numIterations int32) {
+func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, ok := e.copStats[planID]
 	if !ok {
-		e.copStats[planID] = make(map[string][]*RuntimeStats, 8)
+		e.copStats[planID] = &CopRuntimeStats{stats: make(map[string][]*RuntimeStats)}
 	}
+	return e.copStats[planID]
+}
 
-	e.copStats[planID][address] = append(e.copStats[planID][address],
-		&RuntimeStats{numIterations, timeProcessedNs, numProducedRows})
+// RecordOneCopTask records a specific cop tasks's execution detail.
+func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tipb.ExecutorExecutionSummary) {
+	copStats := e.GetCopStats(planID)
+	copStats.RecordOneCopTask(address, summary)
 }
 
 // CopSummary gets a summary of the cop task's execution information.
 func (e *RuntimeStatsColl) CopSummary(planID string) string {
-	stats, ok := e.copStats[planID]
-	if !ok {
+	copStat := e.GetCopStats(planID)
+	if len(copStat.stats) == 0 {
 		return ""
 	}
+
 	var totalRows, totalTasks int64
 	var totalIters int32
 	procTimes := make([]time.Duration, 0, 32)
-	for _, instanceStats := range stats {
+	for _, instanceStats := range copStat.stats {
 		for _, stat := range instanceStats {
 			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
 			totalRows += stat.rows
