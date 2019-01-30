@@ -111,16 +111,19 @@ func (d ExecDetails) String() string {
 	return strings.Join(parts, " ")
 }
 
-// Usually, CopTasks are executed on TiKV cluster consist of multiple instances,
-// so coprocessors' addresses must be taken into account.
-// And Sometimes, several cop tasks of one operator can be executed in a same TiKV instance,
-// which depend on how we split cop tasks and the distribution of data regions.
-// So we have to use a list to maintain all tasks executed on each instance.
+// CopRuntimeStats collects cop tasks' execution info.
 type CopRuntimeStats struct {
 	sync.Mutex
+
+	// Usually, CopTasks are executed on TiKV cluster consist of multiple instances,
+	// so coprocessors' addresses must be taken into account.
+	// And Sometimes, several cop tasks of one operator can be executed in a same TiKV instance,
+	// which depend on how we split cop tasks and the distribution of data regions.
+	// So we have to use a list to maintain all tasks executed on each instance.
 	stats map[string][]*RuntimeStats
 }
 
+// RecordOneCopTask records a specific cop tasks's execution detail.
 func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
 	crs.Lock()
 	defer crs.Unlock()
@@ -163,6 +166,7 @@ func (e *RuntimeStatsColl) GetRootStats(planID string) *RuntimeStats {
 	return runtimeStats
 }
 
+// GetCopStats gets the CopRuntimeStats specified by planID
 func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
