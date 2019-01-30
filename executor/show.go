@@ -595,7 +595,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
-		// charset && collate are not shown for generated columns in mysql
+		// charset && collate are not shown for generated columns in MySQL
 		if col.Charset != "binary" && !col.IsGenerated() {
 			fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
 		}
@@ -615,7 +615,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if mysql.HasNotNullFlag(col.Flag) {
 				buf.WriteString(" NOT NULL")
 			}
-			// don't show default value for generated columns
+			// default values are not shown for generated columns in MySQL
 			if !mysql.HasNoDefaultValueFlag(col.Flag) && !col.IsGenerated() {
 				defaultValue := col.GetDefaultValue()
 				switch defaultValue {
