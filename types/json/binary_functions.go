@@ -58,7 +58,8 @@ func (bj BinaryJSON) Type() string {
 func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
-		s, err := unquoteString(hack.String(bj.GetString()))
+		tmp := string(hack.String(bj.GetString()))
+		s, err := unquoteString(tmp)
 		if err != nil {
 			return "", errors.Trace(err)
 		}

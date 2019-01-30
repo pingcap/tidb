@@ -170,7 +170,7 @@ func (d *Datum) SetFloat32(f float32) {
 
 // GetString gets string value.
 func (d *Datum) GetString() string {
-	return hack.String(d.b)
+	return string(hack.String(d.b))
 }
 
 // SetString sets string value.
@@ -271,7 +271,8 @@ func (d *Datum) SetMysqlDuration(b Duration) {
 
 // GetMysqlEnum gets Enum value
 func (d *Datum) GetMysqlEnum() Enum {
-	return Enum{Value: uint64(d.i), Name: hack.String(d.b)}
+	str := string(hack.String(d.b))
+	return Enum{Value: uint64(d.i), Name: str}
 }
 
 // SetMysqlEnum sets Enum value
@@ -284,7 +285,8 @@ func (d *Datum) SetMysqlEnum(b Enum) {
 
 // GetMysqlSet gets Set value
 func (d *Datum) GetMysqlSet() Set {
-	return Set{Value: uint64(d.i), Name: hack.String(d.b)}
+	str := string(hack.String(d.b))
+	return Set{Value: uint64(d.i), Name: str}
 }
 
 // SetMysqlSet sets Set value
@@ -579,7 +581,8 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string) (int, erro
 }
 
 func (d *Datum) compareBytes(sc *stmtctx.StatementContext, b []byte) (int, error) {
-	return d.compareString(sc, hack.String(b))
+	str := string(hack.String(b))
+	return d.compareString(sc, str)
 }
 
 func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (int, error) {
