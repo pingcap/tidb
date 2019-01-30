@@ -236,4 +236,15 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "on")
 	c.Assert(v.EnableTablePartition, Equals, "on")
+
+	SetSessionSystemVar(v, TiDBEnableCheckWrongUtf8Value, types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, TiDBEnableCheckWrongUtf8Value)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, true)
+	SetSessionSystemVar(v, TiDBEnableCheckWrongUtf8Value, types.NewStringDatum("0"))
+	val, err = GetSessionSystemVar(v, TiDBEnableCheckWrongUtf8Value)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, false)
 }

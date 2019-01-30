@@ -126,6 +126,9 @@ const (
 	// on: always enable table partition.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
+
+	// TiDBEnableCheckWrongUtf8Value is used to control whether to enable the check wrong utf8 value.
+	TiDBEnableCheckWrongUtf8Value = "tidb_enable_check_wrong_utf8_value"
 )
 
 // TiDB system variable names that both in session and global scope.
