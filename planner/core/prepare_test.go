@@ -265,15 +265,29 @@ func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 }
 
 // unit test for issue https://github.com/pingcap/tidb/issues/8518
-func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupBy(c *C) {
+func (s *testPrepareSuite) TestPrepareTableAsNameOnGroupByWithCache(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	orgCapacity := core.PreparedPlanCacheCapacity
+	orgMemGuardRatio := core.PreparedPlanCacheMemoryGuardRatio
+	orgMaxMemory := core.PreparedPlanCacheMaxMemory
 	defer func() {
 		dom.Close()
 		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+		core.PreparedPlanCacheCapacity = orgCapacity
+		core.PreparedPlanCacheMemoryGuardRatio = orgMemGuardRatio
+		core.PreparedPlanCacheMaxMemory = orgMaxMemory
 	}()
+	core.SetPreparedPlanCache(true)
+	core.PreparedPlanCacheCapacity = 100
+	core.PreparedPlanCacheMemoryGuardRatio = 0.1
+	// PreparedPlanCacheMaxMemory is set to MAX_UINT64 to make sure the cache
+	// behavior would not be effected by the uncertain memory utilization.
+	core.PreparedPlanCacheMaxMemory = math.MaxUint64
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (
