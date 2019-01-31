@@ -66,6 +66,7 @@ const (
 	tableTableSpaces                        = "TABLESPACES"
 	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
+	tableTiDBIndexes                        = "TIDB_INDEXES"
 )
 
 type columnInfo struct {
@@ -147,6 +148,7 @@ var tablesCols = []columnInfo{
 	{"CHECKSUM", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"TIDB_TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -528,6 +530,18 @@ var tableProcesslistCols = []columnInfo{
 	{"TIME", mysql.TypeLong, 7, mysql.NotNullFlag, 0, nil},
 	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
 	{"Info", mysql.TypeString, 512, 0, nil, nil},
+}
+
+var tableTiDBIndexesCols = []columnInfo{
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NON_UNIQUE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"KEY_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SEQ_IN_INDEX", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SUB_PART", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
@@ -970,6 +984,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					nil,           // CHECKSUM
 					createOptions, // CREATE_OPTIONS
 					table.Comment, // TABLE_COMMENT
+					table.ID,      // TIDB_TABLE_ID
 				)
 				rows = append(rows, record)
 			} else {
@@ -995,8 +1010,71 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 					nil,           // CHECKSUM
 					nil,           // CREATE_OPTIONS
 					"VIEW",        // TABLE_COMMENT
+					table.ID,      // TIDB_TABLE_ID
 				)
 				rows = append(rows, record)
+			}
+		}
+	}
+	return rows, nil
+}
+
+func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, tb := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+
+			if tb.PKIsHandle {
+				var pkCol *model.ColumnInfo
+				for _, col := range tb.Cols() {
+					if mysql.HasPriKeyFlag(col.Flag) {
+						pkCol = col
+						break
+					}
+				}
+				record := types.MakeDatums(
+					schema.Name.O, // TABLE_SCHEMA
+					tb.Name.O,     // TABLE_NAME
+					0,             // NON_UNIQUE
+					"PRIMARY",     // KEY_NAME
+					1,             // SEQ_IN_INDEX
+					pkCol.Name.O,  // COLUMN_NAME
+					nil,           // SUB_PART
+					"",            // INDEX_COMMENT
+					0,             // INDEX_ID
+				)
+				rows = append(rows, record)
+			}
+			for _, idxInfo := range tb.Indices {
+				if idxInfo.State != model.StatePublic {
+					continue
+				}
+				for i, col := range idxInfo.Columns {
+					nonUniq := 1
+					if idxInfo.Unique {
+						nonUniq = 0
+					}
+					var subPart interface{}
+					if col.Length != types.UnspecifiedLength {
+						subPart = col.Length
+					}
+					record := types.MakeDatums(
+						schema.Name.O,   // TABLE_SCHEMA
+						tb.Name.O,       // TABLE_NAME
+						nonUniq,         // NON_UNIQUE
+						idxInfo.Name.O,  // KEY_NAME
+						i+1,             // SEQ_IN_INDEX
+						col.Name.O,      // COLUMN_NAME
+						subPart,         // SUB_PART
+						idxInfo.Comment, // INDEX_COMMENT
+						idxInfo.ID,      // INDEX_ID
+					)
+					rows = append(rows, record)
+				}
 			}
 		}
 	}
@@ -1390,6 +1468,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTableSpaces:                        tableTableSpacesCols,
 	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
+	tableTiDBIndexes:                        tableTiDBIndexesCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1435,6 +1514,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForSchemata(dbs)
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
+	case tableTiDBIndexes:
+		fullRows, err = dataForIndexes(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
