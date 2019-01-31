@@ -555,6 +555,9 @@ func (b *builtinValuesRealSig) evalReal(_ types.Row) (float64, bool, error) {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
 		}
+		if b.getRetTp().Tp == mysql.TypeFloat {
+			return float64(row.GetFloat32(b.offset)), false, nil
+		}
 		return row.GetFloat64(b.offset), false, nil
 	}
 	return 0, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
