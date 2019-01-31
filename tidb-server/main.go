@@ -376,6 +376,8 @@ func setGlobalVars() {
 	session.SetCommitRetryLimit(cfg.Performance.RetryLimit)
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+	kv.TxnEntryCountLimit = cfg.Performance.TxnEntryCountLimit
+	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
