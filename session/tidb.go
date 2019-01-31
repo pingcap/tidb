@@ -236,12 +236,12 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
 func GetHistory(ctx sessionctx.Context) *StmtHistory {
-	hist, ok := ctx.GetSessionVars().TxnCtx.Histroy.(*StmtHistory)
+	hist, ok := ctx.GetSessionVars().TxnCtx.History.(*StmtHistory)
 	if ok {
 		return hist
 	}
 	hist = new(StmtHistory)
-	ctx.GetSessionVars().TxnCtx.Histroy = hist
+	ctx.GetSessionVars().TxnCtx.History = hist
 	return hist
 }
 

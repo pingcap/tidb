@@ -56,6 +56,7 @@ type Config struct {
 	OOMAction       string `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery   int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	EnableStreaming bool   `toml:"enable-streaming" json:"enable-streaming"`
+	EnableBatchDML  bool   `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -256,6 +257,7 @@ var defaultConf = Config{
 	OOMAction:           "log",
 	MemQuotaQuery:       32 << 30,
 	EnableStreaming:     false,
+	EnableBatchDML:      false,
 	LowerCaseTableNames: 2,
 	Log: Log{
 		Level:  "info",

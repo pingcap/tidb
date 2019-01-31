@@ -20,6 +20,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -278,8 +279,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	}
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
-	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
+	batchDML := config.GetGlobalConfig().EnableBatchDML
+	batchDelete := (e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()) || batchDML
 	fields := e.children[0].retTypes()
 	for {
 		chk := e.children[0].newChunk()
@@ -294,15 +295,11 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
-			if batchDelete && rowCount >= batchDMLSize {
-				if err = e.ctx.StmtCommit(); err != nil {
+			// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
+			if batchDelete {
+				if err := batchDMLIfNeeded(e.ctx, rowCount); err != nil {
 					return errors.Trace(err)
 				}
-				if err = e.ctx.NewTxn(); err != nil {
-					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
-				}
-				rowCount = 0
 			}
 
 			datumRow := chunkRow.GetDatumRow(fields)
@@ -856,7 +853,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) (types.Datu
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.rowCount = 0
 	if !sessVars.ImportingData {
 		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(txn, kv.TempTxnMemBufCap)
 	}
@@ -1080,18 +1076,14 @@ func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types
 // checkBatchLimit check the batchSize limitation.
 func (e *InsertExec) checkBatchLimit() error {
 	sessVars := e.ctx.GetSessionVars()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchDML := config.GetGlobalConfig().EnableBatchDML
+	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || batchDML
 	batchSize := sessVars.DMLBatchSize
-	if batchInsert && e.rowCount >= batchSize {
-		if err := e.ctx.StmtCommit(); err != nil {
+	if batchInsert {
+		if err := batchDMLIfNeeded(e.ctx, e.rowCount); err != nil {
 			return errors.Trace(err)
 		}
-		if err := e.ctx.NewTxn(); err != nil {
-			// We should return a special error for batch insert.
-			return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
-		}
-		e.rowCount = 0
-		if !sessVars.ImportingData {
+		if e.rowCount%batchSize == 0 && e.rowCount != 0 && !sessVars.ImportingData {
 			txn, err := e.ctx.Txn(true)
 			if err != nil {
 				return errors.Trace(err)
@@ -1846,6 +1838,11 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		if idx >= rowsLen {
 			break
 		}
+		if config.GetGlobalConfig().EnableBatchDML {
+			if err := batchDMLIfNeeded(e.ctx, idx); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 		row := rows[idx]
 		h, err1 := e.Table.AddRecord(e.ctx, row, false)
 		if err1 == nil {
@@ -1936,6 +1933,11 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema) (types
 	}
 	if e.cursor >= len(e.rows) {
 		return nil, nil
+	}
+	if config.GetGlobalConfig().EnableBatchDML {
+		if err = batchDMLIfNeeded(e.ctx, e.cursor); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	if e.updatedRowKeys == nil {
 		e.updatedRowKeys = make(map[int64]map[int64]struct{})
@@ -2089,4 +2091,18 @@ func (e *UpdateExec) Close() error {
 // Open implements the Executor Open interface.
 func (e *UpdateExec) Open(ctx context.Context) error {
 	return e.SelectExec.Open(ctx)
+}
+
+func batchDMLIfNeeded(ctx sessionctx.Context, count int) error {
+	if count%ctx.GetSessionVars().DMLBatchSize == 0 && count != 0 {
+		if err := ctx.StmtCommit(); err != nil {
+			return ErrBatchDMLFail.GenByArgs(err)
+		}
+		ctx.GetSessionVars().TxnCtx.IsBatched = true
+		if err := ctx.NewTxn(); err != nil {
+			return ErrBatchDMLFail.GenByArgs(err)
+		}
+		ctx.GetSessionVars().TxnCtx.IsBatched = true
+	}
+	return nil
 }
