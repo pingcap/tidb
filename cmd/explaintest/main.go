@@ -629,9 +629,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 func main() {
 	flag.Parse()
 
-	err := logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	if err != nil {
 		panic("init logger fail, " + err.Error())
 	}

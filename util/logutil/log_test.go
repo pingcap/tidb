@@ -25,6 +25,7 @@ import (
 
 	. "github.com/pingcap/check"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 const (
@@ -61,7 +62,7 @@ func (s *testLogSuite) TestStringToLogLevel(c *C) {
 
 // TestLogging assure log format and log redirection works.
 func (s *testLogSuite) TestLogging(c *C) {
-	conf := &LogConfig{Level: "warn", File: FileLogConfig{}}
+	conf := NewLogConfig("warn", DefaultLogFormat, "", EmptyFileLogConfig, false)
 	c.Assert(InitLogger(conf), IsNil)
 
 	log.SetOutput(s.buf)
@@ -84,7 +85,7 @@ func (s *testLogSuite) TestLogging(c *C) {
 
 func (s *testLogSuite) TestSlowQueryLogger(c *C) {
 	fileName := "slow_query"
-	conf := &LogConfig{Level: "info", File: FileLogConfig{}, SlowQueryFile: fileName}
+	conf := NewLogConfig("info", DefaultLogFormat, fileName, EmptyFileLogConfig, false)
 	err := InitLogger(conf)
 	c.Assert(err, IsNil)
 	defer os.Remove(fileName)
@@ -113,7 +114,7 @@ func (s *testLogSuite) TestSlowQueryLogger(c *C) {
 
 func (s *testLogSuite) TestSlowQueryLoggerKeepOrder(c *C) {
 	fileName := "slow_query"
-	conf := &LogConfig{Level: "warn", File: FileLogConfig{}, Format: "text", DisableTimestamp: true, SlowQueryFile: fileName}
+	conf := NewLogConfig("warn", DefaultLogFormat, fileName, EmptyFileLogConfig, true)
 	c.Assert(InitLogger(conf), IsNil)
 	defer os.Remove(fileName)
 	ft, ok := SlowQueryLogger.Formatter.(*textFormatter)
@@ -148,4 +149,38 @@ func (s *testLogSuite) TestSlowQueryLoggerKeepOrder(c *C) {
 	logEntry.Warnf("slow-query")
 	expectMsg = fmt.Sprintf("log_test.go:%v: [warning] slow-query a=a b=b c=c d=d e=e f=f\n", line+1)
 	c.Assert(s.buf.String(), Equals, expectMsg)
+}
+
+func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
+	fileName := "slow_query"
+	conf := NewLogConfig("info", DefaultLogFormat, fileName, EmptyFileLogConfig, false)
+	err := InitZapLogger(conf)
+	c.Assert(err, IsNil)
+	defer os.Remove(fileName)
+
+	rets := []string{
+		`[INFO] [log_test.go:167] ["info message"] ["str key"=val]`,
+		`[WARN] [log_test.go:168] ["warn message"] ["int key"=123]`,
+		`[ERROR] [log_test.go:169] ["error message"] ["bool key"=true]`,
+	}
+	SlowQueryZapLogger.Debug("debug message", zap.String("str key", "val"))
+	SlowQueryZapLogger.Info("info message", zap.String("str key", "val"))
+	SlowQueryZapLogger.Warn("warn message", zap.Int("int key", 123))
+	SlowQueryZapLogger.Error("error message", zap.Bool("bool key", true))
+
+	f, err := os.Open(fileName)
+	c.Assert(err, IsNil)
+	defer f.Close()
+
+	r := bufio.NewReader(f)
+	for _, ret := range rets {
+		var str string
+		str, err = r.ReadString('\n')
+		if err != nil {
+			break
+		}
+		c.Assert(strings.Contains(str, ret), IsTrue, Commentf("got %v, expected %v", str, ret))
+	}
+	_, err = r.ReadString('\n')
+	c.Assert(err, Equals, io.EOF)
 }

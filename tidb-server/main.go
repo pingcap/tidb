@@ -26,6 +26,7 @@ import (
 
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pd "github.com/pingcap/pd/client"
@@ -53,8 +54,8 @@ import (
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
-	log "github.com/sirupsen/logrus"
 	"github.com/struCoder/pidusage"
+	"go.uber.org/zap"
 )
 
 // Flag Names
@@ -142,6 +143,7 @@ func main() {
 	validateConfig()
 	setGlobalVars()
 	setupLog()
+	defer syncLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -152,6 +154,12 @@ func main() {
 	runServer()
 	cleanup()
 	os.Exit(0)
+}
+
+func syncLog() {
+	if err := log.Sync(); err != nil {
+		println("sync log err: ", err)
+	}
 }
 
 func registerStores() {
@@ -208,7 +216,7 @@ func setupBinlogClient() {
 	terror.MustNil(err)
 
 	binloginfo.SetPumpsClient(client)
-	log.Infof("create pumps client success, ignore binlog error %v", cfg.Binlog.IgnoreError)
+	log.Info("tidb-server", zap.Bool("create pumps client success, ignore binlog error", cfg.Binlog.IgnoreError))
 }
 
 // Prometheus push.
@@ -220,7 +228,7 @@ func pushMetric(addr string, interval time.Duration) {
 		log.Info("disable Prometheus push client")
 		return
 	}
-	log.Infof("start Prometheus push client with server addr %s and interval %s", addr, interval)
+	log.Info("start prometheus push client", zap.String("server addr", addr), zap.String("interval", interval.String()))
 	go prometheusPushClient(addr, interval)
 }
 
@@ -236,7 +244,7 @@ func prometheusPushClient(addr string, interval time.Duration) {
 			prometheus.DefaultGatherer,
 		)
 		if err != nil {
-			log.Errorf("could not push metrics to Prometheus Pushgateway: %v", err)
+			log.Error("could not push metrics to prometheus pushgateway", zap.String("err", err.Error()))
 		}
 		time.Sleep(interval)
 	}
@@ -257,7 +265,7 @@ func parseDuration(lease string) time.Duration {
 		dur, err = time.ParseDuration(lease + "s")
 	}
 	if err != nil || dur < 0 {
-		log.Fatalf("invalid lease duration %s", lease)
+		log.Fatal("invalid lease duration", zap.String("lease", lease))
 	}
 	return dur
 }
@@ -384,37 +392,37 @@ func validateConfig() {
 				nameList = append(nameList, k)
 			}
 		}
-		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
+		log.Error("validate config", zap.Strings("valid storages", nameList))
 		os.Exit(-1)
 	}
 	if cfg.Store == "mocktikv" && !cfg.RunDDL {
-		log.Errorf("can't disable DDL on mocktikv")
+		log.Error("can't disable DDL on mocktikv")
 		os.Exit(-1)
 	}
 	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
-		log.Errorf("log max-size should not be larger than %d MB", config.MaxLogFileSize)
+		log.Error("validate config", zap.Int("log max-size should not be larger than", config.MaxLogFileSize))
 		os.Exit(-1)
 	}
 	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
 
 	// lower_case_table_names is allowed to be 0, 1, 2
 	if cfg.LowerCaseTableNames < 0 || cfg.LowerCaseTableNames > 2 {
-		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
+		log.Error("lower-case-table-names should be 0 or 1 or 2.")
 		os.Exit(-1)
 	}
 
 	if cfg.TxnLocalLatches.Enabled && cfg.TxnLocalLatches.Capacity == 0 {
-		log.Errorf("txn-local-latches.capacity can not be 0")
+		log.Error("txn-local-latches.capacity can not be 0")
 		os.Exit(-1)
 	}
 
 	// For tikvclient.
 	if cfg.TiKVClient.GrpcConnectionCount == 0 {
-		log.Errorf("grpc-connection-count should be greater than 0")
+		log.Error("grpc-connection-count should be greater than 0")
 		os.Exit(-1)
 	}
 	if cfg.TiKVClient.MaxTxnTimeUse == 0 {
-		log.Errorf("max-txn-time-use should be greater than 0")
+		log.Error("max-txn-time-use should be greater than 0")
 		os.Exit(-1)
 	}
 }
@@ -460,14 +468,17 @@ func setGlobalVars() {
 }
 
 func setupLog() {
-	err := logutil.InitLogger(cfg.Log.ToLogConfig())
+	err := logutil.InitZapLogger(cfg.Log.ToLogConfig())
+	terror.MustNil(err)
+
+	err = logutil.InitLogger(cfg.Log.ToLogConfig())
 	terror.MustNil(err)
 }
 
 func printInfo() {
 	// Make sure the TiDB info is always printed.
 	level := log.GetLevel()
-	log.SetLevel(log.InfoLevel)
+	log.SetLevel(zap.InfoLevel)
 	printer.PrintTiDBInfo()
 	log.SetLevel(level)
 }
@@ -520,7 +531,7 @@ func setupTracing() {
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracer, _, err := tracingCfg.New("TiDB")
 	if err != nil {
-		log.Fatal("cannot initialize Jaeger Tracer", err)
+		log.Fatal("setup trace", zap.String("cannot initialize jaeger tracer", err.Error()))
 	}
 	opentracing.SetGlobalTracer(tracer)
 }

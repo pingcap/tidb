@@ -23,7 +23,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	zaplog "github.com/pingcap/log"
 	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -31,40 +33,51 @@ const (
 	defaultLogTimeFormat = "2006/01/02 15:04:05.000"
 	// DefaultLogMaxSize is the default size of log files.
 	DefaultLogMaxSize = 300 // MB
-	defaultLogFormat  = "text"
-	defaultLogLevel   = log.InfoLevel
+	// DefaultLogFormat is the default format of the log.
+	DefaultLogFormat = "text"
+	defaultLogLevel  = log.InfoLevel
 	// DefaultSlowThreshold is the default slow log threshold in millisecond.
 	DefaultSlowThreshold = 300
 	// DefaultQueryLogMaxLen is the default max length of the query in the log.
 	DefaultQueryLogMaxLen = 2048
 )
 
+// EmptyFileLogConfig is an empty FileLogConfig.
+var EmptyFileLogConfig = FileLogConfig{}
+
 // FileLogConfig serializes file log related config in toml/json.
 type FileLogConfig struct {
-	// Log filename, leave empty to disable file log.
-	Filename string `toml:"filename" json:"filename"`
-	// Is log rotate enabled. TODO.
-	LogRotate bool `toml:"log-rotate" json:"log-rotate"`
-	// Max size for a single file, in MB.
-	MaxSize uint `toml:"max-size" json:"max-size"`
-	// Max log keep days, default is never deleting.
-	MaxDays uint `toml:"max-days" json:"max-days"`
-	// Maximum number of old log files to retain.
-	MaxBackups uint `toml:"max-backups" json:"max-backups"`
+	zaplog.FileLogConfig
+}
+
+// NewFileLogConfig creates a FileLogConfig.
+func NewFileLogConfig(rotate bool, maxSize uint) FileLogConfig {
+	return FileLogConfig{FileLogConfig: zaplog.FileLogConfig{
+		LogRotate: rotate,
+		MaxSize:   int(maxSize),
+	},
+	}
 }
 
 // LogConfig serializes log related config in toml/json.
 type LogConfig struct {
-	// Log level.
-	Level string `toml:"level" json:"level"`
-	// Log format. one of json, text, or console.
-	Format string `toml:"format" json:"format"`
-	// Disable automatic timestamps in output.
-	DisableTimestamp bool `toml:"disable-timestamp" json:"disable-timestamp"`
-	// File log config.
-	File FileLogConfig `toml:"file" json:"file"`
+	zaplog.Config
+
 	// SlowQueryFile filename, default to File log config on empty.
 	SlowQueryFile string
+}
+
+// NewLogConfig creates a LogConfig.
+func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, disableTimestamp bool) *LogConfig {
+	return &LogConfig{
+		Config: zaplog.Config{
+			Level:            level,
+			Format:           format,
+			DisableTimestamp: disableTimestamp,
+			File:             fileCfg.FileLogConfig,
+		},
+		SlowQueryFile: slowQueryFile,
+	}
 }
 
 // isSKippedPackageName tests wether path name is on log library calling stack.
@@ -220,7 +233,7 @@ func stringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 }
 
 // initFileLog initializes file based logging options.
-func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
+func initFileLog(cfg *zaplog.FileLogConfig, logger *log.Logger) error {
 	if st, err := os.Stat(cfg.Filename); err == nil {
 		if st.IsDir() {
 			return errors.New("can't use directory as log file name")
@@ -250,13 +263,16 @@ func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.StandardLogger()
 
+// SlowQueryZapLogger is used to log slow query, InitZapLogger will set it according to config file.
+var SlowQueryZapLogger *zap.Logger
+
 // InitLogger initializes PD's logger.
 func InitLogger(cfg *LogConfig) error {
 	log.SetLevel(stringToLogLevel(cfg.Level))
 	log.AddHook(&contextHook{})
 
 	if cfg.Format == "" {
-		cfg.Format = defaultLogFormat
+		cfg.Format = DefaultLogFormat
 	}
 	formatter := stringToLogFormatter(cfg.Format, cfg.DisableTimestamp)
 	log.SetFormatter(formatter)
@@ -283,6 +299,38 @@ func InitLogger(cfg *LogConfig) error {
 			ft.EnableEntryOrder = true
 		}
 		SlowQueryLogger.Formatter = slowQueryFormatter
+	}
+
+	return nil
+}
+
+// InitZapLogger initializes a zap logger with cfg.
+func InitZapLogger(cfg *LogConfig) error {
+	gl, props, err := zaplog.InitLogger(&cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	zaplog.ReplaceGlobals(gl, props)
+
+	if len(cfg.SlowQueryFile) != 0 {
+		sqfCfg := zaplog.FileLogConfig{
+			LogRotate: cfg.File.LogRotate,
+			MaxSize:   cfg.File.MaxSize,
+			Filename:  cfg.SlowQueryFile,
+		}
+		sqCfg := &zaplog.Config{
+			Level:            cfg.Level,
+			Format:           cfg.Format,
+			DisableTimestamp: cfg.DisableTimestamp,
+			File:             sqfCfg,
+		}
+		sqLogger, _, err := zaplog.InitLogger(sqCfg)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		SlowQueryZapLogger = sqLogger
+	} else {
+		SlowQueryZapLogger = gl
 	}
 
 	return nil
