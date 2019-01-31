@@ -148,7 +148,7 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 }
 
 func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
-	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan), false, false)
+	eq, left, right, other := p.extractOnCondition(onConds, false, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
 	p.RightConditions = append(right, p.RightConditions...)
@@ -624,6 +624,22 @@ type LogicalLock struct {
 	Lock ast.SelectLockType
 }
 
+// WindowFrame represents a window function frame.
+type WindowFrame struct {
+	Type  ast.FrameType
+	Start *FrameBound
+	End   *FrameBound
+}
+
+// FrameBound is the boundary of a frame.
+type FrameBound struct {
+	Type      ast.BoundType
+	UnBounded bool
+	Num       uint64
+	// For `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`, we will build the date_add or date_sub functions.
+	DateCalcFunc expression.Expression
+}
+
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
 	logicalSchemaProducer
@@ -631,7 +647,7 @@ type LogicalWindow struct {
 	WindowFuncDesc *aggregation.WindowFuncDesc
 	PartitionBy    []property.Item
 	OrderBy        []property.Item
-	// TODO: add frame clause
+	Frame          *WindowFrame
 }
 
 // GetWindowResultColumn returns the column storing the result of the window function.

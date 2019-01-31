@@ -822,7 +822,7 @@ func runTestIssue3680(c *C) {
 	// is valid, call Ping."
 	err = db.Ping()
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: YES)")
+	c.Assert(err.Error(), Equals, "Error 1045: Access denied for user 'non_existing_user'@'127.0.0.1' (using password: NO)")
 }
 
 func runTestIssue3682(c *C) {

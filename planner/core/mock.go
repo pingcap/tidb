@@ -34,6 +34,11 @@ func newStringType() types.FieldType {
 	return *ft
 }
 
+func newDateType() types.FieldType {
+	ft := types.NewFieldType(mysql.TypeDate)
+	return *ft
+}
+
 // MockTable is only used for plan related tests.
 func MockTable() *model.TableInfo {
 	// column: a, b, c, d, e, c_str, d_str, e_str, f, g
@@ -234,6 +239,13 @@ func MockTable() *model.TableInfo {
 		FieldType: newLongType(),
 		ID:        10,
 	}
+	col7 := &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    11,
+		Name:      model.NewCIStr("i_date"),
+		FieldType: newDateType(),
+		ID:        11,
+	}
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
@@ -243,7 +255,7 @@ func MockTable() *model.TableInfo {
 	col5.Flag = mysql.NotNullFlag
 	col6.Flag = mysql.NoDefaultValueFlag
 	table := &model.TableInfo{
-		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6},
+		Columns:    []*model.ColumnInfo{pkColumn, col0, col1, col2, col3, colStr1, colStr2, colStr3, col4, col5, col6, col7},
 		Indices:    indices,
 		Name:       model.NewCIStr("t"),
 		PKIsHandle: true,
