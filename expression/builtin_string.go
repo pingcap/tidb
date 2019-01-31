@@ -2969,17 +2969,14 @@ func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool
 	} else if d > formatMaxDecimals {
 		d = formatMaxDecimals
 	}
-	xStr, err = roundFormatArgs(xStr, int(d))
-	if err != nil {
-		return "", "", true, err
-	}
+	xStr = roundFormatArgs(xStr, int(d))
 	dStr := strconv.FormatInt(d, 10)
 	return xStr, dStr, false, nil
 }
 
-func roundFormatArgs(xStr string, maxNumDecimals int) (string, error) {
+func roundFormatArgs(xStr string, maxNumDecimals int) string {
 	if !strings.Contains(xStr, ".") {
-		return xStr, nil
+		return xStr
 	}
 
 	sign := false
@@ -3029,7 +3026,7 @@ func roundFormatArgs(xStr string, maxNumDecimals int) (string, error) {
 	if sign {
 		xStr = "-" + xStr
 	}
-	return xStr, nil
+	return xStr
 }
 
 type builtinFormatWithLocaleSig struct {
