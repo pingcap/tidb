@@ -2969,15 +2969,15 @@ func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool
 	} else if d > formatMaxDecimals {
 		d = formatMaxDecimals
 	}
-	dStr := strconv.FormatInt(d, 10)
-	xStr, err = roundFormatArgs(xStr, dStr)
+	xStr, err = roundFormatArgs(xStr, int(d))
 	if err != nil {
 		return "", "", isNull, err
 	}
+	dStr := strconv.FormatInt(d, 10)
 	return xStr, dStr, false, nil
 }
 
-func roundFormatArgs(xStr, dStr string) (string, error) {
+func roundFormatArgs(xStr string, digit int) (string, error) {
 	if strings.Contains(xStr, ".") {
 		sign := false
 		// xStr cannot have '+' prefix now.
@@ -2993,10 +2993,7 @@ func roundFormatArgs(xStr, dStr string) (string, error) {
 		xArr := strings.Split(xStr, ".")
 		x1 := xArr[0]
 		x2 := xArr[1]
-		digit, err := strconv.Atoi(dStr)
-		if err != nil {
-			return "", err
-		}
+
 		if len(x2) > digit {
 			t := []byte(x2)
 			carry := false
