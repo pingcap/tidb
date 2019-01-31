@@ -1078,12 +1078,11 @@ func (e *InsertExec) checkBatchLimit() error {
 	sessVars := e.ctx.GetSessionVars()
 	batchDML := config.GetGlobalConfig().EnableBatchDML
 	batchInsert := (sessVars.BatchInsert && !sessVars.InTxn()) || batchDML
-	batchSize := sessVars.DMLBatchSize
 	if batchInsert {
 		if err := batchDMLIfNeeded(e.ctx, e.rowCount); err != nil {
 			return errors.Trace(err)
 		}
-		if e.rowCount%batchSize == 0 && e.rowCount != 0 && !sessVars.ImportingData {
+		if e.rowCount%sessVars.DMLBatchSize == 0 && e.rowCount != 0 && !sessVars.ImportingData {
 			txn, err := e.ctx.Txn(true)
 			if err != nil {
 				return errors.Trace(err)
