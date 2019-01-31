@@ -145,10 +145,14 @@ pseudo-estimate-ratio = 0.7
 
 # The limitation of the number for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
 txn-entry-count-limit = 300000
 
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
+# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
+# Please adjust this configuration carefully.
 txn-total-size-limit = 104857600
 
 [proxy-protocol]
