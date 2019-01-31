@@ -595,8 +595,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
-		// charset && collate are not shown for generated columns in MySQL
-		if col.Charset != "binary" && !col.IsGenerated() {
+		if col.Charset != "binary" {
 			fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
 		}
 		if col.IsGenerated() {

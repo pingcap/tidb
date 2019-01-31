@@ -338,7 +338,7 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` char(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
-			"  `b` char(10) GENERATED ALWAYS AS (rtrim(`a`)) VIRTUAL\n"+
+			"  `b` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin GENERATED ALWAYS AS (rtrim(`a`)) VIRTUAL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table t")
