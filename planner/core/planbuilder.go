@@ -1695,6 +1695,10 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowCreateTable:
 		names = []string{"Table", "Create Table"}
+	case ast.ShowCreateUser:
+		if s.User != nil {
+			names = []string{fmt.Sprintf("CREATE USER for %s", s.User)}
+		}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:

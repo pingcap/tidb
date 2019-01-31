@@ -31,6 +31,9 @@ type Manager interface {
 	// ShowGrants shows granted privileges for user.
 	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error)
 
+	// GetEncodedPassword shows the encoded password for user.
+	GetEncodedPassword(user, host string) string
+
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.
 	// If table is not "", check global/db/table scope privileges.

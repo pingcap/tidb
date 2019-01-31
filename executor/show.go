@@ -106,6 +106,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowColumns()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateUser:
+		return e.fetchShowCreateUser()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
@@ -811,6 +813,22 @@ func (e *ShowExec) fetchShowCollation() error {
 			1,
 		})
 	}
+	return nil
+}
+
+// fetchShowCreateUser composes show create create user result.
+func (e *ShowExec) fetchShowCreateUser() error {
+	// Get checker
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	//password is encoded, like "*6C387FC3893DBA1E3BA155E74754DA6682D04747"
+	password := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
+	option := "REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' %s",
+		e.User.Username, e.User.Hostname, password, option)
+	e.appendRow([]interface{}{showStr})
 	return nil
 }
 
