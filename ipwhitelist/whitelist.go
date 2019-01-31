@@ -2,48 +2,24 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
-	"net/http"
+	"strings"
+	"sync/atomic"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	// "github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 )
 
-type ipwhitelist struct {
+type whitelist struct {
 	groups []Group
-}
-
-func (i *ipwhitelist) sync(data []Group) {
-	i.groups = data
-}
-
-var global ipwhitelist
-
-func Init() {
-	// plugin.Router.HandleFunc("/whitelist", func(w http.ResponseWriter, r *http.Request) {
-	// 	fmt.Fprintf(w, "hello world")
-	// 	return
-	// })
-
-	http.HandleFunc("/sync", func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		if r.Method != "POST" {
-			http.Error(w, "Wrong request method, need POST", http.StatusBadRequest)
-			return
-		}
-		dec := json.NewDecoder(r.Body)
-		var data []Group
-		if err := dec.Decode(&data); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		global.sync(data)
-		fmt.Println("sync whitelist succ", data)
-	})
-	go http.ListenAndServe(":24123", nil)
 }
 
 type Group struct {
@@ -51,16 +27,168 @@ type Group struct {
 	IPList []*net.IPNet
 }
 
-func OnConnectionEvent(ctx context.Context, u *auth.UserIdentity) error {
-	ip, _, err := net.ParseCIDR(u.Hostname)
+func (i *whitelist) create() {
+
+}
+
+func (i *whitelist) loadFromTable(sctx sessionctx.Context) error {
+	ctx := context.Background()
+	tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, selectTableSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rs := tmp[0]
+	defer rs.Close()
+
+	fs := rs.Fields()
+	req := rs.NewRecordBatch()
+	for {
+		err = rs.Next(context.TODO(), req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			return nil
+		}
+		it := chunk.NewIterator4Chunk(req.Chunk)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			err = i.decodeTableRow(row, fs)
+			if err != nil {
+				log.Error(errors.ErrorStack(err))
+				// Ignore this row and continue...
+				continue
+			}
+		}
+		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
+		// The result will reference memory in the chunk, so the chunk must not be reused
+		// here, otherwise some werid bug will happen!
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
+	}
+}
+
+func (i *whitelist) decodeTableRow(row chunk.Row, fs []*ast.ResultField) error {
+	name := row.GetString(0)
+	group := Group{Name: name}
+
+	list := row.GetString(1)
+	iplist := strings.Split(list, ",")
+	for _, str := range iplist {
+		_, ipNet, err := net.ParseCIDR(str)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		group.IPList = append(group.IPList, ipNet)
+	}
+	return nil
+}
+
+const createTableSQL = `create table if not exists mysql.whitelist (
+	name varchar(16) unique,
+	list TEXT
+)`
+const selectTableSQL = `select * from mysql.whitelist`
+
+type handle struct {
+	// Lazy initialized.
+	dom   *domain.Domain
+	value atomic.Value
+}
+
+// newHandle returns a Handle.
+func newHandle() *handle {
+	return &handle{}
+}
+
+// Get the MySQLPrivilege for read.
+func (h *handle) Get() *whitelist {
+	return h.value.Load().(*whitelist)
+}
+
+// Update loads all the privilege info from kv storage.
+func (h *handle) Update() error {
+	pool := h.dom.SysSessionPool()
+	tmp, err := pool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer pool.Put(tmp)
+
+	sctx := tmp.(sessionctx.Context)
+	var wl whitelist
+	err = wl.loadFromTable(sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	h.value.Store(&wl)
+	return nil
+}
+
+func (h *handle) LazyInitialize() error {
+	if h.dom != nil {
+		return nil
+	}
+
+	dom, err := session.GetDomain(nil)
 	if err != nil {
 		return err
 	}
+	h.dom = dom
+
+	pool := h.dom.SysSessionPool()
+	sctx, err := pool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer pool.Put(sctx)
+
+	ctx := context.Background()
+	rss, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, createTableSQL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, rs := range rss {
+		rs.Close()
+	}
+
+	return h.Update()
+}
+
+var global = newHandle()
+
+func Init() {
+	// global.Update()
+	go notifyUpdateLoop()
+}
+
+func notifyUpdateLoop() {
+	var ch chan struct{}
+	for range ch {
+		// Make sure handle is initialized.
+		if global.dom != nil {
+			global.Update()
+		}
+	}
+}
+
+func OnConnectionEvent(ctx context.Context, u *auth.UserIdentity) error {
+	global.LazyInitialize()
+
+	ip, err := net.LookupIP(u.Hostname)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	fmt.Println("ip = ", ip)
 
-	for _, group := range global.groups {
+	whitelist := global.Get()
+	if len(whitelist.groups) == 0 {
+		// No whitelist data.
+		return nil
+	}
+
+	for _, group := range whitelist.groups {
 		for _, iplist := range group.IPList {
-			if iplist.Contains(ip) {
+			if iplist.Contains(ip[0]) {
 				return nil
 			}
 		}
