@@ -82,7 +82,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])->DataScan(t2)->Sel([like(cast(t2.d), abc, 92)])}(t1.a,t2.b)(t1.d,t2.d)->Projection",
+			best: "Join{DataScan(t1)->Sel([eq(cast(t1.d), cast(abc))])->DataScan(t2)->Sel([eq(cast(t2.d), cast(abc))])}(t1.a,t2.b)(t1.d,t2.d)->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -285,6 +285,12 @@ func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 			left:  "[]",
 			right: "[or(or(eq(t2.a, 3), eq(t2.a, 4)), eq(t2.a, 2))]",
 		},
+		// Duplicate condition would be removed.
+		{
+			sql:   "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1",
+			left:  "[gt(t1.a, 1)]",
+			right: "[]",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -445,6 +451,134 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
 		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
 	}
+}
+
+func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql   string
+		plan  string
+		left  string
+		right string
+	}{
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e = t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e > t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e = t2.e and t1.e is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e = t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e > t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e = t2.e and t2.e is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 right join t t2 on t1.e = t2.e and t1.e is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e <=> t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e <=> t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		// Not deriving if column has NotNull flag already.
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.b = t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.b = t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.b > t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		// Not deriving for AntiSemiJoin
+		{
+			sql:   "select * from t t1 where not exists (select * from t t2 where t2.e = t1.e)",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(p), Equals, ca.plan, comment)
+		join := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		left := join.Children()[0].(*DataSource)
+		right := join.Children()[1].(*DataSource)
+		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
+		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
+		c.Assert(leftConds, Equals, ca.left, comment)
+		c.Assert(rightConds, Equals, ca.right, comment)
+	}
+}
+
+func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
+	sql := "select * from t as t1 join t t2 on t1.a > rand() and t1.a > rand()"
+	comment := Commentf("for %s", sql)
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil, comment)
+	p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+	c.Assert(err, IsNil, comment)
+	p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan))
+	c.Assert(err, IsNil, comment)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue, comment)
+	join, ok := proj.children[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue, comment)
+	leftPlan, ok := join.children[0].(*LogicalSelection)
+	c.Assert(ok, IsTrue, comment)
+	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
+	// Condition with mutable function cannot be de-duplicated when push down join conds.
+	c.Assert(leftCond, Equals, "[gt(cast(t1.a), rand()) gt(cast(t1.a), rand())]", comment)
 }
 
 func (s *testPlanSuite) TestTablePartition(c *C) {
