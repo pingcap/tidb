@@ -650,11 +650,11 @@ func checkIsAutoIncrementColumn(colDefs *ast.ColumnDef) bool {
 
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
-	autoIncrementColumns := make(map[string]interface{})
+	autoIncrementColumns := make(map[string]struct{})
 	for i, colDef := range colDefs {
 		generated, depCols := findDependedColumnNames(colDef)
 		if checkIsAutoIncrementColumn(colDef) {
-			autoIncrementColumns[colDef.Name.Name.L] = nil
+			autoIncrementColumns[colDef.Name.Name.L] = struct{}{}
 		}
 		if !generated {
 			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
@@ -670,16 +670,16 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 		}
 	}
 
+	// Check whether the generated column refers to any auto-increment columns
 	for colName, generated := range colName2Generation {
-		for dep := range generated.dependences {
-			if _, ok := autoIncrementColumns[dep]; ok {
-				return errGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
-			}
+		if err := checkAutoIncrementRef(colName, generated.dependences, autoIncrementColumns); err != nil {
+			return errors.Trace(err)
 		}
 	}
+
 	for _, colDef := range colDefs {
 		colName := colDef.Name.Name.L
-		if err := verifyColumnGeneration(colName3Generation, colName); err != nil {
+		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1389,6 +1389,16 @@ func hasAutoIncrementColumn(tbInfo *model.TableInfo) bool {
 	return false
 }
 
+func collectAutoIncrementColumns(tbInfo *model.TableInfo) map[string]struct{} {
+	ret := make(map[string]struct{})
+	for _, col := range tbInfo.Columns {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			ret[col.Name.L] = struct{}{}
+		}
+	}
+	return ret
+}
+
 // isIgnorableSpec checks if the spec type is ignorable.
 // Some specs are parsed by ignored. This is for compatibility.
 func isIgnorableSpec(tp ast.AlterTableType) bool {
@@ -1639,11 +1649,15 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// generated columns occurring later in table.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
+			autoIncremntColumns := collectAutoIncrementColumns(t.Meta())
 			referableColNames := make(map[string]struct{}, len(t.Cols()))
 			for _, col := range t.Cols() {
 				referableColNames[col.Name.L] = struct{}{}
 			}
 			_, dependColNames := findDependedColumnNames(specNewColumn)
+			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, autoIncremntColumns); err != nil {
+				return errors.Trace(err)
+			}
 			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
 				return errors.Trace(err)
 			}
@@ -2190,6 +2204,25 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	}
 	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
 		return ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
+	}
+
+	// If the modified column is generated, check whether it refers to any auto-increment columns.
+	for _, option := range specNewColumn.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			_, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			autoIncremtnColumns := collectAutoIncrementColumns(t.Meta())
+			referableColNames := make(map[string]struct{}, len(t.Cols()))
+			for _, col := range t.Cols() {
+				referableColNames[col.Name.L] = struct{}{}
+			}
+			_, dependColNames := findDependedColumnNames(specNewColumn)
+			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, autoIncremtnColumns); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	originalColName := specNewColumn.Name.Name

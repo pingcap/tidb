@@ -121,9 +121,9 @@ var (
 	// errJSONUsedAsKey forbiddens to use JSON as key or index.
 	errJSONUsedAsKey = terror.ClassDDL.New(codeJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
 	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
-	errBlobCantHaveDefault = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
-	errTooLongIndexComment = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
-	errGeneratedColumnRefAutoInc = terror.ClassDDL.New(codeErrGeneratedColumnRefAutoInc, "Generated column '%s' cannot refer to auto-increment column.")
+	errBlobCantHaveDefault       = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
+	errTooLongIndexComment       = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
+	ErrGeneratedColumnRefAutoInc = terror.ClassDDL.New(codeErrGeneratedColumnRefAutoInc, "Generated column '%s' cannot refer to auto-increment column.")
 	// ErrUnsupportedAddPartition returns for does not support add partitions.
 	ErrUnsupportedAddPartition = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
