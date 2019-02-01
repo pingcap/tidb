@@ -601,16 +601,18 @@ func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
 	_, err := tk.Exec("CREATE database test")
 	c.Assert(err, NotNil)
 
-	_, err = tk.Exec("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1)); ")
+	_, err = tk.Exec("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error())
 
-	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1)); ")
+	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
 
-	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1); ")
+	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
 
 	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
 
-	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1); ")
+	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("drop table t1;")
 }
