@@ -201,6 +201,14 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'`))
 }
 
+func (s *testSuite2) TestShow3(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Create a new user.
+	createUserSQL := `CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`
+	tk.MustExec(createUserSQL)
+	tk.MustQuery("show create user 'test_show_create_user'@'%'").Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+}
+
 func (s *testSuite2) TestUnprivilegedShow(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)

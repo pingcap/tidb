@@ -823,7 +823,7 @@ func (e *ShowExec) fetchShowCreateUser() error {
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	//password is encoded, like "*6C387FC3893DBA1E3BA155E74754DA6682D04747"
+	//password is encoded, like "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B"(root)
 	password := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
 	option := "REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"
 	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' %s",
