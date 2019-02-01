@@ -42,6 +42,48 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.GetParam:  {},
 }
 
+// IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
+// See https://github.com/mysql/mysql-server/blob/5.7/mysql-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc for details
+var IllegalFunctions4GeneratedColumns = map[string]struct{}{
+	ast.ConnectionID:   {},
+	ast.LoadFile:   {},
+	ast.LastInsertId: {},
+	ast.Rand:      {},
+	ast.UUID:      {},
+	ast.UUIDShort:      {},
+	ast.Curdate:     {},
+	ast.CurrentDate:   {},
+	ast.Curtime:    {},
+	ast.CurrentTime:    {},
+	ast.CurrentTimestamp:    {},
+	ast.LocalTime:  {},
+	ast.LocalTimestamp:  {},
+	ast.Now:  {},
+	ast.UnixTimestamp:  {},
+	ast.UTCDate:  {},
+	ast.UTCTime:  {},
+	ast.UTCTimestamp:  {},
+	ast.Benchmark:  {},
+	ast.CurrentUser:  {},
+	ast.Database:  {},
+	ast.FoundRows:  {},
+	ast.GetLock:  {},
+	ast.IsFreeLock:  {},
+	ast.IsUsedLock:  {},
+	ast.MasterPosWait:  {},
+	ast.NameConst:  {},
+	ast.ReleaseLock:  {},
+	ast.RowCount:  {},
+	ast.Schema:  {},
+	ast.SessionUser:  {},
+	ast.Sleep:  {},
+	ast.SystemUser:  {},
+	ast.User:  {},
+	ast.Values:  {},
+	ast.Encrypt:  {},
+	ast.Version:  {},
+}
+
 // DeferredFunctions stores non-deterministic functions, which can be deferred only when the plan cache is enabled.
 var DeferredFunctions = map[string]struct{}{
 	ast.Now:              {},

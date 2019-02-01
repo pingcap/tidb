@@ -114,8 +114,8 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 			}
 			args[idx] = tgt
 		} else {
-			subReplaced, isNonDeterminisitic, subExpr := tryToReplaceCond(ctx, src, tgt, expr)
-			if isNonDeterminisitic {
+			subReplaced, isNonDeterministic, subExpr := tryToReplaceCond(ctx, src, tgt, expr)
+			if isNonDeterministic {
 				return false, true, cond
 			} else if subReplaced {
 				replaced = true

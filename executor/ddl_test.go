@@ -593,3 +593,46 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
 }
+
+func (s *testSuite3) TestIllegalFunctionCall4GeneratedColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t1 (b double generated always as (rand()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	_, err = tk.Exec("create table t1 (a varchar(64), b varchar(1024) generated always as (load_file(a)) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime generated always as (curdate()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime generated always as (current_time()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime generated always as (current_timestamp()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a datetime, b varchar(10) generated always as (localtime()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	_, err = tk.Exec("create table t1 (a varchar(1024) generated always as (uuid()) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error())
+
+	_, err = tk.Exec("create table t1 (a varchar(1024), b varchar(1024) generated always as (is_free_lock(a)) virtual);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error())
+
+	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
+
+	_, err = tk.Exec("alter table t1 add column d varchar(1024) generated always as (database());")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
+
+	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (connection_id());")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
+
+}

@@ -16,6 +16,7 @@ package ddl
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/table"
 )
 
@@ -150,6 +151,34 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	return nil
+}
+
+type illegalFunctionChecker struct {
+	found bool
+}
+
+func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
+	switch node := inNode.(type) {
+	case *ast.FuncCallExpr:
+		if _, found := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]; found {
+			c.found = true
+			return inNode, true
+		}
+	}
+	return inNode, false
+}
+
+func (c *illegalFunctionChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
+	return inNode, true
+}
+
+func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error{
+	var c illegalFunctionChecker
+	expr.Accept(&c)
+	if c.found {
+		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(colName)
 	}
 	return nil
 }

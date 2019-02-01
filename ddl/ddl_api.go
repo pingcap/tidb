@@ -642,6 +642,13 @@ func checkDuplicateColumn(cols []interface{}) error {
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	for i, colDef := range colDefs {
+		for _, option := range colDef.Options {
+			if option.Tp == ast.ColumnOptionGenerated {
+				if err := checkIllegalFn4GeneratedColumn(colDef.Name.Name.L, option.Expr); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
 		generated, depCols := findDependedColumnNames(colDef)
 		if !generated {
 			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
@@ -1618,6 +1625,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// generated columns occurring later in table.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
+			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
+				return errors.Trace(err)
+			}
 			referableColNames := make(map[string]struct{}, len(t.Cols()))
 			for _, col := range t.Cols() {
 				referableColNames[col.Name.L] = struct{}{}
@@ -2199,6 +2209,14 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
 		return errBadField.GenWithStackByArgs(colName, ident.Name)
+	}
+
+	for _, option := range specNewColumn.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			if err := checkIllegalFn4GeneratedColumn(colName.L, option.Expr); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	// Clean the NoDefaultValueFlag value.
