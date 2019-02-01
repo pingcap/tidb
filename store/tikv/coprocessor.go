@@ -214,7 +214,7 @@ func (r *copRanges) toPBRanges() []*coprocessor.KeyRange {
 	return ranges
 }
 
-// Split ranges into (left, right) by key.
+// split ranges into (left, right) by key.
 func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 	n := sort.Search(r.len(), func(i int) bool {
 		cur := r.at(i)
@@ -354,6 +354,7 @@ type copIterator struct {
 	req         *kv.Request
 	concurrency int
 	finishCh    chan struct{}
+	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32

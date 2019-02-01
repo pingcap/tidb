@@ -33,7 +33,7 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 // eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	// If this projection is specially added for `DO`, we keep it.
-	if p.CalculateNoDelay == true {
+	if p.CalculateNoDelay {
 		return false
 	}
 	if p.Schema().Len() == 0 {
@@ -211,7 +211,10 @@ func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column
 	for _, arg := range p.WindowFuncDesc.Args {
 		resolveExprAndReplace(arg, replace)
 	}
-	for _, item := range p.ByItems {
+	for _, item := range p.PartitionBy {
+		resolveColumnAndReplace(item.Col, replace)
+	}
+	for _, item := range p.OrderBy {
 		resolveColumnAndReplace(item.Col, replace)
 	}
 }

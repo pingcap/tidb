@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -561,7 +562,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	q := &QueryFeedback{}
 	for _, row := range rows {
-		err1 := decodeFeedback(row.GetBytes(3), q, cms)
+		err1 := decodeFeedback(row.GetBytes(3), q, cms, mysql.HasUnsignedFlag(hist.Tp.Flag))
 		if err1 != nil {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
@@ -631,24 +632,25 @@ func withinTimePeriod(start, end, now time.Time) bool {
 // 1. If the table has never been analyzed, we need to analyze it when it has
 //    not been modified for a while.
 // 2. If the table had been analyzed before, we need to analyze it when
-//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
-// 3. The current time is between `start` and `end`.
-func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) bool {
+//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
+//    between `start` and `end`.
+func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-		return time.Since(t) >= limit
+		dur := time.Since(t)
+		return dur >= limit, fmt.Sprintf("table unanalyzed, time since last updated %vs", dur)
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
-		return false
+		return false, ""
 	}
 	// No need to analyze it.
 	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
-		return false
+		return false, ""
 	}
 	// Tests if current time is within the time period.
-	return withinTimePeriod(start, end, now)
+	return withinTimePeriod(start, end, now), fmt.Sprintf("too many modifications(%v/%v)", tbl.ModifyCount, tbl.Count)
 }
 
 const (
@@ -699,13 +701,14 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
-func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
+func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
-		return errors.Trace(err)
+		log.Errorf("[stats] parse auto analyze period failed: %v", errors.ErrorStack(err))
+		return
 	}
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
@@ -716,33 +719,34 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := fmt.Sprintf("analyze table %s", tblName)
-				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
-					return err
+					return
 				}
 				continue
 			}
 			for _, def := range pi.Definitions {
 				sql := fmt.Sprintf("analyze table %s partition `%s`", tblName, def.Name.O)
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
-					return err
+					return
 				}
 				continue
 			}
 		}
 	}
-	return nil
+	return
 }
 
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, start, end time.Time, ratio float64, sql string) (bool, error) {
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, start, end time.Time, ratio float64, sql string) bool {
 	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
-		return false, nil
+		return false
 	}
-	if NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()) {
-		log.Infof("[stats] auto %s now", sql)
-		return true, h.execAutoAnalyze(sql)
+	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()); needAnalyze {
+		log.Infof("[stats] %s, auto %s now", sql, reason)
+		h.execAutoAnalyze(sql)
+		return true
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic {
@@ -750,21 +754,23 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		}
 		if _, ok := statsTbl.Indices[idx.ID]; !ok {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
-			log.Infof("[stats] auto %s now", sql)
-			return true, h.execAutoAnalyze(sql)
+			log.Infof("[stats] index unanalyzed, auto %s now", sql)
+			h.execAutoAnalyze(sql)
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
-func (h *Handle) execAutoAnalyze(sql string) error {
+func (h *Handle) execAutoAnalyze(sql string) {
 	startTime := time.Now()
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
-	metrics.AutoAnalyzeHistogram.Observe(time.Since(startTime).Seconds())
+	dur := time.Since(startTime)
+	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
+		log.Errorf("[stats] auto %v failed: %v, cost_time:%vs", sql, errors.ErrorStack(err), dur.Seconds())
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
 	}
-	return errors.Trace(err)
 }

@@ -17,7 +17,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -143,7 +143,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  |                              |       |                      |
 //  +------------------------------+       +----------------------+
 //
-func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ProjectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("projection.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -151,13 +151,13 @@ func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.GrowAndReset(e.maxChunkSize)
+	req.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
-		return errors.Trace(e.unParallelExecute(ctx, chk))
+		return errors.Trace(e.unParallelExecute(ctx, req.Chunk))
 	}
-	return errors.Trace(e.parallelExecute(ctx, chk))
+	return errors.Trace(e.parallelExecute(ctx, req.Chunk))
 
 }
 
@@ -166,7 +166,7 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 }
 
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
-	err := e.children[0].Next(ctx, e.childResult)
+	err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -294,7 +294,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		f.globalOutputCh <- output
 
-		err := f.child.Next(ctx, input.chk)
+		err := f.child.Next(ctx, chunk.NewRecordBatch(input.chk))
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- errors.Trace(err)
 			return
