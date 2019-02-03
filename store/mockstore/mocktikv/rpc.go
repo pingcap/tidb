@@ -176,7 +176,7 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 			currentRegions = append(currentRegions, nextRegion)
 		}
 		return &errorpb.Error{
-			Message: *proto.String("stale epoch"),
+			Message: *proto.String("epoch not match"),
 			EpochNotMatch: &errorpb.EpochNotMatch{
 				CurrentRegions: currentRegions,
 			},
