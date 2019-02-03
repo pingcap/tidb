@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite3) TestTruncateTable(c *C) {
@@ -592,4 +593,21 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
+}
+
+// Test issue #9205, fix the precision problem for time type default values
+// See https://github.com/pingcap/tidb/issues/9205 for details
+func (s *testSuite3) TestIssue9205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c time DEFAULT '12:12:12.8');`)
+	tk.MustExec(`ALTER TABLE t ADD COLUMN c1 time DEFAULT '12:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
