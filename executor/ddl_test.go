@@ -602,12 +602,36 @@ func (s *testSuite3) TestIssue9205(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(c time DEFAULT '12:12:12.8');`)
-	tk.MustExec(`ALTER TABLE t ADD COLUMN c1 time DEFAULT '12:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`alter table t add column c1 time default '12:12:12.000000';`)
 	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `c` time DEFAULT '12:12:13',\n"+
 			"  `c1` time DEFAULT '12:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t alter column c1 set default '2019-02-01 12:12:10.4';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:10'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t modify c1 time DEFAULT '770:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '770:12:12'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 }
