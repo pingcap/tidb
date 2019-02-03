@@ -650,12 +650,13 @@ func checkIsAutoIncrementColumn(colDefs *ast.ColumnDef) bool {
 
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
-	autoIncrementColumns := make(map[string]struct{})
+	var exists bool
+	var autoIncrementColumn string
 	for i, colDef := range colDefs {
-		generated, depCols := findDependedColumnNames(colDef)
-		if checkIsAutoIncrementColumn(colDef) {
-			autoIncrementColumns[colDef.Name.Name.L] = struct{}{}
+		if !exists && checkIsAutoIncrementColumn(colDef){
+			exists, autoIncrementColumn = true, colDef.Name.Name.L
 		}
+		generated, depCols := findDependedColumnNames(colDef)
 		if !generated {
 			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
 				position:  i,
@@ -671,9 +672,11 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	}
 
 	// Check whether the generated column refers to any auto-increment columns
-	for colName, generated := range colName2Generation {
-		if err := checkAutoIncrementRef(colName, generated.dependences, autoIncrementColumns); err != nil {
-			return errors.Trace(err)
+	if exists {
+		for colName, generated := range colName2Generation {
+			if _, found := generated.dependences[autoIncrementColumn]; found {
+				return errors.Trace(ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName))
+			}
 		}
 	}
 
@@ -1367,7 +1370,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			if hasAutoIncrementColumn(tbInfo) && op.UintValue != 0 {
+			ok, _ := hasAutoIncrementColumn(tbInfo)
+			if ok && op.UintValue != 0 {
 				return errUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
@@ -1380,13 +1384,13 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	return nil
 }
 
-func hasAutoIncrementColumn(tbInfo *model.TableInfo) bool {
+func hasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	for _, col := range tbInfo.Columns {
 		if mysql.HasAutoIncrementFlag(col.Flag) {
-			return true
+			return true, col.Name.L
 		}
 	}
-	return false
+	return false, ""
 }
 
 func collectAutoIncrementColumns(tbInfo *model.TableInfo) map[string]struct{} {
@@ -1573,7 +1577,8 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if hasAutoIncrementColumn(t.Meta()) && uVal != 0 {
+	ok, _ := hasAutoIncrementColumn(t.Meta())
+	if ok && uVal != 0 {
 		return errUnsupportedShardRowIDBits
 	}
 	job := &model.Job{
@@ -1649,13 +1654,12 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// generated columns occurring later in table.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
-			autoIncremntColumns := collectAutoIncrementColumns(t.Meta())
 			referableColNames := make(map[string]struct{}, len(t.Cols()))
 			for _, col := range t.Cols() {
 				referableColNames[col.Name.L] = struct{}{}
 			}
 			_, dependColNames := findDependedColumnNames(specNewColumn)
-			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, autoIncremntColumns); err != nil {
+			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 				return errors.Trace(err)
 			}
 			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
@@ -2213,13 +2217,8 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 			if err != nil {
 				return errors.Trace(err)
 			}
-			autoIncremtnColumns := collectAutoIncrementColumns(t.Meta())
-			referableColNames := make(map[string]struct{}, len(t.Cols()))
-			for _, col := range t.Cols() {
-				referableColNames[col.Name.L] = struct{}{}
-			}
 			_, dependColNames := findDependedColumnNames(specNewColumn)
-			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, autoIncremtnColumns); err != nil {
+			if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
 				return errors.Trace(err)
 			}
 		}
