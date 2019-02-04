@@ -107,6 +107,13 @@ var (
 	_ builtinFunc = &builtinCastJSONAsJSONSig{}
 )
 
+func adjustYearTypeResult(tp byte, input int64) int64 {
+	if tp == mysql.TypeYear && (input > int64(types.MaxYear) || input < int64(types.MinYear)) {
+		return 0
+	}
+	return input
+}
+
 type castAsIntFunctionClass struct {
 	baseFunctionClass
 
@@ -440,6 +447,7 @@ func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool,
 	if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res < 0 {
 		res = 0
 	}
+	res = adjustYearTypeResult(b.tp.Tp, res)
 	return
 }
 
@@ -757,6 +765,7 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		uintVal, err = types.ConvertFloatToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
 		res = int64(uintVal)
 	}
+	res = adjustYearTypeResult(b.tp.Tp, res)
 	return res, isNull, err
 }
 
@@ -923,6 +932,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull b
 		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", val)
 		err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
 	}
+	res = adjustYearTypeResult(b.tp.Tp, res)
 
 	return res, false, err
 }
@@ -1118,6 +1128,7 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	}
 
 	res, err = b.handleOverflow(res, val, err, isNegative)
+	res = adjustYearTypeResult(b.tp.Tp, res)
 	return res, false, err
 }
 
@@ -1285,6 +1296,7 @@ func (b *builtinCastTimeAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		return res, false, err
 	}
 	res, err = t.ToNumber().ToInt()
+	res = adjustYearTypeResult(b.tp.Tp, res)
 	return res, false, err
 }
 

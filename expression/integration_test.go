@@ -3582,6 +3582,25 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert t values (1)")
 	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
+
+	// for issue #9213
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t( y year NOT NULL DEFAULT '2155' )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert t values ();")
+	tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2155 0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t( y year NOT NULL DEFAULT '2155' )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert t values ('2001');")
+	tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y - 1500);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2001 0"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t( y year NOT NULL DEFAULT '2155' )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("insert t values ('1');")
+	tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (concat(y, '1500'));")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2001 0"))
 }
 
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {
