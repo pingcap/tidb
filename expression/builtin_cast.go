@@ -40,6 +40,7 @@ import (
 )
 
 var (
+	_ functionClass = &castAsYearFunctionClass{}
 	_ functionClass = &castAsIntFunctionClass{}
 	_ functionClass = &castAsRealFunctionClass{}
 	_ functionClass = &castAsStringFunctionClass{}
@@ -50,6 +51,7 @@ var (
 )
 
 var (
+	_ builtinFunc = &builtinCastIntAsYearSig{}
 	_ builtinFunc = &builtinCastIntAsIntSig{}
 	_ builtinFunc = &builtinCastIntAsRealSig{}
 	_ builtinFunc = &builtinCastIntAsStringSig{}
@@ -58,6 +60,7 @@ var (
 	_ builtinFunc = &builtinCastIntAsDurationSig{}
 	_ builtinFunc = &builtinCastIntAsJSONSig{}
 
+	_ builtinFunc = &builtinCastRealAsYearSig{}
 	_ builtinFunc = &builtinCastRealAsIntSig{}
 	_ builtinFunc = &builtinCastRealAsRealSig{}
 	_ builtinFunc = &builtinCastRealAsStringSig{}
@@ -66,6 +69,7 @@ var (
 	_ builtinFunc = &builtinCastRealAsDurationSig{}
 	_ builtinFunc = &builtinCastRealAsJSONSig{}
 
+	_ builtinFunc = &builtinCastDecimalAsYearSig{}
 	_ builtinFunc = &builtinCastDecimalAsIntSig{}
 	_ builtinFunc = &builtinCastDecimalAsRealSig{}
 	_ builtinFunc = &builtinCastDecimalAsStringSig{}
@@ -74,6 +78,7 @@ var (
 	_ builtinFunc = &builtinCastDecimalAsDurationSig{}
 	_ builtinFunc = &builtinCastDecimalAsJSONSig{}
 
+	_ builtinFunc = &builtinCastStringAsYearSig{}
 	_ builtinFunc = &builtinCastStringAsIntSig{}
 	_ builtinFunc = &builtinCastStringAsRealSig{}
 	_ builtinFunc = &builtinCastStringAsStringSig{}
@@ -82,6 +87,7 @@ var (
 	_ builtinFunc = &builtinCastStringAsDurationSig{}
 	_ builtinFunc = &builtinCastStringAsJSONSig{}
 
+	_ builtinFunc = &builtinCastTimeAsYearSig{}
 	_ builtinFunc = &builtinCastTimeAsIntSig{}
 	_ builtinFunc = &builtinCastTimeAsRealSig{}
 	_ builtinFunc = &builtinCastTimeAsStringSig{}
@@ -90,6 +96,7 @@ var (
 	_ builtinFunc = &builtinCastTimeAsDurationSig{}
 	_ builtinFunc = &builtinCastTimeAsJSONSig{}
 
+	_ builtinFunc = &builtinCastDurationAsYearSig{}
 	_ builtinFunc = &builtinCastDurationAsIntSig{}
 	_ builtinFunc = &builtinCastDurationAsRealSig{}
 	_ builtinFunc = &builtinCastDurationAsStringSig{}
@@ -98,6 +105,7 @@ var (
 	_ builtinFunc = &builtinCastDurationAsDurationSig{}
 	_ builtinFunc = &builtinCastDurationAsJSONSig{}
 
+	_ builtinFunc = &builtinCastJSONAsYearSig{}
 	_ builtinFunc = &builtinCastJSONAsIntSig{}
 	_ builtinFunc = &builtinCastJSONAsRealSig{}
 	_ builtinFunc = &builtinCastJSONAsStringSig{}
@@ -107,11 +115,51 @@ var (
 	_ builtinFunc = &builtinCastJSONAsJSONSig{}
 )
 
-func adjustYearTypeResult(tp byte, input int64) int64 {
-	if tp == mysql.TypeYear && (input > int64(types.MaxYear) || input < int64(types.MinYear)) {
-		return 0
+type castAsYearFunctionClass struct {
+	baseFunctionClass
+
+	tp *types.FieldType
+}
+
+//TODO: Set correct PbCode for function signature after `cast as year` related pb code are supported
+func (c *castAsYearFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
 	}
-	return input
+	bf := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), ctx.Value(inUnionCastContext) != nil)
+	bf.tp = c.tp
+	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
+		sig = &builtinCastIntAsIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
+		return sig, nil
+	}
+	argTp := args[0].GetType().EvalType()
+	switch argTp {
+	case types.ETInt:
+		sig = &builtinCastIntAsYearSig{bf, &builtinCastIntAsIntSig{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
+	case types.ETReal:
+		sig = &builtinCastRealAsYearSig{bf, &builtinCastRealAsIntSig{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsInt)
+	case types.ETDecimal:
+		sig = &builtinCastDecimalAsYearSig{bf, &builtinCastDecimalAsIntSig{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsInt)
+	case types.ETDatetime, types.ETTimestamp:
+		sig = &builtinCastTimeAsYearSig{bf, &builtinCastTimeAsIntSig{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsInt)
+	case types.ETDuration:
+		sig = &builtinCastDurationAsYearSig{bf, &builtinCastDurationAsIntSig{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsInt)
+	case types.ETJson:
+		sig = &builtinCastJSONAsYearSig{bf, &builtinCastJSONAsIntSig{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsInt)
+	case types.ETString:
+		sig = &builtinCastStringAsYearSig{bf, &builtinCastStringAsIntSig{bf}}
+		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsInt)
+	default:
+		panic("unsupported types.EvalType in castAsYearFunctionClass")
+	}
+	return sig, nil
 }
 
 type castAsIntFunctionClass struct {
@@ -447,7 +495,6 @@ func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool,
 	if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res < 0 {
 		res = 0
 	}
-	res = adjustYearTypeResult(b.tp.Tp, res)
 	return
 }
 
@@ -765,7 +812,6 @@ func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		uintVal, err = types.ConvertFloatToUint(sc, val, types.UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeDouble)
 		res = int64(uintVal)
 	}
-	res = adjustYearTypeResult(b.tp.Tp, res)
 	return res, isNull, err
 }
 
@@ -932,7 +978,6 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull b
 		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", val)
 		err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
 	}
-	res = adjustYearTypeResult(b.tp.Tp, res)
 
 	return res, false, err
 }
@@ -1128,7 +1173,6 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	}
 
 	res, err = b.handleOverflow(res, val, err, isNegative)
-	res = adjustYearTypeResult(b.tp.Tp, res)
 	return res, false, err
 }
 
@@ -1296,7 +1340,6 @@ func (b *builtinCastTimeAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		return res, false, err
 	}
 	res, err = t.ToNumber().ToInt()
-	res = adjustYearTypeResult(b.tp.Tp, res)
 	return res, false, err
 }
 
@@ -1712,21 +1755,25 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	var fc functionClass
-	switch tp.EvalType() {
-	case types.ETInt:
-		fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ETDecimal:
-		fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ETReal:
-		fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ETDatetime, types.ETTimestamp:
-		fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ETDuration:
-		fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ETJson:
-		fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
-	case types.ETString:
-		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	if tp.Tp == mysql.TypeYear {
+		fc = &castAsYearFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+	} else {
+		switch tp.EvalType() {
+		case types.ETInt:
+			fc = &castAsIntFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		case types.ETDecimal:
+			fc = &castAsDecimalFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		case types.ETReal:
+			fc = &castAsRealFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		case types.ETDatetime, types.ETTimestamp:
+			fc = &castAsTimeFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		case types.ETDuration:
+			fc = &castAsDurationFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		case types.ETJson:
+			fc = &castAsJSONFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		case types.ETString:
+			fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
+		}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	terror.Log(err)
@@ -1870,4 +1917,165 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 		Flag:    mysql.BinaryFlag,
 	}
 	return BuildCastFunction(ctx, expr, tp)
+}
+
+func adjustCastYearResult(input int64) int64 {
+	if input > int64(types.MaxYear) || input < int64(types.MinYear) {
+		return 0
+	}
+	return input
+}
+
+type builtinCastIntAsYearSig struct {
+	baseBuiltinCastFunc
+
+	c *builtinCastIntAsIntSig
+}
+
+func (b *builtinCastIntAsYearSig) Clone() builtinFunc {
+	newSig := &builtinCastIntAsYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.c = &builtinCastIntAsIntSig{}
+	newSig.c.cloneFrom(&b.c.baseBuiltinCastFunc)
+	return newSig
+}
+
+func (b *builtinCastIntAsYearSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	res, isNull, err = b.c.evalInt(row)
+	if !isNull && err == nil {
+		res = adjustCastYearResult(res)
+	}
+	return
+}
+
+type builtinCastRealAsYearSig struct {
+	baseBuiltinCastFunc
+
+	c *builtinCastRealAsIntSig
+}
+
+func (b *builtinCastRealAsYearSig) Clone() builtinFunc {
+	newSig := &builtinCastRealAsYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.c = &builtinCastRealAsIntSig{}
+	newSig.c.cloneFrom(&b.c.baseBuiltinCastFunc)
+	return newSig
+}
+
+func (b *builtinCastRealAsYearSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	res, isNull, err = b.c.evalInt(row)
+	if !isNull && err == nil {
+		res = adjustCastYearResult(res)
+	}
+	return
+}
+
+type builtinCastDecimalAsYearSig struct {
+	baseBuiltinCastFunc
+
+	c *builtinCastDecimalAsIntSig
+}
+
+func (b *builtinCastDecimalAsYearSig) Clone() builtinFunc {
+	newSig := &builtinCastDecimalAsYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.c = &builtinCastDecimalAsIntSig{}
+	newSig.c.cloneFrom(&b.c.baseBuiltinCastFunc)
+	return newSig
+}
+
+func (b *builtinCastDecimalAsYearSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	res, isNull, err = b.c.evalInt(row)
+	if !isNull && err == nil {
+		res = adjustCastYearResult(res)
+	}
+	return
+}
+
+type builtinCastStringAsYearSig struct {
+	baseBuiltinCastFunc
+
+	c *builtinCastStringAsIntSig
+}
+
+func (b *builtinCastStringAsYearSig) Clone() builtinFunc {
+	newSig := &builtinCastStringAsYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.c = &builtinCastStringAsIntSig{}
+	newSig.c.cloneFrom(&b.c.baseBuiltinCastFunc)
+	return newSig
+}
+
+func (b *builtinCastStringAsYearSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	res, isNull, err = b.c.evalInt(row)
+	if !isNull && err == nil {
+		res = adjustCastYearResult(res)
+	}
+	return
+}
+
+type builtinCastTimeAsYearSig struct {
+	baseBuiltinCastFunc
+
+	c *builtinCastTimeAsIntSig
+}
+
+func (b *builtinCastTimeAsYearSig) Clone() builtinFunc {
+	newSig := &builtinCastTimeAsYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.c = &builtinCastTimeAsIntSig{}
+	newSig.c.cloneFrom(&b.c.baseBuiltinCastFunc)
+	return newSig
+}
+
+func (b *builtinCastTimeAsYearSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	res, isNull, err = b.c.evalInt(row)
+	if !isNull && err == nil {
+		res = adjustCastYearResult(res)
+	}
+	return
+}
+
+type builtinCastDurationAsYearSig struct {
+	baseBuiltinCastFunc
+
+	c *builtinCastDurationAsIntSig
+}
+
+func (b *builtinCastDurationAsYearSig) Clone() builtinFunc {
+	newSig := &builtinCastDurationAsYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.c = &builtinCastDurationAsIntSig{}
+	newSig.c.cloneFrom(&b.c.baseBuiltinCastFunc)
+	return newSig
+}
+
+func (b *builtinCastDurationAsYearSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	res, isNull, err = b.c.evalInt(row)
+	if !isNull && err == nil {
+		res = adjustCastYearResult(res)
+	}
+	return
+}
+
+type builtinCastJSONAsYearSig struct {
+	baseBuiltinCastFunc
+
+	c *builtinCastJSONAsIntSig
+}
+
+func (b *builtinCastJSONAsYearSig) Clone() builtinFunc {
+	newSig := &builtinCastJSONAsYearSig{}
+	newSig.cloneFrom(&b.baseBuiltinCastFunc)
+	newSig.c = &builtinCastJSONAsIntSig{}
+	newSig.c.cloneFrom(&b.c.baseBuiltinCastFunc)
+	return newSig
+}
+
+func (b *builtinCastJSONAsYearSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	res, isNull, err = b.c.evalInt(row)
+	if !isNull && err == nil {
+		res = adjustCastYearResult(res)
+	}
+	return
 }
