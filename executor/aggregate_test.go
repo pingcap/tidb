@@ -444,7 +444,7 @@ func (s *testSuite1) TestOnlyFullGroupBy(c *C) {
 
 	// test AggregateFunc
 	tk.MustQuery("select max(a) from t group by d")
-	// for issue #8161: support `any_value` in aggregation
+	// for issue #8161: enable `any_value` in aggregation if `ONLY_FULL_GROUP_BY` is set
 	tk.MustQuery("select max(a), any_value(c) from t group by d;")
 	// test incompatible with sql_mode = ONLY_FULL_GROUP_BY
 	err := tk.ExecToErr("select * from t group by d")
