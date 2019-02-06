@@ -1054,8 +1054,6 @@ func checkArgs(args ...interface{}) error {
 		case time.Time:
 			args[i] = types.Time{Time: types.FromGoTime(x), Type: mysql.TypeDatetime}
 		case nil:
-		case hack.MutableString:
-			fmt.Println(debug.Stack())
 		default:
 			return errors.Errorf("cannot use arg[%d] (type %T):unsupported type", i, v)
 		}
