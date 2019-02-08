@@ -922,9 +922,36 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
-	// TODO: issue #4436: The second parameter should be a constant.
-	// TODO: issue #4474: Charset supported by TiDB and MySQL is not the same.
-	// TODO: Fix #4436 && #4474, set the correct charset and flag of `bf.tp`.
+
+	// Validate charset before evaluating conversion, to make charset and flag of `bf.tp` correct
+	// even if it's not evaluated. (#4436)
+	transcodingName, isNull, err := args[1].EvalString(ctx, chunk.Row{})
+	if isNull || err != nil {
+		return nil, err
+	}
+	encoding, _ := charset.Lookup(transcodingName)
+	if encoding == nil {
+		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
+	}
+
+	bf.tp.Charset = strings.ToLower(transcodingName)
+	// Quoted about the behavior of syntax CONVERT(expr, type) to CHAR():
+	// In all cases, the string has the default collation for the character set.
+	// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
+	// Here in syntax CONVERT(expr USING transcoding_name), behavior is kept the same,
+	// picking the default collation of target charset.
+	bf.tp.Collate, err = charset.GetDefaultCollation(bf.tp.Charset)
+	if err != nil {
+		return nil, err
+	}
+	// Result will be a binary string if converts charset to BINARY.
+	// See https://dev.mysql.com/doc/refman/5.7/en/charset-binary-set.html
+	if types.IsBinaryStr(bf.tp) {
+		types.SetBinChsClnFlag(bf.tp)
+	} else {
+		bf.tp.Flag &= ^mysql.BinaryFlag
+	}
+
 	bf.tp.Flen = mysql.MaxBlobWidth
 	sig := &builtinConvertSig{bf}
 	return sig, nil
@@ -941,6 +968,7 @@ func (b *builtinConvertSig) Clone() builtinFunc {
 }
 
 // evalString evals CONVERT(expr USING transcoding_name).
+// Syntax CONVERT(expr, type) is parsed as cast expr so not handled here.
 // See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -948,14 +976,13 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, err
 	}
 
-	charsetName, isNull, err := b.args[1].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return "", true, err
-	}
-
-	encoding, _ := charset.Lookup(charsetName)
+	// Since charset is already validated and set from getFunction(), there's no
+	// need to get charset from args again.
+	encoding, _ := charset.Lookup(b.tp.Charset)
+	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
+	// return with error.
 	if encoding == nil {
-		return "", true, errUnknownCharacterSet.GenWithStackByArgs(charsetName)
+		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
 	}
 
 	target, _, err := transform.String(encoding.NewDecoder(), expr)
