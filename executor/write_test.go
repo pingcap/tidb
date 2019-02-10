@@ -1327,7 +1327,20 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("update t set a = ''")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 1999-12-13 00:00:00"))
 	tk.MustExec("update t set b = ''")
-	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 <nil>"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("0000-00-00 00:00:00 0000-00-00 00:00:00"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
+
+	// issue 8623
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint unsigned);")
+	tk.MustExec("insert into t value(1)")
+	_, err = tk.Exec("update t set a = -1;")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
+	tk.MustExec("update t set a = -1;")
+	// TODO: the following warning message is not consistent with MySQL, fix it in the future PR
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 
 	tk.MustExec("create view v as select * from t")
