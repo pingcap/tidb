@@ -3891,11 +3891,16 @@ func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS t;")
 	tk.MustExec("CREATE TABLE t(a CHAR(20), b VARCHAR(20), c BIGINT);")
+	tk.MustExec("INSERT INTO t (b, c) values('hello', 1);")
 
 	r := tk.MustQuery("SELECT name_const('test_int', 1), name_const('test_float', 3.1415);")
 	r.Check(testkit.Rows("1 3.1415"))
 	r = tk.MustQuery("SELECT name_const('test_string', 'hello'), name_const('test_nil', null);")
 	r.Check(testkit.Rows("hello <nil>"))
+	r = tk.MustQuery("SELECT name_const('test_string', 1) + c FROM t;")
+	r.Check(testkit.Rows("2"))
+	r = tk.MustQuery("SELECT concat('hello', name_const('test_string', 'world')) FROM t;")
+	r.Check(testkit.Rows("helloworld"))
 	err := tk.ExecToErr(`select name_const(a,b) from t;`)
 	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(a,"hello") from t;`)
@@ -3906,10 +3911,13 @@ func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(concat('a', 'b'), 555) from t;`)
 	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const(555) from t;`)
+	c.Assert(err.Error(), Equals, "[expression:1582]Incorrect parameter count in the call to native function 'name_const'")
 
 	var rs sqlexec.RecordSet
 	rs, err = tk.Exec(`select name_const("hello", 1);`)
 	c.Assert(err, IsNil)
 	c.Assert(len(rs.Fields()), Equals, 1)
 	c.Assert(rs.Fields()[0].Column.Name.L, Equals, "hello")
+
 }
