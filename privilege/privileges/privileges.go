@@ -72,6 +72,7 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	}
 	return pwd
 }
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte) (u string, h string, success bool) {
 
