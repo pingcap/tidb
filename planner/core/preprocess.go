@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -129,6 +130,21 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.Join:
 		if len(p.tableAliasInJoin) > 0 {
 			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
+		}
+	case *ast.FuncCallExpr:
+		// The arguments for builtin NAME_CONST should be constants
+		// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_name-const for details
+		if x.FnName.L == ast.NameConst {
+			if len(x.Args) != 2 {
+				p.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(x.FnName.L)
+			} else {
+				_, isValueExpr1 := x.Args[0].(*driver.ValueExpr)
+				_, isValueExpr2 := x.Args[1].(*driver.ValueExpr)
+				if !isValueExpr1 || !isValueExpr2 {
+					p.err = ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
+				}
+			}
+			break
 		}
 	}
 
