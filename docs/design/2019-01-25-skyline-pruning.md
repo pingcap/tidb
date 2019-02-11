@@ -21,13 +21,13 @@ create table t(a int, b int, c int, index idx1(b, a), index idx2(a));
 select * from t where a = 1 and b = 1;
 ```
 
-From the query and schema, we can know that the access condition of  `idx1` could strictly covers `idx2`, therefore the number of rows scanned by `idx1` will be no more than `idx2`,  so `idx1` will be better than `idx2`  in this case.
+From the query and schema, we can know that the access condition of  `idx1` could strictly cover `idx2`, therefore the number of rows scanned by `idx1` will be no more than `idx2`,  so `idx1` will be better than `idx2`  in this case.
 
-So how can we combine these factors to prune the access paths? Consider two access paths `x` and `y`, if `x` is not worse than `y` at all factors, and there exists one factor that `x` is better than `y`, then we can prune `y` before referring to the statistics, because `x` will works better than `y` at all circumstances. This is also called skyline pruning.
+So how can we combine these factors to prune the access paths? Consider two access paths `x` and `y`, if `x` is not worse than `y` at all factors, and there exists one factor that `x` is better than `y`, then we can prune `y` before referring to the statistics, because `x` works better than `y` at all circumstances. This is also called skyline pruning.
 
 ## Rationale
 
-The skyline pruning is also implemented on other databases, including MySQL and OceanBase.  Without it, we may suffer from choosing the wrong access path in some simple cases.
+The skyline pruning is also implemented in other databases, including MySQL and OceanBase.  Without it, we may suffer from choosing the wrong access path in some simple cases.
 
 ## Compatibility
 
