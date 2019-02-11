@@ -189,7 +189,6 @@ func (r *selectResult) updateCopRuntimeStats(callee string) {
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
 				RecordOneCopTask(planID, callee, detail)
-			//, int64(*detail.TimeProcessedNs), int64(*detail.NumProducedRows), int32(*detail.NumIterations))
 		}
 	}
 }

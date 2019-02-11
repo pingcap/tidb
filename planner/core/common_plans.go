@@ -529,11 +529,10 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		copTaskExecDetail := runtimeStatsColl.CopSummary(p.ExplainID())
 		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
-		if copTaskExecDetail != "" {
-			row = append(row, copTaskExecDetail)
+		if runtimeStatsColl.ExistsCopStats(p.ExplainID()) {
+			row = append(row, runtimeStatsColl.GetCopStats(p.ExplainID()).String())
 		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
 			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
 		}

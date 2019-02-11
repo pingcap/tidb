@@ -131,6 +131,29 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 		&RuntimeStats{int32(*summary.NumIterations), int64(*summary.TimeProcessedNs), int64(*summary.NumProducedRows)})
 }
 
+func (crs *CopRuntimeStats) String() string {
+	if len(crs.stats) == 0 {
+		return ""
+	}
+
+	var totalRows, totalTasks int64
+	var totalIters int32
+	procTimes := make([]time.Duration, 0, 32)
+	for _, instanceStats := range crs.stats {
+		for _, stat := range instanceStats {
+			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
+			totalRows += stat.rows
+			totalIters += stat.loop
+			totalTasks++
+		}
+	}
+
+	n := len(procTimes)
+	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
+	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, rows:%v, iters:%v, tasks:%v",
+		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
+}
+
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
 	mu        sync.Mutex
@@ -170,11 +193,12 @@ func (e *RuntimeStatsColl) GetRootStats(planID string) *RuntimeStats {
 func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	_, ok := e.copStats[planID]
+	copStats, ok := e.copStats[planID]
 	if !ok {
-		e.copStats[planID] = &CopRuntimeStats{stats: make(map[string][]*RuntimeStats)}
+		copStats = &CopRuntimeStats{stats: make(map[string][]*RuntimeStats)}
+		e.copStats[planID] = copStats
 	}
-	return e.copStats[planID]
+	return copStats
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -183,36 +207,19 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tip
 	copStats.RecordOneCopTask(address, summary)
 }
 
-// CopSummary gets a summary of the cop task's execution information.
-func (e *RuntimeStatsColl) CopSummary(planID string) string {
-	copStat := e.GetCopStats(planID)
-	if len(copStat.stats) == 0 {
-		return ""
-	}
-
-	var totalRows, totalTasks int64
-	var totalIters int32
-	procTimes := make([]time.Duration, 0, 32)
-	for _, instanceStats := range copStat.stats {
-		for _, stat := range instanceStats {
-			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
-			totalRows += stat.rows
-			totalIters += stat.loop
-			totalTasks++
-		}
-	}
-
-	n := len(procTimes)
-	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, rows:%v, iters:%v, tasks:%v",
-		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
-}
-
 // ExistsRootStats checks if the planID exists in the rootStats collection.
 func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, exists := e.rootStats[planID]
+	return exists
+}
+
+// ExistsCopStats checks if the planID exists in the copStats collection.
+func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, exists := e.copStats[planID]
 	return exists
 }
 
