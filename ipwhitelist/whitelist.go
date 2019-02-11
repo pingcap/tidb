@@ -79,6 +79,9 @@ func (i *whitelist) decodeTableRow(row chunk.Row, fs []*ast.ResultField) error {
 		}
 		group.IPList = append(group.IPList, ipNet)
 	}
+	if len(group.IPList) > 0 {
+		i.groups = append(i.groups, group)
+	}
 	return nil
 }
 

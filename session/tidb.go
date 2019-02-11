@@ -155,7 +155,7 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			log.Info("RollbackTxn for ddl/autocommit error.")
-			terror.Log(se.RollbackTxn(ctx))
+			se.RollbackTxn(ctx)
 		}
 		return meetsErr
 	}
@@ -174,8 +174,7 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, s
 	history := GetHistory(sctx)
 	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sctx.GetSessionVars().IsAutocommit())
 		}
