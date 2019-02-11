@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
@@ -34,7 +35,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (s *testSuite) TestSelectNormal(c *C) {
+func (s *testSuite) createSelectNormal(batch, totalRows int, c *C) (*selectResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
@@ -67,13 +68,24 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	c.Assert(result.sqlType, Equals, "general")
 	c.Assert(result.rowLen, Equals, len(colTypes))
 
+	resp, ok := result.resp.(*mockResponse)
+	c.Assert(ok, IsTrue)
+	resp.total = totalRows
+	resp.batch = batch
+
+	return result, colTypes
+}
+
+func (s *testSuite) TestSelectNormal(c *C) {
+	response, colTypes := s.createSelectNormal(1, 2, c)
 	response.Fetch(context.TODO())
 
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
+	batch := chunk.NewRecordBatch(chk)
 	numAllRows := 0
 	for {
-		err = response.Next(context.TODO(), chk)
+		err := response.Next(context.TODO(), batch)
 		c.Assert(err, IsNil)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
@@ -81,11 +93,17 @@ func (s *testSuite) TestSelectNormal(c *C) {
 		}
 	}
 	c.Assert(numAllRows, Equals, 2)
-	err = response.Close()
+	err := response.Close()
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestSelectStreaming(c *C) {
+func (s *testSuite) TestSelectNormalBatchSize(c *C) {
+	response, colTypes := s.createSelectNormal(100, 1000000, c)
+	response.Fetch(context.TODO())
+	s.testBatchSize(response, colTypes, c)
+}
+
+func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
@@ -112,20 +130,30 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 	s.sctx.GetSessionVars().EnableStreaming = true
 
-	// Test Next.
 	response, err := Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	c.Assert(err, IsNil)
 	result, ok := response.(*streamResult)
 	c.Assert(ok, IsTrue)
 	c.Assert(result.rowLen, Equals, len(colTypes))
 
+	resp, ok := result.resp.(*mockResponse)
+	c.Assert(ok, IsTrue)
+	resp.total = totalRows
+	resp.batch = batch
+
+	return result, colTypes
+}
+
+func (s *testSuite) TestSelectStreaming(c *C) {
+	response, colTypes := s.createSelectStreaming(1, 2, c)
 	response.Fetch(context.TODO())
 
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
+	batch := chunk.NewRecordBatch(chk)
 	numAllRows := 0
 	for {
-		err = response.Next(context.TODO(), chk)
+		err := response.Next(context.TODO(), batch)
 		c.Assert(err, IsNil)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
@@ -133,8 +161,58 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 		}
 	}
 	c.Assert(numAllRows, Equals, 2)
-	err = response.Close()
+	err := response.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestSelectStreamingBatchSize(c *C) {
+	response, colTypes := s.createSelectStreaming(100, 1000000, c)
+	response.Fetch(context.TODO())
+	s.testBatchSize(response, colTypes, c)
+}
+
+func (s *testSuite) testBatchSize(response SelectResult, colTypes []*types.FieldType, c *C) {
+	chk := chunk.New(colTypes, 32, 32)
+	batch := chunk.NewRecordBatch(chk)
+
+	err := response.Next(context.TODO(), batch)
+	c.Assert(err, IsNil)
+	c.Assert(batch.NumRows(), Equals, 32)
+
+	batch.SetRequiredRows(1)
+	err = response.Next(context.TODO(), batch)
+	c.Assert(err, IsNil)
+	c.Assert(batch.NumRows(), Equals, 1)
+
+	batch.SetRequiredRows(2)
+	err = response.Next(context.TODO(), batch)
+	c.Assert(err, IsNil)
+	c.Assert(batch.NumRows(), Equals, 2)
+
+	batch.SetRequiredRows(17)
+	err = response.Next(context.TODO(), batch)
+	c.Assert(err, IsNil)
+	c.Assert(batch.NumRows(), Equals, 17)
+
+	batch.SetRequiredRows(170)
+	err = response.Next(context.TODO(), batch)
+	c.Assert(err, IsNil)
+	c.Assert(batch.NumRows(), Equals, 32)
+
+	batch.SetRequiredRows(32)
+	err = response.Next(context.TODO(), batch)
+	c.Assert(err, IsNil)
+	c.Assert(batch.NumRows(), Equals, 32)
+
+	batch.SetRequiredRows(0)
+	err = response.Next(context.TODO(), batch)
+	c.Assert(err, IsNil)
+	c.Assert(batch.NumRows(), Equals, 32)
+
+	batch.SetRequiredRows(-1)
+	err = response.Next(context.TODO(), batch)
+	c.Assert(err, IsNil)
+	c.Assert(batch.NumRows(), Equals, 32)
 }
 
 func (s *testSuite) TestAnalyze(c *C) {
@@ -166,6 +244,8 @@ func (s *testSuite) TestAnalyze(c *C) {
 // Used only for test.
 type mockResponse struct {
 	count int
+	total int
+	batch int
 	sync.Mutex
 }
 
@@ -183,17 +263,24 @@ func (resp *mockResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 	resp.Lock()
 	defer resp.Unlock()
 
-	if resp.count == 2 {
+	if resp.count >= resp.total {
 		return nil, nil
 	}
-	defer func() { resp.count++ }()
+	numRows := mathutil.Min(resp.batch, resp.total-resp.count)
+	resp.count += numRows
 
 	datum := types.NewIntDatum(1)
 	bytes := make([]byte, 0, 100)
 	bytes, _ = codec.EncodeValue(nil, bytes, datum, datum, datum, datum)
+	chunks := make([]tipb.Chunk, numRows)
+	for i := range chunks {
+		chkData := make([]byte, len(bytes))
+		copy(chkData, bytes)
+		chunks[i] = tipb.Chunk{RowsData: chkData}
+	}
 
 	respPB := &tipb.SelectResponse{
-		Chunks:       []tipb.Chunk{{RowsData: bytes}},
+		Chunks:       chunks,
 		OutputCounts: []int64{1},
 	}
 	respBytes, err := respPB.Marshal()

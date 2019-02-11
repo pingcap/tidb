@@ -43,10 +43,9 @@ type streamResult struct {
 
 func (r *streamResult) Fetch(context.Context) {}
 
-func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	for chk.NumRows() < maxChunkSize {
+func (r *streamResult) Next(ctx context.Context, batch *chunk.RecordBatch) error {
+	batch.Reset()
+	for !batch.IsFull() {
 		err := r.readDataIfNecessary(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -55,7 +54,7 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 
-		err = r.flushToChunk(chk)
+		err = r.flushToChunk(batch)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -113,11 +112,10 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 	return nil
 }
 
-func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
+func (r *streamResult) flushToChunk(batch *chunk.RecordBatch) (err error) {
 	remainRowsData := r.curr.RowsData
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
-	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
+	decoder := codec.NewDecoder(batch.Chunk, r.ctx.GetSessionVars().Location())
+	for !batch.IsFull() && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			remainRowsData, err = decoder.DecodeOne(remainRowsData, i, r.fieldTypes[i])
 			if err != nil {

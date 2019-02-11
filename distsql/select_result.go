@@ -41,7 +41,7 @@ type SelectResult interface {
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
-	Next(context.Context, *chunk.Chunk) error
+	Next(ctx context.Context, batch *chunk.RecordBatch) error
 	// Close closes the iterator.
 	Close() error
 }
@@ -114,16 +114,16 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 }
 
 // Next reads data to the chunk.
-func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
+func (r *selectResult) Next(ctx context.Context, batch *chunk.RecordBatch) error {
+	batch.Reset()
+	for !batch.IsFull() {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
 				return errors.Trace(err)
 			}
 		}
-		err := r.readRowsData(chk)
+		err := r.readRowsData(batch)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -167,11 +167,10 @@ func (r *selectResult) getSelectResp() error {
 	}
 }
 
-func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
+func (r *selectResult) readRowsData(batch *chunk.RecordBatch) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
-	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
+	decoder := codec.NewDecoder(batch.Chunk, r.ctx.GetSessionVars().Location())
+	for !batch.IsFull() && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
