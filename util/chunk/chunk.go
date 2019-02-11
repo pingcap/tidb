@@ -210,7 +210,7 @@ func (c *Chunk) Reset() {
 	c.numVirtualRows = 0
 }
 
-// CopyTo copies this chunk to other.
+// CopyTo copies this chunk's data to other compulsorily.
 // If other is nil, create a new chunk.
 func (c *Chunk) CopyTo(other *Chunk) *Chunk {
 	if other == nil {

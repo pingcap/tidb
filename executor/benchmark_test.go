@@ -141,7 +141,7 @@ func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
 	}
 
 	for i := 0; i < m.p.rows; i++ {
-		idx := i / m.initCap
+		idx := i / m.maxChunkSize
 		retTypes := m.retTypes()
 		for colIdx := 0; colIdx < len(types); colIdx++ {
 			switch retTypes[colIdx].Tp {
@@ -176,7 +176,7 @@ func (a aggTestCase) columns() []*expression.Column {
 
 func (a aggTestCase) String() string {
 	return fmt.Sprintf("(execType:%v, aggFunc:%v, groupByNDV:%v, hasDistinct:%v, rows:%v, concruuency:%v)",
-		a.execType, a.aggFunc, a.hasDistinct, a.rows, a.groupByNDV, a.concurrency)
+		a.execType, a.aggFunc, a.groupByNDV, a.hasDistinct, a.rows, a.concurrency)
 }
 
 func defaultAggTestCase(exec string) *aggTestCase {
@@ -243,21 +243,21 @@ func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Execu
 	return aggExec
 }
 
-func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
-	cols := cas.columns()
-	orders := []bool{false, cas.execType == "stream"}
+func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
+	cols := casTest.columns()
+	orders := []bool{false, casTest.execType == "stream"}
 	dataSource := buildMockDataSource(mockDataSourceParameters{
 		schema: expression.NewSchema(cols...),
-		ndvs:   []int{0, cas.groupByNDV},
+		ndvs:   []int{0, casTest.groupByNDV},
 		orders: orders,
-		rows:   cas.rows,
-		ctx:    cas.ctx,
+		rows:   casTest.rows,
+		ctx:    casTest.ctx,
 	})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer() // prepare a new agg-executor
-		aggExec := buildAggExecutor(b, cas, dataSource)
+		aggExec := buildAggExecutor(b, casTest, dataSource)
 		tmpCtx := context.Background()
 		chk := aggExec.newFirstChunk()
 		dataSource.prepareChunks()
@@ -285,9 +285,9 @@ func benchmarkAggExecWithCase(b *testing.B, cas *aggTestCase) {
 
 func BenchmarkAggRows(b *testing.B) {
 	rows := []int{100000, 1000000, 10000000}
-	concs := []int{1, 4, 8, 15, 20, 30, 40}
+	concurrencies := []int{1, 4, 8, 15, 20, 30, 40}
 	for _, row := range rows {
-		for _, con := range concs {
+		for _, con := range concurrencies {
 			for _, exec := range []string{"hash", "stream"} {
 				if exec == "stream" && con > 1 {
 					continue
