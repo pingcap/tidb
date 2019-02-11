@@ -343,12 +343,10 @@ func (s *testEvaluatorSuite) TestNameConst(c *C) {
 		{"test_string", "TiDB", false, func(d types.Datum) {
 			c.Assert(d.GetString(), Equals, "TiDB")
 		}},
-
 		{"test_null", nil, true, func(d types.Datum) {
 			c.Assert(d.Kind(), Equals, types.KindNull)
 		}},
 		{"test_decimal", dec, false, func(d types.Datum) {
-
 			c.Assert(d.GetMysqlDecimal().String(), Equals, dec.String())
 		}},
 		{"test_time", tm, false, func(d types.Datum) {
