@@ -62,8 +62,15 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 		}
 	}
 	if preCond, ok := errors.Cause(err).(*preconditionErr); ok {
-		return &kvrpcpb.KeyError{
-			PreconditionErr: &preCond.PreconditionError,
+		if preCond.AlreadyExist != nil {
+			return &kvrpcpb.KeyError{
+				AlreadyExist: preCond.AlreadyExist,
+			}
+		}
+		if preCond.NotExist != nil {
+			return &kvrpcpb.KeyError{
+				NotExist: preCond.NotExist,
+			}
 		}
 	}
 	return &kvrpcpb.KeyError{
@@ -182,8 +189,8 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 		return &errorpb.Error{
 			Message: *proto.String("stale epoch"),
-			StaleEpoch: &errorpb.StaleEpoch{
-				NewRegions: newRegions,
+			EpochNotMatch: &errorpb.EpochNotMatch{
+				CurrentRegions: newRegions,
 			},
 		}
 	}

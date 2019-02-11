@@ -56,7 +56,8 @@ func (e ErrAlreadyCommitted) Error() string {
 }
 
 type preconditionErr struct {
-	kvrpcpb.PreconditionError
+	*kvrpcpb.AlreadyExist
+	*kvrpcpb.NotExist
 }
 
 func (e *preconditionErr) Error() string {

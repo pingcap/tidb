@@ -151,20 +151,19 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	for _, pair := range txn.contracts {
 		mutation, ok := mutations[string(pair.key)]
 		if !ok {
-			log.Info(" something is wrong... contract exists but no mutation?", pair)
+			log.Info("something is wrong... contract exists but no mutation?", pair)
 			continue
 		}
 		// Only apply the first contract!
-		if mutation.Precondition != nil {
+		if mutation.Op != pb.Op_Put {
 			continue
 		}
 		mutation.hasContract = true
-		mutation.Precondition = &pb.Precondition{}
 		switch pair.contract {
 		case kv.MustExist:
-			mutation.Precondition.MustExist = true
+			mutation.Op = pb.Op_Update
 		case kv.MustNotExist:
-			mutation.Precondition.ShouldNotExist = true
+			mutation.Op = pb.Op_Insert
 		}
 	}
 
@@ -424,20 +423,15 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				locks = append(locks, lock)
 			}
 
-			preCond := keyErr.PreconditionErr
-			if preCond == nil {
-				continue
-			}
-
 			// If there is any contract error, it must be bugs in TiDB!
 			// TODO: Add prometheus metrics and alert here?
-			if notExist := preCond.GetNotExist(); notExist != nil {
+			if notExist := keyErr.GetNotExist(); notExist != nil {
 				ex := c.mutations[string(notExist.Key)]
 				if ex.hasContract {
 					log.Error(errors.ErrorStack(errors.Trace(errors.Errorf("CONTRACT BUG!!! The key %v should have value, but not found\n", notExist.Key))))
 				}
 			}
-			if exist := preCond.AlreadyExist; exist != nil {
+			if exist := keyErr.GetAlreadyExist(); exist != nil {
 				ex := c.mutations[string(exist.Key)]
 				if ex.hasContract {
 					log.Error(errors.ErrorStack(errors.Trace(errors.Errorf("CONTRACT BUG!!! The key %v must not have value, but value found\n", exist.Key))))

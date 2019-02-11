@@ -555,11 +555,17 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		return ErrRetryable("write conflict")
 	}
 
+	// Translate Insert/Update to Put to simplify the code.
+	op := mutation.GetOp()
+	if op == kvrpcpb.Op_Insert || op == kvrpcpb.Op_Update {
+		op = kvrpcpb.Op_Put
+	}
+
 	lock := mvccLock{
 		startTS: startTS,
 		primary: primary,
 		value:   mutation.Value,
-		op:      mutation.GetOp(),
+		op:      op,
 		ttl:     ttl,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
@@ -567,31 +573,27 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	if err != nil {
 		return errors.Trace(err)
 	}
-	batch.Put(writeKey, writeValue)
 
 	// Check precondition.
 	// Due to false positive may happen, don't return when a contract error is meet.
-	if preCond := mutation.Precondition; preCond != nil {
-		if ok && preCond.ShouldNotExist {
-			log.Debug("prewrite contract fail! must not exist, but exists key:", mutation.Key)
-			err = errors.Trace(&preconditionErr{
-				PreconditionError: kvrpcpb.PreconditionError{
-					AlreadyExist: &kvrpcpb.AlreadyExist{
-						Key: mutation.Key,
-					},
-				},
-			})
-		} else if !ok && preCond.MustExist {
-			log.Debug("prewrite contract fail! must exist, but not exist key:", mutation.Key)
-			err = errors.Trace(&preconditionErr{
-				PreconditionError: kvrpcpb.PreconditionError{
-					NotExist: &kvrpcpb.NotExist{
-						Key: mutation.Key,
-					},
-				},
-			})
-		}
+	if ok && mutation.Op == kvrpcpb.Op_Insert {
+		log.Debug("prewrite contract fail! must not exist, but exists key:", mutation.Key)
+		err = errors.Trace(&preconditionErr{
+			AlreadyExist: &kvrpcpb.AlreadyExist{
+				Key: mutation.Key,
+			},
+		})
 	}
+	if !ok && mutation.Op == kvrpcpb.Op_Update {
+		log.Debug("prewrite contract fail! must exist, but not exist key:", mutation.Key)
+		err = errors.Trace(&preconditionErr{
+			NotExist: &kvrpcpb.NotExist{
+				Key: mutation.Key,
+			},
+		})
+	}
+
+	batch.Put(writeKey, writeValue)
 	return err
 }
 
