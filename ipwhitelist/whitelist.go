@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -90,13 +91,20 @@ const selectTableSQL = `select * from mysql.whitelist`
 
 type handle struct {
 	// Lazy initialized.
-	dom   *domain.Domain
+	mu struct {
+		sync.RWMutex
+		dom *domain.Domain
+	}
+	initialized chan struct{}
+
 	value atomic.Value
 }
 
 // newHandle returns a Handle.
 func newHandle() *handle {
-	return &handle{}
+	return &handle{
+		initialized: make(chan struct{}),
+	}
 }
 
 // Get the MySQLPrivilege for read.
@@ -105,8 +113,9 @@ func (h *handle) Get() *whitelist {
 }
 
 // Update loads all the privilege info from kv storage.
+// The caller should guarantee that dom is not nil.
 func (h *handle) Update() error {
-	pool := h.dom.SysSessionPool()
+	pool := h.mu.dom.SysSessionPool()
 	tmp, err := pool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -125,17 +134,29 @@ func (h *handle) Update() error {
 }
 
 func (h *handle) LazyInitialize() error {
-	if h.dom != nil {
+	h.mu.RLock()
+	dom := h.mu.dom
+	h.mu.RUnlock()
+	if dom != nil {
 		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Prevent h.dom from initializing multiple times.
+	select {
+	case <-h.initialized:
+		return nil
+	default:
 	}
 
 	dom, err := session.GetDomain(nil)
 	if err != nil {
 		return err
 	}
-	h.dom = dom
+	h.mu.dom = dom
 
-	pool := h.dom.SysSessionPool()
+	pool := h.mu.dom.SysSessionPool()
 	sctx, err := pool.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -151,23 +172,33 @@ func (h *handle) LazyInitialize() error {
 		rs.Close()
 	}
 
+	// Notify the update loop about it.
+	close(h.initialized)
+
 	return h.Update()
 }
 
 var global = newHandle()
 
 func Init() {
-	// global.Update()
-	go notifyUpdateLoop()
+	go updateLoop()
 }
 
-func notifyUpdateLoop() {
-	var ch chan struct{}
-	for range ch {
-		// Make sure handle is initialized.
-		if global.dom != nil {
-			global.Update()
-		}
+const whitelistKey = "/tidb/plugins/whitelist"
+
+func updateLoop() {
+	// Wait for LazyInitialize function, make sure handle is initialized.
+	<-global.initialized
+
+	dom := global.mu.dom
+	cli := dom.GetEtcdClient()
+	if cli == nil {
+		return
+	}
+
+	watchCh := cli.Watch(context.Background(), whitelistKey)
+	for range watchCh {
+		global.Update()
 	}
 }
 
