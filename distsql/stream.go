@@ -51,7 +51,7 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 // NextBatch reads the data into batch.
 func (r *streamResult) NextBatch(ctx context.Context, batch *chunk.RecordBatch) error {
 	batch.Reset()
-	for !batch.IsFull() {
+	for !batch.IsFull(r.ctx.GetSessionVars().MaxChunkSize) {
 		err := r.readDataIfNecessary(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -121,7 +121,7 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 func (r *streamResult) flushToChunk(batch *chunk.RecordBatch) (err error) {
 	remainRowsData := r.curr.RowsData
 	decoder := codec.NewDecoder(batch.Chunk, r.ctx.GetSessionVars().Location())
-	for !batch.IsFull() && len(remainRowsData) > 0 {
+	for !batch.IsFull(r.ctx.GetSessionVars().MaxChunkSize) && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			remainRowsData, err = decoder.DecodeOne(remainRowsData, i, r.fieldTypes[i])
 			if err != nil {

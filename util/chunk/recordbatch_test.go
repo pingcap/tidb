@@ -20,7 +20,8 @@ import (
 )
 
 func (s *testChunkSuite) TestRecordBatch(c *check.C) {
-	chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, 10, 10)
+	maxChunkSize := 10
+	chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, maxChunkSize, maxChunkSize)
 	batch := NewRecordBatch(chk)
 	c.Assert(batch.RequiredRows(), check.Equals, UnspecifiedNumRows)
 	for i := 1; i < 10; i++ {
@@ -40,15 +41,15 @@ func (s *testChunkSuite) TestRecordBatch(c *check.C) {
 	batch.AppendInt64(0, 1)
 	batch.AppendInt64(0, 1)
 	c.Assert(batch.NumRows(), check.Equals, 4)
-	c.Assert(batch.IsFull(), check.IsFalse)
+	c.Assert(batch.IsFull(maxChunkSize), check.IsFalse)
 
 	batch.AppendInt64(0, 1)
 	c.Assert(batch.NumRows(), check.Equals, 5)
-	c.Assert(batch.IsFull(), check.IsTrue)
+	c.Assert(batch.IsFull(maxChunkSize), check.IsTrue)
 
 	batch.AppendInt64(0, 1)
 	batch.AppendInt64(0, 1)
 	batch.AppendInt64(0, 1)
 	c.Assert(batch.NumRows(), check.Equals, 8)
-	c.Assert(batch.IsFull(), check.IsTrue)
+	c.Assert(batch.IsFull(maxChunkSize), check.IsTrue)
 }

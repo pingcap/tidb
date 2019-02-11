@@ -13,6 +13,7 @@
 
 package chunk
 
+// UnspecifiedNumRows represents requiredRows is not specified.
 const UnspecifiedNumRows = -1
 
 // RecordBatch is input parameter of Executor.Next` method.
@@ -45,7 +46,8 @@ func (rb *RecordBatch) RequiredRows() int {
 	return rb.requiredRows
 }
 
-func (rb *RecordBatch) IsFull() bool {
+// IsFull returns if this batch can be considered full.
+func (rb *RecordBatch) IsFull(maxChunkSize int) bool {
 	numRows := rb.NumRows()
-	return numRows >= rb.Capacity() || (rb.requiredRows != UnspecifiedNumRows && numRows >= rb.requiredRows)
+	return numRows >= maxChunkSize || (rb.requiredRows != UnspecifiedNumRows && numRows >= rb.requiredRows)
 }

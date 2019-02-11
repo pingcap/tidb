@@ -124,7 +124,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 // NextBatch reads the data into batch.
 func (r *selectResult) NextBatch(ctx context.Context, batch *chunk.RecordBatch) error {
 	batch.Reset()
-	for !batch.IsFull() {
+	for !batch.IsFull(r.ctx.GetSessionVars().MaxChunkSize) {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
@@ -178,7 +178,7 @@ func (r *selectResult) getSelectResp() error {
 func (r *selectResult) readRowsData(batch *chunk.RecordBatch) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	decoder := codec.NewDecoder(batch.Chunk, r.ctx.GetSessionVars().Location())
-	for !batch.IsFull() && len(rowsData) > 0 {
+	for !batch.IsFull(r.ctx.GetSessionVars().MaxChunkSize) && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
