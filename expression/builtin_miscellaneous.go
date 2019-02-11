@@ -236,7 +236,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
 		sig = &builtinTimeAnyValueSig{bf}
 	default:
-		panic("unexpected types.EvalType of builtin function ANY_VALUE")
+		return nil, errIncorrectArgs.GenWithStackByArgs("ANY_VALUE")
 	}
 	return sig, nil
 }
@@ -842,7 +842,7 @@ func (c *nameConstFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
 		sig = &builtinNameConstTimeSig{bf}
 	default:
-		panic("unexpected types.EvalType of builtin function ANY_VALUE")
+		return nil, errIncorrectArgs.GenWithStackByArgs("NAME_CONST")
 	}
 	return sig, nil
 }

@@ -572,8 +572,8 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 			if s, err := v.ToString(); err == nil {
 				return model.NewCIStr(s), nil
 			}
-			return model.NewCIStr(""), errors.Trace(ErrWrongArguments.GenWithStackByArgs("NAME_CONST"))
 		}
+		return model.NewCIStr(""), ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
 	}
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
