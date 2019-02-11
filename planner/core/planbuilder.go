@@ -251,7 +251,8 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	p := &Set{}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 		}
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
@@ -778,8 +779,14 @@ const (
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	for _, tbl := range as.TableNames {
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", nil)
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", nil)
+		user := b.ctx.GetSessionVars().User
+		var insertErr, selectErr error
+		if user != nil {
+			insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+			selectErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
 	}
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
@@ -953,7 +960,12 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 				return nil, ErrNoDB
 			}
 		case ast.ShowCreateTable:
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", nil)
+			user := b.ctx.GetSessionVars().User
+			var err error
+			if user != nil {
+				err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
 			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 				isView = table.Meta().IsView()
 			}
@@ -997,7 +1009,8 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 
 	switch raw := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", nil)
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
 	case *ast.RevokeStmt:

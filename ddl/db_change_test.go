@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
+	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testStateChangeSuite{})
@@ -52,7 +52,6 @@ type testStateChangeSuite struct {
 }
 
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -75,7 +74,6 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
@@ -917,6 +915,8 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 				info = is
 				break
 			}
+			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
+			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
 			time.Sleep(interval)
 		}
 
@@ -928,6 +928,8 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 			if currID == firstConnID || seCnt == finishedCnt {
 				break
 			}
+			// Print log to notify if TestParallelDDLBeforeRunDDLJob hang up
+			log.Infof("time.Sleep(%v) in TestParallelDDLBeforeRunDDLJob", interval)
 			time.Sleep(interval)
 		}
 

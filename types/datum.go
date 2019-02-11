@@ -1169,18 +1169,19 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 
 func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var (
-		ret     Datum
-		y       int64
-		err     error
-		fromStr bool
+		ret    Datum
+		y      int64
+		err    error
+		adjust bool
 	)
 	switch d.k {
 	case KindString, KindBytes:
-		y, err = StrToInt(sc, d.GetString())
+		s := d.GetString()
+		y, err = StrToInt(sc, s)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		fromStr = true
+		adjust = len(s) < 4
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Time.Year())
 	case KindMysqlDuration:
@@ -1192,7 +1193,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		}
 		y = ret.GetInt64()
 	}
-	y, err = AdjustYear(y, fromStr)
+	y, err = AdjustYear(y, adjust)
 	if err != nil {
 		return invalidConv(d, target.Tp)
 	}
@@ -1616,75 +1617,6 @@ func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {
 		*hasDecimal = true
 	}
 	return x
-}
-
-// CoerceDatum changes type.
-// If a or b is Float, changes the both to Float.
-// Else if a or b is Decimal, changes the both to Decimal.
-// Else if a or b is Uint and op is not div, mod, or intDiv changes the both to Uint.
-func CoerceDatum(sc *stmtctx.StatementContext, a, b Datum) (x, y Datum, err error) {
-	if a.IsNull() || b.IsNull() {
-		return x, y, nil
-	}
-	var hasUint, hasDecimal, hasFloat bool
-	x = a.convergeType(&hasUint, &hasDecimal, &hasFloat)
-	y = b.convergeType(&hasUint, &hasDecimal, &hasFloat)
-	if hasFloat {
-		switch x.Kind() {
-		case KindInt64:
-			x.SetFloat64(float64(x.GetInt64()))
-		case KindUint64:
-			x.SetFloat64(float64(x.GetUint64()))
-		case KindMysqlEnum:
-			x.SetFloat64(x.GetMysqlEnum().ToNumber())
-		case KindMysqlSet:
-			x.SetFloat64(x.GetMysqlSet().ToNumber())
-		case KindMysqlDecimal:
-			var fval float64
-			fval, err = x.ToFloat64(sc)
-			if err != nil {
-				return x, y, errors.Trace(err)
-			}
-			x.SetFloat64(fval)
-		}
-		switch y.Kind() {
-		case KindInt64:
-			y.SetFloat64(float64(y.GetInt64()))
-		case KindUint64:
-			y.SetFloat64(float64(y.GetUint64()))
-		case KindBinaryLiteral, KindMysqlBit:
-			var fval uint64
-			fval, err = y.GetBinaryLiteral().ToInt(sc)
-			if err != nil {
-				return x, y, errors.Trace(err)
-			}
-			y.SetFloat64(float64(fval))
-		case KindMysqlEnum:
-			y.SetFloat64(y.GetMysqlEnum().ToNumber())
-		case KindMysqlSet:
-			y.SetFloat64(y.GetMysqlSet().ToNumber())
-		case KindMysqlDecimal:
-			var fval float64
-			fval, err = y.ToFloat64(sc)
-			if err != nil {
-				return x, y, errors.Trace(err)
-			}
-			y.SetFloat64(fval)
-		}
-	} else if hasDecimal {
-		var dec *MyDecimal
-		dec, err = ConvertDatumToDecimal(sc, x)
-		if err != nil {
-			return x, y, errors.Trace(err)
-		}
-		x.SetMysqlDecimal(dec)
-		dec, err = ConvertDatumToDecimal(sc, y)
-		if err != nil {
-			return x, y, errors.Trace(err)
-		}
-		y.SetMysqlDecimal(dec)
-	}
-	return
 }
 
 // NewDatum creates a new Datum from an interface{}.

@@ -497,16 +497,20 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		return errors.Trace(err)
 	}
 	host := variable.DefHostname
+	hasPassword := "YES"
+	if len(authData) == 0 {
+		hasPassword = "NO"
+	}
 	if !cc.server.isUnixSocket() {
 		addr := cc.bufReadConn.RemoteAddr().String()
 		// Do Auth.
 		host, _, err = net.SplitHostPort(addr)
 		if err != nil {
-			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
+			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword))
 		}
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
-		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
+		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, hasPassword))
 	}
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
