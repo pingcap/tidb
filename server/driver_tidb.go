@@ -217,8 +217,8 @@ func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte) {
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.
-func (tc *TiDBContext) RollbackTxn() error {
-	return tc.session.RollbackTxn(context.TODO())
+func (tc *TiDBContext) RollbackTxn() {
+	tc.session.RollbackTxn(context.TODO())
 }
 
 // AffectedRows implements QueryCtx AffectedRows method.
