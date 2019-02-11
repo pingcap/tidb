@@ -13,12 +13,43 @@
 
 package chunk
 
+import (
+	"github.com/cznic/mathutil"
+)
+
+const UnspecifiedNumRows = mathutil.MaxInt
+
 // RecordBatch is input parameter of Executor.Next` method.
 type RecordBatch struct {
 	*Chunk
+
+	// requiredRows indicates how many rows is considered full for parent executor.
+	// Child executor can return immediately if there are such number of rows,
+	// instead of fulling the whole chunk.
+	// This is not compulsory, so the number of returned rows can be larger than it in some cases.
+	requiredRows int
 }
 
 // NewRecordBatch is used to construct a RecordBatch.
 func NewRecordBatch(chk *Chunk) *RecordBatch {
-	return &RecordBatch{chk}
+	return &RecordBatch{chk, UnspecifiedNumRows}
+}
+
+// SetRequiredRows sets the number of rows the parent executor want.
+func (rb *RecordBatch) SetRequiredRows(numRows int) *RecordBatch {
+	if numRows <= 0 {
+		numRows = UnspecifiedNumRows
+	}
+	rb.requiredRows = numRows
+	return rb
+}
+
+// RequiredRows returns how many rows the parent executor want.
+func (rb *RecordBatch) RequiredRows() int {
+	return rb.requiredRows
+}
+
+func (rb *RecordBatch) IsFull() bool {
+	numRows := rb.NumRows()
+	return numRows >= rb.Capacity() || numRows >= rb.requiredRows
 }
