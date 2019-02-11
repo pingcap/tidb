@@ -2173,7 +2173,7 @@ func (s *testSuite) TestDefEnumInsert(c *C) {
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
 }
 
-func (s *testSuite2) TestAutoIDInRetry(c *C) {
+func (s *testSuite) TestAutoIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int not null auto_increment primary key)")
 
