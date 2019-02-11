@@ -93,7 +93,7 @@ func (dt *DirtyTable) getRow(handle int64, ctx sessionctx.Context) ([]types.Datu
 	}
 	// t should be found, due to it has already in the dirty database.
 	t, _ := GetInfoSchema(ctx).TableByID(dt.tid)
-	row, _, err := tables.DecodeRawRowData(ctx, t.Meta(), handle, t.Cols(), val)
+	row, _, err := tables.DecodeRawRowData(ctx, t.Meta(), handle, t.WritableCols(), val)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
