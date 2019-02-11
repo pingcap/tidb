@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -1065,6 +1066,8 @@ func (s *testSuite) TestUpdate(c *C) {
 	r1 := tk.MustQuery("select ts from tsup use index (idx);")
 	r2 := tk.MustQuery("select ts from tsup;")
 	r1.Check(r2.Rows())
+	tk.MustExec("update tsup set ts='2019-01-01';")
+	tk.MustQuery("select ts from tsup;").Check(testkit.Rows("2019-01-01 00:00:00"))
 
 	// issue 5532
 	tk.MustExec("create table decimals (a decimal(20, 0) not null)")
@@ -2168,4 +2171,21 @@ func (s *testSuite) TestDefEnumInsert(c *C) {
 	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
 	tk.MustExec("insert into test (id)  values (1)")
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite2) TestAutoIDInRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int not null auto_increment primary key)")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (),()")
+	tk.MustExec("insert into t values ()")
+
+	gofail.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`)
+	tk.MustExec("commit")
+	gofail.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID")
+
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
 }

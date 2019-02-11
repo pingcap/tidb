@@ -145,6 +145,8 @@ type dirtyTableOperation struct {
 	row    []types.Datum
 }
 
+var hasMockAutoIDRetry = false
+
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
 	defer st.reset()
@@ -167,6 +169,13 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	// mockCommitError8942 is used for PR #8942.
 	// gofail: var mockCommitError8942 bool
 	// if mockCommitError8942 {
+	//	return kv.ErrRetryable
+	// }
+
+	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
+	// gofail: var mockCommitRetryForAutoID bool
+	// if mockCommitRetryForAutoID && !hasMockAutoIDRetry {
+	//  hasMockAutoIDRetry = true
 	//	return kv.ErrRetryable
 	// }
 
