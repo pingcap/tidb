@@ -183,21 +183,45 @@ func (b *PlanBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 // extractOnCondition divide conditions in CNF of join node into 4 groups.
 // These conditions can be where conditions, join conditions, or collection of both.
 // If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
-func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan,
-	deriveLeft bool, deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
+	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
+	left, right := p.children[0], p.children[1]
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
-		if ok && binop.FuncName.L == ast.EQ {
-			ln, lOK := binop.GetArgs()[0].(*expression.Column)
-			rn, rOK := binop.GetArgs()[1].(*expression.Column)
+		if ok && len(binop.GetArgs()) == 2 {
+			ctx := binop.GetCtx()
+			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
+			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
 			if lOK && rOK {
-				if left.Schema().Contains(ln) && right.Schema().Contains(rn) {
-					eqCond = append(eqCond, binop)
-					continue
+				var leftCol, rightCol *expression.Column
+				if left.Schema().Contains(arg0) && right.Schema().Contains(arg1) {
+					leftCol, rightCol = arg0, arg1
 				}
-				if left.Schema().Contains(rn) && right.Schema().Contains(ln) {
-					cond := expression.NewFunctionInternal(binop.GetCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), rn, ln)
+				if leftCol == nil && left.Schema().Contains(arg1) && right.Schema().Contains(arg0) {
+					leftCol, rightCol = arg1, arg0
+				}
+				if leftCol != nil {
+					// Do not derive `is not null` for anti join, since it may cause wrong results.
+					// For example:
+					// `select * from t t1 where t1.a not in (select b from t t2)` does not imply `t2.b is not null`,
+					// `select * from t t1 where t1.a not in (select a from t t2 where t1.b = t2.b` does not imply `t1.b is not null`,
+					// `select * from t t1 where not exists (select * from t t2 where t2.a = t1.a)` does not imply `t1.a is not null`,
+					if deriveLeft && p.JoinType != AntiSemiJoin {
+						if isNullRejected(ctx, left.Schema(), expr) && !mysql.HasNotNullFlag(leftCol.RetType.Flag) {
+							notNullExpr := expression.BuildNotNullExpr(ctx, leftCol)
+							leftCond = append(leftCond, notNullExpr)
+						}
+					}
+					if deriveRight && p.JoinType != AntiSemiJoin {
+						if isNullRejected(ctx, right.Schema(), expr) && !mysql.HasNotNullFlag(rightCol.RetType.Flag) {
+							notNullExpr := expression.BuildNotNullExpr(ctx, rightCol)
+							rightCond = append(rightCond, notNullExpr)
+						}
+					}
+				}
+				if leftCol != nil && binop.FuncName.L == ast.EQ {
+					cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
 				}
@@ -1522,6 +1546,13 @@ func checkExprInGroupBy(p LogicalPlan, expr ast.ExprNode, offset int, loc string
 			}
 		}
 	}
+	// Function `any_value` can be used in aggregation, even `ONLY_FULL_GROUP_BY` is set.
+	// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value for details
+	if f, ok := expr.(*ast.FuncCallExpr); ok {
+		if f.FnName.L == ast.AnyValue {
+			return
+		}
+	}
 	colMap := make(map[*expression.Column]struct{}, len(p.Schema().Columns))
 	allColFromExprNode(p, expr, colMap)
 	for col := range colMap {
@@ -1615,17 +1646,23 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fiel
 // colResolverForOnlyFullGroupBy visits Expr tree to find out if an Expr tree is an aggregation function.
 // If so, find out the first column name that not in an aggregation function.
 type colResolverForOnlyFullGroupBy struct {
-	firstNonAggCol    *ast.ColumnName
-	exprIdx           int
-	firstNonAggColIdx int
-	hasAggFunc        bool
+	firstNonAggCol       *ast.ColumnName
+	exprIdx              int
+	firstNonAggColIdx    int
+	hasAggFuncOrAnyValue bool
 }
 
 func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 	switch t := node.(type) {
 	case *ast.AggregateFuncExpr:
-		c.hasAggFunc = true
+		c.hasAggFuncOrAnyValue = true
 		return node, true
+	case *ast.FuncCallExpr:
+		// enable function `any_value` in aggregation even `ONLY_FULL_GROUP_BY` is set
+		if t.FnName.L == ast.AnyValue {
+			c.hasAggFuncOrAnyValue = true
+			return node, true
+		}
 	case *ast.ColumnNameExpr:
 		if c.firstNonAggCol == nil {
 			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
@@ -1640,7 +1677,7 @@ func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
 }
 
 func (c *colResolverForOnlyFullGroupBy) Check() error {
-	if c.hasAggFunc && c.firstNonAggCol != nil {
+	if c.hasAggFuncOrAnyValue && c.firstNonAggCol != nil {
 		return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
 	}
 	return nil
