@@ -192,6 +192,7 @@ func (s *testSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	c.Check(row, HasLen, 5)
+	c.Assert(row[1].(string) != "0", IsTrue)
 
 	tk.MustQuery("SHOW PRIVILEGES")
 

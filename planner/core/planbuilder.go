@@ -1647,7 +1647,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
 	case ast.ShowMasterStatus:
-		names = []string{"File", "UniqueID", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
+		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPrivileges:
 		names = []string{"Privilege", "Context", "Comment"}
