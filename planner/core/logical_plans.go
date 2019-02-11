@@ -125,30 +125,54 @@ type LogicalJoin struct {
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
+	for i, cond := range p.LeftConditions {
+		p.LeftConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
+	for i, cond := range p.RightConditions {
+		p.RightConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
+	for i, cond := range p.OtherConditions {
+		p.OtherConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
 	for i := len(p.EqualConditions) - 1; i >= 0; i-- {
-		p.EqualConditions[i] = expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
-		// After the column substitute, the equal condition may become single side condition.
-		if p.children[0].Schema().Contains(p.EqualConditions[i].GetArgs()[1].(*expression.Column)) {
-			p.LeftConditions = append(p.LeftConditions, p.EqualConditions[i])
+		newCond := expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
+
+		// If the columns used in the new filter all come from the left child,
+		// we can push this filter to it.
+		if expression.ExprFromSchema(newCond, p.children[0].Schema()) {
+			p.LeftConditions = append(p.LeftConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
-		} else if p.children[1].Schema().Contains(p.EqualConditions[i].GetArgs()[0].(*expression.Column)) {
-			p.RightConditions = append(p.RightConditions, p.EqualConditions[i])
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
 		}
-	}
-	for i, fun := range p.LeftConditions {
-		p.LeftConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
-	}
-	for i, fun := range p.RightConditions {
-		p.RightConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
-	}
-	for i, fun := range p.OtherConditions {
-		p.OtherConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
+
+		// If the columns used in the new filter all come from the right
+		// child, we can push this filter to it.
+		if expression.ExprFromSchema(newCond, p.children[1].Schema()) {
+			p.RightConditions = append(p.RightConditions, newCond)
+			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
+		}
+
+		_, lhsIsCol := newCond.GetArgs()[0].(*expression.Column)
+		_, rhsIsCol := newCond.GetArgs()[1].(*expression.Column)
+
+		// If the columns used in the new filter are not all expression.Column,
+		// we can not use it as join's equal condition.
+		if !(lhsIsCol && rhsIsCol) {
+			p.OtherConditions = append(p.OtherConditions, newCond)
+			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
+		}
+
+		p.EqualConditions[i] = newCond
 	}
 }
 
 func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
-	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan), false, false)
+	eq, left, right, other := p.extractOnCondition(onConds, false, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
 	p.RightConditions = append(right, p.RightConditions...)
@@ -300,6 +324,9 @@ type DataSource struct {
 
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
+	// allConds contains all the filters on this table. For now it's maintained
+	// in predicate push down and used only in partition pruning.
+	allConds []expression.Expression
 
 	// relevantIndices means the indices match the push down conditions
 	relevantIndices []bool
@@ -621,6 +648,22 @@ type LogicalLock struct {
 	Lock ast.SelectLockType
 }
 
+// WindowFrame represents a window function frame.
+type WindowFrame struct {
+	Type  ast.FrameType
+	Start *FrameBound
+	End   *FrameBound
+}
+
+// FrameBound is the boundary of a frame.
+type FrameBound struct {
+	Type      ast.BoundType
+	UnBounded bool
+	Num       uint64
+	// For `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`, we will build the date_add or date_sub functions.
+	DateCalcFunc expression.Expression
+}
+
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
 	logicalSchemaProducer
@@ -628,7 +671,7 @@ type LogicalWindow struct {
 	WindowFuncDesc *aggregation.WindowFuncDesc
 	PartitionBy    []property.Item
 	OrderBy        []property.Item
-	// TODO: add frame clause
+	Frame          *WindowFrame
 }
 
 // GetWindowResultColumn returns the column storing the result of the window function.

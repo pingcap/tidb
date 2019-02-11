@@ -776,7 +776,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			if err != nil {
 				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
 			} else {
-				log.Info("[domain] reload privilege success.")
+				log.Debug("[domain] reload privilege success.")
 			}
 		}
 	}()
@@ -947,10 +947,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 		select {
 		case <-analyzeTicker.C:
 			if owner.IsOwner() {
-				err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
-				if err != nil {
-					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
-				}
+				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
 			return
