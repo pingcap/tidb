@@ -59,6 +59,7 @@ func (a *baseFuncDesc) clone() *baseFuncDesc {
 	clone := *a
 	newTp := *a.RetTp
 	clone.RetTp = &newTp
+	clone.Args = make([]expression.Expression, len(a.Args))
 	for i := range a.Args {
 		clone.Args[i] = a.Args[i].Clone()
 	}

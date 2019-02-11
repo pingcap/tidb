@@ -5060,7 +5060,7 @@ func (b *builtinSubStringAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinAddStringAndStringSig.
+// evalString evals a builtinSubStringAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubStringAndStringSig) evalString(row chunk.Row) (result string, isNull bool, err error) {
 	var (
@@ -5117,7 +5117,7 @@ func (b *builtinSubDurationAndDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDuration evals a builtinAddDurationAndDurationSig.
+// evalDuration evals a builtinSubDurationAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDurationAndDurationSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5145,7 +5145,7 @@ func (b *builtinSubDurationAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDuration evals a builtinAddDurationAndStringSig.
+// evalDuration evals a builtinSubDurationAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDurationAndStringSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5193,7 +5193,7 @@ func (b *builtinSubDateAndDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinAddDateAndDurationSig.
+// evalString evals a builtinSubDateAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndDurationSig) evalString(row chunk.Row) (string, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
@@ -5218,7 +5218,7 @@ func (b *builtinSubDateAndStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalString evals a builtinAddDateAndStringSig.
+// evalString evals a builtinSubDateAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndStringSig) evalString(row chunk.Row) (string, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
