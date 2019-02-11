@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -269,11 +270,13 @@ func (s *testDBSuite) TestAddIndexWorkerNum(c *C) {
 	// Split table to multi region.
 	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, splitCount)
 
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
 	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
 	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
-	defer variable.SetDDLReorgWorkerCounter(originDDLAddIndexWorkerCnt)
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
 	gofail.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum")
@@ -291,7 +294,7 @@ LOOP:
 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ddl.TestCheckWorkerNumCh:
 			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
-			tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
 			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
 			checkNum++
 		}
