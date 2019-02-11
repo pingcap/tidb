@@ -2129,7 +2129,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 				}
 			}
 		}
-		b.visitInfo = make([]visitInfo, 0)
+		b.visitInfo = b.visitInfo[:0]
 	}
 	b.visitInfo = append(originalVisitInfo, b.visitInfo...)
 

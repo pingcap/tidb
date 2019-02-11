@@ -1525,7 +1525,8 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
 		if b.ctx.GetSessionVars().User != nil && v.Definer.String() != b.ctx.GetSessionVars().User.String() {
-			b.visitInfo = append(b.visitInfo, visitInfo{privilege: mysql.SuperPriv, db: "", table: "", err: nil})
+			err = ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+			b.visitInfo = append(b.visitInfo, visitInfo{privilege: mysql.SuperPriv, db: "", table: "", err: err})
 		}
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
