@@ -38,3 +38,7 @@ It does not affect the compatibility.
 Since we need to decide whether the access path matches the physical property, we need to do the skyline pruning when finding the best task for the data source. And usually there won't be too many indices, a naive nested-loops algorithm will suffice. The comparison of any two access paths has been explained in the previous `Proposal` section.
 
 ## Open issues (if applicable)
+
+## References
+
+- [The Skyline Operator](http://skylineresearch.in/skylineintro/The_Skyline_Operator.pdf)
