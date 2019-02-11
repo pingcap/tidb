@@ -42,12 +42,10 @@ type UnionStore interface {
 // ContractType is the type of a contract.
 type ContractType int
 
+// The ContractType constants.
 const (
-	// NoContractCheck is a kind of Contract.
 	NoContractCheck ContractType = iota
-	// MustExist is a kind of Contract.
 	MustExist
-	// MustNotExist is a kind of Contract.
 	MustNotExist
 )
 
