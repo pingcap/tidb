@@ -63,8 +63,8 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 	if constArg, isConst := foldedArg0.(*Constant); isConst {
 		dt, err := constArg.Eval(chunk.Row{})
 		if err != nil {
-			log.Warnf("fold constant %s failed: %s", expr.ExplainInfo(), err.Error())
-			return expr, isDeferredConst
+			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
+			return expr, false
 		}
 		if dt.IsNull() {
 			return foldConstant(args[1])
