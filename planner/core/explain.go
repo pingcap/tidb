@@ -16,10 +16,10 @@ package core
 import (
 	"bytes"
 	"fmt"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/planner/property"
 )
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -299,19 +299,6 @@ func (p *PhysicalTopN) ExplainInfo() string {
 	return buffer.String()
 }
 
-func (p *PhysicalWindow) formatPropertyItems(buffer *bytes.Buffer, items []property.Item) {
-	for i, item := range items {
-		order := "asc"
-		if item.Desc {
-			order = "desc"
-		}
-		fmt.Fprintf(buffer, "%s %s", item.Col.ExplainInfo(), order)
-		if i+1 < len(items) {
-			buffer.WriteString(", ")
-		}
-	}
-}
-
 func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBound) {
 	if bound.Type == ast.CurrentRow {
 		buffer.WriteString("current row")
@@ -321,7 +308,8 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 		buffer.WriteString("unbounded")
 	} else if bound.DateCalcFunc != nil {
 		sf := bound.DateCalcFunc.(*expression.ScalarFunction)
-		fmt.Fprintf(buffer, "%s %s", sf.GetArgs()[1].ExplainInfo(), sf.GetArgs()[2].ExplainInfo())
+		// for `interval '2:30' minute_second`.
+		fmt.Fprintf(buffer, "interval %s %s", sf.GetArgs()[1].ExplainInfo(), sf.GetArgs()[2].ExplainInfo())
 	} else {
 		fmt.Fprintf(buffer, "%d", bound.Num)
 	}
@@ -339,7 +327,12 @@ func (p *PhysicalWindow) ExplainInfo() string {
 	isFirst := true
 	if len(p.PartitionBy) > 0 {
 		buffer.WriteString("partition by ")
-		p.formatPropertyItems(buffer, p.PartitionBy)
+		for i, item := range p.PartitionBy {
+			fmt.Fprintf(buffer, "%s", item.Col.ExplainInfo())
+			if i+1 < len(p.PartitionBy) {
+				buffer.WriteString(", ")
+			}
+		}
 		isFirst = false
 	}
 	if len(p.OrderBy) > 0 {
@@ -347,7 +340,16 @@ func (p *PhysicalWindow) ExplainInfo() string {
 			buffer.WriteString(" ")
 		}
 		buffer.WriteString("order by ")
-		p.formatPropertyItems(buffer, p.OrderBy)
+		for i, item := range p.OrderBy {
+			order := "asc"
+			if item.Desc {
+				order = "desc"
+			}
+			fmt.Fprintf(buffer, "%s %s", item.Col.ExplainInfo(), order)
+			if i+1 < len(p.OrderBy) {
+				buffer.WriteString(", ")
+			}
+		}
 		isFirst = false
 	}
 	if p.Frame != nil {
