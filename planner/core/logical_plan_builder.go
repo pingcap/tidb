@@ -1545,6 +1545,13 @@ func checkExprInGroupBy(p LogicalPlan, expr ast.ExprNode, offset int, loc string
 			}
 		}
 	}
+	// Function `any_value` can be used in aggregation, even `ONLY_FULL_GROUP_BY` is set.
+	// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value for details
+	if f, ok := expr.(*ast.FuncCallExpr); ok {
+		if f.FnName.L == ast.AnyValue {
+			return
+		}
+	}
 	colMap := make(map[*expression.Column]struct{}, len(p.Schema().Columns))
 	allColFromExprNode(p, expr, colMap)
 	for col := range colMap {
@@ -1638,17 +1645,23 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fiel
 // colResolverForOnlyFullGroupBy visits Expr tree to find out if an Expr tree is an aggregation function.
 // If so, find out the first column name that not in an aggregation function.
 type colResolverForOnlyFullGroupBy struct {
-	firstNonAggCol    *ast.ColumnName
-	exprIdx           int
-	firstNonAggColIdx int
-	hasAggFunc        bool
+	firstNonAggCol       *ast.ColumnName
+	exprIdx              int
+	firstNonAggColIdx    int
+	hasAggFuncOrAnyValue bool
 }
 
 func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 	switch t := node.(type) {
 	case *ast.AggregateFuncExpr:
-		c.hasAggFunc = true
+		c.hasAggFuncOrAnyValue = true
 		return node, true
+	case *ast.FuncCallExpr:
+		// enable function `any_value` in aggregation even `ONLY_FULL_GROUP_BY` is set
+		if t.FnName.L == ast.AnyValue {
+			c.hasAggFuncOrAnyValue = true
+			return node, true
+		}
 	case *ast.ColumnNameExpr:
 		if c.firstNonAggCol == nil {
 			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
@@ -1663,7 +1676,7 @@ func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
 }
 
 func (c *colResolverForOnlyFullGroupBy) Check() error {
-	if c.hasAggFunc && c.firstNonAggCol != nil {
+	if c.hasAggFuncOrAnyValue && c.firstNonAggCol != nil {
 		return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
 	}
 	return nil
