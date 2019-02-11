@@ -135,7 +135,6 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	// for uuid
 	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
 	for _, it := range r.Rows() {
@@ -3871,4 +3870,15 @@ func (s *testIntegrationSuite) TestCastAsTime(c *C) {
 
 	err = tk.ExecToErr(`select cast(col5 as time(31)) from t where col1 is null;`)
 	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+}
+
+func (s *testIntegrationSuite) TestValuesFloat32(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (i int key, j float);`)
+	tk.MustExec(`insert into t values (1, 0.01);`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.01`))
+	tk.MustExec(`insert into t values (1, 0.02) on duplicate key update j = values (j);`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.02`))
 }
