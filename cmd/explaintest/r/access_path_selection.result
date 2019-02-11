@@ -4,16 +4,7 @@ CREATE TABLE `pay_daily` (
 `b_id` bigint(11) NOT NULL DEFAULT '0',
 `time_stamp` bigint(11) DEFAULT NULL,
 `date_key` int(20) DEFAULT NULL,
-`hour` int(11) DEFAULT NULL,
-`m_type` int(11) DEFAULT NULL,
-`c_id` bigint(11) DEFAULT NULL,
-`c_name` varchar(50) DEFAULT NULL,
-`d_id` bigint(11) DEFAULT NULL,
-`d_name` varchar(32) DEFAULT NULL,
-`is_custom` varchar(32) DEFAULT NULL,
 `io_type` int(11) DEFAULT NULL,
-`p_cnt` bigint(11) DEFAULT NULL,
-`p_amt` bigint(11) DEFAULT NULL,
 `update_source` int(11) DEFAULT NULL,
 `update_time` timestamp DEFAULT NULL,
 PRIMARY KEY (`id`, `a_id`, `b_id`),
@@ -22,7 +13,7 @@ KEY `IDX_DK` (`date_key`),
 KEY `IDX_TENANT_POI_DATEKEY` (`a_id`, `b_id`, `date_key`),
 KEY `IDX_US` (`update_source`, `a_id`)
 );
-explain select id, a_id, b_id, time_stamp, date_key, hour, m_type, c_id, c_name, d_id, is_custom, io_type, p_cnt, p_amt, update_source from pay_daily where a_id=12565 and b_id=159298363 and date_key=20180731;
+explain select id, a_id, b_id, time_stamp, date_key, update_source from pay_daily where a_id=12565 and b_id=159298363 and date_key=20180731;
 id	count	task	operator info
 IndexLookUp_18	0.00	root	
 ├─IndexScan_16	0.00	cop	table:pay_daily, index:a_id, b_id, date_key, range:[12565 159298363 20180731,12565 159298363 20180731], keep order:false, stats:pseudo
