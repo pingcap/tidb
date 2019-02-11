@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -209,7 +208,6 @@ func OnConnectionEvent(ctx context.Context, u *auth.UserIdentity) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	fmt.Println("ip = ", ip)
 
 	whitelist := global.Get()
 	if len(whitelist.groups) == 0 {
