@@ -2393,7 +2393,12 @@ func (b *PlanBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 
 	updt := Update{OrderedList: orderedList}.Init(b.ctx)
 	updt.SetSchema(p.Schema())
+	// Set sc.InUpdateStmt as false to avoid unnecessary type conversion in WHERE clause.
+	sc := b.ctx.GetSessionVars().StmtCtx
+	origInUpdateStmt := sc.InUpdateStmt
+	sc.InUpdateStmt = false
 	updt.SelectPlan, err = DoOptimize(b.optFlag, p)
+	sc.InUpdateStmt = origInUpdateStmt
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2472,7 +2477,6 @@ func (b *PlanBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		// newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
 		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
 	}

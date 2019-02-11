@@ -1332,14 +1332,20 @@ func (s *testSuite) TestUpdate(c *C) {
 
 	// issue 8623
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint unsigned);")
-	tk.MustExec("insert into t value(1)")
+	tk.MustExec("create table t (a bigint unsigned primary key);")
+	tk.MustExec("insert into t value (1)")
 	_, err = tk.Exec("update t set a = -1;")
 	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
+	_, err = tk.Exec("update t set a = 2 where a = -1;")
+	c.Assert(err, IsNil)
 	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustExec("update t set a = -1;")
-	// TODO: the following warning message is not consistent with MySQL, fix it in the future PR
+	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("update t set a = -1.11;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("update t set a = '-1.11';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 
