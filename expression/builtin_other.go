@@ -620,7 +620,7 @@ func (b *builtinValuesStringSig) evalString(_ chunk.Row) (string, bool, error) {
 	}
 
 	if retType := b.getRetTp(); retType.Hybrid() {
-		val := row.GetDatum(b.offset, b.getRetTp())
+		val := row.GetDatum(b.offset, retType)
 		if val.IsNull() {
 			return "", true, nil
 		}
