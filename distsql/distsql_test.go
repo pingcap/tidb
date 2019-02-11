@@ -82,10 +82,9 @@ func (s *testSuite) TestSelectNormal(c *C) {
 
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
-	batch := chunk.NewRecordBatch(chk)
 	numAllRows := 0
 	for {
-		err := response.Next(context.TODO(), batch)
+		err := response.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
@@ -150,10 +149,9 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 
 	// Test Next.
 	chk := chunk.New(colTypes, 32, 32)
-	batch := chunk.NewRecordBatch(chk)
 	numAllRows := 0
 	for {
-		err := response.Next(context.TODO(), batch)
+		err := response.Next(context.TODO(), chk)
 		c.Assert(err, IsNil)
 		numAllRows += chk.NumRows()
 		if chk.NumRows() == 0 {
@@ -175,42 +173,46 @@ func (s *testSuite) testBatchSize(response SelectResult, colTypes []*types.Field
 	chk := chunk.New(colTypes, 32, 32)
 	batch := chunk.NewRecordBatch(chk)
 
-	err := response.Next(context.TODO(), batch)
+	err := response.Next(context.TODO(), chk)
+	c.Assert(err, IsNil)
+	c.Assert(chk.NumRows(), Equals, 32)
+
+	err = response.NextBatch(context.TODO(), batch)
 	c.Assert(err, IsNil)
 	c.Assert(batch.NumRows(), Equals, 32)
 
 	batch.SetRequiredRows(1)
-	err = response.Next(context.TODO(), batch)
+	err = response.NextBatch(context.TODO(), batch)
 	c.Assert(err, IsNil)
 	c.Assert(batch.NumRows(), Equals, 1)
 
 	batch.SetRequiredRows(2)
-	err = response.Next(context.TODO(), batch)
+	err = response.NextBatch(context.TODO(), batch)
 	c.Assert(err, IsNil)
 	c.Assert(batch.NumRows(), Equals, 2)
 
 	batch.SetRequiredRows(17)
-	err = response.Next(context.TODO(), batch)
+	err = response.NextBatch(context.TODO(), batch)
 	c.Assert(err, IsNil)
 	c.Assert(batch.NumRows(), Equals, 17)
 
 	batch.SetRequiredRows(170)
-	err = response.Next(context.TODO(), batch)
+	err = response.NextBatch(context.TODO(), batch)
 	c.Assert(err, IsNil)
 	c.Assert(batch.NumRows(), Equals, 32)
 
 	batch.SetRequiredRows(32)
-	err = response.Next(context.TODO(), batch)
+	err = response.NextBatch(context.TODO(), batch)
 	c.Assert(err, IsNil)
 	c.Assert(batch.NumRows(), Equals, 32)
 
 	batch.SetRequiredRows(0)
-	err = response.Next(context.TODO(), batch)
+	err = response.NextBatch(context.TODO(), batch)
 	c.Assert(err, IsNil)
 	c.Assert(batch.NumRows(), Equals, 32)
 
 	batch.SetRequiredRows(-1)
-	err = response.Next(context.TODO(), batch)
+	err = response.NextBatch(context.TODO(), batch)
 	c.Assert(err, IsNil)
 	c.Assert(batch.NumRows(), Equals, 32)
 }

@@ -43,7 +43,13 @@ type streamResult struct {
 
 func (r *streamResult) Fetch(context.Context) {}
 
-func (r *streamResult) Next(ctx context.Context, batch *chunk.RecordBatch) error {
+// Next reads data to the chunk.
+func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+	return r.NextBatch(ctx, chunk.NewRecordBatch(chk))
+}
+
+// NextBatch reads the data into batch.
+func (r *streamResult) NextBatch(ctx context.Context, batch *chunk.RecordBatch) error {
 	batch.Reset()
 	for !batch.IsFull() {
 		err := r.readDataIfNecessary(ctx)

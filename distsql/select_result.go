@@ -41,7 +41,10 @@ type SelectResult interface {
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
-	Next(ctx context.Context, batch *chunk.RecordBatch) error
+	// TODO: replace all calls of Next to NextBatch and remove this Next method
+	Next(ctx context.Context, chk *chunk.Chunk) error
+	// NextBatch reads the data into batch.
+	NextBatch(ctx context.Context, batch *chunk.RecordBatch) error
 	// Close closes the iterator.
 	Close() error
 }
@@ -114,7 +117,12 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 }
 
 // Next reads data to the chunk.
-func (r *selectResult) Next(ctx context.Context, batch *chunk.RecordBatch) error {
+func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+	return r.NextBatch(ctx, chunk.NewRecordBatch(chk))
+}
+
+// NextBatch reads the data into batch.
+func (r *selectResult) NextBatch(ctx context.Context, batch *chunk.RecordBatch) error {
 	batch.Reset()
 	for !batch.IsFull() {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
