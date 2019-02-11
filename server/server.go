@@ -315,14 +315,14 @@ func (s *Server) Run() error {
 				host, err := getPeerHost(conn)
 				if err != nil {
 					log.Error(err)
-					conn.Close()
+					terror.Log(conn.Close())
 					continue
 				}
 
 				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host})
 				if err != nil {
 					log.Info(err)
-					conn.Close()
+					terror.Log(conn.Close())
 					continue
 				}
 			}
