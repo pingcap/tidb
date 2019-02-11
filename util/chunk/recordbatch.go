@@ -13,11 +13,7 @@
 
 package chunk
 
-import (
-	"github.com/cznic/mathutil"
-)
-
-const UnspecifiedNumRows = mathutil.MaxInt
+const UnspecifiedNumRows = -1
 
 // RecordBatch is input parameter of Executor.Next` method.
 type RecordBatch struct {
@@ -51,5 +47,5 @@ func (rb *RecordBatch) RequiredRows() int {
 
 func (rb *RecordBatch) IsFull() bool {
 	numRows := rb.NumRows()
-	return numRows >= rb.Capacity() || numRows >= rb.requiredRows
+	return numRows >= rb.Capacity() || (rb.requiredRows != UnspecifiedNumRows && numRows >= rb.requiredRows)
 }
