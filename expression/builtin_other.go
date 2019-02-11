@@ -619,22 +619,25 @@ func (b *builtinValuesStringSig) evalString(_ chunk.Row) (string, bool, error) {
 		return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 	}
 
+	if row.IsNull(b.offset) {
+		return "", true, nil
+	}
+
+	// Specially handle the ENUM/SET/BIT input value.
 	if retType := b.getRetTp(); retType.Hybrid() {
 		val := row.GetDatum(b.offset, retType)
-		if val.IsNull() {
-			return "", true, nil
-		}
 		res, err := val.ToString()
+		if err != nil {
+			return "", true, err
+		}
+
 		resLen := len([]rune(res))
 		if b.ctx.GetSessionVars().StmtCtx.PadCharToFullLength && retType.Tp == mysql.TypeString && resLen < retType.Flen {
 			res = res + strings.Repeat(" ", retType.Flen-resLen)
 		}
-		return res, err != nil, err
+		return res, false, nil
 	}
 
-	if row.IsNull(b.offset) {
-		return "", true, nil
-	}
 	return row.GetString(b.offset), false, nil
 }
 
