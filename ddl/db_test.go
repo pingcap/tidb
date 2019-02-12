@@ -2352,7 +2352,7 @@ func (s *testDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("insert into t values()")
 	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
 	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
-	c.Assert(err.Error(), Equals, "[ddl:15]can't decode index value, because cannot convert datum from unsigned bigint to type year.")
+	c.Assert(err.Error(), Equals, "[ddl:15]cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
 
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
