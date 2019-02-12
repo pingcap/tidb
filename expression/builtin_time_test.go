@@ -1555,7 +1555,7 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		v, err = evalBuiltinFunc(f, chunk.Row{})
+		v, err = evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v.GetMysqlTime().String(), Equals, test.expected)
 	}
@@ -1578,7 +1578,7 @@ func (s *testEvaluatorSuite) TestDateArithFuncs(c *C) {
 		f, err = fcAdd.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		v, err = evalBuiltinFunc(f, chunk.Row{})
+		v, err = evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		c.Assert(v.GetMysqlTime().String(), Equals, test.expected)
 	}
