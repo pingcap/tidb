@@ -77,7 +77,7 @@ var (
 			Help:      "Counter of storing query feedback.",
 		}, []string{LblType})
 
-	HighErrorRateFeedBackCounter = prometheus.NewCounter(
+	SignificantFeedbackCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "statistics",
