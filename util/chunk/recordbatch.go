@@ -20,10 +20,9 @@ const UnspecifiedNumRows = -1
 type RecordBatch struct {
 	*Chunk
 
-	// requiredRows indicates how many rows is considered full for parent executor.
-	// Child executor can return immediately if there are such number of rows,
-	// instead of fulling the whole chunk.
-	// This is not compulsory, so the number of returned rows can be larger than it in some cases.
+	// requiredRows indicates how many rows is required by the parent executor.
+	// Child executor should stop populating rows immediately if there are at
+	// least required rows in the Chunk.
 	requiredRows int
 }
 
