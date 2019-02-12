@@ -20,6 +20,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	. "github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/terror"
 )
 
@@ -30,6 +31,20 @@ type UserIdentity struct {
 	CurrentUser  bool
 	AuthUsername string // Username matched in privileges system
 	AuthHostname string // Match in privs system (i.e. could be a wildcard)
+}
+
+// Restore implements Node interface.
+func (user *UserIdentity) Restore(ctx *RestoreCtx) error {
+	if user.CurrentUser {
+		ctx.WriteKeyWord("CURRENT_USER")
+	} else {
+		ctx.WriteName(user.Username)
+		if user.Hostname != "" {
+			ctx.WritePlain("@")
+			ctx.WriteName(user.Hostname)
+		}
+	}
+	return nil
 }
 
 // String converts UserIdentity to the format user@host.
