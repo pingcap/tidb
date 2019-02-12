@@ -606,8 +606,13 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
-			fmt.Fprintf(&buf, " CHARSET %s", col.Charset)
-			fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+			if col.Charset != tblCharset || col.IsExplictedCollation() {
+				fmt.Fprintf(&buf, " CHARSET %s", col.Charset)
+			}
+			if col.Collate != tblCollate || col.IsExplictedCollation() {
+				fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
+			}
+
 		}
 		if col.IsGenerated() {
 			// It's a generated column.
