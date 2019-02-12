@@ -358,7 +358,6 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 			return types.Datum{}, errors.Trace(err)
 		}
 		return value, nil
-
 	}
 	// Check and get timestamp/datetime default value.
 	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
