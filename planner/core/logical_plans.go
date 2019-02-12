@@ -125,30 +125,54 @@ type LogicalJoin struct {
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
+	for i, cond := range p.LeftConditions {
+		p.LeftConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
+	for i, cond := range p.RightConditions {
+		p.RightConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
+	for i, cond := range p.OtherConditions {
+		p.OtherConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
 	for i := len(p.EqualConditions) - 1; i >= 0; i-- {
-		p.EqualConditions[i] = expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
-		// After the column substitute, the equal condition may become single side condition.
-		if p.children[0].Schema().Contains(p.EqualConditions[i].GetArgs()[1].(*expression.Column)) {
-			p.LeftConditions = append(p.LeftConditions, p.EqualConditions[i])
+		newCond := expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
+
+		// If the columns used in the new filter all come from the left child,
+		// we can push this filter to it.
+		if expression.ExprFromSchema(newCond, p.children[0].Schema()) {
+			p.LeftConditions = append(p.LeftConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
-		} else if p.children[1].Schema().Contains(p.EqualConditions[i].GetArgs()[0].(*expression.Column)) {
-			p.RightConditions = append(p.RightConditions, p.EqualConditions[i])
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
 		}
-	}
-	for i, fun := range p.LeftConditions {
-		p.LeftConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
-	}
-	for i, fun := range p.RightConditions {
-		p.RightConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
-	}
-	for i, fun := range p.OtherConditions {
-		p.OtherConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
+
+		// If the columns used in the new filter all come from the right
+		// child, we can push this filter to it.
+		if expression.ExprFromSchema(newCond, p.children[1].Schema()) {
+			p.RightConditions = append(p.RightConditions, newCond)
+			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
+		}
+
+		_, lhsIsCol := newCond.GetArgs()[0].(*expression.Column)
+		_, rhsIsCol := newCond.GetArgs()[1].(*expression.Column)
+
+		// If the columns used in the new filter are not all expression.Column,
+		// we can not use it as join's equal condition.
+		if !(lhsIsCol && rhsIsCol) {
+			p.OtherConditions = append(p.OtherConditions, newCond)
+			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
+		}
+
+		p.EqualConditions[i] = newCond
 	}
 }
 
 func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
-	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan), false, false)
+	eq, left, right, other := p.extractOnCondition(onConds, false, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
 	p.RightConditions = append(right, p.RightConditions...)
