@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -2149,10 +2150,25 @@ func (b *PlanBuilder) BuildDataSourceFromView(dbName model.CIStr, tableInfo *mod
 	if err != nil {
 		return nil, err
 	}
+
+	originalVisitInfo := b.visitInfo
+	b.visitInfo = make([]visitInfo, 0)
 	selectLogicalPlan, err := b.Build(selectNode)
 	if err != nil {
 		return nil, err
 	}
+
+	if tableInfo.View.Security == model.SecurityDefiner {
+		if pm := privilege.GetPrivilegeManager(b.ctx); pm != nil {
+			for _, v := range b.visitInfo {
+				if !pm.RequestVerificationWithUser(v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
+					return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+				}
+			}
+		}
+		b.visitInfo = b.visitInfo[:0]
+	}
+	b.visitInfo = append(originalVisitInfo, b.visitInfo...)
 
 	projSchema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.View.Cols))...)
 	projExprs := make([]expression.Expression, 0, len(tableInfo.View.Cols))
