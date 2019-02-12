@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -91,8 +92,11 @@ func (dt *DirtyTable) getRow(handle int64, ctx sessionctx.Context) ([]types.Datu
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// t should be found, due to it has already in the dirty database.
-	t, _ := GetInfoSchema(ctx).TableByID(dt.tid)
+	t, found := GetInfoSchema(ctx).TableByID(dt.tid)
+	if !found {
+		// t is got from a snapshot InfoSchema, so it should be found, this branch should not happen.
+		panic(fmt.Sprintf("table which ID is %d should be found", dt.tid))
+	}
 	row, _, err := tables.DecodeRawRowData(ctx, t.Meta(), handle, t.WritableCols(), val)
 	if err != nil {
 		return nil, errors.Trace(err)
