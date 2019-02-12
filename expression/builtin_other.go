@@ -627,15 +627,7 @@ func (b *builtinValuesStringSig) evalString(_ chunk.Row) (string, bool, error) {
 	if retType := b.getRetTp(); retType.Hybrid() {
 		val := row.GetDatum(b.offset, retType)
 		res, err := val.ToString()
-		if err != nil {
-			return "", true, err
-		}
-
-		resLen := len([]rune(res))
-		if b.ctx.GetSessionVars().StmtCtx.PadCharToFullLength && retType.Tp == mysql.TypeString && resLen < retType.Flen {
-			res = res + strings.Repeat(" ", retType.Flen-resLen)
-		}
-		return res, false, nil
+		return res, err != nil, err
 	}
 
 	return row.GetString(b.offset), false, nil
