@@ -704,7 +704,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	t := time.Now()
 	cmd := data[0]
 	data = data[1:]
-	cc.lastCmd = hack.String(data)
+	cc.lastCmd = string(hack.String(data))
 	token := cc.server.getToken()
 	defer func() {
 		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
@@ -716,12 +716,13 @@ func (cc *clientConn) dispatch(data []byte) error {
 		cc.ctx.SetCommandValue(cmd)
 	}
 
+	dataStr := string(hack.String(data))
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
 		cc.ctx.SetProcessInfo("", t, cmd)
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
+		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd)
 	}
 
 	switch cmd {
@@ -739,19 +740,20 @@ func (cc *clientConn) dispatch(data []byte) error {
 		// See http://dev.mysql.com/doc/internals/en/com-query.html
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
+			dataStr = string(hack.String(data))
 		}
-		return cc.handleQuery(ctx1, hack.String(data))
+		return cc.handleQuery(ctx1, dataStr)
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(ctx1, hack.String(data)); err != nil {
+		if err := cc.useDB(ctx1, dataStr); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
 	case mysql.ComFieldList:
-		return cc.handleFieldList(hack.String(data))
+		return cc.handleFieldList(dataStr)
 	case mysql.ComStmtPrepare:
-		return cc.handleStmtPrepare(hack.String(data))
+		return cc.handleStmtPrepare(dataStr)
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx1, data)
 	case mysql.ComStmtFetch:
@@ -1258,7 +1260,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 
 func (cc *clientConn) handleChangeUser(data []byte) error {
 	user, data := parseNullTermString(data)
-	cc.user = hack.String(user)
+	cc.user = string(hack.String(user))
 	if len(data) < 1 {
 		return mysql.ErrMalformPacket
 	}
@@ -1270,7 +1272,7 @@ func (cc *clientConn) handleChangeUser(data []byte) error {
 	pass := data[:passLen]
 	data = data[passLen:]
 	dbName, _ := parseNullTermString(data)
-	cc.dbname = hack.String(dbName)
+	cc.dbname = string(hack.String(dbName))
 	err := cc.ctx.Close()
 	if err != nil {
 		log.Debug(err)
