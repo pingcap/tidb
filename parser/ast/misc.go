@@ -146,7 +146,32 @@ type ExplainStmt struct {
 
 // Restore implements Node interface.
 func (n *ExplainStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	if showStmt, ok := n.Stmt.(*ShowStmt); ok {
+		ctx.WriteKeyWord("DESC ")
+		if err := showStmt.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ExplainStmt.ShowStmt.Table")
+		}
+		if showStmt.Column != nil {
+			ctx.WritePlain(" ")
+			if err := showStmt.Column.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ExplainStmt.ShowStmt.Column")
+			}
+		}
+		return nil
+	}
+	ctx.WriteKeyWord("EXPLAIN ")
+	if n.Analyze {
+		ctx.WriteKeyWord("ANALYZE ")
+	} else {
+		ctx.WriteKeyWord("FORMAT ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Format)
+		ctx.WritePlain(" ")
+	}
+	if err := n.Stmt.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore ExplainStmt.Stmt")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -177,7 +202,20 @@ type PrepareStmt struct {
 
 // Restore implements Node interface.
 func (n *PrepareStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("PREPARE ")
+	ctx.WriteName(n.Name)
+	ctx.WriteKeyWord(" FROM ")
+	if n.SQLText != "" {
+		ctx.WriteString(n.SQLText)
+		return nil
+	}
+	if n.SQLVar != nil {
+		if err := n.SQLVar.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore PrepareStmt.SQLVar")
+		}
+		return nil
+	}
+	return errors.New("An error occurred while restore PrepareStmt")
 }
 
 // Accept implements Node Accept interface.
@@ -207,7 +245,9 @@ type DeallocateStmt struct {
 
 // Restore implements Node interface.
 func (n *DeallocateStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("DEALLOCATE PREPARE ")
+	ctx.WriteName(n.Name)
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -240,7 +280,20 @@ type ExecuteStmt struct {
 
 // Restore implements Node interface.
 func (n *ExecuteStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("EXECUTE ")
+	ctx.WriteName(n.Name)
+	if len(n.UsingVars) > 0 {
+		ctx.WriteKeyWord(" USING ")
+		for i, val := range n.UsingVars {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := val.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore ExecuteStmt.UsingVars index %d", i)
+			}
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
