@@ -147,7 +147,7 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			log.Info("RollbackTxn for ddl/autocommit error.")
-			terror.Log(se.RollbackTxn(ctx))
+			se.RollbackTxn(ctx)
 		}
 		return meetsErr
 	}
@@ -166,8 +166,7 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, s
 	history := GetHistory(sctx)
 	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
+			se.RollbackTxn(ctx)
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sctx.GetSessionVars().IsAutocommit())
 		}
@@ -192,6 +191,10 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	var err error
 	var rs sqlexec.RecordSet
 	se := sctx.(*session)
+	err = se.checkTxnAborted(s)
+	if err != nil {
+		return nil, err
+	}
 	rs, err = s.Exec(ctx)
 	sessVars := se.GetSessionVars()
 	// All the history should be added here.
@@ -245,23 +248,23 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		return nil, nil
 	}
 	var rows []chunk.Row
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for {
 		// Since we collect all the rows, we can not reuse the chunk.
-		iter := chunk.NewIterator4Chunk(chk)
+		iter := chunk.NewIterator4Chunk(req.Chunk)
 
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
 }

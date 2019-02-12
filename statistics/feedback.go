@@ -294,8 +294,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	}
 	total := 0
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	kind := feedback.feedback[0].lower.Kind()
-	min, max := getMinValue(kind, h.tp), getMaxValue(kind, h.tp)
+	min, max := getMinValue(h.Tp), getMaxValue(h.Tp)
 	for _, fb := range feedback.feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
@@ -607,7 +606,7 @@ func UpdateCMSketch(c *CMSketch, eqFeedbacks []feedback) *CMSketch {
 }
 
 func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
-	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets), h.TotColSize)
+	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.Tp, len(buckets), h.TotColSize)
 	preCount := int64(0)
 	for _, bkt := range buckets {
 		hist.AppendBucket(bkt.lower, bkt.upper, bkt.count+preCount, bkt.repeat)
@@ -623,7 +622,7 @@ type queryFeedback struct {
 	HashValues  []uint64
 	IndexRanges [][]byte
 	// Counts is the number of scan keys in each range. It first stores the count for `IntRanges`, `IndexRanges` or `ColumnRanges`.
-	// After that, it stores the ranges for `HashValues`.
+	// After that, it stores the Ranges for `HashValues`.
 	Counts       []int64
 	ColumnRanges [][]byte
 }
@@ -723,11 +722,18 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
 	}
 }
 
-func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback) {
+func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback, isUnsigned bool) {
 	q.tp = pkType
 	// decode feedback for primary key
 	for i := 0; i < len(pb.IntRanges); i += 2 {
-		lower, upper := types.NewIntDatum(pb.IntRanges[i]), types.NewIntDatum(pb.IntRanges[i+1])
+		var lower, upper types.Datum
+		if isUnsigned {
+			lower.SetUint64(uint64(pb.IntRanges[i]))
+			upper.SetUint64(uint64(pb.IntRanges[i+1]))
+		} else {
+			lower.SetInt64(pb.IntRanges[i])
+			upper.SetInt64(pb.IntRanges[i+1])
+		}
 		q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
 	}
 }
@@ -748,7 +754,7 @@ func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback) error {
 	return nil
 }
 
-func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
+func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, isUnsigned bool) error {
 	buf := bytes.NewBuffer(val)
 	dec := gob.NewDecoder(buf)
 	pb := &queryFeedback{}
@@ -759,7 +765,7 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
 		decodeFeedbackForIndex(q, pb, c)
 	} else if len(pb.IntRanges) > 0 {
-		decodeFeedbackForPK(q, pb)
+		decodeFeedbackForPK(q, pb, isUnsigned)
 	} else {
 		err := decodeFeedbackForColumn(q, pb)
 		if err != nil {
@@ -787,10 +793,10 @@ func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
 				return false
 			}
 		} else {
-			if bytes.Compare(fb.lower.GetBytes(), rfb.lower.GetBytes()) != 0 {
+			if !bytes.Equal(fb.lower.GetBytes(), rfb.lower.GetBytes()) {
 				return false
 			}
-			if bytes.Compare(fb.upper.GetBytes(), rfb.upper.GetBytes()) != 0 {
+			if !bytes.Equal(fb.upper.GetBytes(), rfb.upper.GetBytes()) {
 				return false
 			}
 		}
@@ -805,15 +811,15 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 		return nil
 	}
 	tablePseudo := t.Pseudo || t.IsOutdated()
-	if tablePseudo == false {
+	if !tablePseudo {
 		return nil
 	}
-	isIndex := q.hist.tp.Tp == mysql.TypeBlob
+	isIndex := q.hist.Tp.Tp == mysql.TypeBlob
 	id := q.hist.ID
-	if isIndex && (t.Indices[id] == nil || t.Indices[id].NotAccurate() == false) {
+	if isIndex && (t.Indices[id] == nil || !t.Indices[id].NotAccurate()) {
 		return nil
 	}
-	if !isIndex && (t.Columns[id] == nil || t.Columns[id].NotAccurate() == false) {
+	if !isIndex && (t.Columns[id] == nil || !t.Columns[id].NotAccurate()) {
 		return nil
 	}
 
@@ -1050,7 +1056,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.Count), float64(q.feedback[i].count))
 		value := types.NewBytesDatum(bytes)
 		q.feedback[i] = feedback{lower: &value, upper: &value, count: int64(equalityCount)}
-		err = rangeFB.dumpRangeFeedback(h, &rang, rangeCount)
+		err = rangeFB.dumpRangeFeedback(sc, h, &rang, rangeCount)
 		if err != nil {
 			log.Debug("dump range feedback failed:", err)
 			continue
@@ -1059,9 +1065,8 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 	return errors.Trace(h.dumpFeedbackToKV(q))
 }
 
-func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCount float64) error {
+func (q *QueryFeedback) dumpRangeFeedback(sc *stmtctx.StatementContext, h *Handle, ran *ranger.Range, rangeCount float64) error {
 	if q.tp == indexType {
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
 		if err != nil {
 			return errors.Trace(err)
@@ -1073,18 +1078,17 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 		ran.LowVal[0].SetBytes(lower)
 		ran.HighVal[0].SetBytes(upper)
 	} else {
-		k := q.hist.GetLower(0).Kind()
-		if !supportColumnType(k) {
+		if !supportColumnType(q.hist.Tp) {
 			return nil
 		}
 		if ran.LowVal[0].Kind() == types.KindMinNotNull {
-			ran.LowVal[0] = getMinValue(k, q.hist.tp)
+			ran.LowVal[0] = getMinValue(q.hist.Tp)
 		}
 		if ran.HighVal[0].Kind() == types.KindMaxValue {
-			ran.HighVal[0] = getMaxValue(k, q.hist.tp)
+			ran.HighVal[0] = getMaxValue(q.hist.Tp)
 		}
 	}
-	ranges := q.hist.SplitRange([]*ranger.Range{ran})
+	ranges := q.hist.SplitRange(sc, []*ranger.Range{ran}, q.tp == indexType)
 	counts := make([]float64, 0, len(ranges))
 	sum := 0.0
 	for _, r := range ranges {
@@ -1128,27 +1132,30 @@ func setNextValue(d *types.Datum) {
 }
 
 // supportColumnType checks if the type of the column can be updated by feedback.
-func supportColumnType(k byte) bool {
-	switch k {
-	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindString, types.KindBytes,
-		types.KindMysqlDecimal, types.KindMysqlDuration, types.KindMysqlTime:
+func supportColumnType(ft *types.FieldType) bool {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeFloat,
+		mysql.TypeDouble, mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		mysql.TypeNewDecimal, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return true
 	default:
 		return false
 	}
 }
 
-func getMaxValue(k byte, ft *types.FieldType) (max types.Datum) {
-	switch k {
-	case types.KindInt64:
-		max.SetInt64(types.SignedUpperBound[ft.Tp])
-	case types.KindUint64:
-		max.SetUint64(types.UnsignedUpperBound[ft.Tp])
-	case types.KindFloat32:
+func getMaxValue(ft *types.FieldType) (max types.Datum) {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(ft.Flag) {
+			max.SetUint64(types.UnsignedUpperBound[ft.Tp])
+		} else {
+			max.SetInt64(types.SignedUpperBound[ft.Tp])
+		}
+	case mysql.TypeFloat:
 		max.SetFloat32(float32(types.GetMaxFloat(ft.Flen, ft.Decimal)))
-	case types.KindFloat64:
+	case mysql.TypeDouble:
 		max.SetFloat64(types.GetMaxFloat(ft.Flen, ft.Decimal))
-	case types.KindString, types.KindBytes:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		val := types.MaxValueDatum()
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
@@ -1156,11 +1163,11 @@ func getMaxValue(k byte, ft *types.FieldType) (max types.Datum) {
 			log.Error(err)
 		}
 		max.SetBytes(bytes)
-	case types.KindMysqlDecimal:
+	case mysql.TypeNewDecimal:
 		max.SetMysqlDecimal(types.NewMaxOrMinDec(false, ft.Flen, ft.Decimal))
-	case types.KindMysqlDuration:
+	case mysql.TypeDuration:
 		max.SetMysqlDuration(types.Duration{Duration: math.MaxInt64})
-	case types.KindMysqlTime:
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
 			max.SetMysqlTime(types.Time{Time: types.MaxDatetime, Type: ft.Tp})
 		} else {
@@ -1170,17 +1177,19 @@ func getMaxValue(k byte, ft *types.FieldType) (max types.Datum) {
 	return
 }
 
-func getMinValue(k byte, ft *types.FieldType) (min types.Datum) {
-	switch k {
-	case types.KindInt64:
-		min.SetInt64(types.SignedLowerBound[ft.Tp])
-	case types.KindUint64:
-		min.SetUint64(0)
-	case types.KindFloat32:
+func getMinValue(ft *types.FieldType) (min types.Datum) {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(ft.Flag) {
+			min.SetUint64(0)
+		} else {
+			min.SetInt64(types.SignedLowerBound[ft.Tp])
+		}
+	case mysql.TypeFloat:
 		min.SetFloat32(float32(-types.GetMaxFloat(ft.Flen, ft.Decimal)))
-	case types.KindFloat64:
+	case mysql.TypeDouble:
 		min.SetFloat64(-types.GetMaxFloat(ft.Flen, ft.Decimal))
-	case types.KindString, types.KindBytes:
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		val := types.MinNotNullDatum()
 		bytes, err := codec.EncodeKey(nil, nil, val)
 		// should not happen
@@ -1188,11 +1197,11 @@ func getMinValue(k byte, ft *types.FieldType) (min types.Datum) {
 			log.Error(err)
 		}
 		min.SetBytes(bytes)
-	case types.KindMysqlDecimal:
+	case mysql.TypeNewDecimal:
 		min.SetMysqlDecimal(types.NewMaxOrMinDec(true, ft.Flen, ft.Decimal))
-	case types.KindMysqlDuration:
+	case mysql.TypeDuration:
 		min.SetMysqlDuration(types.Duration{Duration: math.MinInt64})
-	case types.KindMysqlTime:
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
 			min.SetMysqlTime(types.Time{Time: types.MinDatetime, Type: ft.Tp})
 		} else {

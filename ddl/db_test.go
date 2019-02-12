@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
@@ -78,7 +77,6 @@ type testDBSuite struct {
 
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
-	testleak.BeforeTest()
 
 	s.lease = 200 * time.Millisecond
 	session.SetSchemaLease(s.lease)
@@ -112,7 +110,6 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -471,6 +468,64 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(c, "alter table t add index idx_c2(c2)")
 	s.mustExec(c, "alter table t drop index idx_c2")
+}
+
+// TestCancelRenameIndex tests cancel ddl job which type is rename index.
+func (s *testDBSuite) TestCancelRenameIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "create database if not exists test_rename_index")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+	for i := 0; i < 100; i++ {
+		s.mustExec(c, "insert into t values (?, ?)", i, i)
+	}
+	s.mustExec(c, "alter table t add index idx_c2(c2)")
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionRenameIndex && job.State == model.JobStateNone {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.Background())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	rs, err := s.tk.Exec("alter table t rename index idx_c2 to idx_c3")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(checkErr, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	t := s.testGetTable(c, "t")
+	for _, idx := range t.Indices() {
+		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c3"), IsFalse)
+	}
+	s.mustExec(c, "alter table t rename index idx_c2 to idx_c3")
 }
 
 // TestCancelDropTable tests cancel ddl job which type is drop table.
@@ -1619,13 +1674,48 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 
 	// for failure case
 	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
-	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	}
 	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
-	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	}
 	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
-	s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	}
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
 	s.testErrorCode(c, failSQL, tmysql.ErrErrorOnRename)
+
+	s.tk.MustExec("use test1")
+	s.tk.MustExec("create table if not exists t_exist (c1 int, c2 int)")
+	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t_exist")
+	s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test1.t_exist")
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+	}
+	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_exist")
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrTableExists)
+	}
+	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_not_exist")
+	if isAlterTable {
+		s.testErrorCode(c, failSQL, tmysql.ErrNoSuchTable)
+	} else {
+		s.testErrorCode(c, failSQL, tmysql.ErrFileNotFound)
+	}
 
 	// for the same table name
 	s.tk.MustExec("use test1")
@@ -1710,7 +1800,7 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	result = s.tk.MustQuery(`show create table table_with_gen_col_blanks`)
 	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` char(20) GENERATED ALWAYS AS (CAST(`a` AS CHAR)) VIRTUAL DEFAULT NULL\n" +
+		"  `b` char(20) CHARSET utf8mb4 COLLATE utf8mb4_bin GENERATED ALWAYS AS (CAST(`a` AS CHAR)) VIRTUAL DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	genExprTests := []struct {
@@ -1835,7 +1925,7 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
 	s.tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
 		"text_default_text CREATE TABLE `text_default_text` (\n"+
-			"  `c1` text NOT NULL\n"+
+			"  `c1` text CHARSET utf8mb4 COLLATE utf8mb4_bin NOT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	ctx := s.tk.Se.(sessionctx.Context)
@@ -1945,6 +2035,51 @@ func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
 	s.testErrorCode(c, "alter table test2 change c1 a1 bigint not null;", tmysql.WarnDataTruncated)
 }
 
+func (s *testDBSuite) TestCheckTooBigFieldLength(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists tr_01;")
+	s.tk.MustExec("create table tr_01 (id int, name varchar(20000), purchased date )  default charset=utf8 collate=utf8_bin;")
+
+	s.tk.MustExec("drop table if exists tr_02;")
+	s.tk.MustExec("create table tr_02 (id int, name varchar(16000), purchased date )  default charset=utf8mb4 collate=utf8mb4_bin;")
+
+	s.tk.MustExec("drop table if exists tr_03;")
+	s.tk.MustExec("create table tr_03 (id int, name varchar(65534), purchased date ) default charset=latin1;")
+
+	s.tk.MustExec("drop table if exists tr_04;")
+	s.tk.MustExec("create table tr_04 (a varchar(20000)) default charset utf8;")
+	s.testErrorCode(c, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
+	s.testErrorCode(c, "create table tr (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
+	s.testErrorCode(c, "create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8;", tmysql.ErrTooBigFieldlength)
+	s.testErrorCode(c, "create table tr (id int, name varchar(65536), purchased date ) default charset=latin1;", tmysql.ErrTooBigFieldlength)
+
+	s.tk.MustExec("drop table if exists tr_05;")
+	s.tk.MustExec("create table tr_05 (a varchar(16000) charset utf8);")
+	s.tk.MustExec("alter table tr_05 modify column a varchar(16000) charset utf8;")
+	s.tk.MustExec("alter table tr_05 modify column a varchar(16000) charset utf8mb4;")
+}
+
+func (s *testDBSuite) TestCheckConvertToCharacter(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	defer s.tk.MustExec("drop table t")
+	s.tk.MustExec("create table t(a varchar(10) charset binary);")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	rs, err := s.tk.Exec("alter table t modify column a varchar(10) charset utf8 collate utf8_bin")
+	c.Assert(err, NotNil)
+	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin")
+	c.Assert(err, NotNil)
+	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset latin collate latin1_bin")
+	c.Assert(err, NotNil)
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(t.Cols()[0].Charset, Equals, "binary")
+}
 func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
@@ -1971,8 +2106,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
-		var err error
-		err = hookCtx.NewTxn(context.Background())
+		err := hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -2179,6 +2313,7 @@ func (s *testDBSuite) TestAddColumn2(c *C) {
 	err = s.tk.Se.StmtCommit()
 	c.Assert(err, IsNil)
 	err = s.tk.Se.CommitTxn(ctx)
+	c.Assert(err, IsNil)
 
 	s.tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 2 1"))
 

@@ -49,7 +49,7 @@ type SimpleExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) {
 	if e.done {
 		return nil
 	}
@@ -210,9 +210,9 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		}
 		if !exists {
 			failedUsers = append(failedUsers, spec.User.String())
-			if s.IfExists {
-				// TODO: Make this error as a warning.
-			}
+			// TODO: Make this error as a warning.
+			// if s.IfExists {
+			// }
 			continue
 		}
 		pwd := ""

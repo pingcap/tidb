@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -42,6 +43,7 @@ var (
 	_ LogicalPlan = &LogicalSort{}
 	_ LogicalPlan = &LogicalLock{}
 	_ LogicalPlan = &LogicalLimit{}
+	_ LogicalPlan = &LogicalWindow{}
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, FullOuterJoin, SemiJoin.
@@ -123,30 +125,54 @@ type LogicalJoin struct {
 }
 
 func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expression.Expression) {
+	for i, cond := range p.LeftConditions {
+		p.LeftConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
+	for i, cond := range p.RightConditions {
+		p.RightConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
+	for i, cond := range p.OtherConditions {
+		p.OtherConditions[i] = expression.ColumnSubstitute(cond, schema, exprs)
+	}
+
 	for i := len(p.EqualConditions) - 1; i >= 0; i-- {
-		p.EqualConditions[i] = expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
-		// After the column substitute, the equal condition may become single side condition.
-		if p.children[0].Schema().Contains(p.EqualConditions[i].GetArgs()[1].(*expression.Column)) {
-			p.LeftConditions = append(p.LeftConditions, p.EqualConditions[i])
+		newCond := expression.ColumnSubstitute(p.EqualConditions[i], schema, exprs).(*expression.ScalarFunction)
+
+		// If the columns used in the new filter all come from the left child,
+		// we can push this filter to it.
+		if expression.ExprFromSchema(newCond, p.children[0].Schema()) {
+			p.LeftConditions = append(p.LeftConditions, newCond)
 			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
-		} else if p.children[1].Schema().Contains(p.EqualConditions[i].GetArgs()[0].(*expression.Column)) {
-			p.RightConditions = append(p.RightConditions, p.EqualConditions[i])
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
 		}
-	}
-	for i, fun := range p.LeftConditions {
-		p.LeftConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
-	}
-	for i, fun := range p.RightConditions {
-		p.RightConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
-	}
-	for i, fun := range p.OtherConditions {
-		p.OtherConditions[i] = expression.ColumnSubstitute(fun, schema, exprs)
+
+		// If the columns used in the new filter all come from the right
+		// child, we can push this filter to it.
+		if expression.ExprFromSchema(newCond, p.children[1].Schema()) {
+			p.RightConditions = append(p.RightConditions, newCond)
+			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
+		}
+
+		_, lhsIsCol := newCond.GetArgs()[0].(*expression.Column)
+		_, rhsIsCol := newCond.GetArgs()[1].(*expression.Column)
+
+		// If the columns used in the new filter are not all expression.Column,
+		// we can not use it as join's equal condition.
+		if !(lhsIsCol && rhsIsCol) {
+			p.OtherConditions = append(p.OtherConditions, newCond)
+			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			continue
+		}
+
+		p.EqualConditions[i] = newCond
 	}
 }
 
 func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
-	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan), false, false)
+	eq, left, right, other := p.extractOnCondition(onConds, false, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
 	p.RightConditions = append(right, p.RightConditions...)
@@ -298,6 +324,9 @@ type DataSource struct {
 
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
+	// allConds contains all the filters on this table. For now it's maintained
+	// in predicate push down and used only in partition pruning.
+	allConds []expression.Expression
 
 	// relevantIndices means the indices match the push down conditions
 	relevantIndices []bool
@@ -310,6 +339,7 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	isPartition     bool
 	physicalTableID int64
+	partitionNames  []model.CIStr
 }
 
 // accessPath tells how we access one index or just access table.
@@ -448,7 +478,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	if corColInAccessConds {
 		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
 		if ok && !ds.stats.HistColl.Pseudo {
-			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+			path.countAfterAccess = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 		} else {
 			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
 		}
@@ -459,7 +489,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, _, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
@@ -616,4 +646,35 @@ type LogicalLock struct {
 	baseLogicalPlan
 
 	Lock ast.SelectLockType
+}
+
+// WindowFrame represents a window function frame.
+type WindowFrame struct {
+	Type  ast.FrameType
+	Start *FrameBound
+	End   *FrameBound
+}
+
+// FrameBound is the boundary of a frame.
+type FrameBound struct {
+	Type      ast.BoundType
+	UnBounded bool
+	Num       uint64
+	// For `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`, we will build the date_add or date_sub functions.
+	DateCalcFunc expression.Expression
+}
+
+// LogicalWindow represents a logical window function plan.
+type LogicalWindow struct {
+	logicalSchemaProducer
+
+	WindowFuncDesc *aggregation.WindowFuncDesc
+	PartitionBy    []property.Item
+	OrderBy        []property.Item
+	Frame          *WindowFrame
+}
+
+// GetWindowResultColumn returns the column storing the result of the window function.
+func (p *LogicalWindow) GetWindowResultColumn() *expression.Column {
+	return p.schema.Columns[p.schema.Len()-1]
 }

@@ -173,28 +173,6 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 	return newKeys
 }
 
-// Change EqualConditions order, by offsets array
-// offsets array is generate by prop check
-func getNewEqualConditionsByOffsets(oldEqualCond []*expression.ScalarFunction, offsets []int) []*expression.ScalarFunction {
-	newEqualCond := make([]*expression.ScalarFunction, 0, len(oldEqualCond))
-	for _, offset := range offsets {
-		newEqualCond = append(newEqualCond, oldEqualCond[offset])
-	}
-	for pos, condition := range oldEqualCond {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
-		if !isExist {
-			newEqualCond = append(newEqualCond, condition)
-		}
-	}
-	return newEqualCond
-}
-
 func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
 	// Check whether SMJ can satisfy the required property
 	offsets := make([]int, 0, len(p.LeftJoinKeys))
@@ -459,7 +437,7 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 	var rowCount float64
 	pkHist, ok := ds.statisticTable.Columns[pk.ID]
 	if ok && !ds.statisticTable.Pseudo {
-		rowCount = pkHist.AvgCountPerValue(ds.statisticTable.Count)
+		rowCount = pkHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 	} else {
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
@@ -506,7 +484,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	var rowCount float64
 	idxHist, ok := ds.statisticTable.Indices[idx.ID]
 	if ok && !ds.statisticTable.Pseudo {
-		rowCount = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+		rowCount = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 	} else {
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
@@ -609,12 +587,16 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	if len(p.EqualConditions) == 0 {
-		return nil, false
-	}
 	plans := make([]PhysicalPlan, 0, 2)
 	rightOuter := (p.preferJoinType & preferLeftAsIndexInner) > 0
 	leftOuter := (p.preferJoinType & preferRightAsIndexInner) > 0
+	if len(p.EqualConditions) == 0 {
+		if leftOuter || rightOuter {
+			warning := ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
+		return nil, false
+	}
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(prop, 0)
@@ -787,6 +769,23 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	apply.SetSchema(la.schema)
 	return []PhysicalPlan{apply}
+}
+
+func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	var byItems []property.Item
+	byItems = append(byItems, p.PartitionBy...)
+	byItems = append(byItems, p.OrderBy...)
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: true}
+	if !prop.IsPrefix(childProperty) {
+		return nil
+	}
+	window := PhysicalWindow{
+		WindowFuncDesc: p.WindowFuncDesc,
+		PartitionBy:    p.PartitionBy,
+		OrderBy:        p.OrderBy,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
+	window.SetSchema(p.Schema())
+	return []PhysicalPlan{window}
 }
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.

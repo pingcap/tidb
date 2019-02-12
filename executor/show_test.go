@@ -173,6 +173,9 @@ func (s *testSuite2) TestShow2(c *C) {
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
 	tk.MustExec("create or replace view v as select * from t")
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
+	tk.MustQuery(`describe t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
+	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
+	tk.MustQuery(`describe v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
 
 	tk.MustQuery("show tables").Check(testkit.Rows("t", "v"))
@@ -295,6 +298,20 @@ func (s *testSuite2) TestShowSlow(c *C) {
 	tk.MustQuery(`admin show slow top 3`)
 	tk.MustQuery(`admin show slow top internal 3`)
 	tk.MustQuery(`admin show slow top all 3`)
+}
+
+func (s *testSuite2) TestShowCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int,b int)")
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
+	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS select * from t1  "))
+
+	tk.MustExec("drop view v1")
+	tk.MustExec("drop table t1")
 }
 
 func (s *testSuite2) TestShowEscape(c *C) {

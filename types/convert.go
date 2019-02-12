@@ -106,7 +106,11 @@ func ConvertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 }
 
 // ConvertIntToUint converts an int value to an uint value.
-func ConvertIntToUint(val int64, upperBound uint64, tp byte) (uint64, error) {
+func ConvertIntToUint(sc *stmtctx.StatementContext, val int64, upperBound uint64, tp byte) (uint64, error) {
+	if sc.ShouldClipToZero() && val < 0 {
+		return 0, overflow(val, tp)
+	}
+
 	if uint64(val) > upperBound {
 		return upperBound, overflow(val, tp)
 	}
@@ -124,9 +128,12 @@ func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 }
 
 // ConvertFloatToUint converts a float value to an uint value.
-func ConvertFloatToUint(fval float64, upperBound uint64, tp byte) (uint64, error) {
+func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
 	val := RoundFloat(fval)
 	if val < 0 {
+		if sc.ShouldClipToZero() {
+			return 0, overflow(val, tp)
+		}
 		return uint64(int64(val)), overflow(val, tp)
 	}
 
@@ -322,14 +329,12 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	if intCnt <= 0 {
 		intStr = "0"
 		if intCnt == 0 && len(digits) > 0 {
-			dotIdx = -1
 			intStr = roundIntStr(digits[0], intStr)
 		}
 		return intStr, nil
 	}
 	if intCnt == 1 && (digits[0] == '-' || digits[0] == '+') {
 		intStr = "0"
-		dotIdx = 0
 		if len(digits) > 1 {
 			intStr = roundIntStr(digits[1], intStr)
 		}
@@ -400,7 +405,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 			return ConvertFloatToInt(f, lBound, uBound, mysql.TypeDouble)
 		}
 		bound := UnsignedUpperBound[mysql.TypeLonglong]
-		u, err := ConvertFloatToUint(f, bound, mysql.TypeDouble)
+		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
 		return StrToInt(sc, hack.String(j.GetString()))
@@ -423,7 +428,7 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 	case json.TypeCodeInt64:
 		return float64(j.GetInt64()), nil
 	case json.TypeCodeUint64:
-		u, err := ConvertIntToUint(j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
+		u, err := ConvertIntToUint(sc, j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
 		return float64(u), errors.Trace(err)
 	case json.TypeCodeFloat64:
 		return j.GetFloat64(), nil

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/gcutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -43,6 +44,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -56,7 +58,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = t.CreateTable(schemaID, tbInfo)
+		err = t.CreateTableOrView(schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -77,7 +79,8 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	var orReplace bool
-	if err := job.DecodeArgs(tbInfo, &orReplace); err != nil {
+	var oldTbInfoID int64
+	if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -85,7 +88,10 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
 	if err != nil {
-		return ver, errors.Trace(err)
+		if infoschema.ErrDatabaseNotExists.Equal(err) || !orReplace {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
@@ -96,7 +102,13 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		// none -> public
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
-		err = t.CreateTable(schemaID, tbInfo)
+		if oldTbInfoID > 0 && orReplace {
+			err = t.DropTableOrView(schemaID, oldTbInfoID, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
+		err = t.CreateTableOrView(schemaID, tbInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -109,38 +121,10 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 }
 
-func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	schemaID := job.SchemaID
-	tableID := job.TableID
-	// Check this table's database.
-	tblInfo, err := t.GetTable(schemaID, tableID)
+func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	tblInfo, err := checkTableExist(t, job, job.SchemaID)
 	if err != nil {
-		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
-				fmt.Sprintf("(Schema ID %d)", schemaID),
-			))
-		}
 		return ver, errors.Trace(err)
-	}
-
-	// Check the table.
-	if tblInfo == nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
-			fmt.Sprintf("(Schema ID %d)", schemaID),
-			fmt.Sprintf("(Table ID %d)", tableID),
-		))
-	}
-
-	if job.IsRollingback() {
-		// To simplify the rollback logic, cannot be canceled after job start to run.
-		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
-		if tblInfo.State == model.StatePublic {
-			job.State = model.JobStateCancelled
-			return ver, errCancelledDDLJob
-		}
-		job.State = model.JobStateRunning
 	}
 
 	originalState := job.SchemaState
@@ -161,18 +145,167 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropTable(job.SchemaID, tableID, true); err != nil {
+		if err = t.DropTableOrView(job.SchemaID, job.TableID, true); err != nil {
 			break
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		startKey := tablecodec.EncodeTablePrefix(tableID)
+		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
 		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+const (
+	restoreTableCheckFlagNone int64 = iota
+	restoreTableCheckFlagEnableGC
+	restoreTableCheckFlagDisableGC
+)
+
+func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	schemaID := job.SchemaID
+	tblInfo := &model.TableInfo{}
+	var autoID, dropJobID, restoreTableCheckFlag int64
+	var snapshotTS uint64
+	if err = job.DecodeArgs(tblInfo, &autoID, &dropJobID, &snapshotTS, &restoreTableCheckFlag); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// check GC and safe point
+	gcEnable, err := checkGCEnable(w)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = checkTableNotExists(t, job, schemaID, tblInfo.Name.L)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Restore table divide into 2 steps:
+	// 1. Check GC enable status, to decided whether enable GC after restore table.
+	//     a. Why not disable GC before put the job to DDL job queue?
+	//        Think about concurrency problem. If a restore job-1 is doing and already disabled GC,
+	//        then, another restore table job-2 check GC enable will get disable before into the job queue.
+	//        then, after restore table job-2 finished, the GC will be disabled.
+	//     b. Why split into 2 steps? 1 step also can finish this job: check GC -> disable GC -> restore table -> finish job.
+	//        What if the transaction commit failed? then, the job will retry, but the GC already disabled when first running.
+	//        So, after this job retry succeed, the GC will be disabled.
+	// 2. Do restore table job.
+	//     a. Check whether GC enabled, if enabled, disable GC first.
+	//     b. Check GC safe point. If drop table time if after safe point time, then can do restore.
+	//        otherwise, can't restore table, because the records of the table may already delete by gc.
+	//     c. Remove GC task of the table from gc_delete_range table.
+	//     d. Create table and rebase table auto ID.
+	//     e. Finish.
+	switch tblInfo.State {
+	case model.StateNone:
+		// none -> write only
+		// check GC enable and update flag.
+		if gcEnable {
+			job.Args[len(job.Args)-1] = restoreTableCheckFlagEnableGC
+		} else {
+			job.Args[len(job.Args)-1] = restoreTableCheckFlagDisableGC
+		}
+
+		job.SchemaState = model.StateWriteOnly
+		tblInfo.State = model.StateWriteOnly
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, false)
+	case model.StateWriteOnly:
+		// write only -> public
+		// do restore table.
+		if gcEnable {
+			err = disableGC(w)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
+			}
+		}
+		// check GC safe point
+		err = checkSafePoint(w, snapshotTS)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// Remove dropped table DDL job from gc_delete_range table.
+		err = w.delRangeManager.removeFromGCDeleteRange(dropJobID, tblInfo.ID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		tblInfo.State = model.StatePublic
+		tblInfo.UpdateTS = t.StartTS
+		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// gofail: var mockRestoreTableCommitErr bool
+		// if mockRestoreTableCommitErr && mockRestoreTableCommitErrOnce {
+		//	 mockRestoreTableCommitErrOnce = false
+		//	 kv.MockCommitErrorEnable()
+		// }
+
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job.
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	default:
+		return ver, ErrInvalidTableState.GenWithStack("invalid restore table state %v", tblInfo.State)
+	}
+	return ver, nil
+}
+
+// mockRestoreTableCommitErrOnce uses to make sure `mockRestoreTableCommitErr` only mock error once.
+var mockRestoreTableCommitErrOnce = true
+
+func enableGC(w *worker) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.EnableGC(ctx)
+}
+
+func disableGC(w *worker) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.DisableGC(ctx)
+}
+
+func checkGCEnable(w *worker) (enable bool, err error) {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.CheckGCEnable(ctx)
+}
+
+func checkSafePoint(w *worker, snapshotTS uint64) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
 type splitableStore interface {
@@ -198,7 +331,22 @@ func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table
 }
 
 func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
+	tblInfo, err := checkTableExist(t, job, schemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tblInfo.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
+	}
+
+	return tblInfo, nil
+}
+
+func checkTableExist(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tableID := job.TableID
+	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
@@ -208,19 +356,16 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 			))
 		}
 		return nil, errors.Trace(err)
-	} else if tblInfo == nil {
+	}
+
+	// Check the table.
+	if tblInfo == nil {
 		job.State = model.JobStateCancelled
 		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		))
 	}
-
-	if tblInfo.State != model.StatePublic {
-		job.State = model.JobStateCancelled
-		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
-	}
-
 	return tblInfo, nil
 }
 
@@ -241,7 +386,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	err = t.DropTable(schemaID, tblInfo.ID, true)
+	err = t.DropTableOrView(schemaID, tblInfo.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -263,7 +408,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	}
 
 	tblInfo.ID = newTableID
-	err = t.CreateTable(schemaID, tblInfo)
+	err = t.CreateTableOrView(schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -354,6 +499,7 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newSchemaID := job.SchemaID
 	err = checkTableNotExists(t, job, newSchemaID, tableName.L)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -371,7 +517,7 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		tblInfo.OldSchemaID = 0
 	}
 
-	err = t.DropTable(oldSchemaID, tblInfo.ID, shouldDelAutoID)
+	err = t.DropTableOrView(oldSchemaID, tblInfo.ID, shouldDelAutoID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -382,7 +528,7 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	//	return ver, errors.New("occur an error after renaming table.")
 	// }
 	tblInfo.Name = tableName
-	err = t.CreateTable(newSchemaID, tblInfo)
+	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -452,7 +598,6 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	tables, err := t.ListTables(schemaID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
 			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 		}
 		return errors.Trace(err)
@@ -461,8 +606,6 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 	// Check the table.
 	for _, tbl := range tables {
 		if tbl.Name.L == tableName {
-			// This table already exists and can't be created, we should cancel this job now.
-			job.State = model.JobStateCancelled
 			return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
 		}
 	}
