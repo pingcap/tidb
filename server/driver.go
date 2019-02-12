@@ -57,7 +57,7 @@ type QueryCtx interface {
 	CommitTxn(ctx context.Context) error
 
 	// RollbackTxn undoes the transaction operations.
-	RollbackTxn() error
+	RollbackTxn()
 
 	// WarningCount returns warning count of last executed command.
 	WarningCount() uint16
