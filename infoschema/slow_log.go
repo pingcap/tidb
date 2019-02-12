@@ -73,12 +73,11 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		// check start
+		// Check slow log entry start flag.
 		if !startFlag && strings.Contains(line, startPrefix) {
 			value, err := parseSlowLogField(variable.SlowLogTimeStr, line[len(startPrefix):])
 			if err != nil {
 				log.Errorf("parse slow log error: %v", err)
-				// temporary ignore now.
 				continue
 			}
 			rowMap[variable.SlowLogTimeStr] = *value
@@ -87,7 +86,7 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 		}
 
 		if startFlag {
-			// parse field.
+			// Parse slow log field.
 			if strings.Contains(line, variable.SlowLogPrefixStr) {
 				line = line[len(variable.SlowLogPrefixStr):]
 				fieldValues := strings.Split(line, " ")
@@ -99,15 +98,14 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 					value, err := parseSlowLogField(field, fieldValues[i+1])
 					if err != nil {
 						log.Errorf("parse slow log error: %v", err)
-						// temporary ignore now.
 						continue
 					}
 					rowMap[field] = *value
 
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
-				// get the sql string, and mark the start flag to false.
-				rowMap[variable.SlowLogQuerySQLStr] = types.NewStringDatum(copyStringHack(line))
+				// Get the sql string, and mark the start flag to false.
+				rowMap[variable.SlowLogQuerySQLStr] = types.NewStringDatum(string(hack.Slice(line)))
 				rows = append(rows, rowMap)
 				rowMap = make(map[string]types.Datum, len(slowQueryCols))
 				startFlag = false
@@ -175,12 +173,4 @@ func findColumnByName(cols []columnInfo, colName string) *columnInfo {
 		}
 	}
 	return nil
-}
-
-func copyString(s string) string {
-	return string([]byte(s))
-}
-
-func copyStringHack(s string) string {
-	return string(hack.Slice(s))
 }
