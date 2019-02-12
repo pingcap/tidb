@@ -116,9 +116,9 @@ func (s *testSuite) TestBindParse(c *C) {
 	bindHandle := infobind.NewHandle()
 
 	hu := &infobind.HandleUpdater{
-		GlobalHandle: bindHandle,
-		Parser:       s.Parser,
-		Ctx:          tk.Se,
+		globalHandle: bindHandle,
+		parser:       s.Parser,
+		ctx:          tk.Se,
 	}
 
 	err := hu.Update(true)

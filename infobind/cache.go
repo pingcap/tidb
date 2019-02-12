@@ -49,10 +49,10 @@ type Handle struct {
 
 // HandleUpdater use to update the bindCache.
 type HandleUpdater struct {
-	Parser         *parser.Parser
-	LastUpdateTime types.Time
-	Ctx            sessionctx.Context
-	GlobalHandle   *Handle
+	parser         *parser.Parser
+	lastUpdateTime types.Time
+	ctx            sessionctx.Context
+	globalHandle   *Handle
 }
 
 type bindRecord struct {
@@ -64,6 +64,15 @@ type bindRecord struct {
 	UpdateTime  types.Time
 	Charset     string
 	Collation   string
+}
+
+// NewHandleUpdater create a new HandleUpdater.
+func NewHandleUpdater(handle *Handle, parser *parser.Parser, ctx sessionctx.Context) *HandleUpdater {
+	return &HandleUpdater{
+		globalHandle: handle,
+		parser:       parser,
+		ctx:          ctx,
+	}
 }
 
 // NewHandle create a Handle with a bindCache.
@@ -80,12 +89,16 @@ func (h *Handle) Get() *bindCache {
 		return bc.(*bindCache)
 	}
 
-	return nil
+	bc = &bindCache{
+		Cache: make(map[string][]*bindData, defaultBindCacheSize),
+	}
+
+	return bc.(*bindCache)
 }
 
 // LoadDiff use to load new bind info to bindCache bc.
 func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
-	tmp, err := h.Ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	tmp, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -106,16 +119,16 @@ func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 		it := chunk.NewIterator4Chunk(chk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			record := decodeBindTableRow(row, fs)
-			err = bc.appendNode(h.Ctx, record, h.Parser)
+			err = bc.appendNode(h.ctx, record, h.parser)
 			if err != nil {
 				continue
 			}
 
-			if record.UpdateTime.Compare(h.LastUpdateTime) == 1 {
-				h.LastUpdateTime = record.UpdateTime
+			if record.UpdateTime.Compare(h.lastUpdateTime) == 1 {
+				h.lastUpdateTime = record.UpdateTime
 			}
 		}
-		chk = chunk.Renew(chk, h.Ctx.GetSessionVars().MaxChunkSize)
+		chk = chunk.Renew(chk, h.ctx.GetSessionVars().MaxChunkSize)
 	}
 }
 
@@ -125,34 +138,27 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 		err error
 		sql string
 	)
-	bc := h.GlobalHandle.Get()
-
-	length := defaultBindCacheSize
-	if bc != nil {
-		length = len(bc.Cache)
-	}
+	bc := h.globalHandle.Get()
 
 	newBc := &bindCache{
-		Cache: make(map[string][]*bindData, length),
+		Cache: make(map[string][]*bindData, len(bc.Cache)),
 	}
 
-	if bc != nil {
-		for hash, bindDataArr := range bc.Cache {
-			newBc.Cache[hash] = append(newBc.Cache[hash], bindDataArr...)
-		}
+	for hash, bindDataArr := range bc.Cache {
+		newBc.Cache[hash] = append(newBc.Cache[hash], bindDataArr...)
 	}
 
 	if fullLoad {
 		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info")
 	} else {
-		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info where update_time > \"%s\"", h.LastUpdateTime.String())
+		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info where update_time > \"%s\"", h.lastUpdateTime.String())
 	}
 	err = h.loadDiff(sql, newBc)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	h.GlobalHandle.bind.Store(newBc)
+	h.globalHandle.bind.Store(newBc)
 	return nil
 }
 
