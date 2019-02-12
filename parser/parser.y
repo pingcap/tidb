@@ -5804,7 +5804,7 @@ AdminStmt:
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminRestoreTable,
 			Tables: []*ast.TableName{$4.(*ast.TableName)},
-		        JobNumber: $5.(int64),
+			JobNumber: $5.(int64),
 		}
 	}
 |	"ADMIN" "CLEANUP" "INDEX" TableName Identifier
