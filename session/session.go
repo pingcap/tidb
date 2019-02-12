@@ -78,7 +78,7 @@ type Session interface {
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a sql statement.
 	String() string                                               // String is used to debug.
 	CommitTxn(context.Context) error
-	RollbackTxn(context.Context) error
+	RollbackTxn(context.Context)
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
@@ -449,13 +449,12 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-func (s *session) RollbackTxn(ctx context.Context) error {
+func (s *session) RollbackTxn(ctx context.Context) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
-	var err error
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
 		metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), metrics.LblRollback).Inc()
@@ -464,7 +463,6 @@ func (s *session) RollbackTxn(ctx context.Context) error {
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return errors.Trace(err)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -541,7 +539,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		if err != nil {
-			s.rollbackOnError(ctx)
+			s.RollbackTxn(ctx)
 		}
 		s.txn.changeToInvalid()
 	}()
@@ -977,7 +975,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
 func (s *session) rollbackOnError(ctx context.Context) {
 	if !s.sessionVars.InTxn() {
-		terror.Log(s.RollbackTxn(ctx))
+		s.RollbackTxn(ctx)
 	}
 }
 
@@ -1006,11 +1004,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 	if !inTxn {
 		// We could start a transaction to build the prepare executor before, we should rollback it here.
-		err = s.RollbackTxn(ctx)
-		if err != nil {
-			err = errors.Trace(err)
-			return
-		}
+		s.RollbackTxn(ctx)
 	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
@@ -1160,9 +1154,7 @@ func (s *session) Close() {
 		s.statsCollector.Delete()
 	}
 	ctx := context.TODO()
-	if err := s.RollbackTxn(ctx); err != nil {
-		log.Error("session Close error:", errors.ErrorStack(err))
-	}
+	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
 	}

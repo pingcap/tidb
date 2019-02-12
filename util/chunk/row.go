@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-// Row represents a row of data, can be used to assess values.
+// Row represents a row of data, can be used to access values.
 type Row struct {
 	c   *Chunk
 	idx int
