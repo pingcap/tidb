@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func isLetter(ch rune) bool {
@@ -634,9 +633,9 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 			return tok
 		}
 	}
-	tok, ok := tokenMap[hack.String(data)]
+	tok, ok := tokenMap[string(data)]
 	if !ok && s.supportWindowFunc {
-		tok = windowFuncTokenMap[hack.String(data)]
+		tok = windowFuncTokenMap[string(data)]
 	}
 	return tok
 }
