@@ -383,14 +383,13 @@ type benchmarkFunctionClass struct {
 	baseFunctionClass
 }
 
-// getFunction See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
 func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 
 	// Syntax: BENCHMARK(loop_count, expression)
-	// Now that eval result of input arg is useless, we can define by the same eval type of input arg here.
+	// Define with same eval type of input arg to avoid unnecessary cast function.
 	sameEvalType := args[1].GetType().EvalType()
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, sameEvalType)
 	sig := &builtinBenchmarkSig{bf}
@@ -407,11 +406,13 @@ func (b *builtinBenchmarkSig) Clone() builtinFunc {
 	return newSig
 }
 
+// evalInt evals a builtinBenchmarkSig. It will execute expression repeatedly count times.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
 func (b *builtinBenchmarkSig) evalInt(row chunk.Row) (int64, bool, error) {
 	// Get loop count.
 	loopCount, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, err
 	}
 
 	// BENCHMARK() will return NULL if loop count < 0,
@@ -420,15 +421,63 @@ func (b *builtinBenchmarkSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, nil
 	}
 
-	// Eval loop count times.
+	// Eval loop count times based on arg type.
+	// BENCHMARK() will pass-through the eval error,
+	// behavior observed on MySQL 5.7.24.
 	var i int64
-	for ; i < loopCount; i++ {
-		_, err := b.args[1].Eval(row)
-		// BENCHMARK() will pass-through the eval error,
-		// behavior observed on MySQL 5.7.24.
-		if err != nil {
-			return 0, false, errors.Trace(err)
+	arg, ctx := b.args[1], b.ctx
+	switch evalType := arg.GetType().EvalType(); evalType {
+	case types.ETInt:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalInt(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
 		}
+	case types.ETReal:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalReal(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETDecimal:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalDecimal(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETString:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalString(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETDatetime, types.ETTimestamp:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalTime(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETDuration:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalDuration(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	case types.ETJson:
+		for ; i < loopCount; i++ {
+			_, isNull, err = arg.EvalJSON(ctx, row)
+			if err != nil {
+				return 0, isNull, err
+			}
+		}
+	default: // Should never go into here.
+		return 0, true, errors.Errorf("EvalType %v not implemented for builtin BENCHMARK()", evalType)
 	}
 
 	// Return value of BENCHMARK() is always 0.

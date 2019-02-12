@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
@@ -131,7 +132,12 @@ func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 		{0, 1, 0, false},
 		{3, 1, 0, false},
 		{3, 1.234, 0, false},
+		{3, types.NewDecFromFloatForTest(1.234), 0, false},
 		{3, "abc", 0, false},
+		{3, types.CurrentTime(mysql.TypeDatetime), 0, false},
+		{3, types.CurrentTime(mysql.TypeTimestamp), 0, false},
+		{3, types.CurrentTime(mysql.TypeDuration), 0, false},
+		{3, json.CreateBinary("[1]"), 0, false},
 	}
 
 	for _, t := range cases {
