@@ -14,7 +14,7 @@
 package chunk
 
 // UnspecifiedNumRows represents requiredRows is not specified.
-const UnspecifiedNumRows = -1
+const UnspecifiedNumRows = 0
 
 // RecordBatch is input parameter of Executor.Next` method.
 type RecordBatch struct {
