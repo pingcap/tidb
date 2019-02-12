@@ -188,6 +188,7 @@ import (
 	nvarcharType		"NVARCHAR"
 	on			"ON"
 	option			"OPTION"
+	optionally		"OPTIONALLY"
 	or			"OR"
 	order			"ORDER"
 	outer			"OUTER"
@@ -7723,6 +7724,10 @@ FieldsTerminated:
 Enclosed:
 	{
 		$$ = ""
+	}
+|	"OPTIONALLY" "ENCLOSED" "BY" stringLit
+	{
+		$$ = $4
 	}
 |	"ENCLOSED" "BY" stringLit
 	{
