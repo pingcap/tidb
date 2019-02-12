@@ -60,7 +60,11 @@ func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer file.Close()
+	defer func() {
+		if err = file.Close(); err != nil {
+			log.Error(err)
+		}
+	}()
 
 	return parseSlowLog(bufio.NewScanner(file))
 }
