@@ -57,14 +57,16 @@ func (bj BinaryJSON) Type() string {
 
 // Quote is for JSON_QUOTE
 func (bj BinaryJSON) Quote() string {
-	return strconv.Quote(hack.String(bj.GetString()))
+	str := hack.String(bj.GetString())
+	return strconv.Quote(string(str))
 }
 
 // Unquote is for JSON_UNQUOTE.
 func (bj BinaryJSON) Unquote() (string, error) {
 	switch bj.TypeCode {
 	case TypeCodeString:
-		s, err := unquoteString(hack.String(bj.GetString()))
+		tmp := string(hack.String(bj.GetString()))
+		s, err := unquoteString(tmp)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
