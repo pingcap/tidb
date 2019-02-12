@@ -17,12 +17,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-var _ Manager = (*BindManager)(nil)
-
 // BindManager is used to manage both global bind info and session bind info.
 type BindManager struct {
 	SessionHandle *Handle // session handle.
-	*Handle               // global handle.
+	GlobalHandle  *Handle // global handle.
 }
 
 type keyType int
@@ -31,13 +29,9 @@ func (k keyType) String() string {
 	return "bind-key"
 }
 
-// Manager is the interface for providing bind related operations.
-type Manager interface {
-}
-
 const key keyType = 0
 
 // BindBinderManager binds Manager to context.
-func BindBinderManager(ctx sessionctx.Context, pc Manager) {
+func BindBinderManager(ctx sessionctx.Context, pc *BindManager) {
 	ctx.SetValue(key, pc)
 }

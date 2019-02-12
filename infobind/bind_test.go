@@ -111,14 +111,14 @@ func (s *testSuite) TestBindParse(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(i int)")
 	tk.MustExec("create index index_t on t(i)")
-	tk.MustExec("INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,charset,collation) VALUES ('select * from t', 'select * from t use index(index_t)', 'test', 1, 'utf8mb4', 'utf8mb4_bin')`,")
+	tk.MustExec("INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('select * from t', 'select * from t use index(index_t)', 'test', 1,'2019-02-12 16:13:46','2019-02-12 16:13:46', 'utf8mb4', 'utf8mb4_bin')`,")
 
 	bindHandle := infobind.NewHandle()
 
 	hu := &infobind.HandleUpdater{
-		Handle: bindHandle,
-		Parser: s.Parser,
-		Ctx:    tk.Se,
+		GlobalHandle: bindHandle,
+		Parser:       s.Parser,
+		Ctx:          tk.Se,
 	}
 
 	err := hu.Update(true)

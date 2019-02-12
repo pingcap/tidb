@@ -31,15 +31,15 @@ import (
 
 const defaultBindCacheSize = 5
 
-// BindData store the basic bind info and bindSql astNode.
-type BindData struct {
+// bindData store the basic bind info and bindSql astNode.
+type bindData struct {
 	bindRecord
 	ast ast.StmtNode
 }
 
-// BindCache hold a bindDataMap, key:origin sql hash value: bindData slice.
-type BindCache struct {
-	Cache map[string][]*BindData
+// bindCache hold a bindDataMap, key:origin sql hash value: bindData slice.
+type bindCache struct {
+	Cache map[string][]*bindData
 }
 
 // Handle hold a atomic bindCache.
@@ -47,12 +47,12 @@ type Handle struct {
 	bind atomic.Value
 }
 
-// HandleUpdater use to update the BindCache.
+// HandleUpdater use to update the bindCache.
 type HandleUpdater struct {
 	Parser         *parser.Parser
 	LastUpdateTime types.Time
 	Ctx            sessionctx.Context
-	*Handle
+	GlobalHandle   *Handle
 }
 
 type bindRecord struct {
@@ -66,25 +66,25 @@ type bindRecord struct {
 	Collation   string
 }
 
-// NewHandle create a Handle with a BindCache.
+// NewHandle create a Handle with a bindCache.
 func NewHandle() *Handle {
 	handle := &Handle{}
 	return handle
 }
 
 // Get get bindCache from a Handle.
-func (h *Handle) Get() *BindCache {
+func (h *Handle) Get() *bindCache {
 	bc := h.bind.Load()
 
 	if bc != nil {
-		return bc.(*BindCache)
+		return bc.(*bindCache)
 	}
 
 	return nil
 }
 
 // LoadDiff use to load new bind info to bindCache bc.
-func (h *HandleUpdater) loadDiff(sql string, bc *BindCache) error {
+func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 	tmp, err := h.Ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -105,11 +105,7 @@ func (h *HandleUpdater) loadDiff(sql string, bc *BindCache) error {
 		}
 		it := chunk.NewIterator4Chunk(chk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			record, err := decodeBindTableRow(row, fs)
-			if err != nil {
-				log.Errorf("row decode error %s", err)
-				continue
-			}
+			record := decodeBindTableRow(row, fs)
 			err = bc.appendNode(h.Ctx, record, h.Parser)
 			if err != nil {
 				continue
@@ -129,15 +125,15 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 		err error
 		sql string
 	)
-	bc := h.Get()
+	bc := h.GlobalHandle.Get()
 
 	length := defaultBindCacheSize
 	if bc != nil {
 		length = len(bc.Cache)
 	}
 
-	newBc := &BindCache{
-		Cache: make(map[string][]*BindData, length),
+	newBc := &bindCache{
+		Cache: make(map[string][]*bindData, length),
 	}
 
 	if bc != nil {
@@ -147,24 +143,24 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 	}
 
 	if fullLoad {
-		sql = fmt.Sprintf("select * from mysql.bind_info")
+		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info")
 	} else {
-		sql = fmt.Sprintf("select * from mysql.bind_info where update_time > \"%s\"", h.LastUpdateTime.String())
+		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info where update_time > \"%s\"", h.LastUpdateTime.String())
 	}
 	err = h.loadDiff(sql, newBc)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	h.bind.Store(newBc)
+	h.GlobalHandle.bind.Store(newBc)
 	return nil
 }
 
-func parseSQL(sctx sessionctx.Context, parser *parser.Parser, sql string, charset string, collation string) ([]ast.StmtNode, []error, error) {
+func parseSQL(parser *parser.Parser, sql string, charset string, collation string) ([]ast.StmtNode, []error, error) {
 	return parser.Parse(sql, charset, collation)
 }
 
-func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) (bindRecord, error) {
+func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) bindRecord {
 	var value bindRecord
 
 	value.OriginalSQL = row.GetString(0)
@@ -176,49 +172,43 @@ func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) (bindRecord, error
 	value.Charset = row.GetString(6)
 	value.Collation = row.GetString(7)
 
-	return value, nil
+	return value
 }
 
-func (b *BindCache) appendNode(sctx sessionctx.Context, value bindRecord, sparser *parser.Parser) error {
-	hash := parser.Digest(value.OriginalSQL)
-	if value.Status == 0 {
-		if bindArr, ok := b.Cache[hash]; ok {
-			if len(bindArr) == 1 {
-				if bindArr[0].Db == value.Db {
-					delete(b.Cache, hash)
-				}
-				return nil
-			}
-			for idx, v := range bindArr {
-				if v.OriginalSQL == value.OriginalSQL && v.Db == value.Db {
-					b.Cache[hash] = append(b.Cache[hash][:idx], b.Cache[hash][idx+1:]...)
-					break
-				}
-			}
-		}
-		return nil
-	}
-
-	stmtNodes, _, err := parseSQL(sctx, sparser, value.BindSQL, value.Charset, value.Collation)
-	if err != nil {
-		log.Warnf("parse error:\n%v\n%s", err, value.BindSQL)
-		return errors.Trace(err)
-	}
-
-	newNode := &BindData{
-		bindRecord: value,
-		ast:        stmtNodes[0],
-	}
+func (b *bindCache) appendNode(sctx sessionctx.Context, newBindRecord bindRecord, sparser *parser.Parser) error {
+	hash := parser.Digest(newBindRecord.OriginalSQL)
 
 	if bindArr, ok := b.Cache[hash]; ok {
 		for idx, v := range bindArr {
-			if v.Db == value.Db {
-				b.Cache[hash][idx] = newNode
-				return nil
+			if v.OriginalSQL == newBindRecord.OriginalSQL && v.Db == newBindRecord.Db {
+				b.Cache[hash] = append(b.Cache[hash][:idx], b.Cache[hash][idx+1:]...)
+				break
 			}
 		}
 	}
+
+	//If the bindRecord has been deleted, the status will be 0 or will be 1.
+	if newBindRecord.Status == 0 {
+		if _, ok := b.Cache[hash]; ok {
+			if len(b.Cache[hash]) == 0 {
+				delete(b.Cache, hash)
+			}
+		}
+
+		return nil
+	}
+
+	stmtNodes, _, err := parseSQL(sparser, newBindRecord.BindSQL, newBindRecord.Charset, newBindRecord.Collation)
+	if err != nil {
+		log.Warnf("parse error:\n%v\n%s", err, newBindRecord.BindSQL)
+		return errors.Trace(err)
+	}
+
+	newNode := &bindData{
+		bindRecord: newBindRecord,
+		ast:        stmtNodes[0],
+	}
+
 	b.Cache[hash] = append(b.Cache[hash], newNode)
 	return nil
-
 }

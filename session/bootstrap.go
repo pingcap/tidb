@@ -210,10 +210,10 @@ const (
 		index hist(table_id, is_index, hist_id)
 	);`
 
-	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache
+	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql varchar(1024) NOT NULL  ,
-      	bind_sql varchar(1024) NOT NULL ,
+		original_sql varchar(2048) NOT NULL  ,
+      	bind_sql varchar(2048) NOT NULL ,
       	default_db varchar(1024)  NOT NULL,
 		status int(10) NOT NULL DEFAULT 1,
 		create_time timestamp NOT NULL,

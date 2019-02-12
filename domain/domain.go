@@ -790,9 +790,9 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	do.bindHandle = infobind.NewHandle()
 
 	hu := &infobind.HandleUpdater{
-		Handle: do.BindHandle(),
-		Parser: parser,
-		Ctx:    ctx,
+		GlobalHandle: do.BindHandle(),
+		Parser:       parser,
+		Ctx:          ctx,
 	}
 
 	fullLoad := true
