@@ -609,7 +609,7 @@ func (b *builtinValuesStringSig) Clone() builtinFunc {
 
 // evalString evals a builtinValuesStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
+func (b *builtinValuesStringSig) evalString(row types.Row) (string, bool, error) {
 	if !b.ctx.GetSessionVars().StmtCtx.InInsertStmt {
 		return "", true, nil
 	}
