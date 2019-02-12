@@ -76,6 +76,7 @@ var (
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
+	errCantDecodeIndex       = terror.ClassDDL.New(codeCantDecodeIndex, "cannot decode index value, because %s")
 	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid DDL job")
 	errCancelledDDLJob       = terror.ClassDDL.New(codeCancelledDDLJob, "cancelled DDL job")
 	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
@@ -559,6 +560,7 @@ const (
 	codeCancelledDDLJob                      = 12
 	codeInvalidRanges                        = 13
 	codeReorgWorkerPanic                     = 14
+	codeCantDecodeIndex                      = 15
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101
