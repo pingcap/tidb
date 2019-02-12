@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
@@ -279,7 +278,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 	t, found := GetInfoSchema(us.ctx).TableByID(us.dirty.tid)
 	if !found {
 		// t is got from a snapshot InfoSchema, so it should be found, this branch should not happen.
-		panic(fmt.Sprintf("table which ID is %d should be found", us.dirty.tid))
+		return errors.Errorf("table not found (tid: %d)", us.dirty.tid)
 	}
 	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
