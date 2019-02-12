@@ -617,14 +617,22 @@ func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
 	if values == nil {
 		return "", true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
-	if b.offset < row.Len() {
-		if row.IsNull(b.offset) {
-			return "", true, nil
-		}
-		return row.GetString(b.offset), false, nil
+	if b.offset >= row.Len() {
+		return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 	}
-	return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+
+	if row.IsNull(b.offset) {
+		return "", true, nil
+	}
+
+	// Specially handle the ENUM/SET/BIT input value.
+	if retType := b.getRetTp(); retType.Hybrid() {
+		val := row.GetDatum(b.offset, retType)
+		res, err := val.ToString()
+		return res, err != nil, err
+	}
+
+	return row.GetString(b.offset), false, nil
 }
 
 type builtinValuesTimeSig struct {

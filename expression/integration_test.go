@@ -3523,3 +3523,14 @@ func (s *testIntegrationSuite) TestValuesFloat32(c *C) {
 	tk.MustExec(`insert into t values (1, 0.02) on duplicate key update j = values (j);`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.02`))
 }
+
+func (s *testIntegrationSuite) TestValuesEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a bigint primary key, b enum('a','b','c'));`)
+	tk.MustExec(`insert into t values (1, "a");`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 a`))
+	tk.MustExec(`insert into t values (1, "b") on duplicate key update b = values(b);`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 b`))
+}
