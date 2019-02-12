@@ -58,7 +58,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"interval", "is", "join", "key", "keys", "kill", "leading", "left", "like", "limit", "lines", "load",
 		"localtime", "localtimestamp", "lock", "longblob", "longtext", "mediumblob", "maxvalue", "mediumint", "mediumtext",
 		"minute_microsecond", "minute_second", "mod", "not", "no_write_to_binlog", "null", "numeric",
-		"on", "option", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
+		"on", "option", "optionally", "or", "order", "outer", "partition", "precision", "primary", "procedure", "range", "read", "real",
 		"references", "regexp", "rename", "repeat", "replace", "revoke", "restrict", "right", "rlike",
 		"schema", "schemas", "second_microsecond", "select", "set", "show", "smallint",
 		"starting", "table", "terminated", "then", "tinyblob", "tinyint", "tinytext", "to",
@@ -396,6 +396,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"DO 1 from t", false, ""},
 
 		// load data
+		{"load data local infile '/tmp/tmp.csv' into table t1 fields terminated by ',' optionally enclosed by '\"' ignore 1 lines", true, "LOAD DATA LOCAL INFILE '/tmp/tmp.csv' INTO TABLE `t1` FIELDS TERMINATED BY ',' ENCLOSED BY '\"' IGNORE 1 LINES"},
 		{"load data infile '/tmp/t.csv' into table t", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t`"},
 		{"load data infile '/tmp/t.csv' into table t character set utf8", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t`"},
 		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab'", true, "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE `t` FIELDS TERMINATED BY 'ab'"},
