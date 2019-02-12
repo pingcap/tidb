@@ -187,7 +187,7 @@ func (b *bindCache) appendNode(sctx sessionctx.Context, newBindRecord bindRecord
 		}
 	}
 
-	//If the bindRecord has been deleted, the status will be 0 or will be 1.
+	// If the bindRecord has been deleted, the status will be 0 or will be 1.
 	if newBindRecord.Status == 0 {
 		if _, ok := b.Cache[hash]; ok {
 			if len(b.Cache[hash]) == 0 {
