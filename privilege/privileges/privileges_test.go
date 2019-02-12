@@ -276,6 +276,29 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	ctx, _ := se.(sessionctx.Context)
+	mustExec(c, se, `CREATE TABLE viewsecurity(c int);`)
+	// ctx.GetSessionVars().User = "root@localhost"
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE USER 'selectusr'@'localhost';`)
+	mustExec(c, se, `GRANT Create ON test.* TO  'selectusr'@'localhost';`)
+	mustExec(c, se, `GRANT Select ON test.viewsecurity TO  'selectusr'@'localhost';`)
+
+	// ctx.GetSessionVars().User = "selectusr@localhost"
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "selectusr", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `SELECT * FROM test.viewsecurity;`)
+	mustExec(c, se, `CREATE ALGORITHM = UNDEFINED SQL SECURITY DEFINER VIEW test.selectviewsecurity as select * FROM test.viewsecurity;`)
+
+	se = newSession(c, s.store, s.dbName)
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	mustExec(c, se, "SELECT * FROM test.selectviewsecurity")
+	mustExec(c, se, `REVOKE Select ON test.viewsecurity FROM  'selectusr'@'localhost';`)
+	_, err := se.Execute(context.Background(), "select * from test.selectviewsecurity")
+	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
+}
+
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
@@ -338,6 +361,39 @@ func (s *testPrivilegeSuite) TestSetGlobal(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "setglobal_b", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err := se.Execute(context.Background(), `set global innodb_commit_concurrency=16`)
 	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+}
+
+func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER tcd1, tcd2`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd2`)
+
+	// should fail
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `CREATE USER acdc`)
+	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+	_, err = se.Execute(context.Background(), `DROP USER tcd2`)
+	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+
+	// should pass
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthUsername: "tcd2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `DROP USER tcd1`)
+	mustExec(c, se, `CREATE USER tcd1`)
+}
+
+func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER tsct1, tsct2`)
+	mustExec(c, se, `GRANT select ON mysql.* to tsct2`)
+
+	// should fail
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tsct1", Hostname: "localhost", AuthUsername: "tsct1", AuthHostname: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `SHOW CREATE TABLE mysql.user`)
+	c.Assert(terror.ErrorEqual(err, core.ErrTableaccessDenied), IsTrue)
+
+	// should pass
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `SHOW CREATE TABLE mysql.user`)
 }
 
 func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {

@@ -126,12 +126,7 @@ func (e *kvEncoder) Close() error {
 
 func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affectedRows uint64, err error) {
 	e.se.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
-	defer func() {
-		err1 := e.se.RollbackTxn(context.Background())
-		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
-		}
-	}()
+	defer e.se.RollbackTxn(context.Background())
 
 	_, err = e.se.Execute(context.Background(), sql)
 	if err != nil {
@@ -169,12 +164,7 @@ func (e *kvEncoder) PrepareStmt(query string) (stmtID uint32, err error) {
 
 func (e *kvEncoder) EncodePrepareStmt(tableID int64, stmtID uint32, param ...interface{}) (kvPairs []KvPair, affectedRows uint64, err error) {
 	e.se.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
-	defer func() {
-		err1 := e.se.RollbackTxn(context.Background())
-		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
-		}
-	}()
+	defer e.se.RollbackTxn(context.Background())
 
 	_, err = e.se.ExecutePreparedStmt(context.Background(), stmtID, param...)
 	if err != nil {
