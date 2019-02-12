@@ -23,8 +23,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -80,28 +78,6 @@ func (dt *DirtyTable) DeleteRow(handle int64) {
 func (dt *DirtyTable) TruncateTable() {
 	dt.addedRows = make(map[int64]struct{})
 	dt.truncated = true
-}
-
-// GetRow gets a row from the DirtyTable.
-func (dt *DirtyTable) getRow(handle int64, ctx sessionctx.Context) ([]types.Datum, error) {
-	txn, err := ctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
-	val, err := txn.Get(tablecodec.EncodeRowKeyWithHandle(dt.tid, handle))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	t, found := GetInfoSchema(ctx).TableByID(dt.tid)
-	if !found {
-		// t is got from a snapshot InfoSchema, so it should be found, this branch should not happen.
-		panic(fmt.Sprintf("table which ID is %d should be found", dt.tid))
-	}
-	row, _, err := tables.DecodeRawRowData(ctx, t.Meta(), handle, t.WritableCols(), val)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return row, nil
 }
 
 // GetDirtyDB returns the DirtyDB bind to the context.
@@ -300,9 +276,15 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 func (us *UnionScanExec) buildAndSortAddedRows() error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
+	t, found := GetInfoSchema(us.ctx).TableByID(us.dirty.tid)
+	if !found {
+		// t is got from a snapshot InfoSchema, so it should be found, this branch should not happen.
+		panic(fmt.Sprintf("table which ID is %d should be found", us.dirty.tid))
+	}
+	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())
-		data, err := us.dirty.getRow(h, us.ctx)
+		data, err := t.RowWithCols(us.ctx, h, cols)
 		if err != nil {
 			return err
 		}
