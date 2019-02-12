@@ -48,6 +48,7 @@ var (
 	ErrDBaccessDenied              = terror.ClassExecutor.New(mysql.ErrDBaccessDenied, mysql.MySQLErrName[mysql.ErrDBaccessDenied])
 	ErrTableaccessDenied           = terror.ClassExecutor.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
 	ErrBadDB                       = terror.ClassExecutor.New(mysql.ErrBadDB, mysql.MySQLErrName[mysql.ErrBadDB])
+	ErrTableIsNotView              = terror.ClassExecutor.New(mysql.ErrWrongObject, "'%s.%s' is not VIEW")
 )
 
 func init() {
@@ -63,6 +64,7 @@ func init() {
 		mysql.ErrDBaccessDenied:              mysql.ErrDBaccessDenied,
 		mysql.ErrTableaccessDenied:           mysql.ErrTableaccessDenied,
 		mysql.ErrBadDB:                       mysql.ErrBadDB,
+		mysql.ErrWrongObject:                 mysql.ErrWrongObject,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }

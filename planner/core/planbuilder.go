@@ -969,6 +969,9 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 				isView = table.Meta().IsView()
 			}
+		case ast.ShowCreateView:
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, "", "", "", err)
 		}
 		p.SetSchema(buildShowSchema(show, isView))
 	}
@@ -1746,6 +1749,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		} else {
 			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 		}
+	case ast.ShowCreateView:
+		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
