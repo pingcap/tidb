@@ -2,6 +2,11 @@ package infoschema
 
 import (
 	"bufio"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -11,10 +16,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
-	"os"
-	"strconv"
-	"strings"
-	"time"
 )
 
 var slowQueryCols = []columnInfo{
@@ -54,18 +55,12 @@ func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return rows, nil
 }
 
-func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer file.Close()
-
+func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 	rows := make([]map[string]types.Datum, 0)
 	rowMap := make(map[string]types.Datum, len(slowQueryCols))
 	startFlag := false
 	startPrefix := variable.SlowLogPrefixStr + variable.SlowLogTimeStr + variable.SlowLogSpaceMarkStr
-	scanner := bufio.NewScanner(file)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		// check start
@@ -138,6 +133,16 @@ func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
 		return nil, errors.Trace(err)
 	}
 	return rows, nil
+}
+
+func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer file.Close()
+
+	return parseSlowLog(bufio.NewScanner(file))
 }
 
 func parseTime(s string) (time.Time, error) {
