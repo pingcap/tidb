@@ -222,7 +222,6 @@ func ResolveCharsetCollation(tblCharset, dbCharset string) (string, string, erro
 func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCharset string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
-
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
@@ -268,7 +267,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
 	isExplictedCollation := true
-	if len(colDef.Tp.Charset) == 0 && len(colDef.Tp.Collate) == 0 {
+	if colDef.Tp.Charset == "" || colDef.Tp.Collate == "" {
 		isExplictedCollation = false
 	}
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, tblCharset, dbCharset); err != nil {
@@ -336,7 +335,6 @@ func isExplicitTimeStamp() bool {
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
-
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
@@ -385,7 +383,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:
-				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
+				value, err := getDefaultValue(ctx, v, colDef.Tp)
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 				}
@@ -464,7 +462,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
+func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
+	tp, fsp := t.Tp, t.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
@@ -504,6 +503,13 @@ func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp i
 		}
 		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
 		return v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+	}
+
+	if tp == mysql.TypeDuration {
+		var err error
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, t); err != nil {
+			return "", errors.Trace(err)
+		}
 	}
 
 	if tp == mysql.TypeBit {
@@ -1214,10 +1220,6 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
 	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
 		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
-
-	if s.Definer.CurrentUser {
-		viewInfo.Definer = ctx.GetSessionVars().User
-	}
 
 	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
 	viewInfo.Cols = make([]model.CIStr, len(schemaCols))
@@ -1941,7 +1943,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
-	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
+	value, err := getDefaultValue(ctx, option, &col.FieldType)
 	if err != nil {
 		return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 	}
@@ -1970,7 +1972,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			value, err := getDefaultValue(ctx, opt, col.Tp, col.Decimal)
+			value, err := getDefaultValue(ctx, opt, &col.FieldType)
 			if err != nil {
 				return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 			}

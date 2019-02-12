@@ -606,12 +606,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
-			if col.Charset != tblCharset || col.IsExplictedCollation() {
-				fmt.Fprintf(&buf, " CHARSET %s", col.Charset)
-			}
-			if col.Collate != tblCollate || col.IsExplictedCollation() {
-				fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
-			}
+			fmt.Fprintf(&buf, " CHARSET %s", col.Charset)
+			fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
 		}
 		if col.IsGenerated() {
 			// It's a generated column.
@@ -709,6 +705,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
+
 	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 {
