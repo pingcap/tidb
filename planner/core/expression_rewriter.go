@@ -675,17 +675,11 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		for _, col := range agg.schema.Columns {
 			col.IsReferenced = true
 		}
-		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg, false, false)
 		// Build inner join above the aggregation.
-		join := LogicalJoin{
-			JoinType:        InnerJoin,
-			EqualConditions: eq,
-			LeftConditions:  left,
-			RightConditions: right,
-			OtherConditions: other,
-		}.Init(er.ctx)
+		join := LogicalJoin{JoinType: InnerJoin}.Init(er.ctx)
 		join.SetChildren(er.p, agg)
 		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
+		join.attachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
 			er.err = join.setPreferredJoinType(er.b.TableHints())
