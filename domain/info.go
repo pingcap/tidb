@@ -127,7 +127,8 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf), clientv3.WithLease(is.session.Lease()))
+	str := string(hack.String(infoBuf))
+	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
 	return errors.Trace(err)
 }
 
