@@ -41,15 +41,18 @@ func (s *testChunkSuite) TestRecordBatch(c *check.C) {
 	batch.AppendInt64(0, 1)
 	batch.AppendInt64(0, 1)
 	c.Assert(batch.NumRows(), check.Equals, 4)
-	c.Assert(batch.IsFull(maxChunkSize), check.IsFalse)
+	c.Assert(batch.IsFull(), check.IsFalse)
 
 	batch.AppendInt64(0, 1)
 	c.Assert(batch.NumRows(), check.Equals, 5)
-	c.Assert(batch.IsFull(maxChunkSize), check.IsTrue)
+	c.Assert(batch.IsFull(), check.IsTrue)
 
 	batch.AppendInt64(0, 1)
 	batch.AppendInt64(0, 1)
 	batch.AppendInt64(0, 1)
 	c.Assert(batch.NumRows(), check.Equals, 8)
-	c.Assert(batch.IsFull(maxChunkSize), check.IsTrue)
+	c.Assert(batch.IsFull(), check.IsTrue)
+
+	batch.SetRequiredRows(UnspecifiedNumRows)
+	c.Assert(batch.IsFull(), check.IsFalse)
 }

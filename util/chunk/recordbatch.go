@@ -46,7 +46,13 @@ func (rb *RecordBatch) RequiredRows() int {
 }
 
 // IsFull returns if this batch can be considered full.
-func (rb *RecordBatch) IsFull(maxChunkSize int) bool {
-	numRows := rb.NumRows()
-	return numRows >= maxChunkSize || (rb.requiredRows != UnspecifiedNumRows && numRows >= rb.requiredRows)
+// IsFull only takes requiredRows into account, the caller of this method should
+// also consider maxChunkSize, then it should behave like:
+// if !batch.IsFull() && batch.NumRows() < maxChunkSize { ... }
+func (rb *RecordBatch) IsFull() bool {
+	if rb.requiredRows == UnspecifiedNumRows {
+		return false
+	}
+
+	return rb.NumRows() >= rb.requiredRows
 }
