@@ -222,6 +222,7 @@ func ResolveCharsetCollation(tblCharset, dbCharset string) (string, string, erro
 func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCharset string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
+
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
@@ -266,14 +267,15 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
-	flag := true
-	if colDef.Tp.Charset == "" && colDef.Tp.Collate == "" {
-		flag = false
+	isExplictedCollation := true
+	if len(colDef.Tp.Charset) == 0 && len(colDef.Tp.Collate) == 0 {
+		isExplictedCollation = false
 	}
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, tblCharset, dbCharset); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
+	col.ExplictedCollation = isExplictedCollation
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -334,6 +336,7 @@ func isExplicitTimeStamp() bool {
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
+
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,

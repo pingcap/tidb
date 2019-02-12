@@ -604,13 +604,12 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
-		fmt.Printf("%#v\n", col)
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
-			if col.Charset != tblCharset {
+			if col.Charset != tblCharset || col.IsExplictedCollation() {
 				fmt.Fprintf(&buf, " CHARSET %s", col.Charset)
 			}
-			if col.Collate != tblCollate {
+			if col.Collate != tblCollate || col.IsExplictedCollation() {
 				fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
 			}
 		}
