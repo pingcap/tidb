@@ -275,10 +275,10 @@ func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
-	col.ExplictedCollation = isExplictedCollation
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	col.ExplictedCollation = isExplictedCollation
 	return col, cts, nil
 }
 
@@ -385,7 +385,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:
-				value, err := getDefaultValue(ctx, v, colDef.Tp)
+				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 				}
@@ -464,8 +464,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
-	tp, fsp := t.Tp, t.Decimal
+func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
@@ -505,13 +504,6 @@ func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, t *types.Field
 		}
 		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
 		return v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
-	}
-
-	if tp == mysql.TypeDuration {
-		var err error
-		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, t); err != nil {
-			return "", errors.Trace(err)
-		}
 	}
 
 	if tp == mysql.TypeBit {
@@ -1222,6 +1214,10 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
 	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
 		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
+
+	if s.Definer.CurrentUser {
+		viewInfo.Definer = ctx.GetSessionVars().User
+	}
 
 	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
 	viewInfo.Cols = make([]model.CIStr, len(schemaCols))
@@ -1945,7 +1941,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
-	value, err := getDefaultValue(ctx, option, &col.FieldType)
+	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
 	if err != nil {
 		return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 	}
@@ -1974,7 +1970,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			value, err := getDefaultValue(ctx, opt, &col.FieldType)
+			value, err := getDefaultValue(ctx, opt, col.Tp, col.Decimal)
 			if err != nil {
 				return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 			}
