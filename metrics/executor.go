@@ -43,6 +43,6 @@ var (
 			Namespace: "tidb",
 			Subsystem: "executor",
 			Name:      "statement_db_total",
-			Help:      "Counter of db StmtNode.",
+			Help:      "Counter of StmtNode by Database.",
 		}, []string{LblDb, LblType})
 )

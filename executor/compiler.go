@@ -137,7 +137,7 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 }
 
 func getStmtDbLabel(stmtNode ast.StmtNode) []string {
-	dbLabelMap := make(map[string]int, 0)
+	dbLabelMap := make(map[string]int)
 
 	switch x := stmtNode.(type) {
 	case *ast.AlterTableStmt:
@@ -186,7 +186,7 @@ func getStmtDbLabel(stmtNode ast.StmtNode) []string {
 		}
 	}
 
-	dbLabels := make([]string, 0)
+	var dbLabels []string
 
 	for k := range dbLabelMap {
 		dbLabels = append(dbLabels, k)
