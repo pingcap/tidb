@@ -2381,13 +2381,47 @@ func (s *testParserSuite) TestInsertStatementMemoryAllocation(c *C) {
 
 func (s *testParserSuite) TestExplain(c *C) {
 	table := []testCase{
-		{"explain select c1 from t1", true, ""},
-		{"explain delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true, ""},
-		{"explain insert into t values (1), (2), (3)", true, ""},
-		{"explain replace into foo values (1 || 2)", true, ""},
-		{"explain update t set id = id + 1 order by id desc;", true, ""},
-		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true, ""},
-		{`explain format = "row" select c1 from t1 union (select c2 from t2) limit 1, 1`, true, ""},
+		{"explain select c1 from t1", true, "EXPLAIN FORMAT = 'row' SELECT `c1` FROM `t1`"},
+		{"explain delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true, "EXPLAIN FORMAT = 'row' DELETE `t1`,`t2` FROM (`t1` JOIN `t2`) JOIN `t3` WHERE `t1`.`id`=`t2`.`id` AND `t2`.`id`=`t3`.`id`"},
+		{"explain insert into t values (1), (2), (3)", true, "EXPLAIN FORMAT = 'row' INSERT INTO `t` VALUES (1),(2),(3)"},
+		{"explain replace into foo values (1 || 2)", true, "EXPLAIN FORMAT = 'row' REPLACE INTO `foo` VALUES (1 OR 2)"},
+		{"explain update t set id = id + 1 order by id desc;", true, "EXPLAIN FORMAT = 'row' UPDATE `t` SET `id`=`id`+1 ORDER BY `id` DESC"},
+		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true, "EXPLAIN FORMAT = 'row' SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"},
+		{`explain format = "row" select c1 from t1 union (select c2 from t2) limit 1, 1`, true, "EXPLAIN FORMAT = 'row' SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"},
+		{"DESC SCHE.TABL", true, "DESC `SCHE`.`TABL`"},
+		{"DESC SCHE.TABL COLUM", true, "DESC `SCHE`.`TABL` `COLUM`"},
+		{"DESCRIBE SCHE.TABL COLUM", true, "DESC `SCHE`.`TABL` `COLUM`"},
+		{"EXPLAIN ANALYZE SELECT 1", true, "EXPLAIN ANALYZE SELECT 1"},
+		{"EXPLAIN FORMAT = 'dot' SELECT 1", true, "EXPLAIN FORMAT = 'dot' SELECT 1"},
+		{"EXPLAIN FORMAT = 'row' SELECT 1", true, "EXPLAIN FORMAT = 'row' SELECT 1"},
+		{"EXPLAIN FORMAT = 'ROW' SELECT 1", true, "EXPLAIN FORMAT = 'ROW' SELECT 1"},
+		{"EXPLAIN SELECT 1", true, "EXPLAIN FORMAT = 'row' SELECT 1"},
+	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestPrepare(c *C) {
+	table := []testCase{
+		{"PREPARE pname FROM 'SELECT ?'", true, "PREPARE `pname` FROM 'SELECT ?'"},
+		{"PREPARE pname FROM @test", true, "PREPARE `pname` FROM @`test`"},
+		{"PREPARE `` FROM @test", true, "PREPARE `` FROM @`test`"},
+	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestDeallocate(c *C) {
+	table := []testCase{
+		{"DEALLOCATE PREPARE test", true, "DEALLOCATE PREPARE `test`"},
+		{"DEALLOCATE PREPARE ``", true, "DEALLOCATE PREPARE ``"},
+	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestExecute(c *C) {
+	table := []testCase{
+		{"EXECUTE test", true, "EXECUTE `test`"},
+		{"EXECUTE test USING @var1,@var2", true, "EXECUTE `test` USING @`var1`,@`var2`"},
+		{"EXECUTE `` USING @var1,@var2", true, "EXECUTE `` USING @`var1`,@`var2`"},
 	}
 	s.RunTest(c, table)
 }
