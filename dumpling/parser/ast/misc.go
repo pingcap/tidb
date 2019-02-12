@@ -1220,7 +1220,65 @@ type PrivElem struct {
 
 // Restore implements Node interface.
 func (n *PrivElem) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	switch n.Priv {
+	case 0:
+		// Do nothing for types that have no effect.
+		// Actually this should not happen since there is no way to determine its type.
+		return errors.New("Cannot determine privilege type")
+	case mysql.AllPriv:
+		ctx.WriteKeyWord("ALL")
+	case mysql.AlterPriv:
+		ctx.WriteKeyWord("ALTER")
+	case mysql.CreatePriv:
+		ctx.WriteKeyWord("CREATE")
+	case mysql.CreateUserPriv:
+		ctx.WriteKeyWord("CREATE USER")
+	case mysql.TriggerPriv:
+		ctx.WriteKeyWord("TRIGGER")
+	case mysql.DeletePriv:
+		ctx.WriteKeyWord("DELETE")
+	case mysql.DropPriv:
+		ctx.WriteKeyWord("DROP")
+	case mysql.ProcessPriv:
+		ctx.WriteKeyWord("PROCESS")
+	case mysql.ExecutePriv:
+		ctx.WriteKeyWord("EXECUTE")
+	case mysql.IndexPriv:
+		ctx.WriteKeyWord("INDEX")
+	case mysql.InsertPriv:
+		ctx.WriteKeyWord("INSERT")
+	case mysql.SelectPriv:
+		ctx.WriteKeyWord("SELECT")
+	case mysql.SuperPriv:
+		ctx.WriteKeyWord("SUPER")
+	case mysql.ShowDBPriv:
+		ctx.WriteKeyWord("SHOW DATABASES")
+	case mysql.UpdatePriv:
+		ctx.WriteKeyWord("UPDATE")
+	case mysql.GrantPriv:
+		ctx.WriteKeyWord("GRANT OPTION")
+	case mysql.ReferencesPriv:
+		ctx.WriteKeyWord("REFERENCES")
+	case mysql.CreateViewPriv:
+		ctx.WriteKeyWord("CREATE VIEW")
+	case mysql.ShowViewPriv:
+		ctx.WriteKeyWord("SHOW VIEW")
+	default:
+		return errors.New("Unsupported privilege type")
+	}
+	if n.Cols != nil {
+		ctx.WritePlain(" (")
+		for i, v := range n.Cols {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore PrivElem.Cols[%d]", i)
+			}
+		}
+		ctx.WritePlain(")")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -1250,6 +1308,19 @@ const (
 	ObjectTypeTable
 )
 
+// Restore implements Node interface.
+func (n ObjectTypeType) Restore(ctx *RestoreCtx) error {
+	switch n {
+	case ObjectTypeNone:
+		// do nothing
+	case ObjectTypeTable:
+		ctx.WriteKeyWord("TABLE ")
+	default:
+		return errors.New("Unsupported object type")
+	}
+	return nil
+}
+
 // GrantLevelType is the type for grant level.
 type GrantLevelType int
 
@@ -1271,6 +1342,28 @@ type GrantLevel struct {
 	TableName string
 }
 
+// Restore implements Node interface.
+func (n *GrantLevel) Restore(ctx *RestoreCtx) error {
+	switch n.Level {
+	case GrantLevelDB:
+		if n.DBName == "" {
+			ctx.WritePlain("*")
+		} else {
+			ctx.WriteName(n.DBName)
+			ctx.WritePlain(".*")
+		}
+	case GrantLevelGlobal:
+		ctx.WritePlain("*.*")
+	case GrantLevelTable:
+		if n.DBName != "" {
+			ctx.WriteName(n.DBName)
+			ctx.WritePlain(".")
+		}
+		ctx.WriteName(n.TableName)
+	}
+	return nil
+}
+
 // RevokeStmt is the struct for REVOKE statement.
 type RevokeStmt struct {
 	stmtNode
@@ -1283,7 +1376,32 @@ type RevokeStmt struct {
 
 // Restore implements Node interface.
 func (n *RevokeStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("REVOKE ")
+	for i, v := range n.Privs {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore RevokeStmt.Privs[%d]", i)
+		}
+	}
+	ctx.WriteKeyWord(" ON ")
+	if err := n.ObjectType.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RevokeStmt.ObjectType")
+	}
+	if err := n.Level.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RevokeStmt.Level")
+	}
+	ctx.WriteKeyWord(" FROM ")
+	for i, v := range n.Users {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore RevokeStmt.Users[%d]", i)
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -1316,7 +1434,35 @@ type GrantStmt struct {
 
 // Restore implements Node interface.
 func (n *GrantStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("GRANT ")
+	for i, v := range n.Privs {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore GrantStmt.Privs[%d]", i)
+		}
+	}
+	ctx.WriteKeyWord(" ON ")
+	if err := n.ObjectType.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore GrantStmt.ObjectType")
+	}
+	if err := n.Level.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore GrantStmt.Level")
+	}
+	ctx.WriteKeyWord(" TO ")
+	for i, v := range n.Users {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore GrantStmt.Users[%d]", i)
+		}
+	}
+	if n.WithGrant {
+		ctx.WriteKeyWord(" WITH GRANT OPTION")
+	}
+	return nil
 }
 
 // SecureText implements SensitiveStatement interface.
