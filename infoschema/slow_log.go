@@ -55,6 +55,16 @@ func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return rows, nil
 }
 
+func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer file.Close()
+
+	return parseSlowLog(bufio.NewScanner(file))
+}
+
 func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 	rows := make([]map[string]types.Datum, 0)
 	rowMap := make(map[string]types.Datum, len(slowQueryCols))
@@ -65,17 +75,13 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 		line := scanner.Text()
 		// check start
 		if !startFlag && strings.Contains(line, startPrefix) {
-			t, err := parseTime(line[len(startPrefix):])
+			value, err := parseSlowLogField(variable.SlowLogTimeStr, line[len(startPrefix):])
 			if err != nil {
 				log.Errorf("parse slow log error: %v", err)
 				// temporary ignore now.
 				continue
 			}
-			rowMap[variable.SlowLogTimeStr] = types.NewTimeDatum(types.Time{
-				Time: types.FromGoTime(t),
-				Type: mysql.TypeDatetime,
-				Fsp:  types.MaxFsp,
-			})
+			rowMap[variable.SlowLogTimeStr] = *value
 			startFlag = true
 			continue
 		}
@@ -90,33 +96,13 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 					if strings.HasSuffix(field, ":") {
 						field = field[:len(field)-1]
 					}
-					col := findColumnByName(slowQueryCols, field)
-					if col == nil {
+					value, err := parseSlowLogField(field, fieldValues[i+1])
+					if err != nil {
+						log.Errorf("parse slow log error: %v", err)
+						// temporary ignore now.
 						continue
 					}
-					var value types.Datum
-					switch col.tp {
-					case mysql.TypeLonglong:
-						num, err := strconv.ParseUint(fieldValues[i+1], 10, 64)
-						if err != nil {
-							log.Errorf("parse slow log error: %v", err)
-							break
-						}
-						value = types.NewUintDatum(num)
-					case mysql.TypeVarchar:
-						value = types.NewStringDatum(fieldValues[i+1])
-					case mysql.TypeDouble:
-						num, err := strconv.ParseFloat(fieldValues[i+1], 64)
-						if err != nil {
-							log.Errorf("parse slow log error: %v", err)
-							break
-						}
-						value = types.NewDatum(num)
-					case mysql.TypeTiny:
-						// parse bool
-						value = types.NewDatum(fieldValues[i+1] == "true")
-					}
-					rowMap[field] = value
+					rowMap[field] = *value
 
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
@@ -135,14 +121,42 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 	return rows, nil
 }
 
-func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, errors.Trace(err)
+func parseSlowLogField(field, value string) (*types.Datum, error) {
+	col := findColumnByName(slowQueryCols, field)
+	if col == nil {
+		return nil, errors.Errorf("can't found column %v", field)
 	}
-	defer file.Close()
-
-	return parseSlowLog(bufio.NewScanner(file))
+	var val types.Datum
+	switch col.tp {
+	case mysql.TypeLonglong:
+		num, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		val = types.NewUintDatum(num)
+	case mysql.TypeVarchar:
+		val = types.NewStringDatum(value)
+	case mysql.TypeDouble:
+		num, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		val = types.NewDatum(num)
+	case mysql.TypeTiny:
+		// parse bool
+		val = types.NewDatum(value == "true")
+	case mysql.TypeDatetime:
+		t, err := parseTime(value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		val = types.NewTimeDatum(types.Time{
+			Time: types.FromGoTime(t),
+			Type: mysql.TypeDatetime,
+			Fsp:  types.MaxFsp,
+		})
+	}
+	return &val, nil
 }
 
 func parseTime(s string) (time.Time, error) {
