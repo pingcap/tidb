@@ -1967,7 +1967,6 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
 	if err != nil {
 		return hasDefaultValue, errors.Trace(err)
-
 	}
 	err = col.SetDefaultValue(value)
 	if err != nil {
