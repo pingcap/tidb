@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -101,4 +102,9 @@ func (s *testSuite1) TestStatementContext(c *C) {
 	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
+	config.GetGlobalConfig().CheckMb4ValueInUtf8 = false
+	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
+	config.GetGlobalConfig().CheckMb4ValueInUtf8 = true
+	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
+	c.Assert(err, NotNil)
 }

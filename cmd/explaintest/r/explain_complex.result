@@ -121,11 +121,11 @@ Projection_13	1.00	root	gad.id, test.dd.id, gad.aid, gad.cm, test.dd.dic, test.d
     └─IndexJoin_24	0.00	root	inner join, inner:IndexLookUp_23, outer key:gad.aid, inner key:test.dd.aid, other cond:eq(test.dd.ip, gad.ip), gt(test.dd.t, gad.t)
       ├─IndexLookUp_23	0.00	root	
       │ ├─IndexScan_20	10.00	cop	table:dd, index:aid, dic, range: decided by [gad.aid gad.ip], keep order:false, stats:pseudo
-      │ └─Selection_22	0.00	cop	eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908)
+      │ └─Selection_22	0.00	cop	eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
       │   └─TableScan_21	10.00	cop	table:dd, keep order:false, stats:pseudo
       └─IndexLookUp_33	3.33	root	
         ├─IndexScan_30	3333.33	cop	table:gad, index:t, range:(1478143908,+inf], keep order:false, stats:pseudo
-        └─Selection_32	3.33	cop	eq(gad.pt, "android")
+        └─Selection_32	3.33	cop	eq(gad.pt, "android"), not(isnull(gad.ip))
           └─TableScan_31	3333.33	cop	table:st, keep order:false, stats:pseudo
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	count	task	operator info
@@ -134,11 +134,11 @@ Projection_10	0.00	root	gad.id, sdk.id, gad.aid, gad.cm, sdk.dic, sdk.ip, sdk.t,
   └─IndexJoin_18	0.00	root	inner join, inner:IndexLookUp_17, outer key:gad.aid, inner key:sdk.aid, other cond:eq(gad.dic, sdk.mac), lt(gad.t, sdk.t)
     ├─IndexLookUp_27	0.00	root	
     │ ├─IndexScan_24	3333.33	cop	table:gad, index:t, range:(1477971479,+inf], keep order:false, stats:pseudo
-    │ └─Selection_26	0.00	cop	eq(gad.bm, 0), eq(gad.dit, "mac"), eq(gad.pt, "ios")
+    │ └─Selection_26	0.00	cop	eq(gad.bm, 0), eq(gad.dit, "mac"), eq(gad.pt, "ios"), not(isnull(gad.dic))
     │   └─TableScan_25	3333.33	cop	table:st, keep order:false, stats:pseudo
     └─IndexLookUp_17	0.00	root	
       ├─IndexScan_14	10.00	cop	table:sdk, index:aid, dic, range: decided by [gad.aid gad.dic], keep order:false, stats:pseudo
-      └─Selection_16	0.00	cop	eq(sdk.bm, 0), eq(sdk.pt, "ios"), gt(sdk.t, 1477971479)
+      └─Selection_16	0.00	cop	eq(sdk.bm, 0), eq(sdk.pt, "ios"), gt(sdk.t, 1477971479), not(isnull(sdk.mac)), not(isnull(sdk.t))
         └─TableScan_15	10.00	cop	table:dd, keep order:false, stats:pseudo
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	count	task	operator info
@@ -153,9 +153,9 @@ id	count	task	operator info
 Projection_10	0.00	root	dt.id, dt.aid, dt.pt, dt.dic, dt.cm, rr.gid, rr.acd, rr.t, dt.p1, dt.p2, dt.p3, dt.p4, dt.p5, dt.p6_md5, dt.p7_md5
 └─Limit_13	0.00	root	offset:0, count:2000
   └─IndexJoin_19	0.00	root	inner join, inner:IndexLookUp_18, outer key:dt.aid, dt.dic, inner key:rr.aid, rr.dic
-    ├─TableReader_45	0.00	root	data:Selection_44
-    │ └─Selection_44	0.00	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592)
-    │   └─TableScan_43	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
+    ├─TableReader_47	0.00	root	data:Selection_46
+    │ └─Selection_46	0.00	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592), not(isnull(dt.dic))
+    │   └─TableScan_45	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
     └─IndexLookUp_18	3.33	root	
       ├─IndexScan_15	10.00	cop	table:rr, index:aid, dic, range: decided by [dt.aid dt.dic], keep order:false, stats:pseudo
       └─Selection_17	3.33	cop	eq(rr.pt, "ios"), gt(rr.t, 1478185592)

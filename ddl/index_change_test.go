@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testIndexChangeSuite{})
@@ -36,7 +35,6 @@ type testIndexChangeSuite struct {
 }
 
 func (s *testIndexChangeSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_index_change")
 	s.dbInfo = &model.DBInfo{
 		Name: model.NewCIStr("test_index_change"),
@@ -51,7 +49,6 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 
 func (s *testIndexChangeSuite) TearDownSuite(c *C) {
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testIndexChangeSuite) TestIndexChange(c *C) {
