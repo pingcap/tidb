@@ -391,7 +391,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"SELECT a.b.c.d FROM t", false, ""},
 
 		// do statement
-		{"DO 1", true, ""},
+		{"DO 1", true, "DO 1"},
+		{"DO 1, sleep(1)", true, "DO 1, SLEEP(1)"},
 		{"DO 1 from t", false, ""},
 
 		// load data
@@ -516,32 +517,32 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"DELETE t1, t2 FROM t1 INNER JOIN t2 INNER JOIN t3 WHERE t1.id=t2.id AND t2.id=t3.id order by t1.id;", false, ""},
 
 		// for admin
-		{"admin show ddl;", true, ""},
-		{"admin show ddl jobs;", true, ""},
-		{"admin show ddl jobs 20;", true, ""},
+		{"admin show ddl;", true, "ADMIN SHOW DDL"},
+		{"admin show ddl jobs;", true, "ADMIN SHOW DDL JOBS"},
+		{"admin show ddl jobs 20;", true, "ADMIN SHOW DDL JOBS 20"},
 		{"admin show ddl jobs -1;", false, ""},
-		{"admin show ddl job queries 1", true, ""},
-		{"admin show ddl job queries 1, 2, 3, 4", true, ""},
-		{"admin show t1 next_row_id", true, ""},
-		{"admin check table t1, t2;", true, ""},
-		{"admin check index tableName idxName;", true, ""},
-		{"admin check index tableName idxName (1, 2), (4, 5);", true, ""},
-		{"admin checksum table t1, t2;", true, ""},
-		{"admin cancel ddl jobs 1", true, ""},
-		{"admin cancel ddl jobs 1, 2", true, ""},
-		{"admin recover index t1 idx_a", true, ""},
-		{"admin cleanup index t1 idx_a", true, ""},
-		{"admin show slow top 3", true, ""},
-		{"admin show slow top internal 7", true, ""},
-		{"admin show slow top all 9", true, ""},
-		{"admin show slow recent 11", true, ""},
-		{"admin restore table by job 11", true, ""},
+		{"admin show ddl job queries 1", true, "ADMIN SHOW DDL JOB QUERIES 1"},
+		{"admin show ddl job queries 1, 2, 3, 4", true, "ADMIN SHOW DDL JOB QUERIES 1, 2, 3, 4"},
+		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
+		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
+		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
+		{"admin check index tableName idxName (1, 2), (4, 5);", true, "ADMIN CHECK INDEX `tableName` idxName (1,2), (4,5)"},
+		{"admin checksum table t1, t2;", true, "ADMIN CHECKSUM TABLE `t1`, `t2`"},
+		{"admin cancel ddl jobs 1", true, "ADMIN CANCEL DDL JOBS 1"},
+		{"admin cancel ddl jobs 1, 2", true, "ADMIN CANCEL DDL JOBS 1, 2"},
+		{"admin recover index t1 idx_a", true, "ADMIN RECOVER INDEX `t1` idx_a"},
+		{"admin cleanup index t1 idx_a", true, "ADMIN CLEANUP INDEX `t1` idx_a"},
+		{"admin show slow top 3", true, "ADMIN SHOW SLOW TOP 3"},
+		{"admin show slow top internal 7", true, "ADMIN SHOW SLOW TOP INTERNAL 7"},
+		{"admin show slow top all 9", true, "ADMIN SHOW SLOW TOP ALL 9"},
+		{"admin show slow recent 11", true, "ADMIN SHOW SLOW RECENT 11"},
+		{"admin restore table by job 11", true, "ADMIN RESTORE TABLE BY JOB 11"},
 		{"admin restore table by job 11,12,13", false, ""},
 		{"admin restore table by job", false, ""},
-		{"admin restore table t1", true, ""},
+		{"admin restore table t1", true, "ADMIN RESTORE TABLE `t1`"},
 		{"admin restore table t1,t2", false, ""},
 		{"admin restore table ", false, ""},
-		{"admin restore table t1 100", true, ""},
+		{"admin restore table t1 100", true, "ADMIN RESTORE TABLE `t1` 100"},
 		{"admin restore table t1 abc", false, ""},
 
 		// for on duplicate key update
@@ -605,7 +606,13 @@ AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 AAAAAAAAAAAA5gm5Mg==
-'/*!*/;`, true, ""},
+'/*!*/;`, true, `BINLOG '
+BxSFVw8JAAAA8QAAAPUAAAAAAAQANS41LjQ0LU1hcmlhREItbG9nAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAEzgNAAgAEgAEBAQEEgAA2QAEGggAAAAICAgCAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAA5gm5Mg==
+'`},
 
 		// for partition table dml
 		{"select * from t1 partition (p1)", true, ""},
@@ -749,17 +756,17 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"set @@session.sql_mode=1, names utf8, charset utf8;", true, "SET @@SESSION.`sql_mode`=1, NAMES 'utf8', NAMES 'utf8'"},
 
 		// for FLUSH statement
-		{"flush no_write_to_binlog tables tbl1 with read lock", true, ""},
-		{"flush table", true, ""},
-		{"flush tables", true, ""},
-		{"flush tables tbl1", true, ""},
-		{"flush no_write_to_binlog tables tbl1", true, ""},
-		{"flush local tables tbl1", true, ""},
-		{"flush table with read lock", true, ""},
-		{"flush tables tbl1, tbl2, tbl3", true, ""},
-		{"flush tables tbl1, tbl2, tbl3 with read lock", true, ""},
-		{"flush privileges", true, ""},
-		{"flush status", true, ""},
+		{"flush no_write_to_binlog tables tbl1 with read lock", true, "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1` WITH READ LOCK"},
+		{"flush table", true, "FLUSH TABLES"},
+		{"flush tables", true, "FLUSH TABLES"},
+		{"flush tables tbl1", true, "FLUSH TABLES `tbl1`"},
+		{"flush no_write_to_binlog tables tbl1", true, "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1`"},
+		{"flush local tables tbl1", true, "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1`"},
+		{"flush table with read lock", true, "FLUSH TABLES WITH READ LOCK"},
+		{"flush tables tbl1, tbl2, tbl3", true, "FLUSH TABLES `tbl1`, `tbl2`, `tbl3`"},
+		{"flush tables tbl1, tbl2, tbl3 with read lock", true, "FLUSH TABLES `tbl1`, `tbl2`, `tbl3` WITH READ LOCK"},
+		{"flush privileges", true, "FLUSH PRIVILEGES"},
+		{"flush status", true, "FLUSH STATUS"},
 	}
 	s.RunTest(c, table)
 }
@@ -2551,14 +2558,14 @@ func (s *testParserSuite) TestSessionManage(c *C) {
 	table := []testCase{
 		// Kill statement.
 		// See https://dev.mysql.com/doc/refman/5.7/en/kill.html
-		{"kill 23123", true, ""},
-		{"kill connection 23123", true, ""},
-		{"kill query 23123", true, ""},
-		{"kill tidb 23123", true, ""},
-		{"kill tidb connection 23123", true, ""},
-		{"kill tidb query 23123", true, ""},
-		{"show processlist", true, ""},
-		{"show full processlist", true, ""},
+		{"kill 23123", true, "KILL 23123"},
+		{"kill connection 23123", true, "KILL 23123"},
+		{"kill query 23123", true, "KILL QUERY 23123"},
+		{"kill tidb 23123", true, "KILL TIDB 23123"},
+		{"kill tidb connection 23123", true, "KILL TIDB 23123"},
+		{"kill tidb query 23123", true, "KILL TIDB QUERY 23123"},
+		{"show processlist", true, "SHOW PROCESSLIST"},
+		{"show full processlist", true, "SHOW FULL PROCESSLIST"},
 	}
 	s.RunTest(c, table)
 }
