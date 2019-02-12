@@ -93,6 +93,18 @@ type AuthOption struct {
 	// TODO: support auth_plugin
 }
 
+// Restore implements Node interface.
+func (n *AuthOption) Restore(ctx *RestoreCtx) error {
+	ctx.WriteKeyWord("IDENTIFIED BY ")
+	if n.ByAuthString {
+		ctx.WriteString(n.AuthString)
+	} else {
+		ctx.WriteKeyWord("PASSWORD ")
+		ctx.WriteString(n.HashString)
+	}
+	return nil
+}
+
 // TraceStmt is a statement to trace what sql actually does at background.
 type TraceStmt struct {
 	stmtNode
@@ -559,28 +571,42 @@ type UserSpec struct {
 	AuthOpt *AuthOption
 }
 
+// Restore implements Node interface.
+func (n *UserSpec) Restore(ctx *RestoreCtx) error {
+	if err := n.User.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore UserSpec.User")
+	}
+	if n.AuthOpt != nil {
+		ctx.WritePlain(" ")
+		if err := n.AuthOpt.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UserSpec.AuthOpt")
+		}
+	}
+	return nil
+}
+
 // SecurityString formats the UserSpec without password information.
-func (u *UserSpec) SecurityString() string {
+func (n *UserSpec) SecurityString() string {
 	withPassword := false
-	if opt := u.AuthOpt; opt != nil {
+	if opt := n.AuthOpt; opt != nil {
 		if len(opt.AuthString) > 0 || len(opt.HashString) > 0 {
 			withPassword = true
 		}
 	}
 	if withPassword {
-		return fmt.Sprintf("{%s password = ***}", u.User)
+		return fmt.Sprintf("{%s password = ***}", n.User)
 	}
-	return u.User.String()
+	return n.User.String()
 }
 
 // EncodedPassword returns the encoded password (which is the real data mysql.user).
 // The boolean value indicates input's password format is legal or not.
-func (u *UserSpec) EncodedPassword() (string, bool) {
-	if u.AuthOpt == nil {
+func (n *UserSpec) EncodedPassword() (string, bool) {
+	if n.AuthOpt == nil {
 		return "", true
 	}
 
-	opt := u.AuthOpt
+	opt := n.AuthOpt
 	if opt.ByAuthString {
 		return auth.EncodePassword(opt.AuthString), true
 	}
@@ -603,7 +629,19 @@ type CreateUserStmt struct {
 
 // Restore implements Node interface.
 func (n *CreateUserStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("CREATE USER ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	for i, v := range n.Specs {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.Specs[%d]", i)
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
@@ -639,7 +677,26 @@ type AlterUserStmt struct {
 
 // Restore implements Node interface.
 func (n *AlterUserStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("ALTER USER ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	if n.CurrentAuth != nil {
+		ctx.WriteKeyWord("USER")
+		ctx.WritePlain("() ")
+		if err := n.CurrentAuth.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentAuth")
+		}
+	}
+	for i, v := range n.Specs {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.Specs[%d]", i)
+		}
+	}
+	return nil
 }
 
 // SecureText implements SensitiveStatement interface.
@@ -674,7 +731,19 @@ type DropUserStmt struct {
 
 // Restore implements Node interface.
 func (n *DropUserStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("DROP USER ")
+	if n.IfExists {
+		ctx.WriteKeyWord("IF EXISTS ")
+	}
+	for i, v := range n.UserList {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := v.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore DropUserStmt.UserList[%d]", i)
+		}
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.

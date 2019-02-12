@@ -1798,18 +1798,6 @@ func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
 		}
 		return nil
 	}
-	restoreUserName := func() error {
-		if n.User.CurrentUser {
-			ctx.WriteKeyWord("CURRENT_USER")
-		} else {
-			ctx.WriteString(n.User.Username)
-			if n.User.Hostname != "" {
-				ctx.WritePlain("@")
-				ctx.WriteString(n.User.Hostname)
-			}
-		}
-		return nil
-	}
 
 	ctx.WriteKeyWord("SHOW ")
 	switch n.Tp {
@@ -1831,12 +1819,16 @@ func (n *ShowStmt) Restore(ctx *RestoreCtx) error {
 		ctx.WriteName(n.DBName)
 	case ShowCreateUser:
 		ctx.WriteKeyWord("CREATE USER ")
-		restoreUserName()
+		if err := n.User.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.User")
+		}
 	case ShowGrants:
 		ctx.WriteKeyWord("GRANTS")
 		if n.User != nil {
 			ctx.WriteKeyWord(" FOR ")
-			restoreUserName()
+			if err := n.User.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.User")
+			}
 		}
 	case ShowMasterStatus:
 		ctx.WriteKeyWord("MASTER STATUS")
