@@ -383,4 +383,5 @@ type PhysicalWindow struct {
 	WindowFuncDesc *aggregation.WindowFuncDesc
 	PartitionBy    []property.Item
 	OrderBy        []property.Item
+	Frame          *WindowFrame
 }
