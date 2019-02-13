@@ -182,7 +182,7 @@ func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) bindRecord {
 }
 
 func (b *bindCache) appendNode(sctx sessionctx.Context, newBindRecord bindRecord, sparser *parser.Parser) error {
-	hash := parser.Digest(newBindRecord.OriginalSQL)
+	hash := parser.Normalize(newBindRecord.OriginalSQL)
 
 	if bindArr, ok := b.Cache[hash]; ok {
 		for idx, v := range bindArr {

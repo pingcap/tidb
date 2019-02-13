@@ -112,6 +112,8 @@ github.com/pingcap/kvproto v0.0.0-20181203065228-c14302da291c h1:Qf5St5XGwKgKQLa
 github.com/pingcap/kvproto v0.0.0-20181203065228-c14302da291c/go.mod h1:Ja9XPjot9q4/3JyCZodnWDGNXt4pKemhIYCvVJM7P24=
 github.com/pingcap/parser v0.0.0-20190108104142-35fab0be7fca h1:BIk063GpkHOJzR4Bp9I8xfsjp3nSvElvhIUjDgmInoo=
 github.com/pingcap/parser v0.0.0-20190108104142-35fab0be7fca/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
+github.com/pingcap/parser v0.0.0-20190213030152-fa42b824f423 h1:g3R90iN23/np68HonZbwSJ3lJTC9h5PV/ZJavT5t/Hs=
+github.com/pingcap/parser v0.0.0-20190213030152-fa42b824f423/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible/go.mod h1:nD3+EoYes4+aNNODO99ES59V83MZSI+dFbhyr667a0E=
 github.com/pingcap/tidb-tools v2.1.3-0.20190104033906-883b07a04a73+incompatible h1:Ba48wwPwPq5hd1kkQpgua49dqB5cthC2zXVo7fUUDec=
@@ -168,6 +170,7 @@ github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d h1:ggUgChAeyge4NZ4
 github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d/go.mod h1:tu82oB5W2ykJRVioYsB+IQKcft7ryBr7w12qMBUPyXg=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18 h1:MPPkRncZLN9Kh4MEFmbnK4h3BD7AUmskWv2+EeZJCCs=
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
+github.com/zhaoxiaojie0415/parser v0.0.0-20190108104054-e9812f82e3f3 h1:GCsP4JQK781IVYYonFXvqbyuc+rL9hCHxwJGkH397mc=
 github.com/zhaoxiaojie0415/parser v0.0.0-20190108104054-e9812f82e3f3/go.mod h1:cFzMp88tsCE3mZ1QXUC7HK6VwuRnW5rhI8/YEpwia+A=
 go.uber.org/atomic v1.3.2 h1:2Oa65PReHzfn29GpvgsYwloV9AVFHPDk8tYxt2c2tr4=
 go.uber.org/atomic v1.3.2/go.mod h1:gD2HeocX3+yG+ygLZcrzQJaqmWj9AIm7n08wl/qW/PE=
