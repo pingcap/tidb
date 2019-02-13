@@ -47,7 +47,7 @@ type tikvTxn struct {
 	vars      *kv.Variables
 
 	// For data consistency check.
-	assumptions []assumptionPair
+	assertions []assertionPair
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -64,26 +64,26 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver)
 	return &tikvTxn{
-		snapshot:    snapshot,
-		us:          kv.NewUnionStore(snapshot),
-		store:       store,
-		startTS:     startTS,
-		startTime:   time.Now(),
-		valid:       true,
-		vars:        kv.DefaultVars,
-		assumptions: make([]assumptionPair, 0, 16),
+		snapshot:   snapshot,
+		us:         kv.NewUnionStore(snapshot),
+		store:      store,
+		startTS:    startTS,
+		startTime:  time.Now(),
+		valid:      true,
+		vars:       kv.DefaultVars,
+		assertions: make([]assertionPair, 0, 16),
 	}, nil
 }
 
-type assumptionPair struct {
-	key        kv.Key
-	assumption kv.AssumptionType
+type assertionPair struct {
+	key       kv.Key
+	assertion kv.AssertionType
 }
 
-// SetAssumption sets a assumption for the key operation.
+// SetAssertion sets a assertion for the key operation.
 // Implements the kv.SafeStore interface.
-func (txn *tikvTxn) SetAssumption(key kv.Key, assumption kv.AssumptionType) {
-	txn.assumptions = append(txn.assumptions, assumptionPair{key, assumption})
+func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
+	txn.assertions = append(txn.assertions, assertionPair{key, assertion})
 }
 
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {

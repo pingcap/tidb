@@ -513,7 +513,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	}
 
 	if ss, ok := txn.(kv.SafeStore); ok {
-		ss.SetAssumption(key, kv.NoCheck)
+		ss.SetAssertion(key, kv.NoCheck)
 	}
 
 	if !sessVars.LightningMode {
@@ -774,7 +774,7 @@ func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 
 	key := t.RecordKey(h)
 	if ss, ok := txn.(kv.SafeStore); ok {
-		ss.SetAssumption(key, kv.MustExist)
+		ss.SetAssertion(key, kv.MustExist)
 	}
 	err = txn.Delete([]byte(key))
 	if err != nil {

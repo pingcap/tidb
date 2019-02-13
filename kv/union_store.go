@@ -39,12 +39,12 @@ type UnionStore interface {
 	GetMemBuffer() MemBuffer
 }
 
-// AssumptionType is the type of a assumption.
-type AssumptionType int
+// AssertionType is the type of a assertion.
+type AssertionType int
 
-// The AssumptionType constants.
+// The AssertionType constants.
 const (
-	NoCheck AssumptionType = iota
+	NoCheck AssertionType = iota
 	MustExist
 	MustNotExist
 )
@@ -52,8 +52,8 @@ const (
 // SafeStore is store that support contract checking.
 // Contracts are some conditions that an operation must meet.
 type SafeStore interface {
-	// SetAssumption sets a assumption for an operation on the key.
-	SetAssumption(key Key, assumption AssumptionType)
+	// SetAssertion sets a assertion for an operation on the key.
+	SetAssertion(key Key, assertion AssertionType)
 }
 
 // Option is used for customizing kv store's behaviors during a transaction.
