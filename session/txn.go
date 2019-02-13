@@ -56,10 +56,10 @@ type TxnState struct {
 var _ kv.SafeStore = &TxnState{}
 
 // SetAssertion implements the kv.SafeStore interface.
-func (st *TxnState) SetAssertion(key kv.Key, contract kv.AssertionType) {
+func (st *TxnState) SetAssertion(key kv.Key, assertion kv.AssertionType) {
 	if st.Transaction != nil {
 		if raw, ok := st.Transaction.(kv.SafeStore); ok {
-			raw.SetAssertion(key, contract)
+			raw.SetAssertion(key, assertion)
 		}
 	}
 }
