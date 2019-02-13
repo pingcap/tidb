@@ -361,10 +361,6 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	server.Close()
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
-	connOverrider = func(config *mysql.Config) {
-		config.TLSConfig = "client-certificate"
-		config.Addr = "localhost:4004"
-	}
 	cfg = config.NewConfig()
 	cfg.Port = 4004
 	cfg.Status.ReportStatus = false

@@ -62,7 +62,7 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	testKit.MustExec("create index idx_t on t(c1)")
-	is = do.InfoSchema()
+	do.InfoSchema()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	// If index is build, but stats is not updated. statsTbl can also work.
 	c.Assert(statsTbl.Pseudo, IsFalse)

@@ -84,6 +84,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildCheckIndexRange(v)
 	case *plannercore.ChecksumTable:
 		return b.buildChecksumTable(v)
+	case *plannercore.RestoreTable:
+		return b.buildRestoreTable(v)
 	case *plannercore.DDL:
 		return b.buildDDL(v)
 	case *plannercore.Deallocate:
@@ -334,6 +336,16 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 		columns:      buildRecoverIndexCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildRestoreTable(v *plannercore.RestoreTable) Executor {
+	e := &RestoreTableExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		jobID:        v.JobID,
+		Table:        v.Table,
+		JobNum:       v.JobNum,
 	}
 	return e
 }

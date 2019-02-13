@@ -264,27 +264,6 @@ func testIsNull(c *C, data interface{}, isnull bool) {
 	c.Assert(d.IsNull(), Equals, isnull, Commentf("data: %v, isnull: %v", data, isnull))
 }
 
-func (ts *testDatumSuite) TestCoerceDatum(c *C) {
-	tests := []struct {
-		a    Datum
-		b    Datum
-		kind byte
-	}{
-		{NewIntDatum(1), NewIntDatum(1), KindInt64},
-		{NewUintDatum(1), NewDecimalDatum(NewDecFromInt(1)), KindMysqlDecimal},
-		{NewFloat64Datum(1), NewDecimalDatum(NewDecFromInt(1)), KindFloat64},
-		{NewFloat64Datum(1), NewFloat64Datum(1), KindFloat64},
-	}
-	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	for _, tt := range tests {
-		x, y, err := CoerceDatum(sc, tt.a, tt.b)
-		c.Check(err, IsNil)
-		c.Check(x.Kind(), Equals, y.Kind())
-		c.Check(x.Kind(), Equals, tt.kind)
-	}
-}
-
 func (ts *testDatumSuite) TestToBytes(c *C) {
 	tests := []struct {
 		a   Datum
