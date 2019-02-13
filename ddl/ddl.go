@@ -477,10 +477,10 @@ func (d *ddl) genGlobalID() (int64, error) {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 
-		if vmockGenGlobalIDFail, __fpErr := __fp_mockGenGlobalIDFail.Acquire(); __fpErr == nil { defer __fp_mockGenGlobalIDFail.Release(); mockGenGlobalIDFail, __fpTypeOK := vmockGenGlobalIDFail.(bool); if !__fpTypeOK { goto __badTypemockGenGlobalIDFail} 
-			 if mockGenGlobalIDFail {
-				 return errors.New("gofail genGlobalID error")
-			 }; __badTypemockGenGlobalIDFail: __fp_mockGenGlobalIDFail.BadType(vmockGenGlobalIDFail, "bool"); };
+		// gofail: var mockGenGlobalIDFail bool
+		// if mockGenGlobalIDFail {
+		//	 return errors.New("gofail genGlobalID error")
+		// }
 
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)

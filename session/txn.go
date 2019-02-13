@@ -168,17 +168,17 @@ func (st *TxnState) Commit(ctx context.Context) error {
 	}
 
 	// mockCommitError8942 is used for PR #8942.
-	if vmockCommitError8942, __fpErr := __fp_mockCommitError8942.Acquire(); __fpErr == nil { defer __fp_mockCommitError8942.Release(); mockCommitError8942, __fpTypeOK := vmockCommitError8942.(bool); if !__fpTypeOK { goto __badTypemockCommitError8942} 
-		 if mockCommitError8942 {
-			return kv.ErrRetryable
-		 }; __badTypemockCommitError8942: __fp_mockCommitError8942.BadType(vmockCommitError8942, "bool"); };
+	// gofail: var mockCommitError8942 bool
+	// if mockCommitError8942 {
+	//	return kv.ErrRetryable
+	// }
 
 	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
-	if vmockCommitRetryForAutoID, __fpErr := __fp_mockCommitRetryForAutoID.Acquire(); __fpErr == nil { defer __fp_mockCommitRetryForAutoID.Release(); mockCommitRetryForAutoID, __fpTypeOK := vmockCommitRetryForAutoID.(bool); if !__fpTypeOK { goto __badTypemockCommitRetryForAutoID} 
-		 if mockCommitRetryForAutoID && !hasMockAutoIDRetry {
-		  hasMockAutoIDRetry = true
-			return kv.ErrRetryable
-		 }; __badTypemockCommitRetryForAutoID: __fp_mockCommitRetryForAutoID.BadType(vmockCommitRetryForAutoID, "bool"); };
+	// gofail: var mockCommitRetryForAutoID bool
+	// if mockCommitRetryForAutoID && !hasMockAutoIDRetry {
+	//  hasMockAutoIDRetry = true
+	//	return kv.ErrRetryable
+	// }
 
 	return errors.Trace(st.Transaction.Commit(ctx))
 }
@@ -316,11 +316,11 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	// Then mockGetTSErrorInRetry will return retryable error when first retry.
 	// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout[try again later]
 	// This may cause duplicate data to be written.
-	if vmockGetTSErrorInRetry, __fpErr := __fp_mockGetTSErrorInRetry.Acquire(); __fpErr == nil { defer __fp_mockGetTSErrorInRetry.Release(); mockGetTSErrorInRetry, __fpTypeOK := vmockGetTSErrorInRetry.(bool); if !__fpTypeOK { goto __badTypemockGetTSErrorInRetry} 
-		 if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
-			 mockGetTSErrorInRetryOnce = false
-			 return nil, errors.Errorf("PD server timeout[try again later]")
-		 }; __badTypemockGetTSErrorInRetry: __fp_mockGetTSErrorInRetry.BadType(vmockGetTSErrorInRetry, "bool"); };
+	// gofail: var mockGetTSErrorInRetry bool
+	// if mockGetTSErrorInRetry && mockGetTSErrorInRetryOnce && !mockCommitErrorOnce {
+	//	 mockGetTSErrorInRetryOnce = false
+	//	 return nil, errors.Errorf("PD server timeout[try again later]")
+	// }
 
 	startTS, err := tf.future.Wait()
 	if err == nil {
@@ -353,10 +353,10 @@ func (s *session) StmtCommit() error {
 	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
 
-		if vmockStmtCommitError, __fpErr := __fp_mockStmtCommitError.Acquire(); __fpErr == nil { defer __fp_mockStmtCommitError.Release(); mockStmtCommitError, __fpTypeOK := vmockStmtCommitError.(bool); if !__fpTypeOK { goto __badTypemockStmtCommitError} 
-			 if mockStmtCommitError {
-			 	count++
-			 }; __badTypemockStmtCommitError: __fp_mockStmtCommitError.BadType(vmockStmtCommitError, "bool"); };
+		// gofail: var mockStmtCommitError bool
+		// if mockStmtCommitError {
+		// 	count++
+		// }
 		if count > 3 {
 			return errors.New("mock stmt commit error")
 		}

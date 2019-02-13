@@ -161,10 +161,10 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, nil
 	}
 
-	if verrorBeforeDecodeArgs, __fpErr := __fp_errorBeforeDecodeArgs.Acquire(); __fpErr == nil { defer __fp_errorBeforeDecodeArgs.Release(); errorBeforeDecodeArgs, __fpTypeOK := verrorBeforeDecodeArgs.(bool); if !__fpTypeOK { goto __badTypeerrorBeforeDecodeArgs} 
-		 if errorBeforeDecodeArgs {
-		 	return ver, errors.New("occur an error before decode args")
-		 }; __badTypeerrorBeforeDecodeArgs: __fp_errorBeforeDecodeArgs.BadType(verrorBeforeDecodeArgs, "bool"); };
+	// gofail: var errorBeforeDecodeArgs bool
+	// if errorBeforeDecodeArgs {
+	// 	return ver, errors.New("occur an error before decode args")
+	// }
 
 	tblInfo, columnInfo, col, pos, offset, err := checkAddColumn(t, job)
 	if err != nil {
@@ -366,12 +366,12 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		}
 	}
 
-	if vuninitializedOffsetAndState, __fpErr := __fp_uninitializedOffsetAndState.Acquire(); __fpErr == nil { defer __fp_uninitializedOffsetAndState.Release(); uninitializedOffsetAndState, __fpTypeOK := vuninitializedOffsetAndState.(bool); if !__fpTypeOK { goto __badTypeuninitializedOffsetAndState} 
-		 if uninitializedOffsetAndState {
-		 if newCol.State != model.StatePublic {
-		      return ver, errors.New("the column state is wrong")
-		 }
-		 }; __badTypeuninitializedOffsetAndState: __fp_uninitializedOffsetAndState.BadType(vuninitializedOffsetAndState, "bool"); };
+	// gofail: var uninitializedOffsetAndState bool
+	// if uninitializedOffsetAndState {
+	// if newCol.State != model.StatePublic {
+	//      return ver, errors.New("the column state is wrong")
+	// }
+	// }
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)

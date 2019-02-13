@@ -593,10 +593,10 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch chan<- *copResponse) ([]*copTask, error) {
 
-	if vhandleTaskOnceError, __fpErr := __fp_handleTaskOnceError.Acquire(); __fpErr == nil { defer __fp_handleTaskOnceError.Release(); handleTaskOnceError, __fpTypeOK := vhandleTaskOnceError.(bool); if !__fpTypeOK { goto __badTypehandleTaskOnceError} 
-		 if handleTaskOnceError {
-		 	return nil, errors.New("mock handleTaskOnce error")
-		 }; __badTypehandleTaskOnceError: __fp_handleTaskOnceError.BadType(vhandleTaskOnceError, "bool"); };
+	// gofail: var handleTaskOnceError bool
+	// if handleTaskOnceError {
+	// 	return nil, errors.New("mock handleTaskOnce error")
+	// }
 
 	sender := NewRegionRequestSender(worker.store.regionCache, worker.store.client)
 	req := &tikvrpc.Request{

@@ -749,10 +749,10 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
-	if verrorMockPanic, __fpErr := __fp_errorMockPanic.Acquire(); __fpErr == nil { defer __fp_errorMockPanic.Release(); errorMockPanic, __fpTypeOK := verrorMockPanic.(bool); if !__fpTypeOK { goto __badTypeerrorMockPanic} 
-		 if errorMockPanic {
-		 		panic("panic test")
-		 }; __badTypeerrorMockPanic: __fp_errorMockPanic.BadType(verrorMockPanic, "bool"); };
+	// gofail: var errorMockPanic bool
+	// if errorMockPanic {
+	// 		panic("panic test")
+	// }
 
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
@@ -877,13 +877,13 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		}
 
 		log.Debug("[ddl-reorg] got backfill index task:#v", task)
-		if vmockAddIndexErr, __fpErr := __fp_mockAddIndexErr.Acquire(); __fpErr == nil { defer __fp_mockAddIndexErr.Release(); mockAddIndexErr, __fpTypeOK := vmockAddIndexErr.(bool); if !__fpTypeOK { goto __badTypemockAddIndexErr} 
-			if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
-				gofailMockAddindexErrOnceGuard = true
-				result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
-				w.resultCh <- result
-				continue
-			}; __badTypemockAddIndexErr: __fp_mockAddIndexErr.BadType(vmockAddIndexErr, "bool"); };
+		// gofail: var mockAddIndexErr bool
+		//if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
+		//	gofailMockAddindexErrOnceGuard = true
+		//	result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
+		//	w.resultCh <- result
+		//	continue
+		//}
 
 		// Dynamic change batch size.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
@@ -1155,20 +1155,20 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			closeAddIndexWorkers(workers)
 		}
 
-		if vcheckIndexWorkerNum, __fpErr := __fp_checkIndexWorkerNum.Acquire(); __fpErr == nil { defer __fp_checkIndexWorkerNum.Release(); checkIndexWorkerNum, __fpTypeOK := vcheckIndexWorkerNum.(bool); if !__fpTypeOK { goto __badTypecheckIndexWorkerNum} 
-			 if checkIndexWorkerNum {
-				num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
-				if num != 0 {
-					if num > len(kvRanges) {
-						if len(idxWorkers) != len(kvRanges) {
-							return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
-						}
-					} else if num != len(idxWorkers) {
-						return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
-					}
-					TestCheckWorkerNumCh <- struct{}{}
-				}
-			}; __badTypecheckIndexWorkerNum: __fp_checkIndexWorkerNum.BadType(vcheckIndexWorkerNum, "bool"); };
+		// gofail: var checkIndexWorkerNum bool
+		// if checkIndexWorkerNum {
+		//	num := int(atomic.LoadInt32(&TestCheckWorkerNumber))
+		//	if num != 0 {
+		//		if num > len(kvRanges) {
+		//			if len(idxWorkers) != len(kvRanges) {
+		//				return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
+		//			}
+		//		} else if num != len(idxWorkers) {
+		//			return errors.Errorf("check index worker num error, len kv ranges is: %v, check index worker num is: %v, actual index num is: %v", len(kvRanges), num, len(idxWorkers))
+		//		}
+		//		TestCheckWorkerNumCh <- struct{}{}
+		//	}
+		//}
 
 		log.Infof("[ddl-reorg] start %d workers to reorg index of %v region ranges, handle range:[%v, %v).", len(idxWorkers), len(kvRanges), startHandle, endHandle)
 		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges)
