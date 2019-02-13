@@ -353,14 +353,11 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 }
 
 func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
-	var ss kv.SafeStore
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
 	}
-	if tmp, ok := txn.(kv.SafeStore); ok {
-		ss = tmp
-	}
+	ss, _ := txn.(kv.SafeStore)
 	for _, idx := range t.DeletableIndices() {
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {

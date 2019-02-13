@@ -150,10 +150,10 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	for _, pair := range txn.assertions {
 		mutation, ok := mutations[string(pair.key)]
 		if !ok {
-			log.Error("CONTRACT BUG!!! contract exists but no mutation?", pair)
+			log.Error("ASSERTION FAIL!!! assertion exists but no mutation?", pair)
 			continue
 		}
-		// Only apply the first contract!
+		// Only apply the first assertion!
 		// TODO: Find a way to avoid mutationEx.
 		if mutation.asserted {
 			continue
