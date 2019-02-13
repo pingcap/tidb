@@ -58,10 +58,6 @@ KEY `IDX_a` (`a`),
 KEY `IDX_b` (`b`),
 KEY `IDX_ab` (`a`, `b`)
 );
-insert into `access_path_selection` values (1, 0);
-insert into `access_path_selection` values (2, 0);
-insert into `access_path_selection` values (3, 0);
-insert into `access_path_selection` values (4, 0);
 explain select a, b from access_path_selection where a < 3;
 id	count	task	operator info
 IndexReader_12	3323.33	root	index:IndexScan_11
