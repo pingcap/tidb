@@ -31,10 +31,10 @@ func EncodeDecimal(b []byte, dec *types.MyDecimal, precision, frac int) ([]byte,
 
 // DecodeDecimal decodes bytes to decimal.
 func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, int, int, error) {
-	// gofail: var errorInDecodeDecimal bool
-	// if errorInDecodeDecimal {
-	//	 return b, nil, 0, 0, errors.New("gofail error")
-	// }
+	if verrorInDecodeDecimal, __fpErr := __fp_errorInDecodeDecimal.Acquire(); __fpErr == nil { defer __fp_errorInDecodeDecimal.Release(); errorInDecodeDecimal, __fpTypeOK := verrorInDecodeDecimal.(bool); if !__fpTypeOK { goto __badTypeerrorInDecodeDecimal} 
+		 if errorInDecodeDecimal {
+			 return b, nil, 0, 0, errors.New("gofail error")
+		 }; __badTypeerrorInDecodeDecimal: __fp_errorInDecodeDecimal.BadType(verrorInDecodeDecimal, "bool"); };
 
 	if len(b) < 3 {
 		return b, nil, 0, 0, errors.New("insufficient bytes to decode value")

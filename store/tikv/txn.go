@@ -169,11 +169,11 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.close()
 
-	// gofail: var mockCommitError bool
-	// if mockCommitError && kv.IsMockCommitErrorEnable() {
-	//  kv.MockCommitErrorDisable()
-	//	return errors.New("mock commit error")
-	// }
+	if vmockCommitError, __fpErr := __fp_mockCommitError.Acquire(); __fpErr == nil { defer __fp_mockCommitError.Release(); mockCommitError, __fpTypeOK := vmockCommitError.(bool); if !__fpTypeOK { goto __badTypemockCommitError} 
+		 if mockCommitError && kv.IsMockCommitErrorEnable() {
+		  kv.MockCommitErrorDisable()
+			return errors.New("mock commit error")
+		 }; __badTypemockCommitError: __fp_mockCommitError.BadType(vmockCommitError, "bool"); };
 
 	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()

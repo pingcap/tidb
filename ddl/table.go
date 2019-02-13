@@ -246,11 +246,11 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
-		// gofail: var mockRestoreTableCommitErr bool
-		// if mockRestoreTableCommitErr && mockRestoreTableCommitErrOnce {
-		//	 mockRestoreTableCommitErrOnce = false
-		//	 kv.MockCommitErrorEnable()
-		// }
+		if vmockRestoreTableCommitErr, __fpErr := __fp_mockRestoreTableCommitErr.Acquire(); __fpErr == nil { defer __fp_mockRestoreTableCommitErr.Release(); mockRestoreTableCommitErr, __fpTypeOK := vmockRestoreTableCommitErr.(bool); if !__fpTypeOK { goto __badTypemockRestoreTableCommitErr} 
+			 if mockRestoreTableCommitErr && mockRestoreTableCommitErrOnce {
+				 mockRestoreTableCommitErrOnce = false
+				 kv.MockCommitErrorEnable()
+			 }; __badTypemockRestoreTableCommitErr: __fp_mockRestoreTableCommitErr.BadType(vmockRestoreTableCommitErr, "bool"); };
 
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -391,11 +391,11 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var truncateTableErr bool
-	// if truncateTableErr {
-	//  job.State = model.JobStateCancelled
-	//  return ver, errors.New("occur an error after dropping table.")
-	// }
+	if vtruncateTableErr, __fpErr := __fp_truncateTableErr.Acquire(); __fpErr == nil { defer __fp_truncateTableErr.Release(); truncateTableErr, __fpTypeOK := vtruncateTableErr.(bool); if !__fpTypeOK { goto __badTypetruncateTableErr} 
+		 if truncateTableErr {
+		  job.State = model.JobStateCancelled
+		  return ver, errors.New("occur an error after dropping table.")
+		 }; __badTypetruncateTableErr: __fp_truncateTableErr.BadType(vtruncateTableErr, "bool"); };
 
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
@@ -522,11 +522,11 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// gofail: var renameTableErr bool
-	// if renameTableErr {
-	//	job.State = model.JobStateCancelled
-	//	return ver, errors.New("occur an error after renaming table.")
-	// }
+	if vrenameTableErr, __fpErr := __fp_renameTableErr.Acquire(); __fpErr == nil { defer __fp_renameTableErr.Release(); renameTableErr, __fpTypeOK := vrenameTableErr.(bool); if !__fpTypeOK { goto __badTyperenameTableErr} 
+		 if renameTableErr {
+			job.State = model.JobStateCancelled
+			return ver, errors.New("occur an error after renaming table.")
+		 }; __badTyperenameTableErr: __fp_renameTableErr.BadType(vrenameTableErr, "bool"); };
 	tblInfo.Name = tableName
 	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {

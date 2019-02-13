@@ -612,10 +612,10 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepared = true
 	}
 
-	// gofail: var parallelHashAggError bool
-	// if parallelHashAggError {
-	// 	return errors.New("HashAggExec.parallelExec error")
-	// }
+	if vparallelHashAggError, __fpErr := __fp_parallelHashAggError.Acquire(); __fpErr == nil { defer __fp_parallelHashAggError.Release(); parallelHashAggError, __fpTypeOK := vparallelHashAggError.(bool); if !__fpTypeOK { goto __badTypeparallelHashAggError} 
+		 if parallelHashAggError {
+		 	return errors.New("HashAggExec.parallelExec error")
+		 }; __badTypeparallelHashAggError: __fp_parallelHashAggError.BadType(vparallelHashAggError, "bool"); };
 
 	for {
 		result, ok := <-e.finalOutputCh
@@ -689,10 +689,10 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			return errors.Trace(err)
 		}
 
-		// gofail: var unparallelHashAggError bool
-		// if unparallelHashAggError {
-		// 	return errors.New("HashAggExec.unparallelExec error")
-		// }
+		if vunparallelHashAggError, __fpErr := __fp_unparallelHashAggError.Acquire(); __fpErr == nil { defer __fp_unparallelHashAggError.Release(); unparallelHashAggError, __fpTypeOK := vunparallelHashAggError.(bool); if !__fpTypeOK { goto __badTypeunparallelHashAggError} 
+			 if unparallelHashAggError {
+			 	return errors.New("HashAggExec.unparallelExec error")
+			 }; __badTypeunparallelHashAggError: __fp_unparallelHashAggError.BadType(vunparallelHashAggError, "bool"); };
 
 		// no more data.
 		if e.childResult.NumRows() == 0 {

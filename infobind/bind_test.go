@@ -107,14 +107,14 @@ func (s *testSuite) TestBindParse(c *C) {
 	tk.MustExec("create table t(i int)")
 	tk.MustExec("create index index_t on t(i)")
 
-	originSql := "select * from t"
-	bindSql := "select * from t use index(index_t)"
+	originSQL := "select * from t"
+	bindSQL := "select * from t use index(index_t)"
 	defaultDb := "test"
 	status := 1
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', %d, NOW(), NOW(),'%s', '%s')`,
-		originSql, bindSql, defaultDb, status, charset, collation)
+		originSQL, bindSQL, defaultDb, status, charset, collation)
 
 	tk.MustExec(sql)
 

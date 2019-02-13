@@ -363,12 +363,12 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		}
 		log.Infof("[ddl-reorg] job %v get partition %d range [%d %d]", job.ID, pid, start, end)
 
-		// gofail: var errorUpdateReorgHandle bool
-		// if errorUpdateReorgHandle && !gofailOnceGuard {
-		//  // only return error once.
-		//	gofailOnceGuard = true
-		// 	return &info, errors.New("occur an error when update reorg handle.")
-		// }
+		if verrorUpdateReorgHandle, __fpErr := __fp_errorUpdateReorgHandle.Acquire(); __fpErr == nil { defer __fp_errorUpdateReorgHandle.Release(); errorUpdateReorgHandle, __fpTypeOK := verrorUpdateReorgHandle.(bool); if !__fpTypeOK { goto __badTypeerrorUpdateReorgHandle} 
+			 if errorUpdateReorgHandle && !gofailOnceGuard {
+			  // only return error once.
+				gofailOnceGuard = true
+			 	return &info, errors.New("occur an error when update reorg handle.")
+			 }; __badTypeerrorUpdateReorgHandle: __fp_errorUpdateReorgHandle.BadType(verrorUpdateReorgHandle, "bool"); };
 		err = t.UpdateDDLReorgHandle(job, start, end, pid)
 		if err != nil {
 			return &info, errors.Trace(err)
