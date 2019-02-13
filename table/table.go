@@ -79,8 +79,6 @@ var (
 	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
 	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
 	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
-	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
-	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
 
 	// ErrUnknownPartition returns unknown partition error.
 	ErrUnknownPartition = terror.ClassTable.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
@@ -208,7 +206,6 @@ const (
 	codeTruncateWrongValue = 1366
 	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
 	// It may happen when inserting some data outside of all table partitions.
-	codeTrgInvalidCreationCtx = 1604
 
 	codeUnknownPartition         = mysql.ErrUnknownPartition
 	codeNoPartitionForGivenValue = mysql.ErrNoPartitionForGivenValue
@@ -232,7 +229,6 @@ func init() {
 		codeDuplicateColumn:          mysql.ErrFieldSpecifiedTwice,
 		codeNoDefaultValue:           mysql.ErrNoDefaultForField,
 		codeTruncateWrongValue:       mysql.ErrTruncatedWrongValueForField,
-		codeTrgInvalidCreationCtx:    mysql.ErrTrgInvalidCreationCtx,
 		codeUnknownPartition:         mysql.ErrUnknownPartition,
 		codeNoPartitionForGivenValue: mysql.ErrNoPartitionForGivenValue,
 	}
