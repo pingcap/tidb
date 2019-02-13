@@ -168,7 +168,7 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 }
 
 func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef,
-	constraints []*ast.Constraint) ([]*table.Column, []*ast.Constraint, error) {
+	constraints []*ast.Constraint, tblCharset, dbCharset string) ([]*table.Column, []*ast.Constraint, error) {
 	var cols []*table.Column
 	colMap := map[string]*table.Column{}
 	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
@@ -180,7 +180,7 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 		}
 	}
 	for i, colDef := range colDefs {
-		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint)
+		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, dbCharset)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -196,13 +196,40 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	return cols, constraints, nil
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
+// ResolveCharsetCollation will resolve the charset by the order: table charset > database charset > server default charset.
+func ResolveCharsetCollation(tblCharset, dbCharset string) (string, string, error) {
+	if len(tblCharset) != 0 {
+		defCollate, err := charset.GetDefaultCollation(tblCharset)
+		if err != nil {
+			// return terror is better.
+			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(tblCharset)
+		}
+		return tblCharset, defCollate, nil
+	}
+
+	if len(dbCharset) != 0 {
+		defCollate, err := charset.GetDefaultCollation(dbCharset)
+		if err != nil {
+			return "", "", ErrUnknownCharacterSet.GenWithStackByArgs(dbCharset)
+		}
+		return dbCharset, defCollate, errors.Trace(err)
+	}
+
+	charset, collate := charset.GetDefaultCharsetAndCollate()
+	return charset, collate, nil
+}
+
+func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCharset string) error {
 	tp.Charset = strings.ToLower(tp.Charset)
 	tp.Collate = strings.ToLower(tp.Collate)
 	if len(tp.Charset) == 0 {
 		switch tp.Tp {
 		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
-			tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
+			var err error
+			tp.Charset, tp.Collate, err = ResolveCharsetCollation(tblCharset, dbCharset)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		default:
 			tp.Charset = charset.CharsetBin
 			tp.Collate = charset.CharsetBin
@@ -219,6 +246,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 			}
 		}
 	}
+
 	// Use default value for flen or decimal when they are unspecified.
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(tp.Tp)
 	if tp.Flen == types.UnspecifiedLength {
@@ -237,9 +265,8 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
-	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
-	err := setCharsetCollationFlenDecimal(colDef.Tp)
-	if err != nil {
+	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, tblCharset, dbCharset); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -351,7 +378,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:
-				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
+				value, err := getDefaultValue(ctx, v, colDef.Tp)
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 				}
@@ -430,7 +457,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
+func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
+	tp, fsp := t.Tp, t.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
@@ -470,6 +498,13 @@ func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp i
 		}
 		// For other kind of fields (e.g. INT), we supply its integer value so that it acts as integers.
 		return v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+	}
+
+	if tp == mysql.TypeDuration {
+		var err error
+		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, t); err != nil {
+			return "", errors.Trace(err)
+		}
 	}
 
 	if tp == mysql.TypeBit {
@@ -673,25 +708,23 @@ func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-// checkColumnFieldLength check the maximum length limit for different character set varchar type columns.
-func checkColumnFieldLength(schema *model.DBInfo, colDefs []*ast.ColumnDef, tbInfo *model.TableInfo) error {
-	for _, colDef := range colDefs {
-		if colDef.Tp.Tp == mysql.TypeVarchar {
-			var setCharset string
-			setCharset = mysql.DefaultCharset
-			if len(schema.Charset) != 0 {
-				setCharset = schema.Charset
-			}
-			if len(tbInfo.Charset) != 0 {
-				setCharset = tbInfo.Charset
-			}
-
-			err := IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, setCharset)
-			if err != nil {
-				return errors.Trace(err)
-			}
+// checkColumnsFieldLength check the maximum length limit for different character set varchar type columns.
+func checkColumnsFieldLength(cols []*table.Column) error {
+	for _, col := range cols {
+		if err := checkColumnFieldLength(col); err != nil {
+			return errors.Trace(err)
 		}
 	}
+	return nil
+}
+
+func checkColumnFieldLength(col *table.Column) error {
+	if col.Tp == mysql.TypeVarchar {
+		if err := IsTooBigFieldLength(col.Flen, col.Name.O, col.Charset); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	return nil
 }
 
@@ -949,10 +982,10 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 // The SQL string should be a create table statement.
 // Don't use this function to build a partitioned table.
 func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return buildTableInfoWithCheck(mock.NewContext(), nil, s)
+	return buildTableInfoWithCheck(mock.NewContext(), nil, s, mysql.DefaultCharset)
 }
 
-func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, dbCharset string) (*model.TableInfo, error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	colDefs := s.Cols
 	var colObjects []interface{}
@@ -979,8 +1012,14 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		return nil, errors.Trace(err)
 	}
 
-	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints)
+	tableCharset := findTableOptionCharset(s.Options)
+	// The column charset haven't been resolved here.
+	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, dbCharset)
 	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = checkColumnsFieldLength(cols); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1015,6 +1054,20 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		}
 		tbInfo.Partition = pi
 	}
+
+	// The specified charset will be handled in handleTableOptions
+	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = resolveDefaultTableCharsetAndCollation(tbInfo, dbCharset); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	return tbInfo, nil
 }
 
@@ -1037,7 +1090,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
-	tbInfo, err := buildTableInfoWithCheck(ctx, d, s)
+	tbInfo, err := buildTableInfoWithCheck(ctx, d, s, schema.Charset)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1048,18 +1101,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tbInfo},
-	}
-
-	err = handleTableOptions(s.Options, tbInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkColumnFieldLength(schema, s.Cols, tbInfo); err != nil {
-		return errors.Trace(err)
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1175,10 +1216,6 @@ func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt
 	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
 		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
 
-	if s.Definer.CurrentUser {
-		viewInfo.Definer = ctx.GetSessionVars().User
-	}
-
 	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
 	viewInfo.Cols = make([]model.CIStr, len(schemaCols))
 	for i, v := range schemaCols {
@@ -1269,15 +1306,33 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64) error {
 	return nil
 }
 
-func setDefaultTableCharsetAndCollation(tbInfo *model.TableInfo) (err error) {
+func resolveDefaultTableCharsetAndCollation(tbInfo *model.TableInfo, dbCharset string) (err error) {
+	chr, collate, err := ResolveCharsetCollation(tbInfo.Charset, dbCharset)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if len(tbInfo.Charset) == 0 {
-		tbInfo.Charset = mysql.DefaultCharset
+		tbInfo.Charset = chr
 	}
 
 	if len(tbInfo.Collate) == 0 {
-		tbInfo.Collate, err = charset.GetDefaultCollation(tbInfo.Charset)
+		tbInfo.Collate = collate
 	}
 	return
+}
+
+func findTableOptionCharset(options []*ast.TableOption) string {
+	var tableCharset string
+	for i := len(options) - 1; i >= 0; i-- {
+		op := options[i]
+		if op.Tp == ast.TableOptionCharset {
+			// find the last one.
+			tableCharset = op.StrValue
+			break
+		}
+	}
+
+	return tableCharset
 }
 
 // handleTableOptions updates tableInfo according to table options.
@@ -1305,9 +1360,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		}
 	}
 
-	if err := setDefaultTableCharsetAndCollation(tbInfo); err != nil {
-		log.Error(errors.ErrorStack(err))
-	}
 	return nil
 }
 
@@ -1588,10 +1640,11 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// Ingore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil)
+	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
 	if err != nil {
 		return errors.Trace(err)
@@ -1806,10 +1859,8 @@ func modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollat
 	if !charset.ValidCharsetAndCollation(toCharset, toCollate) {
 		return ErrUnknownCharacterSet.GenWithStackByArgs(toCharset, toCollate)
 	}
-
-	if toCharset == charset.CharsetUTF8MB4 || (toCharset == charset.CharsetUTF8 && origCharset != charset.CharsetUTF8MB4) {
-		// TiDB treats all the data as utf8mb4, so we support changing the charset to utf8mb4.
-		// And not allow to change utf8mb4 to utf8.
+	if toCharset == charset.CharsetUTF8MB4 && origCharset == charset.CharsetUTF8 {
+		// TiDB only allow utf8 to be changed to utf8mb4.
 		return nil
 	}
 
@@ -1887,7 +1938,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
-	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
+	value, err := getDefaultValue(ctx, option, &col.FieldType)
 	if err != nil {
 		return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 	}
@@ -1916,7 +1967,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			value, err := getDefaultValue(ctx, opt, col.Tp, col.Decimal)
+			value, err := getDefaultValue(ctx, opt, &col.FieldType)
 			if err != nil {
 				return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 			}
@@ -2031,7 +2082,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Name:               newColName,
 	})
 
-	err = setCharsetCollationFlenDecimal(&newCol.FieldType)
+	err = setCharsetCollationFlenDecimal(&newCol.FieldType, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2066,7 +2117,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		modifyColumnTp = mysql.TypeNull
 	}
 
-	if err = checkColumnFieldLength(schema, spec.NewColumns, t.Meta()); err != nil {
+	if err = checkColumnFieldLength(newCol); err != nil {
 		return nil, errors.Trace(err)
 	}
 

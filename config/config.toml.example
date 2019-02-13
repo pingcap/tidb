@@ -267,3 +267,6 @@ ignore-error = false
 
 # use socket file to write binlog, for compatible with kafka version tidb-binlog.
 binlog-socket = ""
+
+# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
+check-mb4-value-in-utf8 = true

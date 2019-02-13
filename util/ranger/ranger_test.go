@@ -358,14 +358,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc'",
-			accessConds: "[like(test.t.a, abc, 92)]",
+			accessConds: "[eq(test.t.a, abc)]",
 			filterConds: "[]",
 			resultStr:   "[[\"abc\",\"abc\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "ab\_c"`,
-			accessConds: "[like(test.t.a, ab\\_c, 92)]",
+			accessConds: "[eq(test.t.a, ab_c)]",
 			filterConds: "[]",
 			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
 		},
@@ -379,14 +379,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE '\%a'`,
-			accessConds: "[like(test.t.a, \\%a, 92)]",
+			accessConds: "[eq(test.t.a, %a)]",
 			filterConds: "[]",
 			resultStr:   `[["%a","%a"]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\"`,
-			accessConds: "[like(test.t.a, \\, 92)]",
+			accessConds: "[eq(test.t.a, \\)]",
 			filterConds: "[]",
 			resultStr:   "[[\"\\\",\"\\\"]]",
 		},
@@ -594,11 +594,11 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", ranges)
+		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }
@@ -681,11 +681,11 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", ranges)
+		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }
