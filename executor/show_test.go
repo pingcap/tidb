@@ -171,7 +171,7 @@ func (s *testSuite2) TestShow2(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
-	tk.MustExec("create or replace view v as select * from t")
+	tk.MustExec("create or replace definer='root'@'localhost' view v as select * from t")
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))

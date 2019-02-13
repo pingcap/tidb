@@ -74,6 +74,7 @@ type Config struct {
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
+	CheckMb4ValueInUtf8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 }
 
 // Log is the log section of config.
@@ -265,19 +266,20 @@ type Plugin struct {
 }
 
 var defaultConf = Config{
-	Host:             "0.0.0.0",
-	AdvertiseAddress: "",
-	Port:             4000,
-	Cors:             "",
-	Store:            "mocktikv",
-	Path:             "/tmp/tidb",
-	RunDDL:           true,
-	SplitTable:       true,
-	Lease:            "45s",
-	TokenLimit:       1000,
-	OOMAction:        "log",
-	MemQuotaQuery:    32 << 30,
-	EnableStreaming:  false,
+	Host:                "0.0.0.0",
+	AdvertiseAddress:    "",
+	Port:                4000,
+	Cors:                "",
+	Store:               "mocktikv",
+	Path:                "/tmp/tidb",
+	RunDDL:              true,
+	SplitTable:          true,
+	Lease:               "45s",
+	TokenLimit:          1000,
+	OOMAction:           "log",
+	MemQuotaQuery:       32 << 30,
+	EnableStreaming:     false,
+	CheckMb4ValueInUtf8: true,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,

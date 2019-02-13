@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -94,4 +95,26 @@ func CompatibleParseGCTime(value string) (time.Time, error) {
 		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\"", value, GCTimeFormat)
 	}
 	return t, err
+}
+
+const (
+	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
+	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
+)
+
+// SyntaxError converts parser error to TiDB's syntax error.
+func SyntaxError(err error) error {
+	if err == nil {
+		return nil
+	}
+	log.Errorf("%+v", err)
+	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+}
+
+// SyntaxWarn converts parser warn to TiDB's syntax warn.
+func SyntaxWarn(err error) error {
+	if err == nil {
+		return nil
+	}
+	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }

@@ -65,10 +65,6 @@ import (
 	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
-// TestLeakCheckCnt is the check count in the package of executor.
-// In this package CustomParallelSuiteFlag is true, so we need to increase check count.
-const TestLeakCheckCnt = 1000
-
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
@@ -77,7 +73,9 @@ func TestT(t *testing.T) {
 		Level: logLevel,
 	})
 	autoid.SetStep(5000)
+	testleak.BeforeTest()
 	TestingT(t)
+	testleak.AfterTestT(t)()
 }
 
 var _ = Suite(&testSuite{})
@@ -99,7 +97,6 @@ type testSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *testSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -125,7 +122,6 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
@@ -3382,9 +3378,9 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table view_t (a int,b int)")
 	tk.MustExec("insert into view_t values(1,2)")
-	tk.MustExec("create view view1 as select * from view_t")
-	tk.MustExec("create view view2(c,d) as select * from view_t")
-	tk.MustExec("create view view3(c,d) as select a,b from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view1 as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view2(c,d) as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view3(c,d) as select a,b from view_t")
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
@@ -3422,7 +3418,6 @@ type testSuite2 struct {
 }
 
 func (s *testSuite2) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -3448,7 +3443,6 @@ func (s *testSuite2) SetUpSuite(c *C) {
 func (s *testSuite2) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testSuite2) TearDownTest(c *C) {
@@ -3475,7 +3469,6 @@ type testSuite3 struct {
 }
 
 func (s *testSuite3) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -3501,7 +3494,6 @@ func (s *testSuite3) SetUpSuite(c *C) {
 func (s *testSuite3) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testSuite3) TearDownTest(c *C) {
