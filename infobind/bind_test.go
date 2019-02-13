@@ -16,6 +16,9 @@ package infobind_test
 import (
 	"flag"
 	"fmt"
+	"os"
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
@@ -29,8 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"os"
-	"testing"
 )
 
 func TestT(t *testing.T) {
