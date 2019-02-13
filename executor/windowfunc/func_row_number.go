@@ -23,22 +23,18 @@ type rowNumber struct {
 }
 
 type partialResult4RowNumber struct {
-	curIdx int64
+	curIdx int
 }
 
-func (wf *rowNumber) ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int) ([]chunk.Row, int, error) {
+func (wf *rowNumber) ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int) error {
 	p := (*partialResult4RowNumber)(pr)
 	processedRows, numRows := 0, len(rows)
-	for processedRows < numRows && processedRows < remained {
+	for p.curIdx < numRows && processedRows < remained {
 		p.curIdx++
 		processedRows++
-		dest.AppendInt64(wf.ordinal, p.curIdx)
+		dest.AppendInt64(wf.ordinal, int64(p.curIdx))
 	}
-	return rows[processedRows:], remained - processedRows, nil
-}
-
-func (wf *rowNumber) ExhaustResult(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int) ([]chunk.Row, int, error) {
-	return rows, remained, nil
+	return nil
 }
 
 func (wf *rowNumber) AllocPartialResult() PartialResult {

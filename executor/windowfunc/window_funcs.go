@@ -29,9 +29,7 @@ type PartialResult unsafe.Pointer
 // WindowFunc is the interface for processing window functions.
 type WindowFunc interface {
 	// ProcessOneChunk processes one chunk and write results to chunk.
-	ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remainedRows int) ([]chunk.Row, int, error)
-	// ExhaustResult exhausts result to chunk.
-	ExhaustResult(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remainedRows int) ([]chunk.Row, int, error)
+	ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remainedRows int) error
 	// AllocPartialResult allocates a specific data structure to store the partial result.
 	AllocPartialResult() PartialResult
 	// ResetPartialResult resets the partial result.
