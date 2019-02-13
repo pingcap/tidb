@@ -59,11 +59,6 @@ type DirtyTable struct {
 
 // AddRow adds a row to the DirtyDB.
 func (dt *DirtyTable) AddRow(handle int64, row []types.Datum) {
-	for i := range row {
-		if row[i].Kind() == types.KindString {
-			row[i].SetBytes(row[i].GetBytes())
-		}
-	}
 	dt.addedRows[handle] = struct{}{}
 }
 
