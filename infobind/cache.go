@@ -89,11 +89,9 @@ func (h *Handle) Get() *bindCache {
 		return bc.(*bindCache)
 	}
 
-	bc = &bindCache{
+	return &bindCache{
 		Cache: make(map[string][]*bindData, defaultBindCacheSize),
 	}
-
-	return bc.(*bindCache)
 }
 
 // LoadDiff use to load new bind info to bindCache bc.
