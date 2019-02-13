@@ -83,6 +83,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
+// IsJobRollbackable checks whether the job can be rollback.
 func IsJobRollbackable(job *model.Job) error {
 	switch job.Type {
 	case model.ActionDropIndex:
