@@ -278,7 +278,8 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 	t, found := GetInfoSchema(us.ctx).TableByID(us.dirty.tid)
 	if !found {
 		// t is got from a snapshot InfoSchema, so it should be found, this branch should not happen.
-		return errors.Errorf("table not found (tid: %d)", us.dirty.tid)
+		return errors.Errorf("table not found (tid: %d, schema version: %d)",
+			us.dirty.tid, GetInfoSchema(us.ctx).SchemaMetaVersion())
 	}
 	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
