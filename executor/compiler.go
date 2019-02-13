@@ -131,68 +131,66 @@ func CountStmtNode(stmtNode ast.StmtNode, inRestrictedSQL bool) {
 	}
 
 	dbLabels := getStmtDbLabel(stmtNode)
-	for _, dbLabel := range dbLabels {
+	for dbLabel := range dbLabels {
 		metrics.DbStmtNodeCounter.WithLabelValues(dbLabel, typeLabel).Inc()
 	}
 }
 
-func getStmtDbLabel(stmtNode ast.StmtNode) []string {
-	dbLabelMap := make(map[string]int)
+func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
+	dbLabelSet := make(map[string]struct{})
 
 	switch x := stmtNode.(type) {
 	case *ast.AlterTableStmt:
 		dbLabel := x.Table.Schema.O
-		dbLabelMap[dbLabel] = 0
+		dbLabelSet[dbLabel] = struct{}{}
 	case *ast.CreateIndexStmt:
 		dbLabel := x.Table.Schema.O
-		dbLabelMap[dbLabel] = 0
+		dbLabelSet[dbLabel] = struct{}{}
 	case *ast.CreateTableStmt:
 		dbLabel := x.Table.Schema.O
-		dbLabelMap[dbLabel] = 0
+		dbLabelSet[dbLabel] = struct{}{}
 	case *ast.InsertStmt:
 		dbLabels := getDbFromResultNode(x.Table.TableRefs)
 		for _, db := range dbLabels {
-			dbLabelMap[db] = 0
+			dbLabelSet[db] = struct{}{}
+		}
+		dbLabels = getDbFromResultNode(x.Select)
+		for _, db := range dbLabels {
+			dbLabelSet[db] = struct{}{}
 		}
 	case *ast.DropIndexStmt:
 		dbLabel := x.Table.Schema.O
-		dbLabelMap[dbLabel] = 0
+		dbLabelSet[dbLabel] = struct{}{}
 	case *ast.DropTableStmt:
 		tables := x.Tables
 		for _, table := range tables {
 			dbLabel := table.Schema.O
-			if _, ok := dbLabelMap[dbLabel]; !ok {
-				dbLabelMap[dbLabel] = 0
+			if _, ok := dbLabelSet[dbLabel]; !ok {
+				dbLabelSet[dbLabel] = struct{}{}
 			}
 		}
 	case *ast.SelectStmt:
 		dbLabels := getDbFromResultNode(x)
 		for _, db := range dbLabels {
-			dbLabelMap[db] = 0
+			dbLabelSet[db] = struct{}{}
 		}
 	case *ast.UpdateStmt:
 		if x.TableRefs != nil {
 			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
 			for _, db := range dbLabels {
-				dbLabelMap[db] = 0
+				dbLabelSet[db] = struct{}{}
 			}
 		}
 	case *ast.DeleteStmt:
 		if x.TableRefs != nil {
 			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs)
 			for _, db := range dbLabels {
-				dbLabelMap[db] = 0
+				dbLabelSet[db] = struct{}{}
 			}
 		}
 	}
 
-	var dbLabels []string
-
-	for k := range dbLabelMap {
-		dbLabels = append(dbLabels, k)
-	}
-
-	return dbLabels
+	return dbLabelSet
 }
 
 func getDbFromResultNode(resultNode ast.ResultSetNode) []string { //may have duplicate db name
