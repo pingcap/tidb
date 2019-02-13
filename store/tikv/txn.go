@@ -64,14 +64,13 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver)
 	return &tikvTxn{
-		snapshot:   snapshot,
-		us:         kv.NewUnionStore(snapshot),
-		store:      store,
-		startTS:    startTS,
-		startTime:  time.Now(),
-		valid:      true,
-		vars:       kv.DefaultVars,
-		assertions: make([]assertionPair, 0, 16),
+		snapshot:  snapshot,
+		us:        kv.NewUnionStore(snapshot),
+		store:     store,
+		startTS:   startTS,
+		startTime: time.Now(),
+		valid:     true,
+		vars:      kv.DefaultVars,
 	}, nil
 }
 
