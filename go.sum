@@ -113,7 +113,6 @@ github.com/pingcap/kvproto v0.0.0-20190110035000-d4fe6b336379 h1:l4KInBOtxjbgQLj
 github.com/pingcap/kvproto v0.0.0-20190110035000-d4fe6b336379/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 github.com/pingcap/log v0.0.0-20190129103703-6afc545b8868 h1:zkyIcjTiuRIOvhuPvbB1wsRFZH5aPqz/3o7p8uAdEzU=
 github.com/pingcap/log v0.0.0-20190129103703-6afc545b8868/go.mod h1:xsfkWVaFVV5B8e1K9seWfyJWFrIhbtUTAD8NV1Pq3+w=
-github.com/pingcap/log v0.0.0-20190211033212-6e5c1a1a9e89 h1:RRvKa01HXBYGKB2o6F0ogFxSgagzsD6sPCETrV3F7Ow=
 github.com/pingcap/log v0.0.0-20190211033212-6e5c1a1a9e89/go.mod h1:xsfkWVaFVV5B8e1K9seWfyJWFrIhbtUTAD8NV1Pq3+w=
 github.com/pingcap/parser v0.0.0-20190121074657-4b899f19591e h1:UxQ0Fj4NDpQ0SSZ0Z76je8OPSDlbRxMfXTbyPrFs6c4=
 github.com/pingcap/parser v0.0.0-20190121074657-4b899f19591e/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
