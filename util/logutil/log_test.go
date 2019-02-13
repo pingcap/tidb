@@ -30,6 +30,9 @@ import (
 
 const (
 	logPattern = `\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d\.\d\d\d ([\w_%!$@.,+~-]+|\\.)+:\d+: \[(fatal|error|warning|info|debug)\] .*?\n`
+	// zapLogPatern is used to match the zap log format, such as the following log:
+	// [2019/02/13 15:56:05.385 +08:00] [INFO] [log_test.go:167] ["info message"] ["str key"=val] ["int key"=123]
+	zapLogPattern = `\[\d\d\d\d/\d\d/\d\d \d\d:\d\d:\d\d.\d\d\d\ \+\d\d:\d\d\] \[(FATAL|ERROR|WARN|INFO|DEBUG)\] \[([\w_%!$@.,+~-]+|\\.)+:\d+\] \[.*\] (\[.*=.*\]).*\n`
 )
 
 func Test(t *testing.T) {
@@ -158,14 +161,9 @@ func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
 	c.Assert(err, IsNil)
 	defer os.Remove(fileName)
 
-	rets := []string{
-		`[INFO] [log_test.go:167] ["info message"] ["str key"=val]`,
-		`[WARN] [log_test.go:168] ["warn message"] ["int key"=123]`,
-		`[ERROR] [log_test.go:169] ["error message"] ["bool key"=true]`,
-	}
 	SlowQueryZapLogger.Debug("debug message", zap.String("str key", "val"))
 	SlowQueryZapLogger.Info("info message", zap.String("str key", "val"))
-	SlowQueryZapLogger.Warn("warn message", zap.Int("int key", 123))
+	SlowQueryZapLogger.Warn("warn", zap.Int("int key", 123))
 	SlowQueryZapLogger.Error("error message", zap.Bool("bool key", true))
 
 	f, err := os.Open(fileName)
@@ -173,14 +171,13 @@ func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
 	defer f.Close()
 
 	r := bufio.NewReader(f)
-	for _, ret := range rets {
+	for {
 		var str string
 		str, err = r.ReadString('\n')
 		if err != nil {
 			break
 		}
-		c.Assert(strings.Contains(str, ret), IsTrue, Commentf("got %v, expected %v", str, ret))
+		c.Assert(str, Matches, zapLogPattern)
 	}
-	_, err = r.ReadString('\n')
 	c.Assert(err, Equals, io.EOF)
 }
