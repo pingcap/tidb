@@ -424,6 +424,8 @@ PARTITION BY RANGE ( id ) (
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(11))
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(10))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(0))
 	c.Assert(err, IsNil)
 }
 
