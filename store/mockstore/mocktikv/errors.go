@@ -55,11 +55,10 @@ func (e ErrAlreadyCommitted) Error() string {
 	return "txn already committed"
 }
 
-type preconditionErr struct {
-	*kvrpcpb.AlreadyExist
-	*kvrpcpb.NotExist
+type assumptionErr struct {
+	*kvrpcpb.Mutation
 }
 
-func (e *preconditionErr) Error() string {
-	return "precondition error"
+func (e *assumptionErr) Error() string {
+	return "assumption error"
 }

@@ -66,7 +66,7 @@ type twoPhaseCommitter struct {
 	txn       *tikvTxn
 	startTS   uint64
 	keys      [][]byte
-	mutations map[string]*mutationEx
+	mutations map[string]*pb.Mutation
 	lockTTL   uint64
 	commitTS  uint64
 	mu        struct {
@@ -85,11 +85,6 @@ type twoPhaseCommitter struct {
 	detail        *execdetails.CommitDetails
 }
 
-type mutationEx struct {
-	pb.Mutation
-	hasContract bool
-}
-
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	var (
@@ -99,23 +94,19 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		delCnt  int
 		lockCnt int
 	)
-	mutations := make(map[string]*mutationEx)
+	mutations := make(map[string]*pb.Mutation)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
-			mutations[string(k)] = &mutationEx{
-				Mutation: pb.Mutation{
-					Op:    pb.Op_Put,
-					Key:   k,
-					Value: v,
-				},
+			mutations[string(k)] = &pb.Mutation{
+				Op:    pb.Op_Put,
+				Key:   k,
+				Value: v,
 			}
 			putCnt++
 		} else {
-			mutations[string(k)] = &mutationEx{
-				Mutation: pb.Mutation{
-					Op:  pb.Op_Del,
-					Key: k,
-				},
+			mutations[string(k)] = &pb.Mutation{
+				Op:  pb.Op_Del,
+				Key: k,
 			}
 			delCnt++
 		}
@@ -133,11 +124,9 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
-			mutations[string(lockKey)] = &mutationEx{
-				Mutation: pb.Mutation{
-					Op:  pb.Op_Lock,
-					Key: lockKey,
-				},
+			mutations[string(lockKey)] = &pb.Mutation{
+				Op:  pb.Op_Lock,
+				Key: lockKey,
 			}
 			lockCnt++
 			keys = append(keys, lockKey)
@@ -148,22 +137,21 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		return nil, nil
 	}
 
-	for _, pair := range txn.contracts {
+	for _, pair := range txn.assumptions {
 		mutation, ok := mutations[string(pair.key)]
 		if !ok {
 			log.Info("something is wrong... contract exists but no mutation?", pair)
 			continue
 		}
 		// Only apply the first contract!
-		if mutation.Op != pb.Op_Put {
+		if mutation.Assumption != nil {
 			continue
 		}
-		mutation.hasContract = true
-		switch pair.contract {
+		switch pair.assumption {
 		case kv.MustExist:
-			mutation.Op = pb.Op_Update
+			mutation.Assumption = &pb.Assumption{MustExist: true}
 		case kv.MustNotExist:
-			mutation.Op = pb.Op_Insert
+			mutation.Assumption = &pb.Assumption{MustNotExist: true}
 		}
 	}
 
@@ -370,8 +358,7 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
-		embed := c.mutations[string(k)]
-		mutations[i] = &embed.Mutation
+		mutations[i] = c.mutations[string(k)]
 	}
 
 	req := &tikvrpc.Request{
@@ -419,27 +406,15 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				return errors.Trace(err1)
 			}
 			log.Debugf("con:%d 2PC prewrite encounters lock: %v", c.connID, lock)
-			if lock != nil {
-				locks = append(locks, lock)
-			}
-
-			// If there is any contract error, it must be bugs in TiDB!
-			// TODO: Add prometheus metrics and alert here?
-			if notExist := keyErr.GetNotExist(); notExist != nil {
-				ex := c.mutations[string(notExist.Key)]
-				if ex.hasContract {
-					log.Error(errors.ErrorStack(errors.Trace(errors.Errorf("CONTRACT BUG!!! The key %v should have value, but not found\n", notExist.Key))))
-				}
-			}
-			if exist := keyErr.GetAlreadyExist(); exist != nil {
-				ex := c.mutations[string(exist.Key)]
-				if ex.hasContract {
-					log.Error(errors.ErrorStack(errors.Trace(errors.Errorf("CONTRACT BUG!!! The key %v must not have value, but value found\n", exist.Key))))
-				}
-			}
+			locks = append(locks, lock)
 		}
-		if len(locks) == 0 {
-			return nil
+
+		// If there is any assumption fails, it must be bugs in TiDB!
+		// TODO: Add prometheus metrics and alert here?
+		if len(prewriteResp.GetFailedAssumption()) > 0 {
+			for _, mutation := range prewriteResp.GetFailedAssumption() {
+				log.Error("CONTRACT BUG!!! mutation=", mutation)
+			}
 		}
 
 		start := time.Now()

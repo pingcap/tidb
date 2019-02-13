@@ -237,7 +237,7 @@ func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues
 	}
 	err = m.Delete(key)
 	if ss != nil {
-		ss.SetContract(key, kv.MustExist)
+		ss.SetAssumption(key, kv.MustExist)
 	}
 	return errors.Trace(err)
 }

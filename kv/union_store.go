@@ -39,12 +39,12 @@ type UnionStore interface {
 	GetMemBuffer() MemBuffer
 }
 
-// ContractType is the type of a contract.
-type ContractType int
+// AssumptionType is the type of a assumption.
+type AssumptionType int
 
-// The ContractType constants.
+// The AssumptionType constants.
 const (
-	NoContractCheck ContractType = iota
+	NoCheck AssumptionType = iota
 	MustExist
 	MustNotExist
 )
@@ -52,8 +52,8 @@ const (
 // SafeStore is store that support contract checking.
 // Contracts are some conditions that an operation must meet.
 type SafeStore interface {
-	// SetContract sets a contract for an operation on the key.
-	SetContract(key Key, contract ContractType)
+	// SetAssumption sets a assumption for an operation on the key.
+	SetAssumption(key Key, assumption AssumptionType)
 }
 
 // Option is used for customizing kv store's behaviors during a transaction.

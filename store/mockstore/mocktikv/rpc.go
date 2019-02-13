@@ -61,18 +61,6 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			Retryable: retryable.Error(),
 		}
 	}
-	if preCond, ok := errors.Cause(err).(*preconditionErr); ok {
-		if preCond.AlreadyExist != nil {
-			return &kvrpcpb.KeyError{
-				AlreadyExist: preCond.AlreadyExist,
-			}
-		}
-		if preCond.NotExist != nil {
-			return &kvrpcpb.KeyError{
-				NotExist: preCond.NotExist,
-			}
-		}
-	}
 	return &kvrpcpb.KeyError{
 		Abort: err.Error(),
 	}
@@ -189,8 +177,8 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 		}
 		return &errorpb.Error{
 			Message: *proto.String("stale epoch"),
-			EpochNotMatch: &errorpb.EpochNotMatch{
-				CurrentRegions: newRegions,
+			StaleEpoch: &errorpb.StaleEpoch{
+				NewRegions: newRegions,
 			},
 		}
 	}
@@ -257,9 +245,10 @@ func (h *rpcHandler) handleKvPrewrite(req *kvrpcpb.PrewriteRequest) *kvrpcpb.Pre
 			panic("KvPrewrite: key not in region")
 		}
 	}
-	errs := h.mvccStore.Prewrite(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetLockTtl())
+	errs, assumption := h.mvccStore.Prewrite(req.Mutations, req.PrimaryLock, req.GetStartVersion(), req.GetLockTtl())
 	return &kvrpcpb.PrewriteResponse{
-		Errors: convertToKeyErrors(errs),
+		Errors:           convertToKeyErrors(errs),
+		FailedAssumption: assumption,
 	}
 }
 

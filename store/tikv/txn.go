@@ -47,7 +47,7 @@ type tikvTxn struct {
 	vars      *kv.Variables
 
 	// For data consistency check.
-	contracts []contractPair
+	assumptions []assumptionPair
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -64,26 +64,26 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver)
 	return &tikvTxn{
-		snapshot:  snapshot,
-		us:        kv.NewUnionStore(snapshot),
-		store:     store,
-		startTS:   startTS,
-		startTime: time.Now(),
-		valid:     true,
-		vars:      kv.DefaultVars,
-		contracts: make([]contractPair, 0, 16),
+		snapshot:    snapshot,
+		us:          kv.NewUnionStore(snapshot),
+		store:       store,
+		startTS:     startTS,
+		startTime:   time.Now(),
+		valid:       true,
+		vars:        kv.DefaultVars,
+		assumptions: make([]assumptionPair, 0, 16),
 	}, nil
 }
 
-type contractPair struct {
-	key      kv.Key
-	contract kv.ContractType
+type assumptionPair struct {
+	key        kv.Key
+	assumption kv.AssumptionType
 }
 
-// SetContract sets a contract for the key operation.
+// SetAssumption sets a assumption for the key operation.
 // Implements the kv.SafeStore interface.
-func (txn *tikvTxn) SetContract(key kv.Key, contract kv.ContractType) {
-	txn.contracts = append(txn.contracts, contractPair{key, contract})
+func (txn *tikvTxn) SetAssumption(key kv.Key, assumption kv.AssumptionType) {
+	txn.assumptions = append(txn.assumptions, assumptionPair{key, assumption})
 }
 
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
