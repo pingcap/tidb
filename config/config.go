@@ -298,7 +298,7 @@ var defaultConf = Config{
 		ReportStatus:    true,
 		StatusPort:      10080,
 		MetricsInterval: 15,
-		RecordQPSbyDB:   true,
+		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
 		MaxMemory:           0,

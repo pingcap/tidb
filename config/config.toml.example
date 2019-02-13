@@ -119,8 +119,8 @@ metrics-addr = ""
 # Prometheus client push interval in second, set \"0\" to disable prometheus push.
 metrics-interval = 15
 
-# if enable tidb record db qps
-record-db-qps = true
+# Record statements qps by database name if it is enabled.
+record-db-qps = false
 
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
