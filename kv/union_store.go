@@ -50,7 +50,6 @@ const (
 )
 
 // SafeStore is store that support assertions.
-// Assertion are some conditions that an operation must meet.
 type SafeStore interface {
 	// SetAssertion sets a assertion for an operation on the key.
 	SetAssertion(key Key, assertion AssertionType)
