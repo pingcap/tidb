@@ -33,6 +33,11 @@ import (
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	// gofail: var mockExceedErrorLimit bool
+	// if mockExceedErrorLimit {
+	//    return ver, errors.New("mock do job error")
+	// }
+
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
