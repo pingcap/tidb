@@ -609,14 +609,17 @@ func (b *builtinValuesStringSig) Clone() builtinFunc {
 
 // evalString evals a builtinValuesStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesStringSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
 	if !b.ctx.GetSessionVars().StmtCtx.InInsertStmt {
 		return "", true, nil
 	}
+
 	values := b.ctx.GetSessionVars().CurrInsertValues
 	if values == nil {
 		return "", true, errors.New("Session current insert values is nil")
 	}
+
+	row := values.(types.Row)
 	if b.offset >= row.Len() {
 		return "", true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 	}
