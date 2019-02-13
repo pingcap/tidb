@@ -84,6 +84,8 @@ var (
 
 	// ErrUnknownPartition returns unknown partition error.
 	ErrUnknownPartition = terror.ClassTable.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
+	// ErrNoPartitionForGivenValue returns table has no partition for value.
+	ErrNoPartitionForGivenValue = terror.ClassTable.New(codeNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -208,7 +210,8 @@ const (
 	// It may happen when inserting some data outside of all table partitions.
 	codeTrgInvalidCreationCtx = 1604
 
-	codeUnknownPartition = mysql.ErrUnknownPartition
+	codeUnknownPartition         = mysql.ErrUnknownPartition
+	codeNoPartitionForGivenValue = mysql.ErrNoPartitionForGivenValue
 )
 
 // Slice is used for table sorting.
@@ -224,13 +227,14 @@ func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeColumnCantNull:        mysql.ErrBadNull,
-		codeUnknownColumn:         mysql.ErrBadField,
-		codeDuplicateColumn:       mysql.ErrFieldSpecifiedTwice,
-		codeNoDefaultValue:        mysql.ErrNoDefaultForField,
-		codeTruncateWrongValue:    mysql.ErrTruncatedWrongValueForField,
-		codeTrgInvalidCreationCtx: mysql.ErrTrgInvalidCreationCtx,
-		codeUnknownPartition:      mysql.ErrUnknownPartition,
+		codeColumnCantNull:           mysql.ErrBadNull,
+		codeUnknownColumn:            mysql.ErrBadField,
+		codeDuplicateColumn:          mysql.ErrFieldSpecifiedTwice,
+		codeNoDefaultValue:           mysql.ErrNoDefaultForField,
+		codeTruncateWrongValue:       mysql.ErrTruncatedWrongValueForField,
+		codeTrgInvalidCreationCtx:    mysql.ErrTrgInvalidCreationCtx,
+		codeUnknownPartition:         mysql.ErrUnknownPartition,
+		codeNoPartitionForGivenValue: mysql.ErrNoPartitionForGivenValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }
