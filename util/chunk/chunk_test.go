@@ -264,17 +264,19 @@ func (s *testChunkSuite) TestChunkSizeControl(c *check.C) {
 
 	chk.Reset()
 	for i := 1; i < maxChunkSize*2; i++ {
-		chk.SetRequiredRows(i)
+		chk.SetRequiredRows(i, maxChunkSize)
 		c.Assert(chk.RequiredRows(), check.Equals, mathutil.Min(maxChunkSize, i))
 	}
 
-	chk.SetRequiredRows(1).SetRequiredRows(2).SetRequiredRows(3)
+	chk.SetRequiredRows(1, maxChunkSize).
+		SetRequiredRows(2, maxChunkSize).
+		SetRequiredRows(3, maxChunkSize)
 	c.Assert(chk.RequiredRows(), check.Equals, 3)
 
-	chk.SetRequiredRows(-1)
+	chk.SetRequiredRows(-1, maxChunkSize)
 	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
 
-	chk.SetRequiredRows(5)
+	chk.SetRequiredRows(5, maxChunkSize)
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
 	chk.AppendInt64(0, 1)
@@ -292,7 +294,7 @@ func (s *testChunkSuite) TestChunkSizeControl(c *check.C) {
 	c.Assert(chk.NumRows(), check.Equals, 8)
 	c.Assert(chk.IsFull(), check.IsTrue)
 
-	chk.SetRequiredRows(maxChunkSize)
+	chk.SetRequiredRows(maxChunkSize, maxChunkSize)
 	c.Assert(chk.NumRows(), check.Equals, 8)
 	c.Assert(chk.IsFull(), check.IsFalse)
 }

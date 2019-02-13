@@ -38,7 +38,6 @@ type Chunk struct {
 
 	// requiredRows indicates how many rows the parent executor want.
 	requiredRows int
-	maxChunkSize int
 }
 
 // Capacity constants.
@@ -75,7 +74,6 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	// is equal to
 	// "!chk.IsFull()".
 	chk.requiredRows = maxChunkSize
-	chk.maxChunkSize = maxChunkSize
 	return chk
 }
 
@@ -94,7 +92,6 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 	newChk.numVirtualRows = 0
 	newChk.capacity = newCap
 	newChk.requiredRows = maxChunkSize
-	newChk.maxChunkSize = maxChunkSize
 	return newChk
 }
 
@@ -154,9 +151,9 @@ func (c *Chunk) RequiredRows() int {
 }
 
 // SetRequiredRows sets the number of required rows.
-func (c *Chunk) SetRequiredRows(requiredRows int) *Chunk {
-	if requiredRows <= 0 || requiredRows > c.maxChunkSize {
-		requiredRows = c.maxChunkSize
+func (c *Chunk) SetRequiredRows(requiredRows, maxChunkSize int) *Chunk {
+	if requiredRows <= 0 || requiredRows > maxChunkSize {
+		requiredRows = maxChunkSize
 	}
 	c.requiredRows = requiredRows
 	return c
@@ -260,7 +257,6 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	c.columns = renewColumns(c.columns, newCap)
 	c.numVirtualRows = 0
 	c.requiredRows = maxChunkSize
-	c.maxChunkSize = maxChunkSize
 }
 
 // reCalcCapacity calculates the capacity for another Chunk based on the current
