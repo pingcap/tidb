@@ -50,6 +50,8 @@ const (
 	waitDependencyJobInterval = 200 * time.Millisecond
 	// noneDependencyJob means a job has no dependency-job.
 	noneDependencyJob = 0
+	// ddlErrorCountLimitCnt is the error count limit for ddl job.
+	ddlErrorCountLimitCnt = 512
 )
 
 // worker is used for handling DDL jobs.
@@ -540,13 +542,12 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		job.ErrorCount++
 		// Check error limit to avoid falling into an infinite loop.
 		if job.ErrorCount > ddlErrorCountLimitCnt && job.State == model.JobStateRunning && admin.IsJobRollbackable(job) == nil {
+			log.Warnf("[ddl-%s] the job id %v error count exceed the limit, cancelling it now", w,job.ID)
 			job.State = model.JobStateCancelling
 		}
 	}
 	return
 }
-
-const ddlErrorCountLimitCnt = 512
 
 func toTError(err error) *terror.Error {
 	originErr := errors.Cause(err)
