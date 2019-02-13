@@ -606,10 +606,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
-			if col.Charset != tblCharset || col.IsExplictedCollation() {
+			if col.Charset != tblCharset || col.HasExplictedCollation() {
 				fmt.Fprintf(&buf, " CHARSET %s", col.Charset)
 			}
-			if col.Collate != tblCollate || col.IsExplictedCollation() {
+			if col.Collate != tblCollate || col.HasExplictedCollation() {
 				fmt.Fprintf(&buf, " COLLATE %s", col.Collate)
 			}
 
