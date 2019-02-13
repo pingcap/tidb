@@ -19,8 +19,8 @@ import (
 
 // BindManager is used to manage both global bind info and session bind info.
 type BindManager struct {
-	SessionHandle *Handle // session handle.
-	GlobalHandle  *Handle // global handle.
+	SessionHandle *Handle
+	GlobalHandle  *Handle
 }
 
 type keyType int

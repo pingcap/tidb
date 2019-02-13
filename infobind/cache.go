@@ -98,15 +98,14 @@ func (h *Handle) Get() *bindCache {
 
 // LoadDiff use to load new bind info to bindCache bc.
 func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
-	tmp, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+	recordSets, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	rs := tmp[0]
+	rs := recordSets[0]
 	defer terror.Call(rs.Close)
 
-	fs := rs.Fields()
 	chkBatch := rs.NewRecordBatch()
 	for {
 		err = rs.Next(context.TODO(), chkBatch)
@@ -114,13 +113,12 @@ func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 			return errors.Trace(err)
 		}
 
-		fmt.Println("chkBatch num row():", chkBatch.NumRows())
 		if chkBatch.NumRows() == 0 {
 			return nil
 		}
 		it := chunk.NewIterator4Chunk(chkBatch.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			record := decodeBindTableRow(row, fs)
+			record := decodeBindTableRow(row)
 			err = bc.appendNode(h.ctx, record, h.parser)
 			if err != nil {
 				continue
@@ -130,8 +128,6 @@ func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 				h.lastUpdateTime = record.UpdateTime
 			}
 		}
-
-		chkBatch.Reset()
 	}
 }
 
@@ -163,7 +159,6 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 
 	h.globalHandle.bind.Store(newBc)
 
-	fmt.Println("newBc len:", len(newBc.Cache))
 	return nil
 }
 
@@ -171,7 +166,7 @@ func parseSQL(parser *parser.Parser, sql string, charset string, collation strin
 	return parser.Parse(sql, charset, collation)
 }
 
-func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) bindRecord {
+func decodeBindTableRow(row chunk.Row) bindRecord {
 	var value bindRecord
 
 	value.OriginalSQL = row.GetString(0)
@@ -193,6 +188,9 @@ func (b *bindCache) appendNode(sctx sessionctx.Context, newBindRecord bindRecord
 		for idx, v := range bindArr {
 			if v.OriginalSQL == newBindRecord.OriginalSQL && v.Db == newBindRecord.Db {
 				b.Cache[hash] = append(b.Cache[hash][:idx], b.Cache[hash][idx+1:]...)
+				if len(b.Cache[hash]) == 0 {
+					delete(b.Cache, hash)
+				}
 				break
 			}
 		}
@@ -200,12 +198,6 @@ func (b *bindCache) appendNode(sctx sessionctx.Context, newBindRecord bindRecord
 
 	// If the bindRecord has been deleted, the status will be 0 or will be 1.
 	if newBindRecord.Status == 0 {
-		if _, ok := b.Cache[hash]; ok {
-			if len(b.Cache[hash]) == 0 {
-				delete(b.Cache, hash)
-			}
-		}
-
 		return nil
 	}
 
