@@ -542,7 +542,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		job.ErrorCount++
 		// Check error limit to avoid falling into an infinite loop.
 		if job.ErrorCount > ddlErrorCountLimitCnt && job.State == model.JobStateRunning && admin.IsJobRollbackable(job) == nil {
-			log.Warnf("[ddl-%s] the job id %v error count exceed the limit, cancelling it now", w,job.ID)
+			log.Warnf("[ddl-%s] the job id %v error count exceed the limit, cancelling it now", w, job.ID)
 			job.State = model.JobStateCancelling
 		}
 	}
