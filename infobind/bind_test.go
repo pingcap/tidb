@@ -16,9 +16,6 @@ package infobind_test
 import (
 	"flag"
 	"fmt"
-	"os"
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
@@ -32,11 +29,9 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"os"
+	"testing"
 )
-
-// TestLeakCheckCnt is the check count in the pacakge of executor.
-// In this package CustomParallelSuiteFlag is true, so we need to increase check count.
-const TestLeakCheckCnt = 1000
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -88,7 +83,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c, TestLeakCheckCnt)()
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TearDownTest(c *C) {
@@ -111,22 +106,31 @@ func (s *testSuite) TestBindParse(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(i int)")
 	tk.MustExec("create index index_t on t(i)")
-	tk.MustExec("INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('select * from t', 'select * from t use index(index_t)', 'test', 1,'2019-02-12 16:13:46','2019-02-12 16:13:46', 'utf8mb4', 'utf8mb4_bin')`,")
+
+	originSql := "select * from t"
+	bindSql := "select * from t use index(index_t)"
+	defaultDb := "test"
+	status := 1
+	charset := "utf8mb4"
+	collation := "utf8mb4_bin"
+	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', %d, NOW(), NOW(),'%s', '%s')`,
+		originSql, bindSql, defaultDb, status, charset, collation)
+
+	tk.MustExec(sql)
 
 	bindHandle := infobind.NewHandle()
 
-	hu := &infobind.HandleUpdater{
-		globalHandle: bindHandle,
-		parser:       s.Parser,
-		ctx:          tk.Se,
-	}
+	hu := infobind.NewHandleUpdater(bindHandle, s.Parser, tk.Se)
 
 	err := hu.Update(true)
 	c.Check(err, IsNil)
 
 	c.Check(len(bindHandle.Get().Cache), Equals, 1)
 
-	hash := parser.Digest("select * from t")
+	fmt.Println("now cache size:" , len(bindHandle.Get().Cache))
+
+	fmt.Println("bindHandle.cache:" , bindHandle.Get().Cache)
+	hash := parser.DigestHash("select * from t")
 	bindData := bindHandle.Get().Cache[hash]
 
 	c.Check(bindData, NotNil)

@@ -113,6 +113,8 @@ func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		fmt.Println("chkBatch num row():" , chkBatch.NumRows())
 		if chkBatch.NumRows() == 0 {
 			return nil
 		}
@@ -160,6 +162,8 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 	}
 
 	h.globalHandle.bind.Store(newBc)
+
+	fmt.Println("newBc len:" , len(newBc.Cache)) ;
 	return nil
 }
 
@@ -183,7 +187,7 @@ func decodeBindTableRow(row chunk.Row, fs []*ast.ResultField) bindRecord {
 }
 
 func (b *bindCache) appendNode(sctx sessionctx.Context, newBindRecord bindRecord, sparser *parser.Parser) error {
-	hash := parser.Normalize(newBindRecord.OriginalSQL)
+	hash := parser.DigestHash(newBindRecord.OriginalSQL)
 
 	if bindArr, ok := b.Cache[hash]; ok {
 		for idx, v := range bindArr {
