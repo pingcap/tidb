@@ -15,8 +15,6 @@ package mocktikv
 
 import (
 	"fmt"
-
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // ErrLocked is returned when trying to Read/Write on a locked key. Client should
@@ -53,12 +51,4 @@ type ErrAlreadyCommitted uint64
 
 func (e ErrAlreadyCommitted) Error() string {
 	return "txn already committed"
-}
-
-type assumptionErr struct {
-	*kvrpcpb.Mutation
-}
-
-func (e *assumptionErr) Error() string {
-	return "assumption error"
 }

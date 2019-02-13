@@ -110,7 +110,6 @@ github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e h1:P73/4dPCL96rG
 github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
 github.com/pingcap/kvproto v0.0.0-20190110035000-d4fe6b336379 h1:l4KInBOtxjbgQLjCFHzX66vZgNzsH4a+RiuVZGrO0xk=
 github.com/pingcap/kvproto v0.0.0-20190110035000-d4fe6b336379/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
-github.com/pingcap/kvproto v0.0.0-20190213071928-5eaa2b4e8f89 h1:0MKqyxd8uVHS3zsH6zjz9Oy0fogBG/myqsCpXmPe1Yw=
 github.com/pingcap/kvproto v0.0.0-20190213071928-5eaa2b4e8f89/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 github.com/pingcap/parser v0.0.0-20190212061044-a71b434969f3 h1:Wn8ERRenAuN00KT7TAISS86HzVHDyMRR+onWCeb6BjI=
 github.com/pingcap/parser v0.0.0-20190212061044-a71b434969f3/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=

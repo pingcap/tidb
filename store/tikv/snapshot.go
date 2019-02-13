@@ -312,13 +312,7 @@ func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 		log.Warn(err)
 		return nil, errors.Trace(err)
 	}
-
-	// // PreconditionErr is not an error for mvcc.
-	// if keyErr.PreconditionErr != nil {
-	// 	return nil, nil
-	// }
-	// return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
-	return nil, nil
+	return nil, errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 
 func conflictToString(conflict *pb.WriteConflict) string {

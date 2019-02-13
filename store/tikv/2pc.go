@@ -121,7 +121,6 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
 			mutations[string(lockKey)] = &pb.Mutation{
@@ -140,7 +139,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	for _, pair := range txn.assumptions {
 		mutation, ok := mutations[string(pair.key)]
 		if !ok {
-			log.Info("something is wrong... contract exists but no mutation?", pair)
+			log.Error("CONTRACT BUG!!! contract exists but no mutation?", pair)
 			continue
 		}
 		// Only apply the first contract!
