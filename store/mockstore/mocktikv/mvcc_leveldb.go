@@ -52,7 +52,10 @@ type MVCCLevelDB struct {
 	// NextKey_0       -- (11)
 	// ...
 	// EOF
+
+	// db represents leveldb
 	db *leveldb.DB
+	// mu used for lock
 	// leveldb can not guarantee multiple operations to be atomic, for example, read
 	// then write, another write may happen during it, so this lock is necessory.
 	mu sync.RWMutex
@@ -177,7 +180,7 @@ type lockDecoder struct {
 	expectKey []byte
 }
 
-// lockDecoder decodes the lock value if current iterator is at expectKey::lock.
+// Decode decodes the lock value if current iterator is at expectKey::lock.
 func (dec *lockDecoder) Decode(iter *Iterator) (bool, error) {
 	if iter.Error() != nil || !iter.Valid() {
 		return false, iter.Error()
@@ -210,7 +213,7 @@ type valueDecoder struct {
 	expectKey []byte
 }
 
-// valueDecoder decodes a mvcc value if iter key is expectKey.
+// Decode decodes a mvcc value if iter key is expectKey.
 func (dec *valueDecoder) Decode(iter *Iterator) (bool, error) {
 	if iter.Error() != nil || !iter.Valid() {
 		return false, iter.Error()
@@ -241,7 +244,7 @@ type skipDecoder struct {
 	currKey []byte
 }
 
-// skipDecoder skips the iterator as long as its key is currKey, the new key would be stored.
+// Decode skips the iterator as long as its key is currKey, the new key would be stored.
 func (dec *skipDecoder) Decode(iter *Iterator) (bool, error) {
 	if iter.Error() != nil {
 		return false, iter.Error()
@@ -262,11 +265,11 @@ func (dec *skipDecoder) Decode(iter *Iterator) (bool, error) {
 
 type mvccEntryDecoder struct {
 	expectKey []byte
-	// Just values and lock is valid.
+	// mvccEntry represents values and lock is valid.
 	mvccEntry
 }
 
-// mvccEntryDecoder decodes a mvcc entry.
+// Decode decodes a mvcc entry.
 func (dec *mvccEntryDecoder) Decode(iter *Iterator) (bool, error) {
 	ldec := lockDecoder{expectKey: dec.expectKey}
 	ok, err := ldec.Decode(iter)
@@ -975,6 +978,37 @@ func (mvcc *MVCCLevelDB) RawScan(startKey, endKey []byte, limit int) []Pair {
 			Value: append([]byte{}, value...),
 			Err:   err,
 		})
+	}
+	return pairs
+}
+
+// RawReverseScan implements the RawKV interface.
+// Scan the range of [endKey, startKey)
+// It doesn't support Scanning from "", because locating the last Region is not yet implemented.
+func (mvcc *MVCCLevelDB) RawReverseScan(startKey, endKey []byte, limit int) []Pair {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	iter := mvcc.db.NewIterator(&util.Range{
+		Limit: startKey,
+	}, nil)
+
+	success := iter.Last()
+
+	var pairs []Pair
+	for success && len(pairs) < limit {
+		key := iter.Key()
+		value := iter.Value()
+		err := iter.Error()
+		if bytes.Compare(key, endKey) < 0 {
+			break
+		}
+		pairs = append(pairs, Pair{
+			Key:   append([]byte{}, key...),
+			Value: append([]byte{}, value...),
+			Err:   err,
+		})
+		success = iter.Prev()
 	}
 	return pairs
 }

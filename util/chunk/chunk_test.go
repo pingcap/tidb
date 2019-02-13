@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func TestT(t *testing.T) {
@@ -69,7 +68,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 		c.Assert(row.IsNull(4), check.IsFalse)
 		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
 		c.Assert(row.IsNull(5), check.IsFalse)
-		c.Assert(hack.String(row.GetJSON(5).GetString()), check.Equals, str)
+		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
 	}
 
 	chk2 := newChunk(8, 8, 0, 0, 40, 0)
@@ -618,6 +617,23 @@ func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
 			c.Assert(val == 0, check.IsTrue)
 		}
 	}
+}
+
+func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 2)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+
+	chk1 := NewChunkWithCapacity(fieldTypes, 1)
+	chk1.AppendFloat64(0, 1)
+	chk1.AppendFloat64(1, 3)
+
+	chk2 := NewChunkWithCapacity(fieldTypes, 1)
+	chk2.MakeRefTo(0, chk1, 1)
+	chk2.MakeRefTo(1, chk1, 0)
+
+	c.Assert(chk2.columns[0] == chk1.columns[1], check.IsTrue)
+	c.Assert(chk2.columns[1] == chk1.columns[0], check.IsTrue)
 }
 
 func BenchmarkAppendInt(b *testing.B) {

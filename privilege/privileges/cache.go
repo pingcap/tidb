@@ -156,7 +156,7 @@ func noSuchTable(err error) bool {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
-	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv,Trigger_priv from mysql.user;", p.decodeUserTableRow)
+	err := p.loadTable(ctx, "select HIGH_PRIORITY Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv,Trigger_priv,Create_view_priv,Show_view_priv from mysql.user;", p.decodeUserTableRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -253,7 +253,7 @@ func (p MySQLPrivilege) SortUserTable() {
 
 // LoadDBTable loads the mysql.db table from database.
 func (p *MySQLPrivilege) LoadDBTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
+	return p.loadTable(ctx, "select HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv from mysql.db order by host, db, user;", p.decodeDBTableRow)
 }
 
 // LoadTablesPrivTable loads the mysql.tables_priv table from database.
@@ -277,16 +277,16 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			return nil
 		}
-		it := chunk.NewIterator4Chunk(chk)
+		it := chunk.NewIterator4Chunk(req.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			err = decodeTableRow(row, fs)
 			if err != nil {
@@ -296,7 +296,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
 		// The result will reference memory in the chunk, so the chunk must not be reused
 		// here, otherwise some werid bug will happen!
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 
@@ -646,7 +646,7 @@ func privToString(priv mysql.PrivilegeType, allPrivs []mysql.PrivilegeType, allP
 		if priv&p == 0 {
 			continue
 		}
-		s, _ := allPrivNames[p]
+		s := allPrivNames[p]
 		pstrs = append(pstrs, s)
 	}
 	return strings.Join(pstrs, ",")

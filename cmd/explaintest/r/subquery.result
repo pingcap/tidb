@@ -1,0 +1,11 @@
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
+id	count	task	operator info
+HashLeftJoin_8	8000.00	root	semi join, inner:TableReader_12, other cond:eq(test.t1.a, plus(test.t1.b, test.t2.b))
+├─TableReader_10	10000.00	root	data:TableScan_9
+│ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_12	10000.00	root	data:TableScan_11
+  └─TableScan_11	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo

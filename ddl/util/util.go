@@ -69,14 +69,14 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 	}
 
 	rs := rss[0]
-	chk := rs.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := rs.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
@@ -109,8 +109,13 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 		return errors.Trace(err)
 	}
 
-	sql = fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	return RemoveFromGCDeleteRange(ctx, dr.JobID, dr.ElementID)
+}
+
+// RemoveFromGCDeleteRange is exported for ddl pkg to use.
+func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
+	sql := fmt.Sprintf(completeDeleteRangeSQL, jobID, elementID)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 

@@ -66,11 +66,11 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
 			return expr, false
 		}
-		if isNull0 == true {
+		if isNull0 {
 			return foldConstant(args[1])
 		}
 	}
-	isDeferredConst := false
+	var isDeferredConst bool
 	expr.GetArgs()[1], isDeferredConst = foldConstant(args[1])
 	return expr, isDeferredConst
 }

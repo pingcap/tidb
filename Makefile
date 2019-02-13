@@ -12,7 +12,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := GO111MODULE=on go
-GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG)
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
 OVERALLS  := CGO_ENABLED=1 GO111MODULE=on overalls
 
@@ -91,8 +91,7 @@ check-slow:tools/bin/gometalinter tools/bin/gosec
 
 errcheck:tools/bin/errcheck
 	@echo "errcheck"
-	@$(GO) mod vendor
-	@tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:tools/bin/revive
 	@echo "linting"

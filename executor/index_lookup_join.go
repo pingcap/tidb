@@ -211,12 +211,12 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 }
 
 // Next implements the Executor interface.
-func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	e.joinResult.Reset()
 	for {
 		task, err := e.getFinishedTask(ctx)
@@ -234,7 +234,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, err := e.joiner.tryToMatch(outerRow, e.innerIter, chk)
+			matched, err := e.joiner.tryToMatch(outerRow, e.innerIter, req.Chunk)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -242,12 +242,12 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
 			if !task.hasMatch {
-				e.joiner.onMissMatch(outerRow, chk)
+				e.joiner.onMissMatch(outerRow, req.Chunk)
 			}
 			task.cursor++
 			task.hasMatch = false
 		}
-		if chk.NumRows() == e.maxChunkSize {
+		if req.NumRows() == e.maxChunkSize {
 			return nil
 		}
 	}
@@ -359,7 +359,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for task.outerResult.NumRows() < ow.batchSize {
-		err := ow.executor.Next(ctx, ow.executorChk)
+		err := ow.executor.Next(ctx, chunk.NewRecordBatch(ow.executorChk))
 		if err != nil {
 			return task, errors.Trace(err)
 		}
@@ -547,7 +547,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := innerExec.Next(ctx, iw.executorChk)
+		err := innerExec.Next(ctx, chunk.NewRecordBatch(iw.executorChk))
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -48,7 +48,9 @@ func TestT(t *testing.T) {
 		Level:  logLevel,
 		Format: "highlight",
 	})
+	testleak.BeforeTest()
 	TestingT(t)
+	testleak.AfterTestT(t)()
 }
 
 var _ = Suite(&testFailDBSuite{})
@@ -64,7 +66,6 @@ type testFailDBSuite struct {
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -85,11 +86,11 @@ func (s *testFailDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testFailDBSuite) TearDownSuite(c *C) {
-	s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	c.Assert(err, IsNil)
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
@@ -111,11 +112,11 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err := s.se.Execute(context.Background(), "select count(*) from t")
 	c.Assert(err, IsNil)
-	chk := rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), chk)
+	req := rs[0].NewRecordBatch()
+	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	row := chk.GetRow(0)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
@@ -144,11 +145,11 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err = s.se.Execute(context.Background(), "select count(*) from tx")
 	c.Assert(err, IsNil)
-	chk = rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), chk)
+	req = rs[0].NewRecordBatch()
+	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	row = chk.GetRow(0)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
@@ -248,7 +249,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
 	for i := 0; i < 50; i++ {
-		if s.dom.SchemaValidator.IsStarted() == false {
+		if !s.dom.SchemaValidator.IsStarted() {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -261,7 +262,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	s.dom.MockReloadFailed.SetValue(false)
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {
-		if s.dom.SchemaValidator.IsStarted() == true {
+		if s.dom.SchemaValidator.IsStarted() {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)

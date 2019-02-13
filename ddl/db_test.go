@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
@@ -78,7 +77,6 @@ type testDBSuite struct {
 
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
-	testleak.BeforeTest()
 
 	s.lease = 200 * time.Millisecond
 	session.SetSchemaLease(s.lease)
@@ -112,7 +110,6 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	s.s.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c, ddl.TestLeakCheckCnt)()
 }
 
 func (s *testDBSuite) testErrorCode(c *C, sql string, errCode int) {
@@ -1803,7 +1800,7 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	result = s.tk.MustQuery(`show create table table_with_gen_col_blanks`)
 	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` char(20) GENERATED ALWAYS AS (CAST(`a` AS CHAR)) VIRTUAL DEFAULT NULL\n" +
+		"  `b` char(20) CHARSET utf8mb4 COLLATE utf8mb4_bin GENERATED ALWAYS AS (CAST(`a` AS CHAR)) VIRTUAL DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	genExprTests := []struct {
@@ -1928,7 +1925,7 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
 	s.tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
 		"text_default_text CREATE TABLE `text_default_text` (\n"+
-			"  `c1` text NOT NULL\n"+
+			"  `c1` text CHARSET utf8mb4 COLLATE utf8mb4_bin NOT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	ctx := s.tk.Se.(sessionctx.Context)
@@ -2038,6 +2035,51 @@ func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
 	s.testErrorCode(c, "alter table test2 change c1 a1 bigint not null;", tmysql.WarnDataTruncated)
 }
 
+func (s *testDBSuite) TestCheckTooBigFieldLength(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists tr_01;")
+	s.tk.MustExec("create table tr_01 (id int, name varchar(20000), purchased date )  default charset=utf8 collate=utf8_bin;")
+
+	s.tk.MustExec("drop table if exists tr_02;")
+	s.tk.MustExec("create table tr_02 (id int, name varchar(16000), purchased date )  default charset=utf8mb4 collate=utf8mb4_bin;")
+
+	s.tk.MustExec("drop table if exists tr_03;")
+	s.tk.MustExec("create table tr_03 (id int, name varchar(65534), purchased date ) default charset=latin1;")
+
+	s.tk.MustExec("drop table if exists tr_04;")
+	s.tk.MustExec("create table tr_04 (a varchar(20000)) default charset utf8;")
+	s.testErrorCode(c, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
+	s.testErrorCode(c, "create table tr (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
+	s.testErrorCode(c, "create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8;", tmysql.ErrTooBigFieldlength)
+	s.testErrorCode(c, "create table tr (id int, name varchar(65536), purchased date ) default charset=latin1;", tmysql.ErrTooBigFieldlength)
+
+	s.tk.MustExec("drop table if exists tr_05;")
+	s.tk.MustExec("create table tr_05 (a varchar(16000) charset utf8);")
+	s.tk.MustExec("alter table tr_05 modify column a varchar(16000) charset utf8;")
+	s.tk.MustExec("alter table tr_05 modify column a varchar(16000) charset utf8mb4;")
+}
+
+func (s *testDBSuite) TestCheckConvertToCharacter(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	defer s.tk.MustExec("drop table t")
+	s.tk.MustExec("create table t(a varchar(10) charset binary);")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	rs, err := s.tk.Exec("alter table t modify column a varchar(10) charset utf8 collate utf8_bin")
+	c.Assert(err, NotNil)
+	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin")
+	c.Assert(err, NotNil)
+	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset latin collate latin1_bin")
+	c.Assert(err, NotNil)
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(t.Cols()[0].Charset, Equals, "binary")
+}
 func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
@@ -2064,8 +2106,7 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
-		var err error
-		err = hookCtx.NewTxn(context.Background())
+		err := hookCtx.NewTxn(context.Background())
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
@@ -2272,6 +2313,7 @@ func (s *testDBSuite) TestAddColumn2(c *C) {
 	err = s.tk.Se.StmtCommit()
 	c.Assert(err, IsNil)
 	err = s.tk.Se.CommitTxn(ctx)
+	c.Assert(err, IsNil)
 
 	s.tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 2 1"))
 
@@ -2297,4 +2339,26 @@ func (s *testDBSuite) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	re.Check(testkit.Rows("1 2"))
 	s.tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
+}
+
+func (s *testDBSuite) TestAddIndexForGeneratedColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
+	defer s.mustExec(c, "drop table t;")
+	for i := 0; i < 50; i++ {
+		s.mustExec(c, "insert into t values (?)", i)
+	}
+	s.tk.MustExec("insert into t values()")
+	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
+	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
+	c.Assert(err.Error(), Equals, "[ddl:15]cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+
+	t := s.testGetTable(c, "t")
+	for _, idx := range t.Indices() {
+		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
+	}
+	s.mustExec(c, "delete from t where y = 2155")
+	s.mustExec(c, "alter table t add index idx_y(y1)")
+	s.mustExec(c, "alter table t drop index idx_y")
 }

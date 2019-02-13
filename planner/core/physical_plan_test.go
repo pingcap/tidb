@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner"
@@ -846,7 +847,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test stream agg + index double.
 		{
 			sql:  "select sum(e), avg(b + c) from t where c = 1 and b = 1 group by c",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection->StreamAgg",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg",
 		},
 		// Test hash agg + order.
 		{
@@ -856,7 +857,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		// Test stream agg + order.
 		{
 			sql:  "select sum(e) as k, avg(b + c) from t where c = 1 and b = 1 and e = 1 group by c order by k",
-			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->StreamAgg->Sort",
+			best: "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t)->Sel([eq(test.t.b, 1)]))->Projection->Projection->StreamAgg->Sort",
 		},
 		// Test agg can't push down.
 		{
@@ -1080,11 +1081,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c_str not like 'abc'",
-			best: "TableReader(Table(t)->Sel([not(like(test.t.c_str, abc, 92))]))->Projection",
+			best: `IndexReader(Index(t.c_d_e_str)[[-inf,"abc") ("abc",+inf]])->Projection`,
 		},
 		{
 			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
-			best: `TableReader(Table(t)->Sel([and(not(like(test.t.c_str, abc, 92)), not(like(test.t.c_str, abd, 92)))]))->Projection`,
+			best: `IndexReader(Index(t.c_d_e_str)[[-inf,"abc") ("abc","abd") ("abd",+inf]])->Projection`,
 		},
 		{
 			sql:  "select a from t where c_str like '_abc'",
@@ -1131,10 +1132,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  `select a from t where c_str like 123`,
 			best: "IndexReader(Index(t.c_d_e_str)[[\"123\",\"123\"]])->Projection",
 		},
-		// c is type int which will be added cast to specified type when building function signature, no index can be used.
+		// c is type int which will be added cast to specified type when building function signature,
+		// and rewrite predicate like to predicate '='  when exact match , index still can be used.
 		{
 			sql:  `select a from t where c like '1'`,
-			best: "TableReader(Table(t))->Sel([like(cast(test.t.c), 1, 92)])->Projection",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->Projection",
 		},
 		{
 			sql:  `select a from t where c = 1.9 and d > 3`,
@@ -1387,4 +1389,28 @@ func (s *testPlanSuite) TestDoSubquery(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
+}
+
+func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	sql := "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2"
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	p, err := planner.Optimize(se, stmt, s.is)
+	c.Assert(err, IsNil)
+	c.Assert(core.ToString(p), Equals, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}")
+	warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+	lastWarn := warnings[len(warnings)-1]
+	err = core.ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
+	c.Assert(terror.ErrorEqual(err, lastWarn.Err), IsTrue)
 }

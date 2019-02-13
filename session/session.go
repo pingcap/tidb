@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infobind"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
@@ -75,7 +77,7 @@ type Session interface {
 	Execute(context.Context, string) ([]sqlexec.RecordSet, error) // Execute a sql statement.
 	String() string                                               // String is used to debug.
 	CommitTxn(context.Context) error
-	RollbackTxn(context.Context) error
+	RollbackTxn(context.Context)
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
@@ -446,13 +448,12 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-func (s *session) RollbackTxn(ctx context.Context) error {
+func (s *session) RollbackTxn(ctx context.Context) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 
-	var err error
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
 		metrics.TransactionCounter.WithLabelValues(s.getSQLLabel(), metrics.LblRollback).Inc()
@@ -461,7 +462,6 @@ func (s *session) RollbackTxn(ctx context.Context) error {
 	s.txn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return errors.Trace(err)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -515,23 +515,42 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) retry(ctx context.Context, maxCnt uint) error {
-	connID := s.sessionVars.ConnectionID
-	if s.sessionVars.TxnCtx.ForUpdate {
-		return errForUpdateCantRetry.GenWithStackByArgs(connID)
+func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
+	if s.txn.doNotCommit == nil {
+		return nil
 	}
-	s.sessionVars.RetryInfo.Retrying = true
+	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
+	// because they are used to finish the aborted transaction.
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+		return nil
+	}
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
+		return nil
+	}
+	return errors.New("current transaction is aborted, commands ignored until end of transaction block")
+}
+
+func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	var retryCnt uint
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
-		s.txn.changeToInvalid()
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		if err != nil {
+			s.RollbackTxn(ctx)
+		}
+		s.txn.changeToInvalid()
 	}()
 
+	connID := s.sessionVars.ConnectionID
+	s.sessionVars.RetryInfo.Retrying = true
+	if s.sessionVars.TxnCtx.ForUpdate {
+		err = errForUpdateCantRetry.GenWithStackByArgs(connID)
+		return err
+	}
+
 	nh := GetHistory(s)
-	var err error
 	var schemaVersion int64
 	sessVars := s.GetSessionVars()
 	orgStartTS := sessVars.TxnCtx.StartTS
@@ -740,17 +759,17 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 
 func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for {
-		err := rs.Next(ctx, chk)
-		if err != nil || chk.NumRows() == 0 {
+		err := rs.Next(ctx, req)
+		if err != nil || req.NumRows() == 0 {
 			return rows, errors.Trace(err)
 		}
-		iter := chunk.NewIterator4Chunk(chk)
+		iter := chunk.NewIterator4Chunk(req.Chunk)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		chk = chunk.Renew(chk, se.sessionVars.MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, se.sessionVars.MaxChunkSize)
 	}
 }
 
@@ -912,7 +931,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	if err != nil {
 		s.rollbackOnError(ctx)
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
-		return nil, errors.Trace(err)
+		return nil, util.SyntaxError(err)
 	}
 	label := s.getSQLLabel()
 	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
@@ -947,7 +966,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	for _, warn := range warns {
-		s.sessionVars.StmtCtx.AppendWarning(warn)
+		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	return recordSets, nil
 }
@@ -955,7 +974,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
 func (s *session) rollbackOnError(ctx context.Context) {
 	if !s.sessionVars.InTxn() {
-		terror.Log(s.RollbackTxn(ctx))
+		s.RollbackTxn(ctx)
 	}
 }
 
@@ -984,11 +1003,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 	if !inTxn {
 		// We could start a transaction to build the prepare executor before, we should rollback it here.
-		err = s.RollbackTxn(ctx)
-		if err != nil {
-			err = errors.Trace(err)
-			return
-		}
+		s.RollbackTxn(ctx)
 	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
@@ -1138,9 +1153,7 @@ func (s *session) Close() {
 		s.statsCollector.Delete()
 	}
 	ctx := context.TODO()
-	if err := s.RollbackTxn(ctx); err != nil {
-		log.Error("session Close error:", errors.ErrorStack(err))
-	}
+	s.RollbackTxn(ctx)
 	if s.sessionVars != nil {
 		s.sessionVars.WithdrawAllPreparedStmt()
 	}
@@ -1255,15 +1268,30 @@ func loadSystemTZ(se *session) (string, error) {
 			log.Error(errors.ErrorStack(err))
 		}
 	}()
-	chk := rss[0].NewChunk()
-	if err := rss[0].Next(context.Background(), chk); err != nil {
+	req := rss[0].NewRecordBatch()
+	if err := rss[0].Next(context.Background(), req); err != nil {
 		return "", errors.Trace(err)
 	}
-	return chk.GetRow(0).GetString(0), nil
+	return req.GetRow(0).GetString(0), nil
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
+	cfg := config.GetGlobalConfig()
+	if len(cfg.Plugin.Load) > 0 {
+		err := plugin.Init(context.Background(), plugin.Config{
+			Plugins:        strings.Split(cfg.Plugin.Load, ","),
+			PluginDir:      cfg.Plugin.Dir,
+			GlobalSysVar:   &variable.SysVars,
+			PluginVarNames: &variable.PluginVarNames,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	initLoadCommonGlobalVarsSQL()
+
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -1443,39 +1471,59 @@ func finishBootstrap(store kv.Storage) {
 }
 
 const quoteCommaQuote = "', '"
-const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" +
-	variable.AutocommitVar + quoteCommaQuote +
-	variable.SQLModeVar + quoteCommaQuote +
-	variable.MaxAllowedPacket + quoteCommaQuote +
-	variable.TimeZone + quoteCommaQuote +
-	variable.BlockEncryptionMode + quoteCommaQuote +
-	variable.WaitTimeout + quoteCommaQuote +
-	variable.InteractiveTimeout + quoteCommaQuote +
-	variable.MaxPreparedStmtCount + quoteCommaQuote +
+
+var builtinGlobalVariable = []string{
+	variable.AutocommitVar,
+	variable.SQLModeVar,
+	variable.MaxAllowedPacket,
+	variable.TimeZone,
+	variable.BlockEncryptionMode,
+	variable.WaitTimeout,
+	variable.InteractiveTimeout,
+	variable.MaxPreparedStmtCount,
 	/* TiDB specific global variables: */
-	variable.TiDBSkipUTF8Check + quoteCommaQuote +
-	variable.TiDBIndexJoinBatchSize + quoteCommaQuote +
-	variable.TiDBIndexLookupSize + quoteCommaQuote +
-	variable.TiDBIndexLookupConcurrency + quoteCommaQuote +
-	variable.TiDBIndexLookupJoinConcurrency + quoteCommaQuote +
-	variable.TiDBIndexSerialScanConcurrency + quoteCommaQuote +
-	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
-	variable.TiDBProjectionConcurrency + quoteCommaQuote +
-	variable.TiDBHashAggPartialConcurrency + quoteCommaQuote +
-	variable.TiDBHashAggFinalConcurrency + quoteCommaQuote +
-	variable.TiDBBackoffLockFast + quoteCommaQuote +
-	variable.TiDBConstraintCheckInPlace + quoteCommaQuote +
-	variable.TiDBOptInSubqToJoinAndAgg + quoteCommaQuote +
-	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
-	variable.TiDBInitChunkSize + quoteCommaQuote +
-	variable.TiDBMaxChunkSize + quoteCommaQuote +
-	variable.TiDBEnableCascadesPlanner + quoteCommaQuote +
-	variable.TiDBRetryLimit + quoteCommaQuote +
-	variable.TiDBDisableTxnAutoRetry + quoteCommaQuote +
-	variable.TiDBEnableWindowFunction + "')"
+	variable.TiDBSkipUTF8Check,
+	variable.TiDBIndexJoinBatchSize,
+	variable.TiDBIndexLookupSize,
+	variable.TiDBIndexLookupConcurrency,
+	variable.TiDBIndexLookupJoinConcurrency,
+	variable.TiDBIndexSerialScanConcurrency,
+	variable.TiDBHashJoinConcurrency,
+	variable.TiDBProjectionConcurrency,
+	variable.TiDBHashAggPartialConcurrency,
+	variable.TiDBHashAggFinalConcurrency,
+	variable.TiDBBackoffLockFast,
+	variable.TiDBConstraintCheckInPlace,
+	variable.TiDBDDLReorgWorkerCount,
+	variable.TiDBDDLReorgBatchSize,
+	variable.TiDBOptInSubqToJoinAndAgg,
+	variable.TiDBDistSQLScanConcurrency,
+	variable.TiDBInitChunkSize,
+	variable.TiDBMaxChunkSize,
+	variable.TiDBEnableCascadesPlanner,
+	variable.TiDBRetryLimit,
+	variable.TiDBDisableTxnAutoRetry,
+	variable.TiDBEnableWindowFunction,
+}
+
+var (
+	loadCommonGlobalVarsSQLOnce sync.Once
+	loadCommonGlobalVarsSQL     string
+)
+
+func initLoadCommonGlobalVarsSQL() {
+	loadCommonGlobalVarsSQLOnce.Do(func() {
+		vars := append(make([]string, 0, len(builtinGlobalVariable)+len(variable.PluginVarNames)), builtinGlobalVariable...)
+		if len(variable.PluginVarNames) > 0 {
+			vars = append(vars, variable.PluginVarNames...)
+		}
+		loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(vars, quoteCommaQuote) + "')"
+	})
+}
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
 func (s *session) loadCommonGlobalVariablesIfNeeded() error {
+	initLoadCommonGlobalVarsSQL()
 	vars := s.sessionVars
 	if vars.CommonGlobalLoaded {
 		return nil
