@@ -267,7 +267,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, tblCharset string, dbCh
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint, tblCharset, dbCharset string) (*table.Column, []*ast.Constraint, error) {
 	isExplictedCollation := true
-	if colDef.Tp.Charset == "" || colDef.Tp.Collate == "" {
+	if colDef.Tp.Charset == "" && colDef.Tp.Collate == "" {
 		isExplictedCollation = false
 	}
 	if err := setCharsetCollationFlenDecimal(colDef.Tp, tblCharset, dbCharset); err != nil {
