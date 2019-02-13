@@ -114,7 +114,7 @@ func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 			return errors.Trace(err)
 		}
 
-		fmt.Println("chkBatch num row():" , chkBatch.NumRows())
+		fmt.Println("chkBatch num row():", chkBatch.NumRows())
 		if chkBatch.NumRows() == 0 {
 			return nil
 		}
@@ -163,7 +163,7 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 
 	h.globalHandle.bind.Store(newBc)
 
-	fmt.Println("newBc len:" , len(newBc.Cache)) ;
+	fmt.Println("newBc len:", len(newBc.Cache))
 	return nil
 }
 
