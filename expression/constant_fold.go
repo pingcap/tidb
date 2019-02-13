@@ -61,12 +61,10 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 	args := expr.GetArgs()
 	foldedArg0, isDeferred := foldConstant(args[0])
 	if constArg, isConst := foldedArg0.(*Constant); isConst {
-		dt, err := constArg.Eval(chunk.Row{})
-		if err != nil {
-			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
-			return expr, false
-		}
-		if dt.IsNull() {
+		// Only check constArg.Value here. Because deferred expression is
+		// evaluated to constArg.Value after foldConstant(args[0]), it's not
+		// needed to be checked.
+		if constArg.Value.IsNull() {
 			return foldConstant(args[1])
 		}
 		return constArg, isDeferred
