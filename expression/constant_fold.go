@@ -41,7 +41,10 @@ func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
 	if constArg, isConst := foldedArg0.(*Constant); isConst {
 		arg0, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), chunk.Row{})
 		if err != nil {
-			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
+			// Failed to fold this expr to a constant, print the DEBUG log and
+			// return the original expression to let the error to be evaluated
+			// again, in that time, the error is returned to the client.
+			log.Debugf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
 			return expr, false
 		}
 		if !isNull0 && arg0 != 0 {
