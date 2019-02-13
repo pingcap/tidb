@@ -107,16 +107,16 @@ func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()
-	chk := rs.NewChunk()
+	chkBatch := rs.NewRecordBatch()
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), chkBatch)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if chkBatch.NumRows() == 0 {
 			return nil
 		}
-		it := chunk.NewIterator4Chunk(chk)
+		it := chunk.NewIterator4Chunk(chkBatch.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			record := decodeBindTableRow(row, fs)
 			err = bc.appendNode(h.ctx, record, h.parser)
@@ -128,7 +128,8 @@ func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 				h.lastUpdateTime = record.UpdateTime
 			}
 		}
-		chk = chunk.Renew(chk, h.ctx.GetSessionVars().MaxChunkSize)
+
+		chkBatch.Reset()
 	}
 }
 
