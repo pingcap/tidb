@@ -541,13 +541,13 @@ func (w *addIndexWorker) close() {
 	}
 }
 
-var gofailMocketIndexRecordErrOnceGuard bool
+var gofailMockGetIndexRecordErrOnceGuard bool
 
 // getIndexRecord gets index columns values from raw binary value row.
 func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecord []byte) (*indexRecord, error) {
 	// gofail: var mockGetIndexRecordPanic bool
-	// if mockGetIndexRecordPanic && !gofailMocketIndexRecordErrOnceGuard {
-	//	gofailMocketIndexRecordErrOnceGuard = true
+	// if mockGetIndexRecordPanic && !gofailMockGetIndexRecordErrOnceGuard {
+	//	gofailMockGetIndexRecordErrOnceGuard = true
 	// 		panic("panic test")
 	// }
 	t := w.table
@@ -927,10 +927,17 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 	return decodeColMap, nil
 }
 
+var gofailMockSplitTableRangesOnceGuard bool
+
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
 func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endHandle int64) ([]kv.KeyRange, error) {
+	//gofail: var mockSplitTableRangesPanic bool
+	//if mockSplitTableRangesPanic && !gofailMockSplitTableRangesOnceGuard {
+	//	gofailMockSplitTableRangesOnceGuard = true
+	//	panic("panic test")
+	//}
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle).Next()
 

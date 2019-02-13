@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -38,8 +39,10 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
+	store     kv.Storage
+	dom       *domain.Domain
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
@@ -48,6 +51,14 @@ func (s *testSerialSuite) SetUpSuite(c *C) {
 
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
+	s.cluster = mocktikv.NewCluster()
+	mocktikv.BootstrapWithSingleStore(s.cluster)
+	s.mvccStore = mocktikv.MustNewMVCCStore()
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithCluster(s.cluster),
+		mockstore.WithMVCCStore(s.mvccStore),
+	)
+	c.Assert(err, IsNil)
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
@@ -510,4 +521,29 @@ func (s *testSerialSuite) TestDropTableOrViewFail(c *C) {
 	gofail.Disable("github.com/pingcap/tidb/ddl/dropTableOrViewErr")
 	tk.MustExec("admin check table t")
 	tk.MustExec("drop table t;")
+}
+
+func (s *testSerialSuite) TestAddIndexSplitTableRangesPanic(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/ddl/mockSplitTableRangesPanic", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockSplitTableRangesPanic")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_split_table")
+	defer tk.MustExec("drop database test_split_table")
+	tk.MustExec("use test_split_table")
+
+	tk.MustExec("create table t_split_table(a bigint primary key, b int)")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t_split_table values(%v, %v)", i, i))
+	}
+
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_split_table"), model.NewCIStr("t_split_table"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+
+	tk.MustExec("alter table t_split_table add index idx_b(b)")
+	tk.MustExec("admin check index t_split_table idx_b")
+	tk.MustExec("admin check table t_split_table")
 }

@@ -391,13 +391,6 @@ func (s *testFailDBSuite) TestAddIndexGetIndexRecordPanic(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
 	}
 
-	dom := domain.GetDomain(tk.Se)
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_add_index"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tblID := tbl.Meta().ID
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
-
 	tk.MustExec("alter table t add index idx_b(b)")
 	tk.MustExec("admin check index t idx_b")
 	tk.MustExec("admin check table t")
