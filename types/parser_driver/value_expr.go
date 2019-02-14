@@ -91,7 +91,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindFloat64:
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
 	case types.KindString:
-		if n.Type.Charset != "utf8mb4" {
+		if n.Type.Charset != "" && n.Type.Charset != "utf8mb4" {
 			ctx.WritePlainf("_%s", n.Type.Charset)
 		}
 		ctx.WriteString(n.GetString())
