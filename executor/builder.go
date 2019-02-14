@@ -1134,7 +1134,7 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	sortExec := SortExec{
+	sortExec := MergeSortExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
