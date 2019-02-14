@@ -146,6 +146,7 @@ type Status struct {
 	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
+	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
 }
 
 // Performance is the performance section of the config.
@@ -299,6 +300,7 @@ var defaultConf = Config{
 		ReportStatus:    true,
 		StatusPort:      10080,
 		MetricsInterval: 15,
+		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
 		MaxMemory:           0,
