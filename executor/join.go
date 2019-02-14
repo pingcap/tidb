@@ -426,7 +426,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 	iter := chunk.NewIterator4Slice(innerRows)
 	hasMatch, hasNull := false, false
 	for iter.Begin(); iter.Current() != iter.End(); {
-		matched, isNull, err := e.joiners[workerID].tryToMatch(outerRow, iter, joinResult.chk)
+		matched, isNull, err := e.joiners[workerID].tryToMatchInners(outerRow, iter, joinResult.chk)
 		if err != nil {
 			joinResult.err = errors.Trace(err)
 			return false, joinResult
@@ -726,7 +726,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.RecordBatch) 
 			e.innerIter.Begin()
 		}
 
-		matched, isNull, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, req.Chunk)
+		matched, isNull, err := e.joiner.tryToMatchInners(*e.outerRow, e.innerIter, req.Chunk)
 		e.hasMatch = e.hasMatch || matched
 		e.hasNull = e.hasNull || isNull
 

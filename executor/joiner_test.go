@@ -72,7 +72,7 @@ func (s *testSuiteJoiner) TestRequiredRows(c *C) {
 					result.Reset()
 					it := chunk.NewIterator4Chunk(innerChk)
 					it.Begin()
-					_, _, err := joiner.tryToMatch(outerRow, it, result)
+					_, _, err := joiner.tryToMatchInners(outerRow, it, result)
 					c.Assert(err, IsNil)
 					c.Assert(result.NumRows(), Equals, required)
 				}
