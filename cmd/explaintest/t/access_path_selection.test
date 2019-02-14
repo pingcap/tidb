@@ -30,3 +30,18 @@ KEY `IDX_ab` (`a`, `b`)
 explain select a, b from access_path_selection where a < 3;
 explain select a, b from access_path_selection where b < 3;
 explain select a, b from access_path_selection where a < 3 and b < 3;
+
+CREATE TABLE `wrong_index_selection` (
+`a` int,
+`b` int,
+`c` int,
+INDEX idx_a(a),
+INDEX idx_ab(a,b)
+);
+insert into wrong_index_selection values (1, 1, 1);
+insert into wrong_index_selection values (2, 2, 2);
+insert into wrong_index_selection values (3, 3, 3);
+# only update idx_ab and leave idx_a outdated.
+# then the estimated number of rows on idx_ab is 1 while it's 0 on idx_a.
+analyze table wrong_index_selection index idx_ab;
+explain select * from wrong_index_selection where a=1 and b=1 and c=1;
