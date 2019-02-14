@@ -312,6 +312,17 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
+
+	tk.MustExec(`drop table if exists different_charset`)
+	tk.MustExec(`create table different_charset(ch1 varchar(10) charset utf8, ch2 varchar(10) charset binary);`)
+	tk.MustQuery(`show create table different_charset`).Check(testutil.RowsWithSep("|",
+		""+
+			"different_charset CREATE TABLE `different_charset` (\n"+
+			"  `ch1` varchar(10) CHARSET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
+			"  `ch2` varbinary(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
 }
 
 func (s *testSuite2) TestShowEscape(c *C) {
