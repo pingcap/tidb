@@ -77,10 +77,10 @@ func (s *joinReorderGreedySingleGroupSolver) solve() (LogicalPlan, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.groupNodeCst[node.ID()] = node.statsInfo().RowCount
+		s.groupNodeCst[node.ID()] = s.baseNodeTotalCost(node)
 	}
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
-		return s.curJoinGroup[i].statsInfo().RowCount < s.curJoinGroup[j].statsInfo().RowCount
+		return s.nodeCost(s.curJoinGroup[i]) < s.nodeCost(s.curJoinGroup[j])
 	})
 
 	var cartesianGroup []LogicalPlan
@@ -100,6 +100,13 @@ func (s *joinReorderGreedySingleGroupSolver) nodeCost(p LogicalPlan) float64 {
 		return cst
 	}
 	return p.statsInfo().RowCount
+}
+func (s *joinReorderGreedySingleGroupSolver) baseNodeTotalCost(p LogicalPlan) float64 {
+	cst := p.statsInfo().RowCount
+	for _, child := range p.Children() {
+		cst += s.baseNodeTotalCost(child)
+	}
+	return cst
 }
 
 func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (LogicalPlan, error) {

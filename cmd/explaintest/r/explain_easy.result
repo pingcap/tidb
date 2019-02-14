@@ -61,13 +61,13 @@ explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	9990.00	root	cast(join_agg_0)
 └─IndexJoin_14	9990.00	root	inner join, inner:TableReader_13, outer key:b.c2, inner key:a.c1
-  ├─HashAgg_22	7992.00	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
-  │ └─TableReader_23	7992.00	root	data:HashAgg_17
-  │   └─HashAgg_17	7992.00	cop	group by:b.c2, funcs:count(b.c2), firstrow(b.c2)
-  │     └─Selection_21	9990.00	cop	not(isnull(b.c2))
-  │       └─TableScan_20	10000.00	cop	table:b, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─TableReader_13	10.00	root	data:TableScan_12
-    └─TableScan_12	10.00	cop	table:a, range: decided by [b.c2], keep order:false, stats:pseudo
+  ├─TableReader_13	10.00	root	data:TableScan_12
+  │ └─TableScan_12	10.00	cop	table:a, range: decided by [b.c2], keep order:false, stats:pseudo
+  └─HashAgg_22	7992.00	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
+    └─TableReader_23	7992.00	root	data:HashAgg_17
+      └─HashAgg_17	7992.00	cop	group by:b.c2, funcs:count(b.c2), firstrow(b.c2)
+        └─Selection_21	9990.00	cop	not(isnull(b.c2))
+          └─TableScan_20	10000.00	cop	table:b, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t2 order by t2.c2 limit 0, 1;
 id	count	task	operator info
 TopN_7	1.00	root	test.t2.c2:asc, offset:0, count:1
@@ -99,13 +99,13 @@ explain select c1 from t1 where c1 in (select c2 from t2);
 id	count	task	operator info
 Projection_9	9990.00	root	test.t1.c1
 └─IndexJoin_12	9990.00	root	inner join, inner:TableReader_11, outer key:test.t2.c2, inner key:test.t1.c1
-  ├─HashAgg_20	7992.00	root	group by:col_1, funcs:firstrow(col_0)
-  │ └─TableReader_21	7992.00	root	data:HashAgg_15
-  │   └─HashAgg_15	7992.00	cop	group by:test.t2.c2, funcs:firstrow(test.t2.c2)
-  │     └─Selection_19	9990.00	cop	not(isnull(test.t2.c2))
-  │       └─TableScan_18	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─TableReader_11	10.00	root	data:TableScan_10
-    └─TableScan_10	10.00	cop	table:t1, range: decided by [test.t2.c2], keep order:false, stats:pseudo
+  ├─TableReader_11	10.00	root	data:TableScan_10
+  │ └─TableScan_10	10.00	cop	table:t1, range: decided by [test.t2.c2], keep order:false, stats:pseudo
+  └─HashAgg_20	7992.00	root	group by:col_1, funcs:firstrow(col_0)
+    └─TableReader_21	7992.00	root	data:HashAgg_15
+      └─HashAgg_15	7992.00	cop	group by:test.t2.c2, funcs:firstrow(test.t2.c2)
+        └─Selection_19	9990.00	cop	not(isnull(test.t2.c2))
+          └─TableScan_18	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	count	task	operator info
 Projection_12	10000.00	root	k
@@ -490,15 +490,15 @@ Projection_12	10000.00	root	9_aux_0
   ├─TableReader_16	10000.00	root	data:TableScan_15
   │ └─TableScan_15	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─HashAgg_19	1.00	root	funcs:count(join_agg_0)
-    └─HashRightJoin_21	9.99	root	inner join, inner:HashAgg_27, equal:[eq(t1.a, s.a)]
-      ├─HashAgg_27	7.99	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
-      │ └─TableReader_28	7.99	root	data:HashAgg_22
-      │   └─HashAgg_22	7.99	cop	group by:t1.a, funcs:count(1), firstrow(t1.a)
-      │     └─Selection_26	9.99	cop	eq(t1.a, test.t.a), not(isnull(t1.a))
-      │       └─TableScan_25	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-      └─TableReader_34	9.99	root	data:Selection_33
-        └─Selection_33	9.99	cop	eq(s.a, test.t.a), not(isnull(s.a))
-          └─TableScan_32	10000.00	cop	table:s, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─HashLeftJoin_20	9.99	root	inner join, inner:HashAgg_30, equal:[eq(s.a, t1.a)]
+      ├─TableReader_24	9.99	root	data:Selection_23
+      │ └─Selection_23	9.99	cop	eq(s.a, test.t.a), not(isnull(s.a))
+      │   └─TableScan_22	10000.00	cop	table:s, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─HashAgg_30	7.99	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
+        └─TableReader_31	7.99	root	data:HashAgg_25
+          └─HashAgg_25	7.99	cop	group by:t1.a, funcs:count(1), firstrow(t1.a)
+            └─Selection_29	9.99	cop	eq(t1.a, test.t.a), not(isnull(t1.a))
+              └─TableScan_28	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
 id	count	task	operator info
 Selection_7	10000.00	root	or(ifnull(tb.a, 1), isnull(tb.a))
@@ -524,15 +524,15 @@ Projection_14	10000.00	root	9_aux_0
   │ └─TableReader_19	10000.00	root	data:TableScan_18
   │   └─TableScan_18	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─HashAgg_23	1.00	root	funcs:count(join_agg_0)
-    └─HashRightJoin_25	9.99	root	inner join, inner:HashAgg_31, equal:[eq(t1.a, s.a)]
-      ├─HashAgg_31	7.99	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
-      │ └─TableReader_32	7.99	root	data:HashAgg_26
-      │   └─HashAgg_26	7.99	cop	group by:t1.a, funcs:count(1), firstrow(t1.a)
-      │     └─Selection_30	9.99	cop	eq(t1.a, test.t.a), not(isnull(t1.a))
-      │       └─TableScan_29	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-      └─TableReader_38	9.99	root	data:Selection_37
-        └─Selection_37	9.99	cop	eq(s.a, test.t.a), not(isnull(s.a))
-          └─TableScan_36	10000.00	cop	table:s, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─HashLeftJoin_24	9.99	root	inner join, inner:HashAgg_34, equal:[eq(s.a, t1.a)]
+      ├─TableReader_28	9.99	root	data:Selection_27
+      │ └─Selection_27	9.99	cop	eq(s.a, test.t.a), not(isnull(s.a))
+      │   └─TableScan_26	10000.00	cop	table:s, range:[-inf,+inf], keep order:false, stats:pseudo
+      └─HashAgg_34	7.99	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
+        └─TableReader_35	7.99	root	data:HashAgg_29
+          └─HashAgg_29	7.99	cop	group by:t1.a, funcs:count(1), firstrow(t1.a)
+            └─Selection_33	9.99	cop	eq(t1.a, test.t.a), not(isnull(t1.a))
+              └─TableScan_32	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int);
 explain select * from t where _tidb_rowid = 0;
