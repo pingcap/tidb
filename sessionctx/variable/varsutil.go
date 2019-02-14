@@ -63,6 +63,16 @@ func GetDDLReorgBatchSize() int32 {
 	return atomic.LoadInt32(&ddlReorgBatchSize)
 }
 
+// SetDDLErrorCountLimit sets ddlErrorCountlimit size.
+func SetDDLErrorCountLimit(cnt int64) {
+	atomic.StoreInt64(&ddlErrorCountlimit, cnt)
+}
+
+// GetDDLErrorCountLimit gets ddlErrorCountlimit size.
+func GetDDLErrorCountLimit() int64 {
+	return atomic.LoadInt64(&ddlErrorCountlimit)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -360,6 +370,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBDDLReorgBatchSize:
 		return checkUInt64SystemVar(name, value, uint64(MinDDLReorgBatchSize), uint64(MaxDDLReorgBatchSize), vars)
+	case TiDBDDLErrorCountLimit:
+		return checkUInt64SystemVar(name, value, uint64(0), math.MaxInt64, vars)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,

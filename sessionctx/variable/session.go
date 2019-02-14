@@ -701,6 +701,8 @@ func SetLocalSystemVar(name string, val string) {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgBatchSize:
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
+	case TiDBDDLErrorCountLimit:
+		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
 	}
 }
 

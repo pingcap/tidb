@@ -135,14 +135,29 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	return errors.Trace(err)
 }
 
-const loadDDLReorgVarsSQL = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in ('" +
-	variable.TiDBDDLReorgWorkerCount + "', '" +
-	variable.TiDBDDLReorgBatchSize + "')"
-
 // LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
 func LoadDDLReorgVars(ctx sessionctx.Context) error {
+	return LoadGlobalVars(ctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize})
+}
+
+func LoadDDLVars(ctx sessionctx.Context) error {
+	return LoadGlobalVars(ctx, []string{variable.TiDBDDLErrorCountLimit})
+}
+
+const loadGlobalVarsSQL = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (%s)"
+
+// LoadGlobalVars loads global variable from mysql.global_variables.
+func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
 	if sctx, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
-		rows, _, err := sctx.ExecRestrictedSQL(ctx, loadDDLReorgVarsSQL)
+		nameList := ""
+		for i, name := range varNames {
+			if i > 0 {
+				nameList += ", "
+			}
+			nameList += fmt.Sprintf("'%s'", name)
+		}
+		sql := fmt.Sprintf(loadGlobalVarsSQL, nameList)
+		rows, _, err := sctx.ExecRestrictedSQL(ctx, sql)
 		if err != nil {
 			return errors.Trace(err)
 		}
