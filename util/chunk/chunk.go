@@ -33,7 +33,11 @@ type Chunk struct {
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
 	// capacity indicates the max number of rows this chunk can hold.
+	// TODO: replace all usages of capacity to requiredRows and remove this field
 	capacity int
+
+	// requiredRows indicates how many rows the parent executor want.
+	requiredRows int
 }
 
 // Capacity constants.
@@ -63,6 +67,13 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 		}
 	}
 	chk.numVirtualRows = 0
+
+	// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
+	// like how we judge whether a chunk is full now, then the statement
+	// "chk.NumRows() < maxChunkSize"
+	// is equal to
+	// "!chk.IsFull()".
+	chk.requiredRows = maxChunkSize
 	return chk
 }
 
@@ -80,6 +91,7 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 	newChk.columns = renewColumns(chk.columns, newCap)
 	newChk.numVirtualRows = 0
 	newChk.capacity = newCap
+	newChk.requiredRows = maxChunkSize
 	return newChk
 }
 
@@ -131,6 +143,25 @@ func newVarLenColumn(cap int, old *column) *column {
 		data:       make([]byte, 0, cap*estimatedElemLen),
 		nullBitmap: make([]byte, 0, cap>>3),
 	}
+}
+
+// RequiredRows returns how many rows is considered full.
+func (c *Chunk) RequiredRows() int {
+	return c.requiredRows
+}
+
+// SetRequiredRows sets the number of required rows.
+func (c *Chunk) SetRequiredRows(requiredRows, maxChunkSize int) *Chunk {
+	if requiredRows <= 0 || requiredRows > maxChunkSize {
+		requiredRows = maxChunkSize
+	}
+	c.requiredRows = requiredRows
+	return c
+}
+
+// IsFull returns if this chunk is considered full.
+func (c *Chunk) IsFull() bool {
+	return c.NumRows() >= c.requiredRows
 }
 
 // MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
@@ -225,6 +256,7 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	c.capacity = newCap
 	c.columns = renewColumns(c.columns, newCap)
 	c.numVirtualRows = 0
+	c.requiredRows = maxChunkSize
 }
 
 // reCalcCapacity calculates the capacity for another Chunk based on the current
