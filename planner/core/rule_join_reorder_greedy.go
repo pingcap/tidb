@@ -56,6 +56,7 @@ type joinReorderGreedySingleGroupSolver struct {
 	curJoinGroup []LogicalPlan
 	eqEdges      []*expression.ScalarFunction
 	otherConds   []expression.Expression
+	groupNodeCst map[int]float64
 }
 
 // solve reorders the join nodes in the group based on a greedy algorithm.
@@ -76,6 +77,7 @@ func (s *joinReorderGreedySingleGroupSolver) solve() (LogicalPlan, error) {
 		if err != nil {
 			return nil, err
 		}
+		s.groupNodeCst[node.ID()] = node.statsInfo().RowCount
 	}
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].statsInfo().RowCount < s.curJoinGroup[j].statsInfo().RowCount
@@ -91,6 +93,13 @@ func (s *joinReorderGreedySingleGroupSolver) solve() (LogicalPlan, error) {
 	}
 
 	return s.makeBushyJoin(cartesianGroup), nil
+}
+
+func (s *joinReorderGreedySingleGroupSolver) nodeCost(p LogicalPlan) float64 {
+	if cst, ok := s.groupNodeCst[p.ID()]; ok {
+		return cst
+	}
+	return p.statsInfo().RowCount
 }
 
 func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (LogicalPlan, error) {
@@ -110,7 +119,7 @@ func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (Logic
 			if err != nil {
 				return nil, err
 			}
-			curCost := curJoinTree.statsInfo().RowCount + newJoin.statsInfo().RowCount + node.statsInfo().RowCount
+			curCost := s.nodeCost(curJoinTree) + newJoin.statsInfo().RowCount + s.nodeCost(node)
 			if bestCost > curCost {
 				bestCost = curCost
 				bestJoin = newJoin
@@ -215,6 +224,7 @@ func (s *joinReOrderGreedySolver) optimizeRecursive(ctx sessionctx.Context, p Lo
 			curJoinGroup: curJoinGroup,
 			eqEdges:      eqEdges,
 			otherConds:   otherConds,
+			groupNodeCst: make(map[int]float64),
 		}
 		p, err = groupSolver.solve()
 		if err != nil {
