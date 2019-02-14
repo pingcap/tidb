@@ -171,7 +171,7 @@ func (s *testSuite2) TestShow2(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
-	tk.MustExec("create or replace view v as select * from t")
+	tk.MustExec("create or replace definer='root'@'localhost' view v as select * from t")
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
@@ -338,10 +338,20 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` char(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
-			"  `b` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin GENERATED ALWAYS AS (rtrim(`a`)) VIRTUAL\n"+
+			"  `b` char(10) GENERATED ALWAYS AS (rtrim(`a`)) VIRTUAL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec("drop table t")
+
+	tk.MustExec(`drop table if exists different_charset`)
+	tk.MustExec(`create table different_charset(ch1 varchar(10) charset utf8, ch2 varchar(10) charset binary);`)
+	tk.MustQuery(`show create table different_charset`).Check(testutil.RowsWithSep("|",
+		""+
+			"different_charset CREATE TABLE `different_charset` (\n"+
+			"  `ch1` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
+			"  `ch2` varbinary(10) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }
 
 func (s *testSuite2) TestShowEscape(c *C) {

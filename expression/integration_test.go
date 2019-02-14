@@ -135,7 +135,6 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	// for uuid
 	r := tk.MustQuery("select uuid(), uuid(), uuid(), uuid(), uuid(), uuid();")
 	for _, it := range r.Rows() {
@@ -2490,6 +2489,42 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select row_count();")
 	result.Check(testkit.Rows("-1"))
+
+	// for benchmark
+	success := testkit.Rows("0")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	result = tk.MustQuery(`select benchmark(3, benchmark(2, length("abc")))`)
+	result.Check(success)
+	err := tk.ExecToErr(`select benchmark(3, length("a", "b"))`)
+	c.Assert(err, NotNil)
+	// Quoted from https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
+	// Although the expression can be a subquery, it must return a single column and at most a single row.
+	// For example, BENCHMARK(10, (SELECT * FROM t)) will fail if the table t has more than one column or
+	// more than one row.
+	oneColumnQuery := "select benchmark(10, (select a from t))"
+	twoColumnQuery := "select benchmark(10, (select * from t))"
+	// rows * columns:
+	// 0 * 1, success;
+	result = tk.MustQuery(oneColumnQuery)
+	result.Check(success)
+	// 0 * 2, error;
+	err = tk.ExecToErr(twoColumnQuery)
+	c.Assert(err, NotNil)
+	// 1 * 1, success;
+	tk.MustExec("insert t values (1, 2)")
+	result = tk.MustQuery(oneColumnQuery)
+	result.Check(success)
+	// 1 * 2, error;
+	err = tk.ExecToErr(twoColumnQuery)
+	c.Assert(err, NotNil)
+	// 2 * 1, error;
+	tk.MustExec("insert t values (3, 4)")
+	err = tk.ExecToErr(oneColumnQuery)
+	c.Assert(err, NotNil)
+	// 2 * 2, error.
+	err = tk.ExecToErr(twoColumnQuery)
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
@@ -3372,6 +3407,22 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r = tk.MustQuery(`select json_unquote('hello'), json_unquote('world')`)
 	r.Check(testkit.Rows("hello world"))
 
+	r = tk.MustQuery(`select
+		json_quote(''),
+		json_quote('""'),
+		json_quote('a'),
+		json_quote('3'),
+		json_quote('{"a": "b"}'),
+		json_quote('{"a":     "b"}'),
+		json_quote('hello,"quoted string",world'),
+		json_quote('hello,"宽字符",world'),
+		json_quote('Invalid Json string	is OK'),
+		json_quote('1\u2232\u22322')
+	`)
+	r.Check(testkit.Rows(
+		`"" "\"\"" "a" "3" "{\"a\": \"b\"}" "{\"a\":     \"b\"}" "hello,\"quoted string\",world" "hello,\"宽字符\",world" "Invalid Json string\tis OK" "1u2232u22322"`,
+	))
+
 	r = tk.MustQuery(`select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json`)
 	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
 
@@ -3882,4 +3933,15 @@ func (s *testIntegrationSuite) TestValuesFloat32(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.01`))
 	tk.MustExec(`insert into t values (1, 0.02) on duplicate key update j = values (j);`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.02`))
+}
+
+func (s *testIntegrationSuite) TestValuesEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a bigint primary key, b enum('a','b','c'));`)
+	tk.MustExec(`insert into t values (1, "a");`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 a`))
+	tk.MustExec(`insert into t values (1, "b") on duplicate key update b = values(b);`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 b`))
 }
