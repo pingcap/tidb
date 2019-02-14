@@ -79,13 +79,17 @@ CREATE TABLE `wrong_index_selection` (
 INDEX idx_a(a),
 INDEX idx_ab(a,b)
 );
-insert into wrong_index_selection values (1, 1, 1);
 insert into wrong_index_selection values (2, 2, 2);
 insert into wrong_index_selection values (3, 3, 3);
+insert into wrong_index_selection values (4, 4, 4);
+analyze table wrong_index_selection;
+insert into wrong_index_selection values (1, 1, 1);
+insert into wrong_index_selection values (1, 2, 2);
+insert into wrong_index_selection values (1, 3, 3);
 analyze table wrong_index_selection index idx_ab;
 explain select * from wrong_index_selection where a=1 and b=1 and c=1;
 id	count	task	operator info
-IndexLookUp_11	0.80	root	
-├─IndexScan_8	1.00	cop	table:wrong_index_selection, index:a, range:[1,1], keep order:false
-└─Selection_10	0.80	cop	eq(test.wrong_index_selection.b, 1), eq(test.wrong_index_selection.c, 1)
-  └─TableScan_9	1.00	cop	table:wrong_index_selection, keep order:false
+IndexLookUp_11	0.00	root	
+├─IndexScan_8	0.00	cop	table:wrong_index_selection, index:a, range:[1,1], keep order:false
+└─Selection_10	0.00	cop	eq(test.wrong_index_selection.b, 1), eq(test.wrong_index_selection.c, 1)
+  └─TableScan_9	0.00	cop	table:wrong_index_selection, keep order:false
