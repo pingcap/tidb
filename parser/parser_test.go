@@ -2437,14 +2437,14 @@ func (s *testParserSuite) TestExecute(c *C) {
 
 func (s *testParserSuite) TestTrace(c *C) {
 	table := []testCase{
-		{"trace select c1 from t1", true, ""},
-		{"trace delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true, ""},
-		{"trace insert into t values (1), (2), (3)", true, ""},
-		{"trace replace into foo values (1 || 2)", true, ""},
-		{"trace update t set id = id + 1 order by id desc;", true, ""},
-		{"trace select c1 from t1 union (select c2 from t2) limit 1, 1", true, ""},
-		{"trace format = 'row' select c1 from t1 union (select c2 from t2) limit 1, 1", true, ""},
-		{"trace format = 'json' update t set id = id + 1 order by id desc;", true, ""},
+		{"trace select c1 from t1", true, "TRACE SELECT `c1` FROM `t1`"},
+		{"trace delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true, "TRACE DELETE `t1`,`t2` FROM (`t1` JOIN `t2`) JOIN `t3` WHERE `t1`.`id`=`t2`.`id` AND `t2`.`id`=`t3`.`id`"},
+		{"trace insert into t values (1), (2), (3)", true, "TRACE INSERT INTO `t` VALUES (1),(2),(3)"},
+		{"trace replace into foo values (1 || 2)", true, "TRACE REPLACE INTO `foo` VALUES (1 OR 2)"},
+		{"trace update t set id = id + 1 order by id desc;", true, "TRACE UPDATE `t` SET `id`=`id`+1 ORDER BY `id` DESC"},
+		{"trace select c1 from t1 union (select c2 from t2) limit 1, 1", true, "TRACE SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"},
+		{"trace format = 'row' select c1 from t1 union (select c2 from t2) limit 1, 1", true, "TRACE FORMAT = 'row' SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"},
+		{"trace format = 'json' update t set id = id + 1 order by id desc;", true, "TRACE UPDATE `t` SET `id`=`id`+1 ORDER BY `id` DESC"},
 	}
 	s.RunTest(c, table)
 }
