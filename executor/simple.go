@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -376,6 +377,19 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		defer sysSessionPool.Put(ctx)
 		err = dom.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 		return errors.Trace(err)
+	case ast.FlushStatus:
+		dom := domain.GetDomain(e.ctx)
+		if plugin.Get(plugin.Audit, "ipwhitelist") != nil {
+			if cli := dom.GetEtcdClient(); cli != nil {
+				const whitelistKey = "/tidb/plugins/whitelist"
+				row := cli.KV
+				_, err := row.Put(context.Background(), whitelistKey, "")
+				if err != nil {
+					log.Warn("notify update whitelist failed:", err)
+				}
+				return errors.Trace(err)
+			}
+		}
 	}
 	return nil
 }

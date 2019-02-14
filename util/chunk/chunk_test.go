@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func TestT(t *testing.T) {
@@ -69,7 +68,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 		c.Assert(row.IsNull(4), check.IsFalse)
 		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
 		c.Assert(row.IsNull(5), check.IsFalse)
-		c.Assert(hack.String(row.GetJSON(5).GetString()), check.Equals, str)
+		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
 	}
 
 	chk2 := newChunk(8, 8, 0, 0, 40, 0)

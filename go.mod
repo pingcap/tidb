@@ -48,7 +48,7 @@ require (
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20190110035000-d4fe6b336379
-	github.com/pingcap/parser v0.0.0-20190129124511-6db717ee970c
+	github.com/pingcap/parser v0.0.0-20190213030152-fa42b824f423
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
 	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
@@ -89,4 +89,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/parser => github.com/spongedu/parser v0.0.0-20181102150703-44e6b4b7e660
+replace github.com/pingcap/parser => github.com/spongedu/parser v0.0.0-20181102150703-1969d7102503

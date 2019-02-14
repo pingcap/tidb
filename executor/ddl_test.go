@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite3) TestTruncateTable(c *C) {
@@ -634,5 +635,45 @@ func (s *testSuite3) TestIllegalFunctionCall4GeneratedColumns(c *C) {
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (connection_id());")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
+}
 
+// Test issue #9205, fix the precision problem for time type default values
+// See https://github.com/pingcap/tidb/issues/9205 for details
+func (s *testSuite3) TestIssue9205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c time DEFAULT '12:12:12.8');`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`alter table t add column c1 time default '12:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t alter column c1 set default '2019-02-01 12:12:10.4';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:10'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t modify c1 time DEFAULT '770:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '770:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }

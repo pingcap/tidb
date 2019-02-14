@@ -40,6 +40,14 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.SetVar:    {},
 	ast.GetVar:    {},
 	ast.GetParam:  {},
+	ast.Benchmark: {},
+}
+
+// DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
+// Typically, these functions shall also exist in unFoldableFunctions, to stop from being folded when they themselves
+// are in child scope of an outer function, and the outer function is recursively folding its children.
+var DisableFoldFunctions = map[string]struct{}{
+	ast.Benchmark: {},
 }
 
 // IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
