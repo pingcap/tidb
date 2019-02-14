@@ -100,6 +100,7 @@ func (s *testSuite) TestSelectNormalChunkSize(c *C) {
 	response, colTypes := s.createSelectNormal(100, 1000000, c)
 	response.Fetch(context.TODO())
 	s.testChunkSize(response, colTypes, c)
+	c.Assert(response.Close(), IsNil)
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
@@ -167,6 +168,7 @@ func (s *testSuite) TestSelectStreamingChunkSize(c *C) {
 	response, colTypes := s.createSelectStreaming(100, 1000000, c)
 	response.Fetch(context.TODO())
 	s.testChunkSize(response, colTypes, c)
+	c.Assert(response.Close(), IsNil)
 }
 
 func (s *testSuite) testChunkSize(response SelectResult, colTypes []*types.FieldType, c *C) {
