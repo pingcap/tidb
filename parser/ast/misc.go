@@ -115,7 +115,17 @@ type TraceStmt struct {
 
 // Restore implements Node interface.
 func (n *TraceStmt) Restore(ctx *RestoreCtx) error {
-	return errors.New("Not implemented")
+	ctx.WriteKeyWord("TRACE ")
+	if n.Format != "json" {
+		ctx.WriteKeyWord("FORMAT")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.Format)
+		ctx.WritePlain(" ")
+	}
+	if err := n.Stmt.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore TraceStmt.Stmt")
+	}
+	return nil
 }
 
 // Accept implements Node Accept interface.
