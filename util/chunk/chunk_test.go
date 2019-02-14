@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -245,6 +246,59 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	c.Assert(chk.GetRow(1).IsNull(0), check.IsTrue)
 }
 
+func (s *testChunkSuite) TestChunkSizeControl(c *check.C) {
+	maxChunkSize := 10
+	chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, maxChunkSize, maxChunkSize)
+	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
+
+	for i := 0; i < maxChunkSize; i++ {
+		chk.AppendInt64(0, 1)
+	}
+	maxChunkSize += maxChunkSize / 3
+	chk.GrowAndReset(maxChunkSize)
+	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
+
+	maxChunkSize2 := maxChunkSize + maxChunkSize/3
+	chk2 := Renew(chk, maxChunkSize2)
+	c.Assert(chk2.RequiredRows(), check.Equals, maxChunkSize2)
+
+	chk.Reset()
+	for i := 1; i < maxChunkSize*2; i++ {
+		chk.SetRequiredRows(i, maxChunkSize)
+		c.Assert(chk.RequiredRows(), check.Equals, mathutil.Min(maxChunkSize, i))
+	}
+
+	chk.SetRequiredRows(1, maxChunkSize).
+		SetRequiredRows(2, maxChunkSize).
+		SetRequiredRows(3, maxChunkSize)
+	c.Assert(chk.RequiredRows(), check.Equals, 3)
+
+	chk.SetRequiredRows(-1, maxChunkSize)
+	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
+
+	chk.SetRequiredRows(5, maxChunkSize)
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	c.Assert(chk.NumRows(), check.Equals, 4)
+	c.Assert(chk.IsFull(), check.IsFalse)
+
+	chk.AppendInt64(0, 1)
+	c.Assert(chk.NumRows(), check.Equals, 5)
+	c.Assert(chk.IsFull(), check.IsTrue)
+
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	c.Assert(chk.NumRows(), check.Equals, 8)
+	c.Assert(chk.IsFull(), check.IsTrue)
+
+	chk.SetRequiredRows(maxChunkSize, maxChunkSize)
+	c.Assert(chk.NumRows(), check.Equals, 8)
+	c.Assert(chk.IsFull(), check.IsFalse)
+}
+
 // newChunk creates a new chunk and initialize columns with element length.
 // 0 adds an varlen column, positive len add a fixed length column, negative len adds a interface column.
 func newChunk(elemLen ...int) *Chunk {
@@ -399,6 +453,60 @@ func (s *testChunkSuite) TestCompare(c *check.C) {
 		c.Assert(cmpFunc(rowSmall, i, rowBig, i), check.Equals, -1, check.Commentf("%d", allTypes[i].Tp))
 		c.Assert(cmpFunc(rowBig, i, rowSmall, i), check.Equals, 1)
 		c.Assert(cmpFunc(rowBig, i, rowBig, i), check.Equals, 0)
+	}
+}
+
+func (s *testChunkSuite) TestCopyTo(c *check.C) {
+	chunk := NewChunkWithCapacity(allTypes, 101)
+	for i := 0; i < len(allTypes); i++ {
+		chunk.AppendNull(i)
+	}
+	for k := 0; k < 100; k++ {
+		for i := 0; i < len(allTypes); i++ {
+			switch allTypes[i].Tp {
+			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+				if mysql.HasUnsignedFlag(allTypes[i].Flag) {
+					chunk.AppendUint64(i, uint64(k))
+				} else {
+					chunk.AppendInt64(i, int64(k))
+				}
+			case mysql.TypeFloat:
+				chunk.AppendFloat32(i, float32(k))
+			case mysql.TypeDouble:
+				chunk.AppendFloat64(i, float64(k))
+			case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+				mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+				chunk.AppendString(i, fmt.Sprintf("%v", k))
+			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+				chunk.AppendTime(i, types.TimeFromDays(2000*365+int64(k)))
+			case mysql.TypeDuration:
+				chunk.AppendDuration(i, types.Duration{Duration: time.Second * time.Duration(k), Fsp: types.DefaultFsp})
+			case mysql.TypeNewDecimal:
+				chunk.AppendMyDecimal(i, types.NewDecFromInt(int64(k)))
+			case mysql.TypeSet:
+				chunk.AppendSet(i, types.Set{Name: "a", Value: uint64(k)})
+			case mysql.TypeEnum:
+				chunk.AppendEnum(i, types.Enum{Name: "a", Value: uint64(k)})
+			case mysql.TypeBit:
+				chunk.AppendBytes(i, []byte{byte(k)})
+			case mysql.TypeJSON:
+				chunk.AppendJSON(i, json.CreateBinary(int64(k)))
+			default:
+				c.FailNow()
+			}
+		}
+	}
+
+	ck1 := chunk.CopyConstruct()
+
+	for k := 0; k < 101; k++ {
+		row := chunk.GetRow(k)
+		r1 := ck1.GetRow(k)
+		for i := 0; i < len(allTypes); i++ {
+			cmpFunc := GetCompareFunc(allTypes[i])
+			c.Assert(cmpFunc(row, i, r1, i), check.Equals, 0)
+		}
+
 	}
 }
 
