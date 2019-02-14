@@ -393,7 +393,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				err := c.txn.us.GetPreconditionErr(key)
+				err := c.txn.us.LookupConditionErr(key)
 				if err == nil {
 					panic(fmt.Sprintf("con:%d, precondition error for key:%s should not be nil", c.connID, key))
 				}
