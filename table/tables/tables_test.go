@@ -427,6 +427,18 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(0))
 	c.Assert(err, IsNil)
+
+	createTable4 := `create table test.t4 (a int,b int) partition by range (a+b)
+	(
+	partition p0 values less than (10)
+	);`
+	_, err = ts.se.Execute(context.Background(), createTable4)
+	c.Assert(err, IsNil)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(1, 11))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 
 func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
