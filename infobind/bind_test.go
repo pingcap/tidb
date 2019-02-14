@@ -128,7 +128,6 @@ func (s *testSuite) TestBindParse(c *C) {
 
 	c.Check(len(bindHandle.Get().Cache), Equals, 1)
 
-
 	hash := parser.DigestHash("select * from t")
 	bindData := bindHandle.Get().Cache[hash]
 
