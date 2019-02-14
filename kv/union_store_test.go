@@ -121,11 +121,11 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	_, err = s.us.Get([]byte("2"))
 	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue, Commentf("err %v", err))
 
-	precondition1 := s.us.ShouldNotExist([]byte("1"))
-	c.Assert(precondition1, IsNil)
+	shouldNotExist1 := s.us.ShouldNotExist([]byte("1"))
+	c.Assert(shouldNotExist1, IsFalse)
 
-	precondition2 := s.us.ShouldNotExist([]byte("2"))
-	c.Assert(precondition2, NotNil)
+	shouldNotExist2 := s.us.ShouldNotExist([]byte("2"))
+	c.Assert(shouldNotExist2, IsTrue)
 
 	err2 := s.us.LookupConditionErr([]byte("2"))
 	c.Assert(terror.ErrorEqual(err2, ErrNotExist), IsTrue, Commentf("err %v", err2))
