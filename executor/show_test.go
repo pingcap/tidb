@@ -323,15 +323,6 @@ func (s *testSuite2) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
-	tk.MustExec(`drop table if exists explicted_charset`)
-	tk.MustExec(`create table explicted_charset(ch1 varchar(10) , ch2 varchar(10) charset utf8mb4);`)
-	tk.MustQuery(`show create table explicted_charset`).Check(testutil.RowsWithSep("|",
-		""+
-			"explicted_charset CREATE TABLE `explicted_charset` (\n"+
-			"  `ch1` varchar(10) DEFAULT NULL,\n"+
-			"  `ch2` varchar(10) CHARSET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
 }
 
 func (s *testSuite2) TestShowEscape(c *C) {
