@@ -151,16 +151,6 @@ func (e *SortExec) buildKeyColumns() {
 	}
 }
 
-func (e *SortExec) buildKeyExprsAndTypes() {
-	keyLen := len(e.ByItems)
-	e.keyTypes = make([]*types.FieldType, keyLen)
-	e.keyExprs = make([]expression.Expression, keyLen)
-	for keyColIdx := range e.ByItems {
-		e.keyExprs[keyColIdx] = e.ByItems[keyColIdx].Expr
-		e.keyTypes[keyColIdx] = e.ByItems[keyColIdx].Expr.GetType()
-	}
-}
-
 func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]

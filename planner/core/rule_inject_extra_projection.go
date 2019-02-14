@@ -179,9 +179,10 @@ func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
 		}
 		projExprs = append(projExprs, itemExpr)
 		newArg := &expression.Column{
-			RetType: itemExpr.GetType(),
-			ColName: model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
-			Index:   len(projSchemaCols),
+			UniqueID: p.context().GetSessionVars().AllocPlanColumnID(),
+			RetType:  itemExpr.GetType(),
+			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
+			Index:    len(projSchemaCols),
 		}
 		projSchemaCols = append(projSchemaCols, newArg)
 		item.Expr = newArg
