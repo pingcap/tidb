@@ -110,7 +110,6 @@ var (
 	errTooManyFields                       = terror.ClassDDL.New(codeTooManyFields, "Too many columns")
 	errInvalidSplitRegionRanges            = terror.ClassDDL.New(codeInvalidRanges, "Failed to split region ranges")
 	errReorgPanic                          = terror.ClassDDL.New(codeReorgWorkerPanic, "reorg worker panic.")
-	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(codeErrGeneratedColumnFunctionIsNotAllowed, "Expression of generated column '%s' contains a disallowed function.")
 
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
@@ -129,6 +128,8 @@ var (
 	ErrUnsupportedAddPartition = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
 	ErrUnsupportedCoalescePartition = terror.ClassDDL.New(codeUnsupportedCoalescePartition, "unsupported coalesce partitions")
+	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
+	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(codeErrGeneratedColumnFunctionIsNotAllowed, "Expression of generated column '%s' contains a disallowed function.")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
