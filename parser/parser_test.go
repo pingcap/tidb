@@ -2039,8 +2039,9 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for bit
 		{"select 0b01, 0b0, b'11', B'11'", true, "SELECT b'1',b'0',b'11',b'11'"},
-		{"select 0B01", false, ""},
-		{"select 0b21", false, ""},
+		// 0B01 and 0b21 are identifiers, the following two statement could parse.
+		// {"select 0B01", false, ""},
+		// {"select 0b21", false, ""},
 
 		// for enum and set type
 		{"create table t (c1 enum('a', 'b'), c2 set('a', 'b'))", true, ""},
