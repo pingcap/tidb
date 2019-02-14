@@ -77,7 +77,7 @@ func (s *joinReorderGreedySingleGroupSolver) solve() (LogicalPlan, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.groupNodeCst[node.ID()] = s.baseNodeTotalCost(node)
+		s.groupNodeCst[node.ID()] = s.baseNodeCost(node)
 	}
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.nodeCost(s.curJoinGroup[i]) < s.nodeCost(s.curJoinGroup[j])
@@ -101,10 +101,11 @@ func (s *joinReorderGreedySingleGroupSolver) nodeCost(p LogicalPlan) float64 {
 	}
 	return p.statsInfo().RowCount
 }
-func (s *joinReorderGreedySingleGroupSolver) baseNodeTotalCost(p LogicalPlan) float64 {
+
+func (s *joinReorderGreedySingleGroupSolver) baseNodeCost(p LogicalPlan) float64 {
 	cst := p.statsInfo().RowCount
 	for _, child := range p.Children() {
-		cst += s.baseNodeTotalCost(child)
+		cst += s.baseNodeCost(child)
 	}
 	return cst
 }
