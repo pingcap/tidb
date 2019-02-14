@@ -124,7 +124,8 @@ func truncateTrailingSpaces(v *types.Datum) {
 		length--
 	}
 	b = b[:length]
-	v.SetString(hack.String(b))
+	str := string(hack.String(b))
+	v.SetString(str)
 }
 
 // CastValues casts values based on columns type.
