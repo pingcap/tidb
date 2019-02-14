@@ -639,17 +639,31 @@ func startWithNumber(s *Scanner) (tok int, pos Pos, lit string) {
 			s.scanOct()
 		case ch1 == 'x' || ch1 == 'X':
 			s.r.inc()
+			p1 := s.r.pos()
 			s.scanHex()
+			p2 := s.r.pos()
+			// 0x, 0x7fz3 are identifier
+			if p1 == p2 || isDigit(s.r.peek()) {
+				s.r.incAsLongAs(isIdentChar)
+				return identifier, pos, s.r.data(&pos)
+			}
 			tok = hexLit
 		case ch1 == 'b':
 			s.r.inc()
+			p1 := s.r.pos()
 			s.scanBit()
+			p2 := s.r.pos()
+			// 0b, 0b123, 0b1ab are identifier
+			if p1 == p2 || isDigit(s.r.peek()) {
+				s.r.incAsLongAs(isIdentChar)
+				return identifier, pos, s.r.data(&pos)
+			}
 			tok = bitLit
 		case ch1 == '.':
 			return s.scanFloat(&pos)
 		case ch1 == 'B':
-			tok = unicode.ReplacementChar
-			return
+			s.r.incAsLongAs(isIdentChar)
+			return identifier, pos, s.r.data(&pos)
 		}
 	}
 
@@ -717,11 +731,17 @@ func (s *Scanner) scanFloat(beg *Pos) (tok int, pos Pos, lit string) {
 	if ch0 == 'e' || ch0 == 'E' {
 		s.r.inc()
 		ch0 = s.r.peek()
-		if ch0 == '-' || ch0 == '+' {
+		if ch0 == '-' || ch0 == '+' || isDigit(ch0) {
 			s.r.inc()
+			s.scanDigits()
+			tok = floatLit
+		} else {
+			// D1 . D2 e XX when XX is not D3, parse the result to an identifier.
+			// 9e9e = 9e9(float) + e(identifier)
+			// 9est = 9est(identifier)
+			s.r.incAsLongAs(isIdentChar)
+			tok = identifier
 		}
-		s.scanDigits()
-		tok = floatLit
 	} else {
 		tok = decLit
 	}
