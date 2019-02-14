@@ -174,7 +174,7 @@ func (c *illegalFunctionChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 	return inNode, true
 }
 
-func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error{
+func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	var c illegalFunctionChecker
 	expr.Accept(&c)
 	if c.found {

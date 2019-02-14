@@ -635,6 +635,9 @@ func (s *testSuite3) TestIllegalFunctionCall4GeneratedColumns(c *C) {
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (connection_id());")
 	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error())
+
+	_, err = tk.Exec("alter table t1 change column c cc bigint generated always as (connection_id());")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("cc").Error())
 }
 
 // Test issue #9205, fix the precision problem for time type default values

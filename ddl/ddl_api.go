@@ -1625,7 +1625,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 	// If new column is a generated column, do validation.
 	// NOTE: Because now we can only append columns to table,
-	// we dont't need check whether the column refers other
+	// we don't need check whether the column refers other
 	// generated columns occurring later in table.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
@@ -1968,8 +1968,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-// setDefaultAndComment is only used in getModifiableColumnJob.
-func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// processColumnOptions is only used in getModifiableColumnJob.
+func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	if len(options) == 0 {
 		return nil
 	}
@@ -2012,6 +2012,9 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
 		case ast.ColumnOptionGenerated:
+			if err := checkIllegalFn4GeneratedColumn(col.Name.L, opt.Expr); err != nil {
+				return errors.Trace(err)
+			}
 			var buf = bytes.NewBuffer([]byte{})
 			opt.Expr.Format(buf)
 			col.GeneratedExprString = buf.String()
@@ -2066,7 +2069,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// Constraints in the new column means adding new constraints. Errors should thrown,
-	// which will be done by `setDefaultAndComment` later.
+	// which will be done by `processColumnOptions` later.
 	if specNewColumn.Tp == nil {
 		// Make sure the column definition is simple field type.
 		return nil, errors.Trace(errUnsupportedModifyColumn)
@@ -2100,7 +2103,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err = setDefaultAndComment(ctx, newCol, specNewColumn.Options); err != nil {
+	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
