@@ -629,24 +629,20 @@ func checkColumnValueConstraint(col *table.Column) error {
 
 func checkDuplicateColumn(cols []interface{}) error {
 	colNames := set.StringSet{}
-	var nameLower string
-	var nameOriginal string
+	colName := model.NewCIStr("")
 	for _, col := range cols {
 		switch x := col.(type) {
 		case *ast.ColumnDef:
-			nameLower = x.Name.Name.L
-			nameOriginal = x.Name.Name.O
+			colName = x.Name.Name
 		case model.CIStr:
-			nameLower = x.L
-			nameOriginal = x.O
+			colName = x
 		default:
-			nameLower = ""
-			nameOriginal = ""
+			colName.O, colName.L = "", ""
 		}
-		if colNames.Exist(nameLower) {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(nameOriginal)
+		if colNames.Exist(colName.L) {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(colName.O)
 		}
-		colNames.Insert(nameLower)
+		colNames.Insert(colName.L)
 	}
 	return nil
 }
