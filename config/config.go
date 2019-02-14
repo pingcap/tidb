@@ -74,6 +74,7 @@ type Config struct {
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
+	CheckMb4ValueInUtf8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 }
 
 // Log is the log section of config.
@@ -145,6 +146,7 @@ type Status struct {
 	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
+	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
 }
 
 // Performance is the performance section of the config.
@@ -264,19 +266,20 @@ type Plugin struct {
 }
 
 var defaultConf = Config{
-	Host:             "0.0.0.0",
-	AdvertiseAddress: "",
-	Port:             4000,
-	Cors:             "",
-	Store:            "mocktikv",
-	Path:             "/tmp/tidb",
-	RunDDL:           true,
-	SplitTable:       true,
-	Lease:            "45s",
-	TokenLimit:       1000,
-	OOMAction:        "log",
-	MemQuotaQuery:    32 << 30,
-	EnableStreaming:  false,
+	Host:                "0.0.0.0",
+	AdvertiseAddress:    "",
+	Port:                4000,
+	Cors:                "",
+	Store:               "mocktikv",
+	Path:                "/tmp/tidb",
+	RunDDL:              true,
+	SplitTable:          true,
+	Lease:               "45s",
+	TokenLimit:          1000,
+	OOMAction:           "log",
+	MemQuotaQuery:       32 << 30,
+	EnableStreaming:     false,
+	CheckMb4ValueInUtf8: true,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  true,
 		Capacity: 2048000,
@@ -297,6 +300,7 @@ var defaultConf = Config{
 		ReportStatus:    true,
 		StatusPort:      10080,
 		MetricsInterval: 15,
+		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
 		MaxMemory:           0,

@@ -79,7 +79,7 @@ type twoPhaseCommitter struct {
 	syncLog  bool
 	connID   uint64 // connID is used for log.
 	cleanWg  sync.WaitGroup
-	// The max time a Txn may use (in ms) from its startTS to commitTS.
+	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
 	maxTxnTimeUse uint64
@@ -245,8 +245,12 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
+		// The backoffer instance is created outside of the goroutine to avoid
+		// potencial data race in unit test since `CommitMaxBackoff` will be updated
+		// by test suites.
+		secondaryBo := NewBackoffer(context.Background(), CommitMaxBackoff)
 		go func() {
-			e := c.doActionOnBatches(bo, action, batches)
+			e := c.doActionOnBatches(secondaryBo, action, batches)
 			if e != nil {
 				log.Debugf("con:%d 2PC async doActionOnBatches %s err: %v", c.connID, action, e)
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()

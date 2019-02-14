@@ -119,6 +119,9 @@ metrics-addr = ""
 # Prometheus client push interval in second, set \"0\" to disable prometheus push.
 metrics-interval = 15
 
+# Record statements qps by database name if it is enabled.
+record-db-qps = false
+
 [performance]
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
@@ -267,3 +270,6 @@ ignore-error = false
 
 # use socket file to write binlog, for compatible with kafka version tidb-binlog.
 binlog-socket = ""
+
+# check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
+check-mb4-value-in-utf8 = true
