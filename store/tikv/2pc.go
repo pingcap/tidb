@@ -98,13 +98,20 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	mutations := make(map[string]*pb.Mutation)
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
-			mutations[string(k)] = &pb.Mutation{
-				Op:    pb.Op_Put,
-				Key:   k,
-				Value: v,
-				Precondition: txn.us.GetPrecondition(k),
+			if txn.us.ShouldNotExist(k) {
+				mutations[string(k)] = &pb.Mutation{
+					Op: pb.Op_Insert,
+					Key: k,
+					Value: v,
+				}
+			} else {
+				mutations[string(k)] = &pb.Mutation{
+					Op:    pb.Op_Put,
+					Key:   k,
+					Value: v,
+				}
+				putCnt++
 			}
-			putCnt++
 		} else {
 			mutations[string(k)] = &pb.Mutation{
 				Op:  pb.Op_Del,

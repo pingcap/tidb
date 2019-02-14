@@ -15,17 +15,16 @@ package kv
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// GetConditionPair returns ConditionPair for k if it exists.
-	GetPrecondition(k Key) *kvrpcpb.Precondition
-	// Returns related error if precondition is not satisfied.
-	GetPreconditionErr(k Key) error
+	// Returns true if k should not exist before.
+	ShouldNotExist(k Key) bool
+	// Returns related key error.
+	LookupConditionErr(k Key) error
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -201,23 +200,14 @@ func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
 	}
 }
 
-func (us *unionStore) GetPrecondition(k Key) *kvrpcpb.Precondition {
-	if c, ok := us.lazyConditionPairs[string(k)]; ok && c != nil {
-		if len(c.value) == 0 {
-			return &kvrpcpb.Precondition {
-				ShouldNotExist: true,
-			}
-		} else {
-			return &kvrpcpb.Precondition {
-				ShouldNotExist: false,
-				EqualTo: c.value,
-			}
-		}
+func (us *unionStore) ShouldNotExist(k Key) bool {
+	if c, ok := us.lazyConditionPairs[string(k)]; ok && c != nil && len(c.value) == 0 {
+		return true
 	}
-	return nil
+	return false
 }
 
-func (us *unionStore) GetPreconditionErr(k Key) error {
+func (us *unionStore) LookupConditionErr(k Key) error {
 	if c, ok := us.lazyConditionPairs[string(k)]; ok {
 		if c != nil {
 			return c.err

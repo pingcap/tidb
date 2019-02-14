@@ -138,6 +138,8 @@ github.com/unrolled/render v0.0.0-20180914162206-b9786414de4d/go.mod h1:tu82oB5W
 github.com/xiang90/probing v0.0.0-20160813154853-07dd2e8dfe18/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 github.com/zhangjinpeng1987/kvproto v0.0.0-20190121023921-8b065921c2a3 h1:4EsTmTsN4o2iPgo7I03gxwr4KB5LNjaPOQ6wyDxY6/M=
 github.com/zhangjinpeng1987/kvproto v0.0.0-20190121023921-8b065921c2a3/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
+github.com/zhangjinpeng1987/kvproto v0.0.0-20190214053406-037fae253106 h1:GQNVcWaXZxzJt6SXvN2yQbXqJ+MGqwHqdV27hjQW9Lk=
+github.com/zhangjinpeng1987/kvproto v0.0.0-20190214053406-037fae253106/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 go.uber.org/atomic v1.3.2/go.mod h1:gD2HeocX3+yG+ygLZcrzQJaqmWj9AIm7n08wl/qW/PE=
 go.uber.org/multierr v1.1.0/go.mod h1:wR5kodmAFQ0UK8QlbwjlSNy0Z68gJhDJUG5sjR94q/0=
 go.uber.org/zap v1.9.1/go.mod h1:vwi/ZaCAaUcBkycHslxD9B2zi4UTXhF60s6SWpuDF0Q=
