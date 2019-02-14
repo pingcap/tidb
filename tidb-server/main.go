@@ -158,7 +158,8 @@ func main() {
 
 func syncLog() {
 	if err := log.Sync(); err != nil {
-		println("sync log err: ", err)
+		fmt.Fprintln(os.Stderr, "sync log err:", err)
+		os.Exit(1)
 	}
 }
 
@@ -531,7 +532,7 @@ func setupTracing() {
 	tracingCfg := cfg.OpenTracing.ToTracingConfig()
 	tracer, _, err := tracingCfg.New("TiDB")
 	if err != nil {
-		log.Fatal("setup trace", zap.String("cannot initialize jaeger tracer", err.Error()))
+		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}
 	opentracing.SetGlobalTracer(tracer)
 }
