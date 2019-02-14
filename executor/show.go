@@ -598,13 +598,25 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		return nil
 	}
 
+	tblCharset := tb.Meta().Charset
+	if len(tblCharset) == 0 {
+		tblCharset = mysql.DefaultCharset
+	}
+	tblCollate := tb.Meta().Collate
+	// Set default collate if collate is not specified.
+	if len(tblCollate) == 0 {
+		tblCollate = getDefaultCollate(tblCharset)
+	}
+
 	fmt.Fprintf(&buf, "CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode))
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
-			fmt.Fprintf(&buf, " CHARSET %s COLLATE %s", col.Charset, col.Collate)
+			if col.Charset != tblCharset || col.Collate != tblCollate {
+				fmt.Fprintf(&buf, " CHARSET %s COLLATE %s", col.Charset, col.Collate)
+			}
 		}
 		if col.IsGenerated() {
 			// It's a generated column.
@@ -711,23 +723,14 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	charsetName := tb.Meta().Charset
-	if len(charsetName) == 0 {
-		charsetName = mysql.DefaultCharset
-	}
-	collate := tb.Meta().Collate
-	// Set default collate if collate is not specified.
-	if len(collate) == 0 {
-		collate = getDefaultCollate(charsetName)
-	}
 	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
-	if len(collate) == 0 {
+	if len(tblCollate) == 0 {
 		// If we can not find default collate for the given charset,
 		// do not show the collate part.
-		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", charsetName)
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", tblCharset)
 	} else {
-		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", tblCharset, tblCollate)
 	}
 
 	// Displayed if the compression typed is set.
