@@ -241,6 +241,15 @@ func (c *Chunk) Reset() {
 	c.numVirtualRows = 0
 }
 
+// CopyConstruct creates a new chunk and copies this chunk's data into it.
+func (c *Chunk) CopyConstruct() *Chunk {
+	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*column, len(c.columns))}
+	for i := range c.columns {
+		newChk.columns[i] = c.columns[i].copyConstruct()
+	}
+	return newChk
+}
+
 // GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
 // The doubled capacity should not be larger than maxChunkSize.
 // TODO: this method will be used in following PR.
