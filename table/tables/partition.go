@@ -265,7 +265,7 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		
+
 		ret, _, err2 := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 		if err2 != nil {
 			return 0, errors.Trace(err2)
