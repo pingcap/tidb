@@ -52,8 +52,6 @@ const (
 	waitDependencyJobInterval = 200 * time.Millisecond
 	// noneDependencyJob means a job has no dependency-job.
 	noneDependencyJob = 0
-	// ddlErrorCountLimitCnt is the error count limit for ddl job.
-	ddlErrorCountLimitCnt = 512
 )
 
 // worker is used for handling DDL jobs.
