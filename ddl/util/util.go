@@ -140,6 +140,7 @@ func LoadDDLReorgVars(ctx sessionctx.Context) error {
 	return LoadGlobalVars(ctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize})
 }
 
+// LoadDDLVars loads ddl variable from mysql.global_variables.
 func LoadDDLVars(ctx sessionctx.Context) error {
 	return LoadGlobalVars(ctx, []string{variable.TiDBDDLErrorCountLimit})
 }
