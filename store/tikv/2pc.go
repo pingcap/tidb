@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"fmt"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
-	"fmt"
 )
 
 type twoPhaseCommitAction int
@@ -100,8 +100,8 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		if len(v) > 0 {
 			if txn.us.ShouldNotExist(k) {
 				mutations[string(k)] = &pb.Mutation{
-					Op: pb.Op_Insert,
-					Key: k,
+					Op:    pb.Op_Insert,
+					Key:   k,
 					Value: v,
 				}
 			} else {
