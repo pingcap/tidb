@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 // Filter the input expressions, append the results to result.
@@ -321,15 +320,15 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 		for _, cnfItem := range cnfItems {
 			code := cnfItem.HashCode(sc)
 			if i == 0 {
-				codeMap[hack.String(code)] = 1
-				hashcode2Expr[hack.String(code)] = cnfItem
-			} else if _, ok := codeMap[hack.String(code)]; ok {
+				codeMap[string(code)] = 1
+				hashcode2Expr[string(code)] = cnfItem
+			} else if _, ok := codeMap[string(code)]; ok {
 				// We need this check because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
 				// We should make sure that the two `t.a=t1.a` contributes only once.
 				// TODO: do this out of this function.
-				if _, ok = innerMap[hack.String(code)]; !ok {
-					codeMap[hack.String(code)]++
-					innerMap[hack.String(code)] = struct{}{}
+				if _, ok = innerMap[string(code)]; !ok {
+					codeMap[string(code)]++
+					innerMap[string(code)] = struct{}{}
 				}
 			}
 		}
@@ -350,7 +349,7 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 		newCNFItems := make([]Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
 			code := cnfItem.HashCode(sc)
-			_, ok := hashcode2Expr[hack.String(code)]
+			_, ok := hashcode2Expr[string(code)]
 			if !ok {
 				newCNFItems = append(newCNFItems, cnfItem)
 			}

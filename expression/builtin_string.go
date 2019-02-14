@@ -2969,8 +2969,64 @@ func evalNumDecArgsForFormat(f builtinFunc, row chunk.Row) (string, string, bool
 	} else if d > formatMaxDecimals {
 		d = formatMaxDecimals
 	}
+	xStr = roundFormatArgs(xStr, int(d))
 	dStr := strconv.FormatInt(d, 10)
 	return xStr, dStr, false, nil
+}
+
+func roundFormatArgs(xStr string, maxNumDecimals int) string {
+	if !strings.Contains(xStr, ".") {
+		return xStr
+	}
+
+	sign := false
+	// xStr cannot have '+' prefix now.
+	// It is built in `evalNumDecArgsFormat` after evaluating `Evalxxx` method.
+	if strings.HasPrefix(xStr, "-") {
+		xStr = strings.Trim(xStr, "-")
+		sign = true
+	}
+
+	xArr := strings.Split(xStr, ".")
+	integerPart := xArr[0]
+	decimalPart := xArr[1]
+
+	if len(decimalPart) > maxNumDecimals {
+		t := []byte(decimalPart)
+		carry := false
+		if t[maxNumDecimals] >= '5' {
+			carry = true
+		}
+		for i := maxNumDecimals - 1; i >= 0 && carry; i-- {
+			if t[i] == '9' {
+				t[i] = '0'
+			} else {
+				t[i] = t[i] + 1
+				carry = false
+			}
+		}
+		decimalPart = string(t)
+		t = []byte(integerPart)
+		for i := len(integerPart) - 1; i >= 0 && carry; i-- {
+			if t[i] == '9' {
+				t[i] = '0'
+			} else {
+				t[i] = t[i] + 1
+				carry = false
+			}
+		}
+		if carry {
+			integerPart = "1" + string(t)
+		} else {
+			integerPart = string(t)
+		}
+	}
+
+	xStr = integerPart + "." + decimalPart
+	if sign {
+		xStr = "-" + xStr
+	}
+	return xStr
 }
 
 type builtinFormatWithLocaleSig struct {
