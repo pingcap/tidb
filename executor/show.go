@@ -492,11 +492,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
-	if tb.Meta().IsView() {
-		e.fetchShowCreateTable4View(tb.Meta(), &buf)
-		e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
-		return nil
-	}
 
 	tblCharset := tb.Meta().Charset
 	if len(tblCharset) == 0 {
