@@ -210,24 +210,13 @@ func (c *Chunk) Reset() {
 	c.numVirtualRows = 0
 }
 
-// CopyTo copies this chunk's data to other compulsorily.
-// If other is nil, create a new chunk.
-func (c *Chunk) CopyTo(other *Chunk) *Chunk {
-	if other == nil {
-		other = new(Chunk)
+// CopyConstruct creates a new chunk and copies this chunk's data into it.
+func (c *Chunk) CopyConstruct() *Chunk {
+	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*column, len(c.columns))}
+	for i := range c.columns {
+		newChk.columns[i] = c.columns[i].copyConstruct()
 	}
-	other.numVirtualRows = c.numVirtualRows
-	other.capacity = c.capacity
-	if len(other.columns) < len(c.columns) {
-		other.columns = append(other.columns, make([]*column, len(c.columns)-len(other.columns))...)
-	} else if len(other.columns) > len(c.columns) {
-		other.columns = other.columns[:len(c.columns)]
-	}
-
-	for i := range other.columns {
-		other.columns[i] = c.columns[i].copyTo(other.columns[i])
-	}
-	return other
+	return newChk
 }
 
 // GrowAndReset resets the Chunk and doubles the capacity of the Chunk.

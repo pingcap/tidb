@@ -443,18 +443,14 @@ func (s *testChunkSuite) TestCopyTo(c *check.C) {
 		}
 	}
 
-	ck1 := NewChunkWithCapacity(allTypes, 50)
-	ck1 = chunk.CopyTo(ck1)
-	ck2 := chunk.CopyTo(nil)
+	ck1 := chunk.CopyConstruct()
 
 	for k := 0; k < 101; k++ {
 		row := chunk.GetRow(k)
 		r1 := ck1.GetRow(k)
-		r2 := ck2.GetRow(k)
 		for i := 0; i < len(allTypes); i++ {
 			cmpFunc := GetCompareFunc(allTypes[i])
 			c.Assert(cmpFunc(row, i, r1, i), check.Equals, 0)
-			c.Assert(cmpFunc(row, i, r2, i), check.Equals, 0)
 		}
 
 	}

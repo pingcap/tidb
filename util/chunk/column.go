@@ -72,17 +72,13 @@ func (c *column) isNull(rowIdx int) bool {
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-func (c *column) copyTo(other *column) *column {
-	if other == nil {
-		other = new(column)
-	}
-	other.length = c.length
-	other.nullCount = c.nullCount
-	other.nullBitmap = append(other.nullBitmap[:0], c.nullBitmap...)
-	other.offsets = append(other.offsets[:0], c.offsets...)
-	other.data = append(other.data[:0], c.data...)
-	other.elemBuf = append(other.elemBuf[:0], c.elemBuf...)
-	return other
+func (c *column) copyConstruct() *column {
+	newCol := &column{length: c.length, nullCount: c.nullCount}
+	newCol.nullBitmap = append(newCol.nullBitmap, c.nullBitmap...)
+	newCol.offsets = append(newCol.offsets, c.offsets...)
+	newCol.data = append(newCol.data, c.data...)
+	newCol.elemBuf = append(newCol.elemBuf, c.elemBuf...)
+	return newCol
 }
 
 func (c *column) appendNullBitmap(notNull bool) {

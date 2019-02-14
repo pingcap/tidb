@@ -55,14 +55,6 @@ func (s *testChunkSuite) TestColumnCopy(c *check.C) {
 		col.appendInt64(int64(i))
 	}
 
-	c1 := col.copyTo(nil)
+	c1 := col.copyConstruct()
 	c.Check(equalColumn(col, c1), check.IsTrue)
-
-	c2 := newFixedLenColumn(8, 5)
-	c2 = col.copyTo(c2)
-	c.Check(equalColumn(col, c2), check.IsTrue)
-
-	c3 := newFixedLenColumn(8, 15)
-	c3 = col.copyTo(c3)
-	c.Check(equalColumn(col, c3), check.IsTrue)
 }

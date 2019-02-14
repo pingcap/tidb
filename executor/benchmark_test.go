@@ -110,7 +110,7 @@ func (mds *mockDataSource) randDatum(typ *types.FieldType) interface{} {
 func (mds *mockDataSource) prepareChunks() {
 	mds.chunks = make([]*chunk.Chunk, len(mds.genData))
 	for i := range mds.chunks {
-		mds.chunks[i] = mds.genData[i].CopyTo(mds.chunks[i])
+		mds.chunks[i] = mds.genData[i].CopyConstruct()
 	}
 	mds.chunkPtr = 0
 }
