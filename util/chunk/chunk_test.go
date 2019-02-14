@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -243,6 +244,59 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	chk.TruncateTo(1)
 	chk.AppendNull(0)
 	c.Assert(chk.GetRow(1).IsNull(0), check.IsTrue)
+}
+
+func (s *testChunkSuite) TestChunkSizeControl(c *check.C) {
+	maxChunkSize := 10
+	chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, maxChunkSize, maxChunkSize)
+	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
+
+	for i := 0; i < maxChunkSize; i++ {
+		chk.AppendInt64(0, 1)
+	}
+	maxChunkSize += maxChunkSize / 3
+	chk.GrowAndReset(maxChunkSize)
+	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
+
+	maxChunkSize2 := maxChunkSize + maxChunkSize/3
+	chk2 := Renew(chk, maxChunkSize2)
+	c.Assert(chk2.RequiredRows(), check.Equals, maxChunkSize2)
+
+	chk.Reset()
+	for i := 1; i < maxChunkSize*2; i++ {
+		chk.SetRequiredRows(i, maxChunkSize)
+		c.Assert(chk.RequiredRows(), check.Equals, mathutil.Min(maxChunkSize, i))
+	}
+
+	chk.SetRequiredRows(1, maxChunkSize).
+		SetRequiredRows(2, maxChunkSize).
+		SetRequiredRows(3, maxChunkSize)
+	c.Assert(chk.RequiredRows(), check.Equals, 3)
+
+	chk.SetRequiredRows(-1, maxChunkSize)
+	c.Assert(chk.RequiredRows(), check.Equals, maxChunkSize)
+
+	chk.SetRequiredRows(5, maxChunkSize)
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	c.Assert(chk.NumRows(), check.Equals, 4)
+	c.Assert(chk.IsFull(), check.IsFalse)
+
+	chk.AppendInt64(0, 1)
+	c.Assert(chk.NumRows(), check.Equals, 5)
+	c.Assert(chk.IsFull(), check.IsTrue)
+
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	chk.AppendInt64(0, 1)
+	c.Assert(chk.NumRows(), check.Equals, 8)
+	c.Assert(chk.IsFull(), check.IsTrue)
+
+	chk.SetRequiredRows(maxChunkSize, maxChunkSize)
+	c.Assert(chk.NumRows(), check.Equals, 8)
+	c.Assert(chk.IsFull(), check.IsFalse)
 }
 
 // newChunk creates a new chunk and initialize columns with element length.
