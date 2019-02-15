@@ -110,7 +110,7 @@ func (e *MergeSortExec) Close() error {
 func (e *MergeSortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.Idx = 0
-	e.concurrency = 4
+	e.concurrency = 8
 	e.workerRowIdx = make([]int, e.concurrency)
 	e.workerRowLen = make([]int, e.concurrency)
 	e.workerRowPtrs = make([]*[]chunk.RowPtr, e.concurrency)
