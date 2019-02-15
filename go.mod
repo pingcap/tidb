@@ -47,7 +47,7 @@ require (
 	github.com/pingcap/errors v0.11.0
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
-	github.com/pingcap/kvproto v0.0.0-20190110035000-d4fe6b336379
+	github.com/pingcap/kvproto v0.0.0-20190131052532-7e329e0c9e32
 	github.com/pingcap/log v0.0.0-20190214045112-b37da76f67a7
 	github.com/pingcap/parser v0.0.0-20190212061044-a71b434969f3
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
@@ -79,6 +79,7 @@ require (
 	golang.org/x/sys v0.0.0-20190109145017-48ac38b7c8cb // indirect
 	golang.org/x/text v0.3.0
 	golang.org/x/time v0.0.0-20181108054448-85acf8d2951c // indirect
+	golang.org/x/tools v0.0.0-20190130214255-bb1329dc71a0 // indirect
 	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275 // indirect
 	google.golang.org/grpc v1.17.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0

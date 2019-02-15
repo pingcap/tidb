@@ -260,8 +260,17 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		idx = 0
 	}
 	if idx < 0 || idx >= len(partitionExprs) {
-		// The data does not belong to any of the partition?
-		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
+		// The data does not belong to any of the partition returns `table has no partition for value %s`.
+		e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
+		ret, _, err2 := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		if err2 != nil {
+			return 0, errors.Trace(err2)
+		}
+		return 0, errors.Trace(table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("%d", ret)))
 	}
 	return idx, nil
 }
