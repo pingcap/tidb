@@ -911,39 +911,38 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 	var obj json.BinaryJSON
 	obj, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 
 	// one_or_all
 	var containType string
 	containType, isNull, err = b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
-		return res, true, json.ErrInvalidJSONContainsPathType
+		return res, true, errors.AddStack(json.ErrInvalidJSONContainsPathType)
 	}
 
 	// search_str & escape_char
 	var searchStr string
 	searchStr, isNull, err = b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return res, isNull, errors.Trace(err)
+		return res, isNull, err
 	}
 	escape := byte('\\')
 	if len(b.args) >= 4 {
 		var escapeStr string
 		escapeStr, isNull, err = b.args[3].EvalString(b.ctx, row)
 		if err != nil {
-			return res, isNull, errors.Trace(err)
+			return res, isNull, err
 		}
 		if isNull || len(escapeStr) == 0 {
 			escape = byte('\\')
 		} else if len(escapeStr) == 1 {
 			escape = byte(escapeStr[0])
 		} else {
-			err = errors.New("Incorrect arguments to ESCAPE")
-			return res, true, errors.Trace(err)
+			return res, true, errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 		}
 	}
 	patChars, patTypes := stringutil.CompilePattern(searchStr, escape)
@@ -967,12 +966,12 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 			var s string
 			s, isNull, err = b.args[i].EvalString(b.ctx, row)
 			if isNull || err != nil {
-				return res, isNull, errors.Trace(err)
+				return res, isNull, err
 			}
 			var pathExpr json.PathExpression
 			pathExpr, err = json.ParseJSONPathExpr(s)
 			if err != nil {
-				return res, true, errors.Trace(err)
+				return res, true, err
 			}
 			pathExprs = append(pathExprs, pathExpr)
 		}
