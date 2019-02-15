@@ -22,8 +22,12 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util"
+	log "github.com/sirupsen/logrus"
 )
 
 // pluginGlobal holds all global variables for plugin.
@@ -83,6 +87,7 @@ type Config struct {
 	PluginVarNames *[]string
 	SkipWhenFail   bool
 	EnvVersion     map[string]uint16
+	EtcdClient     *clientv3.Client
 }
 
 // Plugin presents a TiDB plugin.
@@ -222,6 +227,55 @@ func Init(ctx context.Context, cfg Config) (err error) {
 	return
 }
 
+// InitWatchLoops starts etcd watch loops for plugin that need watch.
+func InitWatchLoops(etcdClient *clientv3.Client) {
+	if etcdClient == nil {
+		return
+	}
+	tiPlugins := pluginGlobal.plugins()
+	for kind := range tiPlugins.plugins {
+		for i := range tiPlugins.plugins[kind] {
+			if tiPlugins.plugins[kind][i].OnFlush == nil {
+				continue
+			}
+			const pluginWatchPrefix = "/tidb/plugins/"
+			ctx, cancel := context.WithCancel(context.Background())
+			watcher := &flushWatcher{
+				ctx:      ctx,
+				cancel:   cancel,
+				path:     pluginWatchPrefix + tiPlugins.plugins[kind][i].Name,
+				etcd:     etcdClient,
+				manifest: tiPlugins.plugins[kind][i].Manifest,
+			}
+			tiPlugins.plugins[kind][i].flushWatcher = watcher
+			go util.WithRecovery(watcher.watchLoop, nil)
+		}
+	}
+}
+
+type flushWatcher struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
+	path     string
+	etcd     *clientv3.Client
+	manifest *Manifest
+}
+
+func (w *flushWatcher) watchLoop() {
+	watchChan := w.etcd.Watch(w.ctx, w.path)
+	for {
+		select {
+		case <-w.ctx.Done():
+			return
+		case <-watchChan:
+			err := w.manifest.OnFlush(w.ctx, w.manifest)
+			if err != nil {
+				log.Errorf("Notify plugin %s flush event failure: %v", w.manifest.Name, err)
+			}
+		}
+	}
+}
+
 func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 	plugin.Path = filepath.Join(dir, string(pluginID)+LibrarySuffix)
 	plugin.library, err = gplugin.Open(plugin.Path)
@@ -256,72 +310,6 @@ func loadOne(dir string, pluginID ID) (plugin Plugin, err error) {
 	return
 }
 
-// Reload hot swap a old plugin with new version.
-// Limit: loaded plugins shouldn't be unload and only be mark dying.
-func Reload(ctx context.Context, cfg Config, pluginID ID) (err error) {
-	newPlugin, err := loadOne(cfg.PluginDir, pluginID)
-	if err != nil {
-		return
-	}
-	_, err = replace(ctx, cfg, newPlugin.Name, newPlugin)
-	return
-}
-
-func replace(ctx context.Context, cfg Config, name string, newPlugin Plugin) (replaced bool, err error) {
-
-	oldPlugins := pluginGlobal.plugins()
-	if oldPlugins.versions[name] == newPlugin.Version {
-		replaced = false
-		return
-	}
-	err = newPlugin.validate(ctx, oldPlugins, reloadMode)
-	if err != nil {
-		return
-	}
-	err = newPlugin.OnInit(ctx, newPlugin.Manifest)
-	if err != nil {
-		return
-	}
-	if cfg.GlobalSysVar != nil {
-		for key, value := range newPlugin.SysVars {
-			(*cfg.GlobalSysVar)[key] = value
-		}
-	}
-
-	for {
-		oldPlugins = pluginGlobal.plugins()
-		newPlugins := oldPlugins.clone()
-		replaced = true
-		tiPluginKind := newPlugins.plugins[newPlugin.Kind]
-		var oldPlugin *Plugin
-		for i, p := range tiPluginKind {
-			if p.Name == name {
-				oldPlugin = &tiPluginKind[i]
-				tiPluginKind = append(tiPluginKind[:i], tiPluginKind[i+1:]...)
-			}
-		}
-
-		if oldPlugin != nil {
-			oldPlugin.State = Dying
-			newPlugins.dyingPlugins = append(newPlugins.dyingPlugins, *oldPlugin)
-			err = oldPlugin.OnShutdown(ctx, oldPlugin.Manifest)
-			if err != nil {
-				// When shutdown failure, the plugin is in stranger state, so make it as Dying.
-				return
-			}
-		}
-
-		newPlugin.State = Ready
-		tiPluginKind = append(tiPluginKind, newPlugin)
-		newPlugins.plugins[newPlugin.Kind] = tiPluginKind
-		newPlugins.versions[newPlugin.Name] = newPlugin.Version
-
-		if atomic.CompareAndSwapPointer(&pluginGlobal.tiPlugins, unsafe.Pointer(oldPlugins), unsafe.Pointer(newPlugins)) {
-			return
-		}
-	}
-}
-
 // Shutdown cleanups all plugin resources.
 // Notice: it just cleanups the resource of plugin, but cannot unload plugins(limited by go plugin).
 func Shutdown(ctx context.Context) {
@@ -330,6 +318,9 @@ func Shutdown(ctx context.Context) {
 		for _, plugins := range tiPlugins.plugins {
 			for _, p := range plugins {
 				p.State = Dying
+				if p.flushWatcher != nil {
+					p.flushWatcher.cancel()
+				}
 				if err := p.OnShutdown(ctx, p.Manifest); err != nil {
 				}
 			}
@@ -370,4 +361,28 @@ func GetAll() map[Kind][]Plugin {
 		return nil
 	}
 	return plugins.plugins
+}
+
+// NotifyFlush notify plugins to do flush logic.
+func NotifyFlush(dom *domain.Domain, pluginName string) error {
+	p := getByName(pluginName)
+	if p == nil || p.Manifest.flushWatcher == nil {
+		return errors.Errorf("plugin %s doesn't exists or unsupported flush", pluginName)
+	}
+	_, err := dom.GetEtcdClient().KV.Put(context.Background(), p.Manifest.flushWatcher.path, "")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func getByName(pluginName string) *Plugin {
+	for _, plugins := range GetAll() {
+		for _, p := range plugins {
+			if p.Name == pluginName {
+				return &p
+			}
+		}
+	}
+	return nil
 }
