@@ -16,13 +16,13 @@ package executor_test
 import (
 	"context"
 	"fmt"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -204,9 +204,21 @@ func (s *testSuite2) TestShow2(c *C) {
 func (s *testSuite2) TestShow3(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	// Create a new user.
-	createUserSQL := `CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`
-	tk.MustExec(createUserSQL)
-	tk.MustQuery("show create user 'test_show_create_user'@'%'").Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
+	tk.MustQuery("show create user 'test_show_create_user'@'%'").
+		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+
+	tk.MustExec(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED BY 'test';`)
+	tk.MustQuery("show create user 'test_show_create_user'@'localhost';").
+		Check(testkit.Rows(`CREATE USER 'test_show_create_user'@'localhost' IDENTIFIED WITH 'mysql_native_password' AS '*94BDCEBE19083CE2A1F959FD02F964C7AF4CFC29' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK`))
+
+	// Case: the user exists but the host portion doesn't match
+	err := tk.QueryToErr("show create user 'test_show_create_user'@'asdf';")
+	c.Assert(err.Error(), Equals, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'test_show_create_user'@'asdf'").Error())
+
+	// Case: a user that doesn't exist
+	err = tk.QueryToErr("show create user 'aaa'@'localhost';")
+	c.Assert(err.Error(), Equals, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'aaa'@'localhost'").Error())
 }
 
 func (s *testSuite2) TestUnprivilegedShow(c *C) {

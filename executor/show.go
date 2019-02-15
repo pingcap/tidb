@@ -843,16 +843,23 @@ func (e *ShowExec) fetchShowCollation() error {
 
 // fetchShowCreateUser composes show create create user result.
 func (e *ShowExec) fetchShowCreateUser() error {
-	// Get checker
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	//password is encoded, like "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B"(root)
-	password := checker.GetEncodedPassword(e.User.Username, e.User.Hostname)
-	option := "REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
+		mysql.SystemDB, mysql.UserTable, e.User.Username, e.User.Hostname)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
+			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
+	}
 	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' %s",
-		e.User.Username, e.User.Hostname, password, option)
+		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname),
+		"REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
 	e.appendRow([]interface{}{showStr})
 	return nil
 }
