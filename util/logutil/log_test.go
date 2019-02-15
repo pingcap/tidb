@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	zaplog "github.com/pingcap/log"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
@@ -180,4 +181,21 @@ func (s *testLogSuite) TestSlowQueryZapLogger(c *C) {
 		c.Assert(str, Matches, zapLogPattern)
 	}
 	c.Assert(err, Equals, io.EOF)
+}
+
+func (s *testLogSuite) TestSetLevel(c *C) {
+	conf := NewLogConfig("info", DefaultLogFormat, "", EmptyFileLogConfig, false)
+	err := InitZapLogger(conf)
+	c.Assert(err, IsNil)
+
+	c.Assert(zaplog.GetLevel(), Equals, zap.InfoLevel)
+	err = SetLevel("warn")
+	c.Assert(err, IsNil)
+	c.Assert(zaplog.GetLevel(), Equals, zap.WarnLevel)
+	err = SetLevel("Error")
+	c.Assert(err, IsNil)
+	c.Assert(zaplog.GetLevel(), Equals, zap.ErrorLevel)
+	err = SetLevel("DEBUG")
+	c.Assert(err, IsNil)
+	c.Assert(zaplog.GetLevel(), Equals, zap.DebugLevel)
 }

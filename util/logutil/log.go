@@ -335,3 +335,13 @@ func InitZapLogger(cfg *LogConfig) error {
 
 	return nil
 }
+
+// SetLevel sets the zap logger's level.
+func SetLevel(level string) error {
+	l := zap.NewAtomicLevel()
+	if err := l.UnmarshalText([]byte(level)); err != nil {
+		return errors.Trace(err)
+	}
+	zaplog.SetLevel(l.Level())
+	return nil
+}

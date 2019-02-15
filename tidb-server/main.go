@@ -143,7 +143,6 @@ func main() {
 	validateConfig()
 	setGlobalVars()
 	setupLog()
-	defer syncLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -153,14 +152,15 @@ func main() {
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
 	cleanup()
-	os.Exit(0)
+	exit()
 }
 
-func syncLog() {
+func exit() {
 	if err := log.Sync(); err != nil {
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
 	}
+	os.Exit(0)
 }
 
 func registerStores() {
