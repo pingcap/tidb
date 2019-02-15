@@ -14,9 +14,10 @@
 package execdetails
 
 import (
-	"github.com/pingcap/tipb/go-tipb"
 	"testing"
 	"time"
+
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 func TestString(t *testing.T) {

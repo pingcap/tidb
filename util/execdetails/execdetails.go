@@ -15,12 +15,13 @@ package execdetails
 
 import (
 	"fmt"
-	"github.com/pingcap/tipb/go-tipb"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // CommitDetailCtxKey presents CommitDetail info key in context.
@@ -193,7 +194,7 @@ func (e *RuntimeStatsColl) GetRootStats(planID string) *RuntimeStats {
 	return runtimeStats
 }
 
-// GetCopStats gets the CopRuntimeStats specified by planID
+// GetCopStats gets the CopRuntimeStats specified by planID.
 func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
