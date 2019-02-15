@@ -549,9 +549,35 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Note that it's a write conflict here, even if the value is a rollback one.
-	if ok && dec1.value.commitTS >= startTS {
-		return ErrRetryable("write conflict")
+	if ok {
+		// Note that it's a write conflict here, even if the value is a rollback one.
+		if dec1.value.commitTS >= startTS {
+			return ErrRetryable("write conflict")
+		}
+		// Key should not exist before
+		if mutation.GetOp() == kvrpcpb.Op_Insert {
+ExistCheckingLoop:
+			for {
+				switch dec1.value.valueType {
+				case typePut:
+					return ErrAbort("key already exist")
+				case typeDelete:
+					break ExistCheckingLoop
+				default:
+				}
+
+				dec1 = valueDecoder{
+					expectKey: mutation.Key,
+				}
+				ok, err = dec1.Decode(iter)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !ok {
+					break
+				}
+			}
+		}
 	}
 
 	lock := mvccLock{
