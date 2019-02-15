@@ -80,19 +80,10 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	c.Assert(len(rs.Rows()), Equals, 10)
 	for _, row := range rs.Rows() {
 		c.Assert(len(row), Equals, 5)
-		taskType := row[2].(string)
-		if taskType == "root" {
-			execInfo := row[4].(string)
-			c.Assert(strings.Contains(execInfo, "time"), Equals, true)
-			c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
-			c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
-		} else { // cop task
-			execInfo := row[4].(string)
-			c.Assert(strings.Contains(execInfo, "proc"), Equals, true)
-			c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
-			c.Assert(strings.Contains(execInfo, "iters"), Equals, true)
-			c.Assert(strings.Contains(execInfo, "tasks"), Equals, true)
-		}
+		execInfo := row[4].(string)
+		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
+		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
+		c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
 	}
 }
 
