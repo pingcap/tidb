@@ -92,6 +92,26 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
+// ExtractColumnSet extract columns that occurred in the exprs.
+func ExtractColumnSet(exprs []Expression) map[int64]struct{} {
+	set := make(map[int64]struct{})
+	for _, expr := range exprs {
+		extractColumnSet(expr, set)
+	}
+	return set
+}
+
+func extractColumnSet(expr Expression, set map[int64]struct{}) {
+	switch v := expr.(type) {
+	case *Column:
+		set[v.UniqueID] = struct{}{}
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			extractColumnSet(arg, set)
+		}
+	}
+}
+
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
