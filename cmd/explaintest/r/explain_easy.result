@@ -183,12 +183,13 @@ HashAgg_18	24000.00	root	group by:c1, funcs:firstrow(join_agg_0)
 set @@session.tidb_opt_insubquery_unfold = 0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
-StreamAgg_12	1.00	root	funcs:sum(5_aux_0)
-└─MergeJoin_28	10000.00	root	left outer semi join, left key:test.t1.c1, right key:test.t2.c1
-  ├─TableReader_19	10000.00	root	data:TableScan_18
-  │ └─TableScan_18	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
-  └─IndexReader_23	10000.00	root	index:IndexScan_22
-    └─IndexScan_22	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+StreamAgg_12	1.00	root	funcs:sum(col_0)
+└─Projection_35	10000.00	root	cast(5_aux_0)
+  └─MergeJoin_28	10000.00	root	left outer semi join, left key:test.t1.c1, right key:test.t2.c1
+    ├─TableReader_19	10000.00	root	data:TableScan_18
+    │ └─TableScan_18	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
+    └─IndexReader_23	10000.00	root	index:IndexScan_22
+      └─IndexScan_22	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
 explain select 1 in (select c2 from t2) from t1;
 id	count	task	operator info
 Projection_6	10000.00	root	5_aux_0
@@ -200,13 +201,14 @@ Projection_6	10000.00	root	5_aux_0
       └─TableScan_10	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(6 in (select c2 from t2)) from t1;
 id	count	task	operator info
-StreamAgg_12	1.00	root	funcs:sum(5_aux_0)
-└─HashLeftJoin_19	10000.00	root	left outer semi join, inner:TableReader_18
-  ├─TableReader_21	10000.00	root	data:TableScan_20
-  │ └─TableScan_20	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-  └─TableReader_18	10.00	root	data:Selection_17
-    └─Selection_17	10.00	cop	eq(6, test.t2.c2)
-      └─TableScan_16	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+StreamAgg_12	1.00	root	funcs:sum(col_0)
+└─Projection_22	10000.00	root	cast(5_aux_0)
+  └─HashLeftJoin_19	10000.00	root	left outer semi join, inner:TableReader_18
+    ├─TableReader_21	10000.00	root	data:TableScan_20
+    │ └─TableScan_20	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableReader_18	10.00	root	data:Selection_17
+      └─Selection_17	10.00	cop	eq(6, test.t2.c2)
+        └─TableScan_16	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain format="dot" select sum(t1.c1 in (select c1 from t2)) from t1;
 dot contents
 
@@ -215,7 +217,8 @@ subgraph cluster12{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"StreamAgg_12" -> "MergeJoin_28"
+"StreamAgg_12" -> "Projection_35"
+"Projection_35" -> "MergeJoin_28"
 "MergeJoin_28" -> "TableReader_19"
 "MergeJoin_28" -> "IndexReader_23"
 }
