@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	log "github.com/sirupsen/logrus"
+
 )
 
 // MergeSortExec represents sorting executor.
@@ -167,7 +169,7 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		go e.wait4WorkerSort(wg, e.finishedCh)
 		avgLen := 0
 		avgLen = e.rowChunks.Len() / e.concurrency
-		//log.Infof("allcolumnExpr %v row count %d  row chunk %d avgLen %d", e.allColumnExpr, e.rowChunks.Len(),e.rowChunks.NumChunks(),  avgLen)
+		log.Infof("allcolumnExpr %v row count %d  row chunk %d avgLen %d", e.allColumnExpr, e.rowChunks.Len(),e.rowChunks.NumChunks(),  avgLen)
 
 		for i := 0; i < e.concurrency; i++ {
 			chkIdx := (avgLen * i) / e.maxChunkSize
@@ -191,7 +193,7 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		e.fetched = true
 		<-e.finishedCh
 		for i := 0; i < e.concurrency; i++ {
-			//log.Infof("worker %d row count %d row len %d",i, len(*e.workerRowPtrs[i]), e.workerRowLen[i])
+			log.Infof("worker %d row count %d row len %d",i, len(*e.workerRowPtrs[i]), e.workerRowLen[i])
 		//	for j := 0; j < len(*e.workerRowPtrs[i]); j++ {
 		//		//log.Infof("worker %d row %d ptr %v",i, j, (*e.workerRowPtrs[i])[j])
 		//	}
