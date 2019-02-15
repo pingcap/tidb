@@ -505,7 +505,25 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
 	for _, m := range mutations {
-		err := prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl)
+		// If the operation is Insert, check if key is exists at first.
+		var err error
+		if m.GetOp() == kvrpcpb.Op_Insert {
+			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI)
+			if err != nil {
+				errs = append(errs, err)
+				anyError = true
+				continue
+			}
+			if v != nil {
+				err = &ErrKeyAlreadyExist{
+					Key: m.Key,
+				}
+				errs = append(errs, err)
+				anyError = true
+				continue
+			}
+		}
+		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -519,29 +537,6 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 	}
 
 	return errs
-}
-
-func keyAlreadyExist(iter *Iterator, dec valueDecoder) (bool, error) {
-	for {
-		switch dec.value.valueType {
-		case typePut:
-			return true, nil
-		case typeDelete:
-			return false, nil
-		default:
-		}
-
-		dec = valueDecoder{
-			expectKey: dec.expectKey,
-		}
-		ok, err := dec.Decode(iter)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if !ok {
-			return false, nil
-		}
-	}
 }
 
 func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
@@ -572,23 +567,8 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if ok {
-		// Note that it's a write conflict here, even if the value is a rollback one.
-		if dec1.value.commitTS >= startTS {
-			return ErrRetryable("write conflict")
-		}
-		// Key should not exist before
-		if mutation.GetOp() == kvrpcpb.Op_Insert {
-			keyExist, err := keyAlreadyExist(iter, dec1)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if keyExist {
-				return &ErrKeyAlreadyExist{
-					Key: mutation.Key,
-				}
-			}
-		}
+	if ok && dec1.value.commitTS >= startTS {
+		return ErrRetryable("write conflict")
 	}
 
 	op := mutation.GetOp()
