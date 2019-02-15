@@ -24,9 +24,8 @@ var specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){}
 
 func init() {
 	specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){
-		ast.If:        ifFoldHandler,
-		ast.Ifnull:    ifNullFoldHandler,
-		ast.NameConst: nameConstFoldHandler,
+		ast.If:     ifFoldHandler,
+		ast.Ifnull: ifNullFoldHandler,
 	}
 }
 
@@ -34,10 +33,6 @@ func init() {
 func FoldConstant(expr Expression) Expression {
 	e, _ := foldConstant(expr)
 	return e
-}
-
-func nameConstFoldHandler(expr *ScalarFunction) (Expression, bool) {
-	return foldConstant(expr.GetArgs()[1])
 }
 
 func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
