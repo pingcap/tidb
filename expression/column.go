@@ -225,18 +225,14 @@ func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bo
 	if row.IsNull(col.Index) {
 		return "", true, nil
 	}
+
+	// Specially handle the ENUM/SET/BIT input value.
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
-		if val.IsNull() {
-			return "", true, nil
-		}
 		res, err := val.ToString()
-		resLen := len([]rune(res))
-		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
-			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
-		}
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, err
 	}
+
 	val := row.GetString(col.Index)
 	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
 		valLen := len([]rune(val))
