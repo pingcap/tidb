@@ -24,30 +24,38 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// buildProjBelowAgg builds a ProjOperator below AggOperator.
-// If all the args of `aggFuncs`, and all the item of `groupByItems`
-// are columns or constants, we do not need to build the `proj`.
-func buildProjBelowAgg(plan PhysicalPlan) PhysicalPlan {
-	for _, child := range plan.Children() {
-		buildProjBelowAgg(child)
-	}
-
-	var aggFuncs []*aggregation.AggFuncDesc
-	var groupByItems []expression.Expression
-	if aggHash, ok := plan.(*PhysicalHashAgg); ok {
-		aggFuncs = aggHash.AggFuncs
-		groupByItems = aggHash.GroupByItems
-	} else if aggStream, ok := plan.(*PhysicalStreamAgg); ok {
-		aggFuncs = aggStream.AggFuncs
-		groupByItems = aggStream.GroupByItems
-	} else {
-		return plan
-	}
-
-	return doBuildProjBelowAgg(plan, aggFuncs, groupByItems)
+// injectExtraProjection is used to extract the expressions of specific operators into a
+// physical Projection operator and inject the Projection below the operators.
+// Thus we can accelerate the expression evaluation by eager evaluation.
+func injectExtraProjection(plan PhysicalPlan) PhysicalPlan {
+	return NewProjInjector().inject(plan)
 }
 
-func doBuildProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
+type projInjector struct {
+}
+
+// NewProjInjector builds a projInjector.
+func NewProjInjector() *projInjector {
+	return &projInjector{}
+}
+
+func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
+	for _, child := range plan.Children() {
+		pe.inject(child)
+	}
+	switch p := plan.(type) {
+	case *PhysicalHashAgg:
+		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
+	case *PhysicalStreamAgg:
+		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
+	}
+	return plan
+}
+
+// injectProjBelowAgg injects a ProjOperator below AggOperator.
+// If all the args of `aggFuncs`, and all the item of `groupByItems`
+// are columns or constants, we do not need to build the `proj`.
+func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
 
 	// If the mode is FinalMode, we do not need to wrap cast upon the args,
