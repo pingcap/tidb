@@ -521,6 +521,29 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 	return errs
 }
 
+func keyAlreadyExist(iter *Iterator, dec valueDecoder) (bool, error) {
+	for {
+		switch dec.value.valueType {
+		case typePut:
+			return true, nil
+		case typeDelete:
+			return false, nil
+		default:
+		}
+
+		dec = valueDecoder{
+			expectKey: dec.expectKey,
+		}
+		ok, err := dec.Decode(iter)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if !ok {
+			return false, nil
+		}
+	}
+}
+
 func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mutation, startTS uint64, primary []byte, ttl uint64) error {
 	startKey := mvccEncode(mutation.Key, lockVer)
 	iter := newIterator(db, &util.Range{
@@ -556,35 +579,27 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		}
 		// Key should not exist before
 		if mutation.GetOp() == kvrpcpb.Op_Insert {
-ExistCheckingLoop:
-			for {
-				switch dec1.value.valueType {
-				case typePut:
-					return ErrAbort("key already exist")
-				case typeDelete:
-					break ExistCheckingLoop
-				default:
-				}
-
-				dec1 = valueDecoder{
-					expectKey: mutation.Key,
-				}
-				ok, err = dec1.Decode(iter)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if !ok {
-					break
+			keyExist, err := keyAlreadyExist(iter, dec1)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if keyExist {
+				return &ErrKeyAlreadyExist{
+					Key: mutation.Key,
 				}
 			}
 		}
 	}
 
+	op := mutation.GetOp()
+	if op == kvrpcpb.Op_Insert {
+		op = kvrpcpb.Op_Put
+	}
 	lock := mvccLock{
 		startTS: startTS,
 		primary: primary,
 		value:   mutation.Value,
-		op:      mutation.GetOp(),
+		op:      op,
 		ttl:     ttl,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)
