@@ -80,7 +80,6 @@ type assertionPair struct {
 }
 
 // SetAssertion sets a assertion for the key operation.
-// Implements the kv.SafeStore interface.
 func (txn *tikvTxn) SetAssertion(key kv.Key, assertion kv.AssertionType) {
 	txn.assertions = append(txn.assertions, assertionPair{key, assertion})
 }

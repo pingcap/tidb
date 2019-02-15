@@ -150,6 +150,8 @@ type Transaction interface {
 	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
+	// SetAssertion sets an assertion for an operation on the key.
+	SetAssertion(key Key, assertion AssertionType)
 }
 
 // Client is used to send request to KV layer.

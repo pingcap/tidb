@@ -53,17 +53,6 @@ type TxnState struct {
 	doNotCommit error
 }
 
-var _ kv.SafeStore = &TxnState{}
-
-// SetAssertion implements the kv.SafeStore interface.
-func (st *TxnState) SetAssertion(key kv.Key, assertion kv.AssertionType) {
-	if st.Transaction != nil {
-		if raw, ok := st.Transaction.(kv.SafeStore); ok {
-			raw.SetAssertion(key, assertion)
-		}
-	}
-}
-
 func (st *TxnState) init() {
 	st.buf = kv.NewMemDbBuffer(kv.DefaultTxnMembufCap)
 	st.mutations = make(map[int64]*binlog.TableMutation)
