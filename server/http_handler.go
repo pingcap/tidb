@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	logutil "github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -544,12 +545,19 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			err1 := logutil.SetLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+
 			l, err1 := log.ParseLevel(levelStr)
 			if err1 != nil {
 				writeError(w, err1)
 				return
 			}
 			log.SetLevel(l)
+
 			config.GetGlobalConfig().Log.Level = levelStr
 		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
