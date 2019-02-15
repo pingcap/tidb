@@ -166,7 +166,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 	case tipb.ExecType_TypeTopN:
 		currExec, err = h.buildTopN(ctx, curr)
 	case tipb.ExecType_TypeLimit:
-		currExec = &limitExec{limit: curr.Limit.GetLimit()}
+		currExec = &limitExec{limit: curr.Limit.GetLimit(), execDetail: new(execDetail)}
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
@@ -203,6 +203,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
+		execDetail:     new(execDetail),
 	}
 	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
 		e.counts = make([]int64, len(ranges))
@@ -241,6 +242,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		pkStatus:       pkStatus,
+		execDetail:     new(execDetail),
 	}
 	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
 		e.counts = make([]int64, len(ranges))
@@ -268,6 +270,7 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 		relatedColOffsets: relatedColOffsets,
 		conditions:        conds,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
+		execDetail:        new(execDetail),
 	}, nil
 }
 
@@ -316,6 +319,7 @@ func (h *rpcHandler) buildHashAgg(ctx *dagContext, executor *tipb.Executor) (*ha
 		groupKeys:         make([][]byte, 0),
 		relatedColOffsets: relatedColOffsets,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
+		execDetail:        new(execDetail),
 	}, nil
 }
 
@@ -337,6 +341,7 @@ func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 		currGroupByValues: make([][]byte, 0),
 		relatedColOffsets: relatedColOffsets,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
+		execDetail:        new(execDetail),
 	}, nil
 }
 
@@ -371,6 +376,7 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 		relatedColOffsets: relatedColOffsets,
 		orderByExprs:      conds,
 		row:               make([]types.Datum, len(ctx.evalCtx.columnInfos)),
+		execDetail:        new(execDetail),
 	}, nil
 }
 

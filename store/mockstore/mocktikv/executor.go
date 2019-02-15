@@ -48,6 +48,14 @@ type execDetail struct {
 	numIterations   int
 }
 
+func (e *execDetail) update(begin time.Time, row [][]byte) {
+	e.timeProcessed += time.Since(begin)
+	e.numIterations++
+	if row != nil {
+		e.numProducedRows++
+	}
+}
+
 type executor interface {
 	SetSrcExec(executor)
 	GetSrcExec() executor
@@ -72,7 +80,7 @@ type tableScanExec struct {
 	seekKey        []byte
 	start          int
 	counts         []int64
-	execDetail     execDetail
+	execDetail     *execDetail
 
 	src executor
 }
@@ -82,7 +90,7 @@ func (e *tableScanExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append(suffix, &e.execDetail)
+	return append(suffix, e.execDetail)
 }
 
 func (e *tableScanExec) SetSrcExec(exec executor) {
@@ -135,9 +143,7 @@ func (e *tableScanExec) Cursor() ([]byte, bool) {
 
 func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 	defer func(begin time.Time) {
-		e.execDetail.numIterations++
-		e.execDetail.timeProcessed += time.Since(begin)
-		e.execDetail.numProducedRows += len(value)
+		e.execDetail.update(begin, value)
 	}(time.Now())
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
@@ -258,7 +264,7 @@ type indexScanExec struct {
 	pkStatus       int
 	start          int
 	counts         []int64
-	execDetail     execDetail
+	execDetail     *execDetail
 
 	src executor
 }
@@ -268,7 +274,7 @@ func (e *indexScanExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append(suffix, &e.execDetail)
+	return append(suffix, e.execDetail)
 }
 
 func (e *indexScanExec) SetSrcExec(exec executor) {
@@ -322,9 +328,7 @@ func (e *indexScanExec) Cursor() ([]byte, bool) {
 
 func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
 	defer func(begin time.Time) {
-		e.execDetail.numIterations++
-		e.execDetail.timeProcessed += time.Since(begin)
-		e.execDetail.numProducedRows += len(value)
+		e.execDetail.update(begin, value)
 	}(time.Now())
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
@@ -448,7 +452,7 @@ type selectionExec struct {
 	row               []types.Datum
 	evalCtx           *evalContext
 	src               executor
-	execDetail        execDetail
+	execDetail        *execDetail
 }
 
 func (e *selectionExec) ExecDetails() []*execDetail {
@@ -456,7 +460,7 @@ func (e *selectionExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append(suffix, &e.execDetail)
+	return append(suffix, e.execDetail)
 }
 
 func (e *selectionExec) SetSrcExec(exec executor) {
@@ -503,9 +507,7 @@ func (e *selectionExec) Cursor() ([]byte, bool) {
 
 func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 	defer func(begin time.Time) {
-		e.execDetail.numIterations++
-		e.execDetail.timeProcessed += time.Since(begin)
-		e.execDetail.numProducedRows += len(value)
+		e.execDetail.update(begin, value)
 	}(time.Now())
 	for {
 		value, err = e.src.Next(ctx)
@@ -538,7 +540,7 @@ type topNExec struct {
 	row               []types.Datum
 	cursor            int
 	executed          bool
-	execDetail        execDetail
+	execDetail        *execDetail
 
 	src executor
 }
@@ -548,7 +550,7 @@ func (e *topNExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append(suffix, &e.execDetail)
+	return append(suffix, e.execDetail)
 }
 
 func (e *topNExec) SetSrcExec(src executor) {
@@ -588,9 +590,7 @@ func (e *topNExec) Cursor() ([]byte, bool) {
 
 func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
 	defer func(begin time.Time) {
-		e.execDetail.numIterations++
-		e.execDetail.timeProcessed += time.Since(begin)
-		e.execDetail.numProducedRows += len(value)
+		e.execDetail.update(begin, value)
 	}(time.Now())
 	if !e.executed {
 		for {
@@ -643,7 +643,7 @@ type limitExec struct {
 
 	src executor
 
-	execDetail execDetail
+	execDetail *execDetail
 }
 
 func (e *limitExec) ExecDetails() []*execDetail {
@@ -651,7 +651,7 @@ func (e *limitExec) ExecDetails() []*execDetail {
 	if e.src != nil {
 		suffix = e.src.ExecDetails()
 	}
-	return append(suffix, &e.execDetail)
+	return append(suffix, e.execDetail)
 }
 
 func (e *limitExec) SetSrcExec(src executor) {
@@ -676,9 +676,7 @@ func (e *limitExec) Cursor() ([]byte, bool) {
 
 func (e *limitExec) Next(ctx context.Context) (value [][]byte, err error) {
 	defer func(begin time.Time) {
-		e.execDetail.numIterations++
-		e.execDetail.timeProcessed += time.Since(begin)
-		e.execDetail.numProducedRows += len(value)
+		e.execDetail.update(begin, value)
 	}(time.Now())
 	if e.cursor >= e.limit {
 		return nil, nil
