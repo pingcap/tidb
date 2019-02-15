@@ -73,15 +73,21 @@ type SortWorker struct {
 	rowPtrs []chunk.RowPtr
 }
 
-func (sw *SortWorker) run() {
+func (sw *SortWorker) run(workerId int) {
 	//sw.memTracker.Consume(int64(8 * sw.rowChunks.Len()))
-	//log.Infof("chkIdx %d rowIdx %d workerlen %d", sw.chkIdx, sw.rowIdx, sw.len)
-	for chkIdx := sw.chkIdx; chkIdx < sw.rowChunks.NumChunks(); chkIdx++ {
+	for chkIdx := sw.chkIdx; chkIdx < sw.rowChunks.NumChunks() && len(sw.rowPtrs) < sw.len; chkIdx++ {
 		rowChk := sw.rowChunks.GetChunk(chkIdx)
-		for rowIdx := sw.rowIdx; rowIdx < rowChk.NumRows() && len(sw.rowPtrs) < sw.len; rowIdx++ {
+		rowIdx := 0
+		if chkIdx == sw.chkIdx {
+			rowIdx = sw.rowIdx
+		}
+		//log.Infof("workerId %d chkIdx %d rowIdx %d rowChkNum %d rowPtrs %d", workerId,chkIdx, rowIdx, rowChk.NumRows(), len(sw.rowPtrs))
+		for ; rowIdx < rowChk.NumRows() && len(sw.rowPtrs) < sw.len; rowIdx++ {
 			sw.rowPtrs = append(sw.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
+		//log.Infof("workerId %d chkIdx %d rowPtrs %d", workerId,chkIdx, len(sw.rowPtrs))
 	}
+	//log.Infof("workerId %d chkIdx %d rowIdx %d workerlen %d, rowPtrsLen %d", workerId, sw.chkIdx, sw.rowIdx, sw.len, len(sw.rowPtrs))
 
 	if sw.allColumnExpr {
 		sort.Slice(sw.rowPtrs, sw.keyColumnsLess)
@@ -161,67 +167,73 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		go e.wait4WorkerSort(wg, e.finishedCh)
 		avgLen := 0
 		avgLen = e.rowChunks.Len() / e.concurrency
-		//log.Infof("row count %d avgLen  %d", e.rowChunks.Len(), avgLen)
+		//log.Infof("allcolumnExpr %v row count %d  row chunk %d avgLen %d", e.allColumnExpr, e.rowChunks.Len(),e.rowChunks.NumChunks(),  avgLen)
 
 		for i := 0; i < e.concurrency; i++ {
-			chkIdx := avgLen * i / e.maxChunkSize
-			rowIdx := avgLen * i % e.maxChunkSize
+			chkIdx := (avgLen * i) / e.maxChunkSize
+			rowIdx := (avgLen * i) % e.maxChunkSize
 			if i == e.concurrency-1 {
 				avgLen = e.rowChunks.Len()%e.concurrency + avgLen
 			}
+			//log.Infof("worker %d chunkIdx %d rowIdx %d rowLen %d maxChunkSize %d", i, chkIdx, rowIdx, avgLen, e.maxChunkSize)
 
 			sortWorker := e.newSortWorker(chkIdx, rowIdx, avgLen)
 			e.workerRowLen[i] = avgLen
 			e.workerRowIdx[i] = 0
 			e.workerRowPtrs[i] = &sortWorker.rowPtrs
-
+			workerId := i
 			go util.WithRecovery(func() {
 				defer wg.Done()
-				sortWorker.run()
+				sortWorker.run(workerId)
 			}, nil)
 		}
 
 		e.fetched = true
 		<-e.finishedCh
 		for i := 0; i < e.concurrency; i++ {
-			//log.Infof("worker %d row count %d",i, len(*e.workerRowPtrs[i]))
-			for j := 0; j < len(*e.workerRowPtrs[i]); j++ {
-				//log.Infof("worker %d row %d ptr %v",i, j, (*e.workerRowPtrs[i])[j])
-			}
+			//log.Infof("worker %d row count %d row len %d",i, len(*e.workerRowPtrs[i]), e.workerRowLen[i])
+		//	for j := 0; j < len(*e.workerRowPtrs[i]); j++ {
+		//		//log.Infof("worker %d row %d ptr %v",i, j, (*e.workerRowPtrs[i])[j])
+		//	}
 		}
 	}
 	for req.NumRows() < e.maxChunkSize {
-		i := 0
 		j := 0
 		for; j < e.concurrency && e.workerRowIdx[j] >= e.workerRowLen[j];{
 			j++
 		}
-		//log.Infof("j %d", j)
 		if j >= e.concurrency {
 			break
 		}
-		minRowPtr := (*e.workerRowPtrs[j])[e.workerRowIdx[j]]
+		//log.Infof("start worker %d ptr len %d idx %d len %d",j , len(*e.workerRowPtrs[j]), e.workerRowIdx[j], e.workerRowLen[j] )
 
-		for i = j; i < e.concurrency; i++ {
+		minRowPtr := (*e.workerRowPtrs[j])[e.workerRowIdx[j]]
+		//log.Infof("%v", e.rowChunks.GetRow(minRowPtr))
+		for i := j + 1; i < e.concurrency ; i++ {
 			if e.workerRowIdx[i] < e.workerRowLen[i] {
 				flag := false
 				if e.allColumnExpr {
 					keyRowI := e.rowChunks.GetRow(minRowPtr)
-					keyRowJ := e.rowChunks.GetRow((*e.workerRowPtrs[j])[e.workerRowIdx[j]])
+					//log.Infof("compare worker %d ptr len %d idx %d len %d",i , len(*e.workerRowPtrs[i]), e.workerRowIdx[i], e.workerRowLen[i] )
+					//if e.workerRowIdx[i] == 8850 {
+					//	log.Infof("compare worker %d reach 8874", i)
+					//	break
+					//}
+					keyRowJ := e.rowChunks.GetRow((*e.workerRowPtrs[i])[e.workerRowIdx[i]])
 					flag = e.lessRow(keyRowI, keyRowJ)
 				} else {
 					keyRowI := e.keyChunks.GetRow(minRowPtr)
-					keyRowJ := e.keyChunks.GetRow((*e.workerRowPtrs[j])[e.workerRowIdx[j]])
+					keyRowJ := e.keyChunks.GetRow((*e.workerRowPtrs[i])[e.workerRowIdx[i]])
 					flag = e.lessRow(keyRowI, keyRowJ)
 				}
-				if flag {
-					minRowPtr = (*e.workerRowPtrs[j])[e.workerRowIdx[j]]
+				if !flag {
+					minRowPtr = (*e.workerRowPtrs[i])[e.workerRowIdx[i]]
 					j = i
 				}
 			}
 		}
+		//log.Infof("worker %d idx %d append rowPtr %v", j, e.workerRowIdx[j], (*e.workerRowPtrs[j])[e.workerRowIdx[j]])
 		e.workerRowIdx[j]++
-		//log.Infof("worker %d idx increase to %d", j, e.workerRowIdx[j])
 		req.AppendRow(e.rowChunks.GetRow(minRowPtr))
 	}
 	return nil
