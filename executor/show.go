@@ -291,7 +291,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	sql := fmt.Sprintf(`SELECT
                table_name, engine, version, row_format, table_rows,
                avg_row_length, data_length, max_data_length, index_length,
-               data_free, auto_increment, create_time, update_time, check_time, 
+               data_free, auto_increment, create_time, update_time, check_time,
                table_collation, IFNULL(checksum,''), create_options, table_comment
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
@@ -615,7 +615,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
 			if col.Charset != tblCharset || col.Collate != tblCollate {
-				fmt.Fprintf(&buf, " CHARSET %s COLLATE %s", col.Charset, col.Collate)
+				fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
 			}
 		}
 		if col.IsGenerated() {
@@ -634,7 +634,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if mysql.HasNotNullFlag(col.Flag) {
 				buf.WriteString(" NOT NULL")
 			}
-			if !mysql.HasNoDefaultValueFlag(col.Flag) {
+			// default values are not shown for generated columns in MySQL
+			if !mysql.HasNoDefaultValueFlag(col.Flag) && !col.IsGenerated() {
 				defaultValue := col.GetDefaultValue()
 				switch defaultValue {
 				case nil:
