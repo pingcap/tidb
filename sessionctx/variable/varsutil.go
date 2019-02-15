@@ -348,6 +348,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case LogBin:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
+		}
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBEnableTablePartition:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
