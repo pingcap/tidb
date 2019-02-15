@@ -44,7 +44,7 @@ type AssertionType int
 
 // The AssertionType constants.
 const (
-	NoCheck AssertionType = iota
+	None AssertionType = iota
 	Exist
 	NotExist
 )

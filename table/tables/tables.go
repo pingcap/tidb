@@ -507,7 +507,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
-	txn.SetAssertion(key, kv.NoCheck)
+	txn.SetAssertion(key, kv.None)
 
 	if !sessVars.LightningMode {
 		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
