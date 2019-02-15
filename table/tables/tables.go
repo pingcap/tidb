@@ -786,11 +786,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var ss kv.SafeStore
-	if tmp, ok := txn.(kv.SafeStore); ok {
-		ss = tmp
-	}
-
+	ss, _ := txn.(kv.SafeStore)
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
