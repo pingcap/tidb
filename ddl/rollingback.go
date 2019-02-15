@@ -206,7 +206,7 @@ func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 }
 
 func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
-	// We can only cancel the not handled rebase auto id ddl job.
+	// We can only cancel the not handled job.
 	if job.SchemaState == model.StateNone {
 		job.State = model.JobStateCancelled
 		return ver, errCancelledDDLJob
