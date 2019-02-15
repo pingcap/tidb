@@ -159,9 +159,9 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 			continue
 		}
 		switch pair.assertion {
-		case kv.MustExist:
+		case kv.Exist:
 			mutation.Assertion = pb.Assertion_Exist
-		case kv.MustNotExist:
+		case kv.NotExist:
 			mutation.Assertion = pb.Assertion_NotExist
 		default:
 			mutation.Assertion = pb.Assertion_None

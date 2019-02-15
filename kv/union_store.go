@@ -45,8 +45,8 @@ type AssertionType int
 // The AssertionType constants.
 const (
 	NoCheck AssertionType = iota
-	MustExist
-	MustNotExist
+	Exist
+	NotExist
 )
 
 // SafeStore is store that support assertions.

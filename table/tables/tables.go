@@ -771,7 +771,7 @@ func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 
 	key := t.RecordKey(h)
 	if ss, ok := txn.(kv.SafeStore); ok {
-		ss.SetAssertion(key, kv.MustExist)
+		ss.SetAssertion(key, kv.Exist)
 	}
 	err = txn.Delete([]byte(key))
 	if err != nil {
