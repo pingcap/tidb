@@ -14,12 +14,12 @@ All notable changes to this project will be documented in this file. See also [R
 
 ### Server
 
-* Optimize the “reload privilege success” log and change it to the DEBUG level [#9274](https://github.com/pingcap/tidb/pull/9274)
+* Optimize the "reload privilege success" log and change it to the DEBUG level [#9274](https://github.com/pingcap/tidb/pull/9274)
 
 ### DDL
 
 * Change `tidb_ddl_reorg_worker_cnt` and `tidb_ddl_reorg_batch_size` to global variables [#9134](https://github.com/pingcap/tidb/pull/9134)
-* Fix the bug caused by adding an index to a generated column in some abnormal conditions [#9289](https://github.com/pingcap/tidb/pull/9289) 
+* Fix the bug caused by adding an index to a generated column in some abnormal conditions [#9289](https://github.com/pingcap/tidb/pull/9289)
 
 ## [2.1.3] 2019-01-25
 
