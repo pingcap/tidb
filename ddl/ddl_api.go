@@ -629,20 +629,20 @@ func checkColumnValueConstraint(col *table.Column) error {
 
 func checkDuplicateColumn(cols []interface{}) error {
 	colNames := set.StringSet{}
-	var nameLower string
+	colName := model.NewCIStr("")
 	for _, col := range cols {
 		switch x := col.(type) {
 		case *ast.ColumnDef:
-			nameLower = x.Name.Name.L
+			colName = x.Name.Name
 		case model.CIStr:
-			nameLower = x.L
+			colName = x
 		default:
-			nameLower = ""
+			colName.O, colName.L = "", ""
 		}
-		if colNames.Exist(nameLower) {
-			return infoschema.ErrColumnExists.GenWithStackByArgs(nameLower)
+		if colNames.Exist(colName.L) {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(colName.O)
 		}
-		colNames.Insert(nameLower)
+		colNames.Insert(colName.L)
 	}
 	return nil
 }
@@ -1215,10 +1215,6 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 func buildViewInfoWithTableColumns(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewInfo, []*table.Column) {
 	viewInfo := &model.ViewInfo{Definer: s.Definer, Algorithm: s.Algorithm,
 		Security: s.Security, SelectStmt: s.Select.Text(), CheckOption: s.CheckOption}
-
-	if s.Definer.CurrentUser {
-		viewInfo.Definer = ctx.GetSessionVars().User
-	}
 
 	var schemaCols = s.Select.(*ast.SelectStmt).Fields.Fields
 	viewInfo.Cols = make([]model.CIStr, len(schemaCols))

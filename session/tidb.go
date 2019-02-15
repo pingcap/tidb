@@ -47,9 +47,17 @@ type domainMap struct {
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	key := store.UUID()
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
+
+	// If this is the only domain instance, and the caller doesn't provide store.
+	if len(dm.domains) == 1 && store == nil {
+		for _, r := range dm.domains {
+			return r, nil
+		}
+	}
+
+	key := store.UUID()
 	d = dm.domains[key]
 	if d != nil {
 		return
