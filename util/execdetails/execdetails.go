@@ -115,11 +115,11 @@ func (d ExecDetails) String() string {
 type CopRuntimeStats struct {
 	sync.Mutex
 
-	// Usually, CopTasks are executed on TiKV cluster consist of multiple instances,
-	// so coprocessors' addresses must be taken into account.
-	// And Sometimes, several cop tasks of one operator can be executed in a same TiKV instance,
-	// which depend on how we split cop tasks and the distribution of data regions.
-	// So we have to use a list to maintain all tasks executed on each instance.
+	// stats stores the runtime statistics of coprocessor tasks.
+	// The key of the map is the tikv-server address. Because a tikv-server can
+	// have many region leaders, several coprocessor tasks can be sent to the
+	// same tikv-server instance. We have to use a list to maintain all tasks
+	// executed on each instance.
 	stats map[string][]*RuntimeStats
 }
 
@@ -146,6 +146,10 @@ func (crs *CopRuntimeStats) String() string {
 			totalIters += stat.loop
 			totalTasks++
 		}
+	}
+
+	if totalTasks == 1 {
+		return fmt.Sprintf("time:%v, loops:%d, rows:%d", procTimes[0], totalIters, totalRows)
 	}
 
 	n := len(procTimes)
