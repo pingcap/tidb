@@ -892,7 +892,7 @@ func (b *builtinJSONSearchSig) Clone() builtinFunc {
 
 func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	// json_doc, one_or_all, search_str[, escape_char[, path] ...])
 	argTps := make([]types.EvalType, 0, len(args))
@@ -977,12 +977,12 @@ func (b *builtinJSONSearchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isN
 		}
 		err = obj.Walk(walkFn, pathExprs...)
 		if err != nil {
-			return res, true, errors.Trace(err)
+			return res, true, err
 		}
 	} else {
 		err = obj.Walk(walkFn)
 		if err != nil {
-			return res, true, errors.Trace(err)
+			return res, true, err
 		}
 	}
 
