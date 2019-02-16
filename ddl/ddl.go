@@ -76,6 +76,7 @@ var (
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
+	errCantDecodeIndex       = terror.ClassDDL.New(codeCantDecodeIndex, "cannot decode index value, because %s")
 	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid DDL job")
 	errCancelledDDLJob       = terror.ClassDDL.New(codeCancelledDDLJob, "cancelled DDL job")
 	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
@@ -114,16 +115,17 @@ var (
 	errWrongKeyColumn = terror.ClassDDL.New(codeWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
 	// errUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
 	errUnsupportedOnGeneratedColumn = terror.ClassDDL.New(codeUnsupportedOnGeneratedColumn, mysql.MySQLErrName[mysql.ErrUnsupportedOnGeneratedColumn])
-	// errGeneratedColumnNonPrior forbiddens to refer generated column non prior to it.
+	// errGeneratedColumnNonPrior forbids to refer generated column non prior to it.
 	errGeneratedColumnNonPrior = terror.ClassDDL.New(codeGeneratedColumnNonPrior, mysql.MySQLErrName[mysql.ErrGeneratedColumnNonPrior])
-	// errDependentByGeneratedColumn forbiddens to delete columns which are dependent by generated columns.
+	// errDependentByGeneratedColumn forbids to delete columns which are dependent by generated columns.
 	errDependentByGeneratedColumn = terror.ClassDDL.New(codeDependentByGeneratedColumn, mysql.MySQLErrName[mysql.ErrDependentByGeneratedColumn])
-	// errJSONUsedAsKey forbiddens to use JSON as key or index.
+	// errJSONUsedAsKey forbids to use JSON as key or index.
 	errJSONUsedAsKey = terror.ClassDDL.New(codeJSONUsedAsKey, mysql.MySQLErrName[mysql.ErrJSONUsedAsKey])
-	// errBlobCantHaveDefault forbiddens to give not null default value to TEXT/BLOB/JSON.
+	// errBlobCantHaveDefault forbids to give not null default value to TEXT/BLOB/JSON.
 	errBlobCantHaveDefault       = terror.ClassDDL.New(codeBlobCantHaveDefault, mysql.MySQLErrName[mysql.ErrBlobCantHaveDefault])
 	errTooLongIndexComment       = terror.ClassDDL.New(codeErrTooLongIndexComment, mysql.MySQLErrName[mysql.ErrTooLongIndexComment])
-	ErrGeneratedColumnRefAutoInc = terror.ClassDDL.New(codeErrGeneratedColumnRefAutoInc, "Generated column '%s' cannot refer to auto-increment column.")
+	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
+	ErrGeneratedColumnRefAutoInc = terror.ClassDDL.New(codeErrGeneratedColumnRefAutoInc, mysql.MySQLErrName[mysql.ErrGeneratedColumnRefAutoInc])
 	// ErrUnsupportedAddPartition returns for does not support add partitions.
 	ErrUnsupportedAddPartition = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
@@ -618,6 +620,7 @@ const (
 	codeCancelledDDLJob                      = 12
 	codeInvalidRanges                        = 13
 	codeReorgWorkerPanic                     = 14
+	codeCantDecodeIndex                      = 15
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101
