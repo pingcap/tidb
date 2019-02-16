@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
@@ -378,9 +379,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:
-				value, err := getDefaultValue(ctx, v, colDef.Tp)
+				value, err := getDefaultValue(ctx, col.Name.L, v, colDef.Tp)
 				if err != nil {
-					return nil, nil, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
+					return nil, nil, errors.Trace(err)
 				}
 				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
@@ -457,9 +458,23 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
+func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
 	tp, fsp := t.Tp, t.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+		switch x := c.Expr.(type) {
+		case *ast.FuncCallExpr:
+			if x.FnName.L == ast.CurrentTimestamp {
+				defaultFsp := 0
+				if len(x.Args) == 1 {
+					if val := x.Args[0].(*driver.ValueExpr); val != nil {
+						defaultFsp = int(val.GetInt64())
+					}
+				}
+				if defaultFsp != fsp {
+					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+				}
+			}
+		}
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
@@ -1618,7 +1633,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 	// If new column is a generated column, do validation.
 	// NOTE: Because now we can only append columns to table,
-	// we dont't need check whether the column refers other
+	// we don't need check whether the column refers other
 	// generated columns occurring later in table.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
@@ -1637,7 +1652,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
-	// Ingore table constraints now, maybe return error later.
+	// Ignore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
 	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, schema.Charset)
@@ -1938,7 +1953,7 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
-	value, err := getDefaultValue(ctx, option, &col.FieldType)
+	value, err := getDefaultValue(ctx, col.Name.L, option, &col.FieldType)
 	if err != nil {
 		return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 	}
@@ -1967,9 +1982,9 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			value, err := getDefaultValue(ctx, opt, &col.FieldType)
+			value, err := getDefaultValue(ctx, col.Name.L, opt, &col.FieldType)
 			if err != nil {
-				return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
+				return errors.Trace(err)
 			}
 			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 				return errors.Trace(err)
