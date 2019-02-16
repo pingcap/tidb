@@ -21,9 +21,10 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 )
 
-// injectExtraProjection is used to extract the expressions of specific operators into a
-// physical Projection operator and inject the Projection below the operators.
-// Thus we can accelerate the expression evaluation by eager evaluation.
+// injectExtraProjection is used to extract the expressions of specific
+// operators into a physical Projection operator and inject the Projection below
+// the operators. Thus we can accelerate the expression evaluation by eager
+// evaluation.
 func injectExtraProjection(plan PhysicalPlan) PhysicalPlan {
 	return NewProjInjector().inject(plan)
 }
@@ -40,18 +41,23 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 	for _, child := range plan.Children() {
 		pe.inject(child)
 	}
+
 	switch p := plan.(type) {
 	case *PhysicalHashAgg:
 		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
 	case *PhysicalStreamAgg:
 		plan = injectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
+	case *PhysicalSort:
+		plan = injectProjBelowSort(p, p.ByItems)
+	case *PhysicalTopN:
+		plan = injectProjBelowSort(p, p.ByItems)
 	}
 	return plan
 }
 
-// injectProjBelowAgg injects a ProjOperator below AggOperator.
-// If all the args of `aggFuncs`, and all the item of `groupByItems`
-// are columns or constants, we do not need to build the `proj`.
+// injectProjBelowAgg injects a ProjOperator below AggOperator. If all the args
+// of `aggFuncs`, and all the item of `groupByItems` are columns or constants,
+// we do not need to build the `proj`.
 func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
 
@@ -104,9 +110,10 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 		}
 		projExprs = append(projExprs, item)
 		newArg := &expression.Column{
-			RetType: item.GetType(),
-			ColName: model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
-			Index:   cursor,
+			UniqueID: aggPlan.context().GetSessionVars().AllocPlanColumnID(),
+			RetType:  item.GetType(),
+			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(projSchemaCols))),
+			Index:    cursor,
 		}
 		projSchemaCols = append(projSchemaCols, newArg)
 		groupByItems[i] = newArg
@@ -124,4 +131,74 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 
 	aggPlan.SetChildren(proj)
 	return aggPlan
+}
+
+// injectProjBelowSort extracts the ScalarFunctions of `orderByItems` into a
+// PhysicalProjection and injects it below PhysicalTopN/PhysicalSort. The schema
+// of PhysicalSort and PhysicalTopN are the same as the schema of their
+// children. When a projection is injected as the child of PhysicalSort and
+// PhysicalTopN, some extra columns will be added into the schema of the
+// Projection, thus we need to add another Projection upon them to prune the
+// redundant columns.
+func injectProjBelowSort(p PhysicalPlan, orderByItems []*ByItems) PhysicalPlan {
+	hasScalarFunc, numOrderByItems := false, len(orderByItems)
+	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
+		_, isScalarFunc := orderByItems[i].Expr.(*expression.ScalarFunction)
+		hasScalarFunc = hasScalarFunc || isScalarFunc
+	}
+	if !hasScalarFunc {
+		return p
+	}
+
+	topProjExprs := make([]expression.Expression, 0, p.Schema().Len())
+	for i := range p.Schema().Columns {
+		col := p.Schema().Columns[i]
+		col.Index = i
+		topProjExprs = append(topProjExprs, col)
+	}
+	topProj := PhysicalProjection{
+		Exprs:                topProjExprs,
+		AvoidColumnEvaluator: false,
+	}.Init(p.context(), p.statsInfo(), nil)
+	topProj.SetSchema(p.Schema().Clone())
+	topProj.SetChildren(p)
+
+	childPlan := p.Children()[0]
+	bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns)+numOrderByItems)
+	bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns)+numOrderByItems)
+	for i, col := range childPlan.Schema().Columns {
+		col.Index = i
+		bottomProjSchemaCols = append(bottomProjSchemaCols, col)
+		bottomProjExprs = append(bottomProjExprs, col)
+	}
+
+	for _, item := range orderByItems {
+		itemExpr := item.Expr
+		if _, isScalarFunc := itemExpr.(*expression.ScalarFunction); !isScalarFunc {
+			continue
+		}
+		bottomProjExprs = append(bottomProjExprs, itemExpr)
+		newArg := &expression.Column{
+			UniqueID: p.context().GetSessionVars().AllocPlanColumnID(),
+			RetType:  itemExpr.GetType(),
+			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", len(bottomProjSchemaCols))),
+			Index:    len(bottomProjSchemaCols),
+		}
+		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
+		item.Expr = newArg
+	}
+
+	childProp := p.GetChildReqProps(0).Clone()
+	bottomProj := PhysicalProjection{
+		Exprs:                bottomProjExprs,
+		AvoidColumnEvaluator: false,
+	}.Init(p.context(), childPlan.statsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), childProp)
+	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
+	bottomProj.SetChildren(childPlan)
+	p.SetChildren(bottomProj)
+
+	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
+		refine4NeighbourProj(bottomProj, origChildProj)
+	}
+	return topProj
 }

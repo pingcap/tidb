@@ -27,6 +27,7 @@ var (
 	_ functionClass = &jsonTypeFunctionClass{}
 	_ functionClass = &jsonExtractFunctionClass{}
 	_ functionClass = &jsonUnquoteFunctionClass{}
+	_ functionClass = &jsonQuoteFunctionClass{}
 	_ functionClass = &jsonSetFunctionClass{}
 	_ functionClass = &jsonInsertFunctionClass{}
 	_ functionClass = &jsonReplaceFunctionClass{}
@@ -50,6 +51,7 @@ var (
 	_ functionClass = &jsonLengthFunctionClass{}
 
 	_ builtinFunc = &builtinJSONTypeSig{}
+	_ builtinFunc = &builtinJSONQuoteSig{}
 	_ builtinFunc = &builtinJSONUnquoteSig{}
 	_ builtinFunc = &builtinJSONArraySig{}
 	_ builtinFunc = &builtinJSONObjectSig{}
@@ -750,8 +752,34 @@ type jsonQuoteFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONQuoteSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONQuoteSig) Clone() builtinFunc {
+	newSig := &builtinJSONQuoteSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_QUOTE")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
+	DisableParseJSONFlag4Expr(args[0])
+	sig := &builtinJSONQuoteSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonQuoteSig)
+	return sig, nil
+}
+
+func (b *builtinJSONQuoteSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
+	var j json.BinaryJSON
+	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, errors.Trace(err)
+	}
+	return j.Quote(), false, nil
 }
 
 type jsonSearchFunctionClass struct {
