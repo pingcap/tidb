@@ -137,25 +137,25 @@ func (c *castAsYearFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsYearSig{bf, &builtinCastIntAsIntSig{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsInt)
+		sig.setPbCode(tipb.ScalarFuncSig_CastIntAsYear)
 	case types.ETReal:
 		sig = &builtinCastRealAsYearSig{bf, &builtinCastRealAsIntSig{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsInt)
+		sig.setPbCode(tipb.ScalarFuncSig_CastRealAsYear)
 	case types.ETDecimal:
 		sig = &builtinCastDecimalAsYearSig{bf, &builtinCastDecimalAsIntSig{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsInt)
+		sig.setPbCode(tipb.ScalarFuncSig_CastDecimalAsYear)
 	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinCastTimeAsYearSig{bf, &builtinCastTimeAsIntSig{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsInt)
+		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsYear)
 	case types.ETDuration:
 		sig = &builtinCastDurationAsYearSig{bf, &builtinCastDurationAsIntSig{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsInt)
+		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsYear)
 	case types.ETJson:
 		sig = &builtinCastJSONAsYearSig{bf, &builtinCastJSONAsIntSig{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsInt)
+		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsYear)
 	case types.ETString:
 		sig = &builtinCastStringAsYearSig{bf, &builtinCastStringAsIntSig{bf}}
-		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsInt)
+		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsYear)
 	default:
 		panic("unsupported types.EvalType in castAsYearFunctionClass")
 	}

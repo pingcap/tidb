@@ -52,7 +52,7 @@ require (
 	github.com/pingcap/parser v0.0.0-20190212061044-a71b434969f3
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
-	github.com/pingcap/tipb v0.0.0-20181012112600-11e33c750323
+	github.com/pingcap/tipb v0.0.0-20190107072121-abbec73437b7
 	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect
@@ -87,3 +87,5 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/pingcap/tipb => github.com/spongedu/tipb v0.0.0-20181102150703-19e74594d27a
