@@ -18,16 +18,13 @@ WORKDIR /go/src/github.com/pingcap/tidb/
 RUN make
 
 # Executable image
-FROM scratch
+FROM alpine
 
 COPY --from=builder /go/src/github.com/pingcap/tidb/bin/tidb-server /tidb-server
 COPY --from=builder /usr/local/bin/dumb-init /usr/local/bin/dumb-init
-
-
 
 WORKDIR /
 
 EXPOSE 4000
 
 ENTRYPOINT ["/usr/local/bin/dumb-init", "/tidb-server"]
-
