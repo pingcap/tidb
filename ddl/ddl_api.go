@@ -661,7 +661,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var exists bool
 	var autoIncrementColumn string
 	for i, colDef := range colDefs {
-		if checkIsAutoIncrementColumn(colDef){
+		if checkIsAutoIncrementColumn(colDef) {
 			exists, autoIncrementColumn = true, colDef.Name.Name.L
 		}
 		generated, depCols := findDependedColumnNames(colDef)
