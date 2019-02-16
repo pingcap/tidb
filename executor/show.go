@@ -761,7 +761,7 @@ func (e *ShowExec) fetchShowCreateView() error {
 	}
 
 	if !tb.Meta().IsView() {
-		return ErrTableIsNotView.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O)
+		return ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "VIEW")
 	}
 
 	var buf bytes.Buffer
