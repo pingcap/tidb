@@ -52,12 +52,6 @@
     curl http://{TiDBIP}:10080/schema?table_id={tableID}
     ```
 
-1. Get disk-usage info about db.table
-
-    ```shell
-    curl http://{TiDBIP}:10080/tables/{db}/{table}/disk-usage
-    ```
-
 1. Get MVCC Information of the key with a specified handle ID
 
     ```shell
@@ -81,6 +75,7 @@
     ```shell
     curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}
     ```
+
     *Hint: For the index column which column type is timezone dependent, e.g. `timestamp`, convert its value to UTC
 timezone.*
 
@@ -89,7 +84,7 @@ timezone.*
     ```shell
     curl -X POST http://{TiDBIP}:10080/tables/{db}/{table}/scatter
     ```
-    
+
     **Note**: The `scatter-range` scheduler may conflict with the global scheduler, do not use it for long periods on the larger table.
 
 1. Stop scatter the regions, disable the `scatter-range` scheduler for the specified table.
@@ -145,12 +140,13 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/tables/{colID}/{colFlag}/{colLen}?rowBin={val}
     ```
+
     *Hint: For the column which field type is timezone dependent, e.g. `timestamp`, convert its value to UTC timezone.*
-    
+
 1. Resign the ddl owner, let tidb start a new ddl owner election.
 
     ```shell
     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
-    
+
     **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
