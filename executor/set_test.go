@@ -231,6 +231,15 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 
+	tk.MustQuery(`select @@session.log_bin;`).Check(testkit.Rows("OFF"))
+	tk.MustExec("set session log_bin = on;")
+	tk.MustQuery(`select @@session.log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set session log_bin = off;")
+	tk.MustExec("set global log_bin = OFF;")
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows("OFF"))
+	tk.MustExec("set global log_bin = on;")
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows("ON"))
+
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
 
