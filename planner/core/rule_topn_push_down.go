@@ -96,6 +96,16 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		for _, by := range topN.ByItems {
 			by.Expr = expression.ColumnSubstitute(by.Expr, p.schema, p.Exprs)
 		}
+
+		// remove meaningless constant sort items.
+		for i := len(topN.ByItems) - 1; i >= 0; i-- {
+			_, isConst := topN.ByItems[i].Expr.(*expression.Constant)
+			if isConst {
+				numItems := len(topN.ByItems)
+				copy(topN.ByItems[i:numItems-1], topN.ByItems[i+1:])
+				topN.ByItems = topN.ByItems[:numItems-1]
+			}
+		}
 	}
 	p.children[0] = p.children[0].pushDownTopN(topN)
 	return p
