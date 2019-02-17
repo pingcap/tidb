@@ -195,3 +195,10 @@ id	count	task	operator info
 Point_Get_1	1.00	root	table:index_prune, index:a b
 drop table if exists t1, t2, t3, index_prune;
 set @@session.tidb_opt_insubq_to_join_and_agg=1;
+drop table if exists tbl;
+create table tbl(column1 int, column2 int, index idx(column1, column2));
+load stats 's/explain_easy_stats_tbl_dnf.json';
+explain select * from tbl where (column1=0 and column2=1) or (column1=1 and column2=3) or (column1=2 and column2=5);
+id	count	task	operator info
+IndexReader_9	3.00	root	index:IndexScan_8
+└─IndexScan_8	3.00	cop	table:tbl, index:column1, column2, range:[0 1,0 1], [1 3,1 3], [2 5,2 5], keep order:false
