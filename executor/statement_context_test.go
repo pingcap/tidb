@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -28,7 +29,7 @@ const (
 	nonStrictModeSQL = "set sql_mode = ''"
 )
 
-func (s *testSuite) TestStatementContext(c *C) {
+func (s *testSuite1) TestStatementContext(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table sc (a int)")
@@ -81,4 +82,29 @@ func (s *testSuite) TestStatementContext(c *C) {
 	tk.MustExec("set @@tidb_skip_utf8_check = '0'")
 	runeErrStr := string(utf8.RuneError)
 	tk.MustExec(fmt.Sprintf("insert sc2 values ('%s')", runeErrStr))
+
+	// Test non-BMP characters.
+	tk.MustExec(nonStrictModeSQL)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a varchar(100) charset utf8);")
+	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
+	tk.MustQuery("select * from t1").Check(testkit.Rows(""))
+	tk.MustExec("insert t1 values (unhex('4040f09f8c80'))")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Greater, uint16(0))
+	tk.MustQuery("select * from t1").Check(testkit.Rows("", "@@"))
+	tk.MustQuery("select length(a) from t1").Check(testkit.Rows("0", "2"))
+	tk.MustExec(strictModeSQL)
+	_, err = tk.Exec("insert t1 values (unhex('f09f8c80'))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
+	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncateWrongValue), IsTrue, Commentf("err %v", err))
+	config.GetGlobalConfig().CheckMb4ValueInUtf8 = false
+	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
+	config.GetGlobalConfig().CheckMb4ValueInUtf8 = true
+	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
+	c.Assert(err, NotNil)
 }

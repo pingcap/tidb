@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 )
 
 type simpleRewriter struct {
@@ -37,9 +38,12 @@ type simpleRewriter struct {
 // The expression string must only reference the column in table Info.
 func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, err := parser.New().Parse(exprStr, "", "")
+	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
 	if err != nil {
-		return nil, err
+		return nil, util.SyntaxError(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr)
@@ -72,9 +76,12 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 // The expression string must only reference the column in the given schema.
 func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, err := parser.New().Parse(exprStr, "", "")
+	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
 	if err != nil {
-		return nil, err
+		return nil, util.SyntaxWarn(err)
 	}
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	exprs := make([]Expression, 0, len(fields))

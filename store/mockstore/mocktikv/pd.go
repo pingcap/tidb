@@ -47,11 +47,6 @@ func (c *pdClient) GetClusterID(ctx context.Context) uint64 {
 }
 
 func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
-	// gofail: var mockGetTSFail bool
-	// if mockGetTSFail {
-	// 	return 0, 0, errors.New("mock get timestamp fail")
-	// }
-
 	tsMu.Lock()
 	defer tsMu.Unlock()
 
@@ -83,8 +78,9 @@ func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *
 	return region, peer, nil
 }
 
-func (c *pdClient) GetPrevRegion(context.Context, []byte) (*metapb.Region, *metapb.Peer, error) {
-	panic("unimplemented")
+func (c *pdClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+	region, peer := c.cluster.GetPrevRegionByKey(key)
+	return region, peer, nil
 }
 
 func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {

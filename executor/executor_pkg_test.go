@@ -93,13 +93,13 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
-		err = e.Next(context.Background(), chk)
+		err = e.Next(context.Background(), chunk.NewRecordBatch(chk))
 		c.Assert(err, IsNil)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			c.Assert(row.GetUint64(0), Equals, p.ID)
 		}
 	}
-	err = e.Next(context.Background(), chk)
+	err = e.Next(context.Background(), chunk.NewRecordBatch(chk))
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows(), Equals, 0)
 	err = e.Close()
@@ -196,6 +196,11 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 			`"\0\b\n\r\t\Z\\\  \c\'\""`,
 			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
 		},
+		// Test mixed.
+		{
+			`"123",456,"\t7890",abcd`,
+			[]string{"123", "456", "\t7890", "abcd"},
+		},
 	}
 
 	ldInfo := LoadDataInfo{
@@ -212,7 +217,7 @@ func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
 	}
 
 	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 }
 
 func assertEqualStrings(c *C, got []field, expect []string) {

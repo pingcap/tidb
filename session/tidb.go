@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -46,9 +47,17 @@ type domainMap struct {
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	key := store.UUID()
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
+
+	// If this is the only domain instance, and the caller doesn't provide store.
+	if len(dm.domains) == 1 && store == nil {
+		for _, r := range dm.domains {
+			return r, nil
+		}
+	}
+
+	key := store.UUID()
 	d = dm.domains[key]
 	if d != nil {
 		return
@@ -124,7 +133,10 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	p := parser.New()
 	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
-	stmts, err := p.Parse(src, charset, collation)
+	stmts, warns, err := p.Parse(src, charset, collation)
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
 		return nil, errors.Trace(err)
@@ -139,6 +151,43 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 	return stmt, errors.Trace(err)
 }
 
+func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars, meetsErr error) error {
+	if meetsErr != nil {
+		if !sessVars.InTxn() {
+			log.Info("RollbackTxn for ddl/autocommit error.")
+			se.RollbackTxn(ctx)
+		}
+		return meetsErr
+	}
+
+	if !sessVars.InTxn() {
+		return se.CommitTxn(ctx)
+	}
+
+	return checkStmtLimit(ctx, sctx, se, sessVars)
+}
+
+func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars) error {
+	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
+	// So we limit the statement count in a transaction here.
+	var err error
+	history := GetHistory(sctx)
+	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
+		if !sessVars.BatchCommit {
+			se.RollbackTxn(ctx)
+			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
+				history.Count(), sctx.GetSessionVars().IsAutocommit())
+		}
+		err = se.NewTxn(ctx)
+		// The transaction does not committed yet, we need to keep it in transaction.
+		// The last history could not be "commit"/"rollback" statement.
+		// It means it is impossible to start a new transaction at the end of the transaction.
+		// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
+		se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	}
+	return err
+}
+
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (sqlexec.RecordSet, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -150,6 +199,10 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 	var err error
 	var rs sqlexec.RecordSet
 	se := sctx.(*session)
+	err = se.checkTxnAborted(s)
+	if err != nil {
+		return nil, err
+	}
 	rs, err = s.Exec(ctx)
 	sessVars := se.GetSessionVars()
 	// All the history should be added here.
@@ -158,41 +211,20 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		if err == nil {
 			GetHistory(sctx).Add(0, s, se.sessionVars.StmtCtx)
 		}
-		if sctx.Txn(false).Valid() {
-			if err != nil {
-				sctx.StmtRollback()
-			} else {
-				sctx.StmtCommit()
+		if txn, err1 := sctx.Txn(false); err1 == nil {
+			if txn.Valid() {
+				if err != nil {
+					sctx.StmtRollback()
+				} else {
+					err = sctx.StmtCommit()
+				}
 			}
-		}
-	}
-	if !sessVars.InTxn() {
-		if err != nil {
-			log.Info("RollbackTxn for ddl/autocommit error.")
-			err1 := se.RollbackTxn(ctx)
-			terror.Log(errors.Trace(err1))
 		} else {
-			err = se.CommitTxn(ctx)
-		}
-	} else {
-		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
-		// So we limit the statement count in a transaction here.
-		history := GetHistory(sctx)
-		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
-			if !sessVars.BatchCommit {
-				err1 := se.RollbackTxn(ctx)
-				terror.Log(errors.Trace(err1))
-				return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-					history.Count(), sctx.GetSessionVars().IsAutocommit())
-			}
-			err = se.NewTxn(ctx)
-			// The transaction does not committed yet, we need to keep it in transaction.
-			// The last history could not be "commit"/"rollback" statement.
-			// It means it is impossible to start a new transaction at the end of the transaction.
-			// Because after the server executed "commit"/"rollback" statement, the session is out of the transaction.
-			se.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+			log.Error(err1)
 		}
 	}
+
+	err = finishStmt(ctx, sctx, se, sessVars, err)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
@@ -224,23 +256,23 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		return nil, nil
 	}
 	var rows []chunk.Row
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for {
 		// Since we collect all the rows, we can not reuse the chunk.
-		iter := chunk.NewIterator4Chunk(chk)
+		iter := chunk.NewIterator4Chunk(req.Chunk)
 
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
 }

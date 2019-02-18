@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -123,7 +124,8 @@ func truncateTrailingSpaces(v *types.Datum) {
 		length--
 	}
 	b = b[:length]
-	v.SetString(hack.String(b))
+	str := string(hack.String(b))
+	v.SetString(str)
 }
 
 // CastValues casts values based on columns type.
@@ -143,6 +145,16 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 		rec[c.Offset] = converted
 	}
 	return nil
+}
+
+func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	err := ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
+	log.Errorf("con:%d %v", ctx.GetSessionVars().ConnectionID, err)
+	// Truncate to valid utf8 string.
+	truncateVal := types.NewStringDatum(str[:i])
+	err = sc.HandleTruncate(err)
+	return truncateVal, err
 }
 
 // CastValue casts a value based on column type.
@@ -166,18 +178,22 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		return casted, nil
 	}
 	str := casted.GetString()
-	for i, r := range str {
-		if r == utf8.RuneError {
+	utf8Charset := col.Charset == mysql.UTF8Charset
+	for i, w := 0, 0; i < len(str); i += w {
+		runeValue, width := utf8.DecodeRuneInString(str[i:])
+		if runeValue == utf8.RuneError {
 			if strings.HasPrefix(str[i:], string(utf8.RuneError)) {
+				w = width
 				continue
 			}
-			err = ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-			log.Errorf("con:%d %v", ctx.GetSessionVars().ConnectionID, err)
-			// Truncate to valid utf8 string.
-			casted = types.NewStringDatum(str[:i])
-			err = sc.HandleTruncate(err)
+			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
+			break
+		} else if width > 3 && utf8Charset && config.GetGlobalConfig().CheckMb4ValueInUtf8 {
+			// Handle non-BMP characters.
+			casted, err = handleWrongUtf8Value(ctx, col, &casted, str, i)
 			break
 		}
+		w = width
 	}
 
 	return casted, errors.Trace(err)
@@ -376,7 +392,7 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 		sc.AppendWarning(ErrColumnCantNull.GenWithStackByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	return types.Datum{}, ErrNoDefaultValue.GenWithStack("Field '%s' doesn't have a default value", col.Name)
+	return types.Datum{}, ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 }
 
 // GetZeroValue gets zero value for given column type.

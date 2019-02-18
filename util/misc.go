@@ -15,9 +15,11 @@ package util
 
 import (
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -26,6 +28,8 @@ const (
 	DefaultMaxRetries = 30
 	// RetryInterval indicates retry interval.
 	RetryInterval uint64 = 500
+	// GCTimeFormat is the format that gc_worker used to store times.
+	GCTimeFormat = "20060102-15:04:05 -0700"
 )
 
 // RunWithRetry will run the f with backoff and retry.
@@ -71,4 +75,46 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 		}
 	}()
 	exec()
+}
+
+// CompatibleParseGCTime parses a string with `GCTimeFormat` and returns a time.Time. If `value` can't be parsed as that
+// format, truncate to last space and try again. This function is only useful when loading times that saved by
+// gc_worker. We have changed the format that gc_worker saves time (removed the last field), but when loading times it
+// should be compatible with the old format.
+func CompatibleParseGCTime(value string) (time.Time, error) {
+	t, err := time.Parse(GCTimeFormat, value)
+
+	if err != nil {
+		// Remove the last field that separated by space
+		parts := strings.Split(value, " ")
+		prefix := strings.Join(parts[:len(parts)-1], " ")
+		t, err = time.Parse(GCTimeFormat, prefix)
+	}
+
+	if err != nil {
+		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\"", value, GCTimeFormat)
+	}
+	return t, err
+}
+
+const (
+	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
+	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
+)
+
+// SyntaxError converts parser error to TiDB's syntax error.
+func SyntaxError(err error) error {
+	if err == nil {
+		return nil
+	}
+	log.Errorf("%+v", err)
+	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+}
+
+// SyntaxWarn converts parser warn to TiDB's syntax warn.
+func SyntaxWarn(err error) error {
+	if err == nil {
+		return nil
+	}
+	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }

@@ -466,7 +466,7 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 }
 
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
-func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) HistColl {
+func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64)
 	colNames2UniqueID := make(map[string]int64)
@@ -506,7 +506,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 		newIdxHistMap[idxHist.ID] = idxHist
 		idx2Columns[idxHist.ID] = ids
 	}
-	newColl := HistColl{
+	newColl := &HistColl{
 		PhysicalID:     coll.PhysicalID,
 		HavePhysicalID: coll.HavePhysicalID,
 		Pseudo:         coll.Pseudo,
@@ -534,7 +534,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			totalCount += count
 			continue
 		}
-		selectivity := 1.0
+		var selectivity float64
 		// use CM Sketch to estimate the equal conditions
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
@@ -660,8 +660,7 @@ func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount
 		} else if ran.LowVal[colIdx].Kind() == types.KindMinNotNull {
-			var nullCount float64
-			nullCount = tableRowCount / pseudoEqualRate
+			nullCount := tableRowCount / pseudoEqualRate
 			if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 				rowCount += tableRowCount - nullCount
 			} else if err == nil {

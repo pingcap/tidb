@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/rowDecoder"
+	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -89,6 +89,16 @@ func isJobRollbackable(job *model.Job, id int64) error {
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
 		if job.SchemaState == model.StateDeleteOnly ||
 			job.SchemaState == model.StateDeleteReorganization {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
+	case model.ActionDropColumn:
+		if job.SchemaState != model.StateNone {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
+	case model.ActionDropSchema, model.ActionDropTable:
+		// To simplify the rollback logic, cannot be canceled in the following states.
+		if job.SchemaState == model.StateWriteOnly ||
+			job.SchemaState == model.StateDeleteOnly {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
 	}
@@ -430,8 +440,8 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.Flag) {
-					return false, errors.New("Miss")
+				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
 				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
@@ -637,8 +647,8 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 		ri, ok := rowMap[col.ID]
 		if !ok {
-			if mysql.HasNotNullFlag(col.Flag) {
-				return nil, errors.New("Miss")
+			if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+				return nil, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h)
 			}
 			// NULL value is regarded as its default value.
 			colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())

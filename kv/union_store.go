@@ -221,7 +221,7 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 				return errors.Trace(v.err)
 			}
 		} else {
-			if bytes.Compare(values[k], v.value) != 0 {
+			if !bytes.Equal(values[k], v.value) {
 				return errors.Trace(ErrLazyConditionPairsNotMatch)
 			}
 		}

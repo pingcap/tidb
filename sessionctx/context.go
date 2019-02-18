@@ -37,7 +37,7 @@ type Context interface {
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
 	// to become valid.
-	Txn(active bool) kv.Transaction
+	Txn(active bool) (kv.Transaction, error)
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
@@ -74,7 +74,7 @@ type Context interface {
 	StoreQueryFeedback(feedback interface{})
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit()
+	StmtCommit() error
 	// StmtRollback provides statement level rollback.
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.

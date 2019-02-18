@@ -359,14 +359,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     "a LIKE 'abc'",
-			accessConds: "[like(test.t.a, abc, 92)]",
+			accessConds: "[eq(test.t.a, abc)]",
 			filterConds: "[]",
 			resultStr:   "[[\"abc\",\"abc\"]]",
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "ab\_c"`,
-			accessConds: "[like(test.t.a, ab\\_c, 92)]",
+			accessConds: "[eq(test.t.a, ab_c)]",
 			filterConds: "[]",
 			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
 		},
@@ -380,14 +380,14 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE '\%a'`,
-			accessConds: "[like(test.t.a, \\%a, 92)]",
+			accessConds: "[eq(test.t.a, %a)]",
 			filterConds: "[]",
 			resultStr:   `[["%a","%a"]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a LIKE "\\"`,
-			accessConds: "[like(test.t.a, \\, 92)]",
+			accessConds: "[eq(test.t.a, \\)]",
 			filterConds: "[]",
 			resultStr:   "[[\"\\\",\"\\\"]]",
 		},
@@ -545,6 +545,34 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			filterConds: "[eq(test.t.e, 你好啊)]",
 			resultStr:   "[[\"[228 189]\",\"[228 189]\"]]",
 		},
+		{
+			indexPos:    2,
+			exprStr:     `d in ("你好啊")`,
+			accessConds: "[in(test.t.d, 你好啊)]",
+			filterConds: "[in(test.t.d, 你好啊)]",
+			resultStr:   "[[\"你好\",\"你好\"]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d not in ("你好啊")`,
+			accessConds: "[not(in(test.t.d, 你好啊))]",
+			filterConds: "[not(in(test.t.d, 你好啊))]",
+			resultStr:   "[(NULL,+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d < "你好" || d > "你好"`,
+			accessConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
+			filterConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
+			resultStr:   "[[-inf,\"你好\") (\"你好\",+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `not(d < "你好" || d > "你好")`,
+			accessConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
+			filterConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
+			resultStr:   "[[\"你好\",\"你好\"]]",
+		},
 	}
 
 	for _, tt := range tests {
@@ -567,11 +595,11 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", ranges)
+		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }
@@ -654,11 +682,11 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", ranges)
+		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }

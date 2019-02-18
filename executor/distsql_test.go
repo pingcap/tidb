@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"runtime/pprof"
 	"strings"
-	"sync/atomic"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -31,40 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-// TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
-// leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
-func (s *testSuite) TestIndexDoubleReadClose(c *C) {
-	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
-		// Make sure the store is tikv store.
-		return
-	}
-	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
-	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_index_lookup_size = '10'")
-	tk.MustExec("use test")
-	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
-
-	// Insert 100 rows.
-	var values []string
-	for i := 0; i < 100; i++ {
-		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i, i))
-	}
-	tk.MustExec("insert dist values " + strings.Join(values, ","))
-
-	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
-	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
-	c.Assert(err, IsNil)
-	c.Assert(err, IsNil)
-	keyword := "pickAndExecTask"
-	rs.Close()
-	time.Sleep(time.Millisecond * 50)
-	c.Check(checkGoroutineExists(keyword), IsFalse)
-	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
-}
-
 func checkGoroutineExists(keyword string) bool {
 	buf := new(bytes.Buffer)
 	profile := pprof.Lookup("goroutine")
@@ -73,7 +37,7 @@ func checkGoroutineExists(keyword string) bool {
 	return strings.Contains(str, keyword)
 }
 
-func (s *testSuite) TestCopClientSend(c *C) {
+func (s *testSuite3) TestCopClientSend(c *C) {
 	c.Skip("not stable")
 	if _, ok := s.store.GetClient().(*tikv.CopClient); !ok {
 		// Make sure the store is tikv store.
@@ -104,11 +68,11 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Send coprocessor request when the table split.
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	defer rs.Close()
-	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
+	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
+	rs.Close()
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
@@ -119,24 +83,24 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Check again.
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req = rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
+	c.Assert(req.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
 
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req = rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 }
 
-func (s *testSuite) TestGetLackHandles(c *C) {
+func (s *testSuite3) TestGetLackHandles(c *C) {
 	expectedHandles := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
 	handlesMap := make(map[int64]struct{})
 	for _, h := range expectedHandles {
@@ -160,7 +124,7 @@ func (s *testSuite) TestGetLackHandles(c *C) {
 	c.Assert(retHandles, DeepEquals, diffHandles)
 }
 
-func (s *testSuite) TestBigIntPK(c *C) {
+func (s *testSuite3) TestBigIntPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b))")
@@ -168,7 +132,7 @@ func (s *testSuite) TestBigIntPK(c *C) {
 	tk.MustQuery("select * from t use index(idx) order by a").Check(testkit.Rows("1 1 1", "9223372036854775807 2 2"))
 }
 
-func (s *testSuite) TestCorColToRanges(c *C) {
+func (s *testSuite3) TestCorColToRanges(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only-full-group-by
@@ -184,7 +148,7 @@ func (s *testSuite) TestCorColToRanges(c *C) {
 	tk.MustQuery("select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t").Check(testkit.Rows("1", "0", "0", "0", "0", "0", "0", "0", "0"))
 }
 
-func (s *testSuite) TestUniqueKeyNullValueSelect(c *C) {
+func (s *testSuite3) TestUniqueKeyNullValueSelect(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

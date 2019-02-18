@@ -60,8 +60,8 @@ type CheckIndexRangeExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	handleIdx := e.schema.Len() - 1
 	for {
 		err := e.result.Next(ctx, e.srcChunk)
@@ -76,12 +76,12 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 			handle := row.GetInt64(handleIdx)
 			for _, hr := range e.handleRanges {
 				if handle >= hr.Begin && handle < hr.End {
-					chk.AppendRow(row)
+					req.AppendRow(row)
 					break
 				}
 			}
 		}
-		if chk.NumRows() > 0 {
+		if req.NumRows() > 0 {
 			return nil
 		}
 	}
@@ -114,6 +114,9 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retFieldTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
@@ -125,7 +128,11 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 
 func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = e.ctx.Txn(true).StartTS()
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	dagReq.StartTs = txn.StartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
@@ -135,7 +142,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
 
-	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
+	err = plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -259,6 +266,9 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	// Actually, with limitCnt, the match datas maybe only in one region, so let the concurrency to be 1,
 	// avoid unnecessary region scan.
@@ -434,8 +444,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 }
 
 // Next implements the Executor Next interface.
-func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
@@ -445,8 +455,8 @@ func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	chk.AppendInt64(0, totalAddedCnt)
-	chk.AppendInt64(1, totalScanCnt)
+	req.AppendInt64(0, totalAddedCnt)
+	req.AppendInt64(1, totalScanCnt)
 	e.done = true
 	return nil
 }
@@ -570,8 +580,8 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 }
 
 // Next implements the Executor Next interface.
-func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
@@ -604,7 +614,7 @@ func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 	e.done = true
-	chk.AppendUint64(0, e.removeCnt)
+	req.AppendUint64(0, e.removeCnt)
 	return nil
 }
 
@@ -621,6 +631,10 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 		SetKeepOrder(true).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	kvReq.KeyRanges[0].StartKey = kv.Key(e.lastIdxKey).PrefixNext()
 	kvReq.Concurrency = 1
 	result, err := distsql.Select(ctx, e.ctx, kvReq, e.getIdxColTypes(), statistics.NewQueryFeedback(0, nil, 0, false))

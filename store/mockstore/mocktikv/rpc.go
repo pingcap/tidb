@@ -101,15 +101,15 @@ type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore MVCCStore
 
-	// store id for current request
+	// storeID stores id for current request
 	storeID uint64
-	// Used for handling normal request.
+	// startKey is used for handling normal request.
 	startKey []byte
 	endKey   []byte
-	// Used for handling coprocessor request.
+	// rawStartKey is used for handling coprocessor request.
 	rawStartKey []byte
 	rawEndKey   []byte
-	// Used for current request.
+	// isolationLevel is used for current request.
 	isolationLevel kvrpcpb.IsolationLevel
 }
 
@@ -475,7 +475,30 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 			},
 		}
 	}
-	pairs := rawKV.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
+
+	var pairs []Pair
+	if req.Reverse {
+		lowerBound := h.startKey
+		if bytes.Compare(req.EndKey, lowerBound) > 0 {
+			lowerBound = req.EndKey
+		}
+		pairs = rawKV.RawReverseScan(
+			req.StartKey,
+			lowerBound,
+			int(req.GetLimit()),
+		)
+	} else {
+		upperBound := h.endKey
+		if len(req.EndKey) > 0 && (len(upperBound) == 0 || bytes.Compare(req.EndKey, upperBound) < 0) {
+			upperBound = req.EndKey
+		}
+		pairs = rawKV.RawScan(
+			req.StartKey,
+			upperBound,
+			int(req.GetLimit()),
+		)
+	}
+
 	return &kvrpcpb.RawScanResponse{
 		Kvs: convertToPbPairs(pairs),
 	}

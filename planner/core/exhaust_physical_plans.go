@@ -88,11 +88,12 @@ func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Exp
 
 // Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *property.PhysicalProperty) ([]*property.PhysicalProperty, bool) {
-	lProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.LeftKeys, ExpectedCnt: math.MaxFloat64}
-	rProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.RightKeys, ExpectedCnt: math.MaxFloat64}
+	lProp := property.NewPhysicalProperty(property.RootTaskType, p.LeftKeys, false, math.MaxFloat64, false)
+	rProp := property.NewPhysicalProperty(property.RootTaskType, p.RightKeys, false, math.MaxFloat64, false)
 	if !prop.IsEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
-		if prop.Desc {
+		all, desc := prop.AllSameOrder()
+		if !all || desc {
 			return nil, false
 		}
 		if !prop.IsPrefix(lProp) && !prop.IsPrefix(rProp) {
@@ -175,39 +176,21 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 	return newKeys
 }
 
-// Change EqualConditions order, by offsets array
-// offsets array is generate by prop check
-func getNewEqualConditionsByOffsets(oldEqualCond []*expression.ScalarFunction, offsets []int) []*expression.ScalarFunction {
-	newEqualCond := make([]*expression.ScalarFunction, 0, len(oldEqualCond))
-	for _, offset := range offsets {
-		newEqualCond = append(newEqualCond, oldEqualCond[offset])
-	}
-	for pos, condition := range oldEqualCond {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
-		if !isExist {
-			newEqualCond = append(newEqualCond, condition)
-		}
-	}
-	return newEqualCond
-}
-
 func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
 	// Check whether SMJ can satisfy the required property
 	offsets := make([]int, 0, len(p.LeftJoinKeys))
-	for _, col := range prop.Cols {
+	all, desc := prop.AllSameOrder()
+	if !all {
+		return nil
+	}
+	for _, item := range prop.Items {
 		isExist := false
 		for joinKeyPos := 0; joinKeyPos < len(p.LeftJoinKeys); joinKeyPos++ {
 			var key *expression.Column
-			if col.Equal(p.ctx, p.LeftJoinKeys[joinKeyPos]) {
+			if item.Col.Equal(p.ctx, p.LeftJoinKeys[joinKeyPos]) {
 				key = p.LeftJoinKeys[joinKeyPos]
 			}
-			if col.Equal(p.ctx, p.RightJoinKeys[joinKeyPos]) {
+			if item.Col.Equal(p.ctx, p.RightJoinKeys[joinKeyPos]) {
 				key = p.RightJoinKeys[joinKeyPos]
 			}
 			if key == nil {
@@ -232,8 +215,8 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 	// Generate the enforced sort merge join
 	leftKeys := getNewJoinKeysByOffsets(p.LeftJoinKeys, offsets)
 	rightKeys := getNewJoinKeysByOffsets(p.RightJoinKeys, offsets)
-	lProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: leftKeys, ExpectedCnt: math.MaxFloat64, Enforced: true, Desc: prop.Desc}
-	rProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: rightKeys, ExpectedCnt: math.MaxFloat64, Enforced: true, Desc: prop.Desc}
+	lProp := property.NewPhysicalProperty(property.RootTaskType, leftKeys, desc, math.MaxFloat64, true)
+	rProp := property.NewPhysicalProperty(property.RootTaskType, rightKeys, desc, math.MaxFloat64, true)
 	enforcedPhysicalMergeJoin := PhysicalMergeJoin{
 		JoinType:        p.JoinType,
 		LeftConditions:  p.LeftConditions,
@@ -317,12 +300,13 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, innerJ
 	innerPlan PhysicalPlan, ranges []*ranger.Range, keyOff2IdxOff []int, compareFilters *ColWithCompareOps) []PhysicalPlan {
 	joinType := p.JoinType
 	outerSchema := p.children[outerIdx].Schema()
+	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
-	if !prop.AllColsFromSchema(outerSchema) {
+	if !prop.AllColsFromSchema(outerSchema) || !all {
 		return nil
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
-	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt, Cols: prop.Cols, Desc: prop.Desc}
+	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt, Items: prop.Items}
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
 	newKeyOff := make([]int, 0, len(keyOff2IdxOff))
@@ -378,7 +362,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		return nil
 	}
 	if isUnionScan {
-		ds = us.Children()[0].(*DataSource)
+		// The child of union scan may be union all for partition table.
+		ds, isDataSource = us.Children()[0].(*DataSource)
+		if !isDataSource {
+			return nil
+		}
 	}
 	var tblPath *accessPath
 	for _, path := range ds.possibleAccessPaths {
@@ -488,7 +476,7 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 	var rowCount float64
 	pkHist, ok := ds.statisticTable.Columns[pk.ID]
 	if ok && !ds.statisticTable.Pseudo {
-		rowCount = pkHist.AvgCountPerValue(ds.statisticTable.Count)
+		rowCount = pkHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 	} else {
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
@@ -536,7 +524,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	var rowCount float64
 	idxHist, ok := ds.statisticTable.Indices[idx.ID]
 	if ok && !ds.statisticTable.Pseudo {
-		rowCount = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+		rowCount = idxHist.AvgCountPerNotNullValue(ds.statisticTable.Count)
 	} else {
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
@@ -627,10 +615,14 @@ func (cwc *ColWithCompareOps) BuildRangesByRow(ctx sessionctx.Context, row chunk
 	return ranges, nil
 }
 
-func (cwc *ColWithCompareOps) resolveIndices(schema *expression.Schema) {
+func (cwc *ColWithCompareOps) resolveIndices(schema *expression.Schema) (err error) {
 	for i := range cwc.opArg {
-		cwc.opArg[i] = cwc.opArg[i].ResolveIndices(schema)
+		cwc.opArg[i], err = cwc.opArg[i].ResolveIndices(schema)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (cwc *ColWithCompareOps) String() string {
@@ -859,12 +851,16 @@ func (p *LogicalJoin) buildTemplateRange(idxOff2KeyOff []int, matchedKeyCnt int,
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
 // will be true, which means we force to choose this index join. Otherwise we will select a join algorithm with min-cost.
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	if len(p.EqualConditions) == 0 {
-		return nil, false
-	}
 	plans := make([]PhysicalPlan, 0, 2)
 	rightOuter := (p.preferJoinType & preferLeftAsIndexInner) > 0
 	leftOuter := (p.preferJoinType & preferRightAsIndexInner) > 0
+	if len(p.EqualConditions) == 0 {
+		if leftOuter || rightOuter {
+			warning := ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		}
+		return nil, false
+	}
 	switch p.JoinType {
 	case SemiJoin, AntiSemiJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin, LeftOuterJoin:
 		join := p.getIndexJoinByOuterIdx(prop, 0)
@@ -943,18 +939,17 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) []Ph
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *LogicalProjection) tryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
 	newProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: prop.ExpectedCnt}
-	newCols := make([]*expression.Column, 0, len(prop.Cols))
-	for _, col := range prop.Cols {
-		idx := p.schema.ColumnIndex(col)
+	newCols := make([]property.Item, 0, len(prop.Items))
+	for _, col := range prop.Items {
+		idx := p.schema.ColumnIndex(col.Col)
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
-			newCols = append(newCols, expr)
+			newCols = append(newCols, property.Item{Col: expr, Desc: col.Desc})
 		case *expression.ScalarFunction:
 			return nil, false
 		}
 	}
-	newProp.Cols = newCols
-	newProp.Desc = prop.Desc
+	newProp.Items = newCols
 	return newProp, true
 }
 
@@ -993,7 +988,7 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	}
 	ret := make([]PhysicalPlan, 0, 3)
 	for _, tp := range wholeTaskTypes {
-		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), Cols: prop.Cols, Desc: prop.Desc}
+		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), Items: prop.Items}
 		limit := PhysicalLimit{
 			Count:  lt.Count,
 			Offset: lt.Offset,
@@ -1005,12 +1000,12 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 
 // Check if this prop's columns can match by items totally.
 func matchItems(p *property.PhysicalProperty, items []*ByItems) bool {
-	if len(items) < len(p.Cols) {
+	if len(items) < len(p.Items) {
 		return false
 	}
-	for i, col := range p.Cols {
+	for i, col := range p.Items {
 		sortItem := items[i]
-		if sortItem.Desc != p.Desc || !sortItem.Expr.Equal(nil, col) {
+		if sortItem.Desc != col.Desc || !sortItem.Expr.Equal(nil, col.Col) {
 			return false
 		}
 	}
@@ -1034,10 +1029,28 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		rightChOffset: la.children[0].Schema().Len(),
 	}.Init(la.ctx,
 		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
-		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Cols: prop.Cols, Desc: prop.Desc},
+		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: prop.Items},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	apply.SetSchema(la.schema)
 	return []PhysicalPlan{apply}
+}
+
+func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
+	var byItems []property.Item
+	byItems = append(byItems, p.PartitionBy...)
+	byItems = append(byItems, p.OrderBy...)
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: true}
+	if !prop.IsPrefix(childProperty) {
+		return nil
+	}
+	window := PhysicalWindow{
+		WindowFuncDesc: p.WindowFuncDesc,
+		PartitionBy:    p.PartitionBy,
+		OrderBy:        p.OrderBy,
+		Frame:          p.Frame,
+	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
+	window.SetSchema(p.Schema())
+	return []PhysicalPlan{window}
 }
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
@@ -1046,7 +1059,8 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) []P
 }
 
 func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
-	if len(la.possibleProperties) == 0 {
+	all, desc := prop.AllSameOrder()
+	if len(la.possibleProperties) == 0 || !all {
 		return nil
 	}
 	for _, aggFunc := range la.AggFuncs {
@@ -1061,7 +1075,6 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 
 	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
 	childProp := &property.PhysicalProperty{
-		Desc:        prop.Desc,
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
 
@@ -1071,7 +1084,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			continue
 		}
 
-		childProp.Cols = possibleChildProperty[:len(sortColOffsets)]
+		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(sortColOffsets)], desc)
 		if !prop.IsPrefix(childProp) {
 			continue
 		}
