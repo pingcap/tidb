@@ -1,56 +1,3 @@
-CREATE TABLE `pay_daily` (
-`id` varchar(50) NOT NULL DEFAULT '',
-`a_id` bigint(11) NOT NULL DEFAULT '0',
-`b_id` bigint(11) NOT NULL DEFAULT '0',
-`time_stamp` bigint(11) DEFAULT NULL,
-`date_key` int(20) DEFAULT NULL,
-`io_type` int(11) DEFAULT NULL,
-`update_source` int(11) DEFAULT NULL,
-`update_time` timestamp DEFAULT NULL,
-PRIMARY KEY (`id`, `a_id`, `b_id`),
-KEY `IDX_ID` (`a_id`, `b_id`, `time_stamp`),
-KEY `IDX_DK` (`date_key`),
-KEY `IDX_TENANT_POI_DATEKEY` (`a_id`, `b_id`, `date_key`),
-KEY `IDX_US` (`update_source`, `a_id`)
-);
-explain select id, a_id, b_id, time_stamp, date_key, update_source from pay_daily where a_id=12565 and b_id=159298363 and date_key=20180731;
-id	count	task	operator info
-IndexLookUp_18	0.00	root	
-├─IndexScan_16	0.00	cop	table:pay_daily, index:a_id, b_id, date_key, range:[12565 159298363 20180731,12565 159298363 20180731], keep order:false, stats:pseudo
-└─TableScan_17	0.00	cop	table:pay_daily, keep order:false, stats:pseudo
-explain select id from pay_daily where a_id=12565 and b_id=159298363 and time_stamp=10000;
-id	count	task	operator info
-Projection_4	0.00	root	test.pay_daily.id
-└─IndexLookUp_10	0.00	root	
-  ├─IndexScan_8	0.00	cop	table:pay_daily, index:a_id, b_id, time_stamp, range:[12565 159298363 10000,12565 159298363 10000], keep order:false, stats:pseudo
-  └─TableScan_9	0.00	cop	table:pay_daily, keep order:false, stats:pseudo
-explain select id from pay_daily where update_source>12565 and a_id<159298363;
-id	count	task	operator info
-Projection_4	1107.78	root	test.pay_daily.id
-└─IndexLookUp_19	1107.78	root	
-  ├─Selection_18	1107.78	cop	lt(test.pay_daily.a_id, 159298363)
-  │ └─IndexScan_16	3333.33	cop	table:pay_daily, index:update_source, a_id, range:(12565,+inf], keep order:false, stats:pseudo
-  └─TableScan_17	1107.78	cop	table:pay_daily, keep order:false
-explain select id from pay_daily where date_key>12565;
-id	count	task	operator info
-Projection_4	3333.33	root	test.pay_daily.id
-└─IndexLookUp_10	3333.33	root	
-  ├─IndexScan_8	3333.33	cop	table:pay_daily, index:date_key, range:(12565,+inf], keep order:false, stats:pseudo
-  └─TableScan_9	3333.33	cop	table:pay_daily, keep order:false, stats:pseudo
-explain select id from pay_daily where date_key>12565 and io_type=1;
-id	count	task	operator info
-Projection_4	3.33	root	test.pay_daily.id
-└─IndexLookUp_11	3.33	root	
-  ├─IndexScan_8	3333.33	cop	table:pay_daily, index:date_key, range:(12565,+inf], keep order:false, stats:pseudo
-  └─Selection_10	3.33	cop	eq(test.pay_daily.io_type, 1)
-    └─TableScan_9	3333.33	cop	table:pay_daily, keep order:false, stats:pseudo
-explain select id from pay_daily where date_key>12565 and a_id<159298363;
-id	count	task	operator info
-Projection_4	1107.78	root	test.pay_daily.id
-└─IndexLookUp_19	1107.78	root	
-  ├─Selection_18	1107.78	cop	gt(test.pay_daily.date_key, 12565)
-  │ └─IndexScan_16	3323.33	cop	table:pay_daily, index:a_id, b_id, date_key, range:[-inf,159298363), keep order:false, stats:pseudo
-  └─TableScan_17	1107.78	cop	table:pay_daily, keep order:false
 CREATE TABLE `access_path_selection` (
 `a` int,
 `b` int,
@@ -58,6 +5,10 @@ KEY `IDX_a` (`a`),
 KEY `IDX_b` (`b`),
 KEY `IDX_ab` (`a`, `b`)
 );
+explain select a from access_path_selection where a < 3;
+id	count	task	operator info
+IndexReader_9	3323.33	root	index:IndexScan_8
+└─IndexScan_8	3323.33	cop	table:access_path_selection, index:a, range:[-inf,3), keep order:false, stats:pseudo
 explain select a, b from access_path_selection where a < 3;
 id	count	task	operator info
 IndexReader_12	3323.33	root	index:IndexScan_11
