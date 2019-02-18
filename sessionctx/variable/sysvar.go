@@ -741,7 +741,7 @@ const (
 	InnodbLockWaitTimeout = "innodb_lock_wait_timeout"
 	// SQLLogBin is the name for 'sql_log_bin' system variable.
 	SQLLogBin = "sql_log_bin"
-	//LogBin is the name for 'log_bin' system variable.
+	// LogBin is the name for 'log_bin' system variable.
 	LogBin = "log_bin"
 	// MaxSortLength is the name for 'max_sort_length' system variable.
 	MaxSortLength = "max_sort_length"
