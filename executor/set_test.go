@@ -220,6 +220,16 @@ func (s *testSuite2) TestSetVar(c *C) {
 	tk.MustExec("COMMIT")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
+	tk.MustExec("set session log_bin = off;")
+	tk.MustQuery(`select @@session.log_bin;`).Check(testkit.Rows("OFF"))
+	tk.MustExec("set session log_bin = on;")
+	tk.MustQuery(`select @@session.log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set session log_bin = off;")
+	tk.MustExec("set global log_bin = OFF;")
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows("OFF"))
+	tk.MustExec("set global log_bin = on;")
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows("ON"))
+
 	tk.MustExec("set global avoid_temporal_upgrade = on")
 	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.avoid_temporal_upgrade = off")
