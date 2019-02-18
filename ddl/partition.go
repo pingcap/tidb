@@ -449,7 +449,7 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	// Checks that the partitioning key is included in the constraint.
 	// Every unique key on the table must use every column in the table's partitioning expression.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	for i, constraint := range constraints {
+	for _, constraint := range constraints {
 		switch constraint.Tp {
 		case ast.ConstraintPrimaryKey, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			uniKeys := make(map[string]struct{})
@@ -459,9 +459,8 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 			if !checkConstraintIncludePartKey(partCols, uniKeys) {
 				if constraint.Tp == ast.ConstraintUniq {
 					return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
-				} else {
-					return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 				}
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 		}
 	}
