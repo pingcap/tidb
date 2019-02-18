@@ -679,7 +679,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
-	{ScopeSession, TiDBForcePriority, config.GetGlobalConfig().Performance.ForcePriority},
+	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, boolToIntStr(DefTiDBUseRadixJoin)},
 }
 

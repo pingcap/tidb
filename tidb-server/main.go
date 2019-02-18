@@ -444,7 +444,10 @@ func setGlobalVars() {
 	}
 	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
-	variable.ForcePriority = int32(mysql.Str2Priority(cfg.Performance.ForcePriority))
+
+	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
+	variable.ForcePriority = int32(priority)
+	variable.SysVars[variable.TiDBForcePriority].Value = mysql.Priority2Str[priority]
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
