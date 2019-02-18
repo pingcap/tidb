@@ -101,9 +101,7 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		for i := len(topN.ByItems) - 1; i >= 0; i-- {
 			_, isConst := topN.ByItems[i].Expr.(*expression.Constant)
 			if isConst {
-				numItems := len(topN.ByItems)
-				copy(topN.ByItems[i:numItems-1], topN.ByItems[i+1:])
-				topN.ByItems = topN.ByItems[:numItems-1]
+				topN.ByItems = append(topN.ByItems[:i], topN.ByItems[i+1:])
 			}
 		}
 	}
