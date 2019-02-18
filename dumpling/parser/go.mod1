@@ -9,8 +9,8 @@ require (
 	github.com/cznic/y v0.0.0-20170802143616-045f81c6662a
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.0
-	github.com/pingcap/tidb v0.0.0-20190108123336-c68ee7318319
+	github.com/pingcap/tidb v0.0.0-20190218065808-69472bd1a6e9
 	github.com/pingcap/tipb v0.0.0-20190107072121-abbec73437b7
-	github.com/sirupsen/logrus v1.2.0
-	golang.org/x/text v0.3.0
+	github.com/sirupsen/logrus v1.3.0
+	golang.org/x/text v0.3.1-0.20180807135948-17ff2d5776d2
 )

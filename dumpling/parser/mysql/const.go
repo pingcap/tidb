@@ -16,6 +16,9 @@ package mysql
 import (
 	"fmt"
 	"strings"
+
+	. "github.com/pingcap/parser/format"
+	"github.com/pkg/errors"
 )
 
 func newInvalidModeErr(s string) error {
@@ -713,6 +716,23 @@ func Str2Priority(val string) PriorityEnum {
 	default:
 		return NoPriority
 	}
+}
+
+// Restore implements Node interface.
+func (n *PriorityEnum) Restore(ctx *RestoreCtx) error {
+	switch *n {
+	case NoPriority:
+		return nil
+	case LowPriority:
+		ctx.WriteKeyWord("LOW_PRIORITY")
+	case HighPriority:
+		ctx.WriteKeyWord("HIGH_PRIORITY")
+	case DelayedPriority:
+		ctx.WriteKeyWord("DELAYED")
+	default:
+		return errors.Errorf("undefined PriorityEnum Type[%d]", *n)
+	}
+	return nil
 }
 
 // PrimaryKeyName defines primary key name.
