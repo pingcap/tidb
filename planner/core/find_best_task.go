@@ -207,6 +207,10 @@ type candidatePath struct {
 
 // compareColumnSet will compares the two set. The last return value is used to indicate
 // if they are comparable, it is false when both two sets have columns that do not occur in the other.
+// When the second return value is true, the value of first:
+// (1) -1 means that `l` is a strict subset of `r`;
+// (2) 0 means that `l` equals to `r`;
+// (3) 1 means that `l` is a strict superset of `r`.
 func compareColumnSet(l, r *intsets.Sparse) (int, bool) {
 	lLen, rLen := l.Len(), r.Len()
 	if lLen <= rLen {
@@ -294,14 +298,12 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		var currentCandidate *candidatePath
 		if path.isTablePath {
 			currentCandidate = ds.getTableCandidate(path, prop)
-		} else {
+		} else if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced {
 			// We will use index to generate physical plan if:
 			// this path's access cond is not nil or
 			// we have prop to match or
 			// this index is forced to choose.
-			if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced {
-				currentCandidate = ds.getIndexCandidate(path, prop)
-			}
+			currentCandidate = ds.getIndexCandidate(path, prop)
 		}
 		if currentCandidate == nil {
 			continue
