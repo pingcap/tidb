@@ -108,13 +108,14 @@ func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
 
-// BoolToStatusStr converts bool to string,for example "ON" or "OFF"
 func boolToIntStr(b bool) string {
 	if b {
 		return "1"
 	}
 	return "0"
 }
+
+// BoolToStatusStr converts bool to string,for example "ON" or "OFF".
 func BoolToStatusStr(b bool) string {
 	if b {
 		return "ON"
