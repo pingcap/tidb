@@ -681,7 +681,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, boolToIntStr(DefTiDBUseRadixJoin)},
-	{ScopeSession, TiDBEnableCheckWrongUtf8Value, boolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8)},
+	{ScopeSession, TiDBCheckMb4ValueInUtf8, boolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
