@@ -732,7 +732,17 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				atomic.StoreUint32(&variable.DDLSlowOprThreshold, uint32(threshold))
 			}
 		}
-
+		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
+			switch checkMb4ValueInUtf8 {
+			case "0":
+				config.GetGlobalConfig().CheckMb4ValueInUtf8 = false
+			case "1":
+				config.GetGlobalConfig().CheckMb4ValueInUtf8 = true
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
