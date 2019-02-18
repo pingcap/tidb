@@ -431,56 +431,54 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 }
 
 // checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
-func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
+func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
 	// Returns directly if there is no constraint in the partition table.
 	// TODO: Remove the test 's.Partition.Expr == nil' when we support 'PARTITION BY RANGE COLUMNS'
 	if len(constraints) == 0 || s.Partition.Expr == nil {
 		return nil
 	}
 
-	// Extract the column names in table constraints to []map[string]struct{}.
-	consColNames := extractConstraintsColumnNames(constraints)
-
 	// Parse partitioning key, extract the column names in the partitioning key to slice.
 	buf := new(bytes.Buffer)
 	s.Partition.Expr.Format(buf)
-	var partkeys []string
-	e, err := expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
+	partCols, err := extractPartitionColumns(sctx, buf.String(), tblInfo)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	cols := expression.ExtractColumns(e)
-	for _, col := range cols {
-		partkeys = append(partkeys, col.ColName.L)
+		return err
 	}
 
 	// Checks that the partitioning key is included in the constraint.
-	for _, con := range consColNames {
-		// Every unique key on the table must use every column in the table's partitioning expression.
-		// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
-		if !checkConstraintIncludePartKey(partkeys, con) {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(primarykey)
+	// Every unique key on the table must use every column in the table's partitioning expression.
+	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
+	for i, constraint := range constraints {
+		switch constraint.Tp {
+		case ast.ConstraintPrimaryKey, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
+			uniKeys := make(map[string]struct{})
+			for _, key := range constraint.Keys {
+				uniKeys[key.Column.Name.L] = struct{}{}
+			}
+			if !checkConstraintIncludePartKey(partCols, uniKeys) {
+				if constraint.Tp == ast.ConstraintUniq {
+					return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+				} else {
+					return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+				}
+			}
 		}
 	}
 	return nil
 }
 
-// extractConstraintsColumnNames extract the column names in table constraints to []map[string]struct{}.
-func extractConstraintsColumnNames(cons []*ast.Constraint) []map[string]struct{} {
-	var constraints []map[string]struct{}
-	for _, v := range cons {
-		if v.Tp == ast.ConstraintUniq || v.Tp == ast.ConstraintPrimaryKey {
-			uniKeys := make(map[string]struct{})
-			for _, key := range v.Keys {
-				uniKeys[key.Column.Name.L] = struct{}{}
-			}
-			// Extract every unique key and primary key.
-			if len(uniKeys) != 0 {
-				constraints = append(constraints, uniKeys)
-			}
-		}
+func extractPartitionColumns(sctx sessionctx.Context, partExpr string, tblInfo *model.TableInfo) ([]string, error) {
+	e, err := expression.ParseSimpleExprWithTableInfo(sctx, partExpr, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	return constraints
+	cols := expression.ExtractColumns(e)
+	partCols := make([]string, 0, len(cols))
+	for _, col := range cols {
+		partCols = append(partCols, col.ColName.L)
+	}
+	return partCols, nil
 }
 
 // checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
