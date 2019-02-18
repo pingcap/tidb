@@ -517,8 +517,8 @@ func extractPartitionColumns(sctx sessionctx.Context, partExpr string, tblInfo *
 }
 
 // checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
-func checkConstraintIncludePartKey(partCols []string, constraints map[string]struct{}) bool {
-	for _, pk := range partCols {
+func checkConstraintIncludePartKey(partkeys []string, constraints map[string]struct{}) bool {
+	for _, pk := range partkeys {
 		if _, ok := constraints[pk]; !ok {
 			return false
 		}
