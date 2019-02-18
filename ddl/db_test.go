@@ -2369,4 +2369,11 @@ func (s *testDBSuite) TestIssue9100(c *C) {
 	tk.MustExec("create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));")
 	_, err := tk.Exec("alter table employ add unique index  p_a (a);")
 	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+
+	tk.MustExec("create table t1 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col2)) partition by range( col1 ) (partition p1 values less than (11))")
+	tk.MustExec("alter table t1 add unique index  p_col1 (col1)")
+
+	tk.MustExec("create table t2 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col3)) partition by range( col1 + col3 ) (partition p1 values less than (11))")
+	_, err = tk.Exec("alter table t2 add unique index  p_col1 (col1)")
+	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 }
