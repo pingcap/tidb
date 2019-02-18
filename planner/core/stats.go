@@ -349,7 +349,10 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 		keyNdv := math.Min(leftChild.statsInfo().Cardinality[lPos], rightChild.statsInfo().Cardinality[rPos])
 		ndv *= keyNdv
 	}
-	count := leftProfile.RowCount / leftNdv * rightProfile.RowCount / rightNdv * ndv
+	var count float64 = 0
+	if leftNdv != 0 || rightNdv != 0 {
+		count = leftProfile.RowCount / leftNdv * rightProfile.RowCount / rightNdv * ndv
+	}
 
 	// Update left column map in `HistColl`.
 	for uniqID, colHist := range leftProfile.HistColl.Columns {
