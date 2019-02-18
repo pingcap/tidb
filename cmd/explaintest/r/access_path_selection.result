@@ -1,0 +1,61 @@
+CREATE TABLE `access_path_selection` (
+`a` int,
+`b` int,
+KEY `IDX_a` (`a`),
+KEY `IDX_b` (`b`),
+KEY `IDX_ab` (`a`, `b`)
+);
+explain select a from access_path_selection where a < 3;
+id	count	task	operator info
+IndexReader_9	3323.33	root	index:IndexScan_8
+└─IndexScan_8	3323.33	cop	table:access_path_selection, index:a, range:[-inf,3), keep order:false, stats:pseudo
+explain select a, b from access_path_selection where a < 3;
+id	count	task	operator info
+IndexReader_12	3323.33	root	index:IndexScan_11
+└─IndexScan_11	3323.33	cop	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+explain select a, b from access_path_selection where b < 3;
+id	count	task	operator info
+IndexLookUp_10	3323.33	root	
+├─IndexScan_8	3323.33	cop	table:access_path_selection, index:b, range:[-inf,3), keep order:false, stats:pseudo
+└─TableScan_9	3323.33	cop	table:access_path_selection, keep order:false, stats:pseudo
+explain select a, b from access_path_selection where a < 3 and b < 3;
+id	count	task	operator info
+IndexReader_18	1104.45	root	index:Selection_17
+└─Selection_17	1104.45	cop	lt(test.access_path_selection.b, 3)
+  └─IndexScan_16	3323.33	cop	table:access_path_selection, index:a, b, range:[-inf,3), keep order:false, stats:pseudo
+CREATE TABLE `outdated_statistics` (
+`a` int,
+`b` int,
+`c` int,
+INDEX idx_a(a),
+INDEX idx_ab(a,b)
+);
+insert into outdated_statistics values (2, 2, 2);
+insert into outdated_statistics values (3, 3, 3);
+insert into outdated_statistics values (4, 4, 4);
+analyze table outdated_statistics;
+insert into outdated_statistics values (1, 1, 1);
+insert into outdated_statistics values (1, 2, 2);
+insert into outdated_statistics values (1, 3, 3);
+analyze table outdated_statistics index idx_ab;
+explain select * from outdated_statistics where a=1 and b=1 and c=1;
+id	count	task	operator info
+IndexLookUp_11	0.00	root	
+├─IndexScan_8	0.00	cop	table:outdated_statistics, index:a, range:[1,1], keep order:false
+└─Selection_10	0.00	cop	eq(test.outdated_statistics.b, 1), eq(test.outdated_statistics.c, 1)
+  └─TableScan_9	0.00	cop	table:outdated_statistics, keep order:false
+CREATE TABLE `unknown_correlation` (
+id int,
+a int,
+PRIMARY KEY (`id`),
+INDEX idx_a(a)
+);
+INSERT INTO unknown_correlation values (1, 1),(2, 1),(3, 1),(4, 1),(5, 1),(6, 1),(7, 1),(8, 1),(9, 1),(10, 1),(11, 1),(12, 1),(13, 1),(14, 1),(15, 1),(16, 1),(17, 1),(18, 1),(19, 1),(20, 2),(21, 2),(22, 2),(23, 2),(24, 2),(25, 2);
+ANALYZE TABLE unknown_correlation;
+EXPLAIN SELECT * FROM unknown_correlation WHERE a = 2 ORDER BY id limit 1;
+id	count	task	operator info
+Limit_11	1.00	root	offset:0, count:1
+└─TableReader_29	1.00	root	data:Limit_28
+  └─Limit_28	1.00	cop	offset:0, count:1
+    └─Selection_26	1.00	cop	eq(test.unknown_correlation.a, 2)
+      └─TableScan_25	4.17	cop	table:unknown_correlation, range:[-inf,+inf], keep order:true
