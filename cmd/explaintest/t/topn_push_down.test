@@ -171,3 +171,5 @@ WHERE
     te.expect_time BETWEEN '2018-04-23 00:00:00.0' AND '2018-04-23 23:59:59.0'
 ORDER BY te.expect_time asc
 LIMIT 0, 5;
+
+desc select 1 as a from dual order by a limit 1;

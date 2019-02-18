@@ -69,9 +69,7 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 	testleak.BeforeTest()
 	TestingT(t)
@@ -3378,9 +3376,9 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table view_t (a int,b int)")
 	tk.MustExec("insert into view_t values(1,2)")
-	tk.MustExec("create view view1 as select * from view_t")
-	tk.MustExec("create view view2(c,d) as select * from view_t")
-	tk.MustExec("create view view3(c,d) as select a,b from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view1 as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view2(c,d) as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view3(c,d) as select a,b from view_t")
 	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
 	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
