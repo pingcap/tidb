@@ -93,7 +93,7 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
-// ExtractColumnSet extract the different unique id of columns that occurred in the exprs.
+// ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
 func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
 	set := &intsets.Sparse{}
 	for _, expr := range exprs {
