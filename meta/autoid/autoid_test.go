@@ -151,9 +151,9 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	alloc := autoid.NewAllocator(store, 1, true)
 	c.Assert(alloc, NotNil)
 
-	globalAutoId, err := alloc.NextGlobalAutoID(1)
+	globalAutoID, err := alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
-	c.Assert(globalAutoId, Equals, int64(1))
+	c.Assert(globalAutoID, Equals, int64(1))
 	id, err := alloc.Alloc(1)
 	c.Assert(err, IsNil)
 	c.Assert(id, Equals, int64(1))
@@ -162,9 +162,9 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(id, Equals, int64(2))
 	_, err = alloc.Alloc(0)
 	c.Assert(err, NotNil)
-	globalAutoId, err = alloc.NextGlobalAutoID(1)
+	globalAutoID, err = alloc.NextGlobalAutoID(1)
 	c.Assert(err, IsNil)
-	c.Assert(globalAutoId, Equals, int64(autoid.GetStep()+1))
+	c.Assert(globalAutoID, Equals, int64(autoid.GetStep()+1))
 
 	// rebase
 	err = alloc.Rebase(1, int64(1), true)
