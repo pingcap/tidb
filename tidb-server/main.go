@@ -24,11 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -418,12 +418,6 @@ func validateConfig() {
 		os.Exit(-1)
 	}
 }
-func boolToStatusStr(b bool) string {
-	if b {
-		return "ON"
-	}
-	return "OFF"
-}
 
 func setGlobalVars() {
 	ddlLeaseDuration := parseDuration(cfg.Lease)
@@ -445,7 +439,7 @@ func setGlobalVars() {
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
-	variable.SysVars["log_bin"].Value = boolToStatusStr(config.GetGlobalConfig().Binlog.Enable)
+	variable.SysVars[variable.LogBin].Value = variable.BoolToStatusStr(config.GetGlobalConfig().Binlog.Enable)
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
