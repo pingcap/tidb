@@ -61,9 +61,9 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
 
-	// If the mode is FinalMode, we do not need to wrap cast upon the args,
+	// If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
 	// since the types of the args are already the expected.
-	if len(aggFuncs) > 0 && aggFuncs[0].Mode != aggregation.FinalMode {
+	if len(aggFuncs) > 0 && aggFuncs[0].Mode != aggregation.FinalMode && aggFuncs[0].Mode != aggregation.Partial2Mode {
 		for _, agg := range aggFuncs {
 			agg.WrapCastForAggArgs(aggPlan.context())
 		}
@@ -121,11 +121,10 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	}
 
 	child := aggPlan.Children()[0]
-	prop := aggPlan.GetChildReqProps(0).Clone()
 	proj := PhysicalProjection{
 		Exprs:                projExprs,
 		AvoidColumnEvaluator: false,
-	}.Init(aggPlan.context(), child.statsInfo().ScaleByExpectCnt(prop.ExpectedCnt), prop)
+	}.Init(aggPlan.context(), child.statsInfo()) // give a nil property since physical optimization has finished.
 	proj.SetSchema(expression.NewSchema(projSchemaCols...))
 	proj.SetChildren(child)
 
