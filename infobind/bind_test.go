@@ -119,9 +119,9 @@ func (s *testSuite) TestBindParse(c *C) {
 
 	tk.MustExec(sql)
 
-	bindHandle := infobind.NewHandle()
+	bindHandle := infobind.NewHandler()
 
-	hu := infobind.NewHandleUpdater(bindHandle, s.Parser, tk.Se)
+	hu := infobind.NewHandleUpdater(tk.Se, bindHandle, s.Parser)
 
 	err := hu.Update(true)
 	c.Check(err, IsNil)

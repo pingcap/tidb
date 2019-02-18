@@ -70,7 +70,7 @@ type Domain struct {
 	wg              sync.WaitGroup
 	gvc             GlobalVariableCache
 	slowQuery       *topNSlowQueries
-	bindHandle      *infobind.Handle
+	bindHandler     *infobind.Handler
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -796,17 +796,17 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
-// BindHandle returns the BindInfo.
-func (do *Domain) BindHandle() *infobind.Handle {
-	return do.bindHandle
+// BindHandler returns the BindInfo.
+func (do *Domain) BindHandler() *infobind.Handler {
+	return do.bindHandler
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should be called only once in BootstrapSession.
 func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	do.bindHandle = infobind.NewHandle()
+	do.bindHandler = infobind.NewHandler()
 
-	hu := infobind.NewHandleUpdater(do.BindHandle(), parser, ctx)
+	hu := infobind.NewHandleUpdater(ctx, do.BindHandler(), parser)
 
 	fullLoad := true
 	err := hu.Update(fullLoad)

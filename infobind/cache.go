@@ -33,17 +33,17 @@ const defaultBindCacheSize = 5
 
 // bindData store the basic bind info and bindSql astNode.
 type bindData struct {
-	bindRecord
+	bindMeta
 	ast ast.StmtNode
 }
 
-// bindCache hold a bindDataMap, key:origin sql hash value: bindData slice.
+// bindCache holds a bindDataMap, key:origin sql hash value: bindData slice.
 type bindCache struct {
 	Cache map[string][]*bindData
 }
 
-// Handle hold a atomic bindCache.
-type Handle struct {
+// Handler hold a atomic bindCache.
+type Handler struct {
 	bind atomic.Value
 }
 
@@ -52,14 +52,14 @@ type HandleUpdater struct {
 	parser         *parser.Parser
 	lastUpdateTime types.Time
 	ctx            sessionctx.Context
-	globalHandle   *Handle
+	globalHandler  *Handler
 }
 
-type bindRecord struct {
+type bindMeta struct {
 	OriginalSQL string
 	BindSQL     string
 	Db          string
-	Status      int64
+	Status      int64 // If the bindMeta has been deleted, the status will be 0 or will be 1.
 	CreateTime  types.Time
 	UpdateTime  types.Time
 	Charset     string
@@ -67,22 +67,22 @@ type bindRecord struct {
 }
 
 // NewHandleUpdater create a new HandleUpdater.
-func NewHandleUpdater(handle *Handle, parser *parser.Parser, ctx sessionctx.Context) *HandleUpdater {
+func NewHandleUpdater(ctx sessionctx.Context, handler *Handler, parser *parser.Parser) *HandleUpdater {
 	return &HandleUpdater{
-		globalHandle: handle,
-		parser:       parser,
-		ctx:          ctx,
+		globalHandler: handler,
+		parser:        parser,
+		ctx:           ctx,
 	}
 }
 
-// NewHandle create a Handle with a bindCache.
-func NewHandle() *Handle {
-	handle := &Handle{}
-	return handle
+// NewHandler create a Handler with a bindCache.
+func NewHandler() *Handler {
+	handler := &Handler{}
+	return handler
 }
 
-// Get get bindCache from a Handle.
-func (h *Handle) Get() *bindCache {
+// Get get bindCache from a Handler.
+func (h *Handler) Get() *bindCache {
 	bc := h.bind.Load()
 
 	if bc != nil {
@@ -117,9 +117,9 @@ func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 		it := chunk.NewIterator4Chunk(chkBatch.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			record := decodeBindTableRow(row)
-			err = bc.appendNode(h.ctx, record, h.parser)
+			err = bc.appendNode(record, h.parser)
 			if err != nil {
-				continue
+				return err
 			}
 
 			if record.UpdateTime.Compare(h.lastUpdateTime) == 1 {
@@ -130,12 +130,10 @@ func (h *HandleUpdater) loadDiff(sql string, bc *bindCache) error {
 }
 
 // Update update the HandleUpdater's bindCache if tidb first startup,the fullLoad is true,otherwise fullLoad is false.
-func (h *HandleUpdater) Update(fullLoad bool) error {
-	var (
-		err error
-		sql string
-	)
-	bc := h.globalHandle.Get()
+func (h *HandleUpdater) Update(fullLoad bool) (err error) {
+	var sql string
+
+	bc := h.globalHandler.Get()
 
 	newBc := &bindCache{
 		Cache: make(map[string][]*bindData, len(bc.Cache)),
@@ -155,17 +153,13 @@ func (h *HandleUpdater) Update(fullLoad bool) error {
 		return errors.Trace(err)
 	}
 
-	h.globalHandle.bind.Store(newBc)
+	h.globalHandler.bind.Store(newBc)
 
 	return nil
 }
 
-func parseSQL(parser *parser.Parser, sql string, charset string, collation string) ([]ast.StmtNode, []error, error) {
-	return parser.Parse(sql, charset, collation)
-}
-
-func decodeBindTableRow(row chunk.Row) bindRecord {
-	var value bindRecord
+func decodeBindTableRow(row chunk.Row) bindMeta {
+	var value bindMeta
 
 	value.OriginalSQL = row.GetString(0)
 	value.BindSQL = row.GetString(1)
@@ -179,7 +173,7 @@ func decodeBindTableRow(row chunk.Row) bindRecord {
 	return value
 }
 
-func (b *bindCache) appendNode(sctx sessionctx.Context, newBindRecord bindRecord, sparser *parser.Parser) error {
+func (b *bindCache) appendNode(newBindRecord bindMeta, sparser *parser.Parser) error {
 	hash := parser.DigestHash(newBindRecord.OriginalSQL)
 
 	if bindArr, ok := b.Cache[hash]; ok {
@@ -194,20 +188,20 @@ func (b *bindCache) appendNode(sctx sessionctx.Context, newBindRecord bindRecord
 		}
 	}
 
-	// If the bindRecord has been deleted, the status will be 0 or will be 1.
+	// If the bindMeta has been deleted, the status will be 0 or will be 1.
 	if newBindRecord.Status == 0 {
 		return nil
 	}
 
-	stmtNodes, _, err := parseSQL(sparser, newBindRecord.BindSQL, newBindRecord.Charset, newBindRecord.Collation)
+	stmtNodes, _, err := sparser.Parse(newBindRecord.BindSQL, newBindRecord.Charset, newBindRecord.Collation)
 	if err != nil {
 		log.Warnf("parse error:\n%v\n%s", err, newBindRecord.BindSQL)
 		return errors.Trace(err)
 	}
 
 	newNode := &bindData{
-		bindRecord: newBindRecord,
-		ast:        stmtNodes[0],
+		bindMeta: newBindRecord,
+		ast:      stmtNodes[0],
 	}
 
 	b.Cache[hash] = append(b.Cache[hash], newNode)

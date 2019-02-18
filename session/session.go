@@ -1241,8 +1241,8 @@ func CreateSession(store kv.Storage) (Session, error) {
 	privilege.BindPrivilegeManager(s, pm)
 
 	bm := &infobind.BindManager{
-		GlobalHandle:  do.BindHandle(),
-		SessionHandle: infobind.NewHandle(),
+		GlobalHandler:  do.BindHandler(),
+		SessionHandler: infobind.NewHandler(),
 	}
 	infobind.BindBinderManager(s, bm)
 
