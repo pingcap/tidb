@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/tools/container/intsets"
 )
 
 // Filter the input expressions, append the results to result.
@@ -93,18 +94,18 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 }
 
 // ExtractColumnSet extract columns that occurred in the exprs.
-func ExtractColumnSet(exprs []Expression) map[int64]struct{} {
-	set := make(map[int64]struct{})
+func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
+	set := &intsets.Sparse{}
 	for _, expr := range exprs {
 		extractColumnSet(expr, set)
 	}
 	return set
 }
 
-func extractColumnSet(expr Expression, set map[int64]struct{}) {
+func extractColumnSet(expr Expression, set *intsets.Sparse) {
 	switch v := expr.(type) {
 	case *Column:
-		set[v.UniqueID] = struct{}{}
+		set.Insert(int(v.UniqueID))
 	case *ScalarFunction:
 		for _, arg := range v.GetArgs() {
 			extractColumnSet(arg, set)

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/tools/container/intsets"
 )
 
 const (
@@ -199,29 +200,26 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 // candidatePath is used to maintain required info for skyline pruning.
 type candidatePath struct {
 	path       *accessPath
-	columnSet  map[int64]struct{} // columnSet is the set of columns that occurred in the access conditions.
+	columnSet  *intsets.Sparse // columnSet is the set of columns that occurred in the access conditions.
 	singleScan bool
 	matchProp  bool
 }
 
 // compareColumnSet will compares the two set. The last return value is used to indicate
 // if they are comparable, it is false when both two sets have columns that do not occur in the other.
-func compareColumnSet(l, r map[int64]struct{}) (int, bool) {
-	if len(l) <= len(r) {
-		for key := range l {
-			if _, ok := r[key]; !ok {
-				return 0, false
-			}
+func compareColumnSet(l, r *intsets.Sparse) (int, bool) {
+	lLen, rLen := l.Len(), r.Len()
+	if lLen <= rLen {
+		if isSubset := l.SubsetOf(r); !isSubset {
+			return 0, false
 		}
-		if len(l) == len(r) {
+		if lLen == rLen {
 			return 0, true
 		}
 		return -1, true
 	}
-	for key := range r {
-		if _, ok := l[key]; !ok {
-			return 0, false
-		}
+	if isSubset := r.SubsetOf(l); !isSubset {
+		return 0, false
 	}
 	return 1, true
 }
@@ -239,7 +237,7 @@ func compareBool(l, r bool) int {
 // compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
 // the set of columns that occurred in the access condition, whether or not it matches the physical property
 // and does it require a double scan.  If `x` is not worse than `y` at all factors,
-// and there exists one factor that `x` is better than `y`, then we `x` is better than `y`.
+// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
 	setsResult, comparable := compareColumnSet(lhs.columnSet, rhs.columnSet)
 	if !comparable {
