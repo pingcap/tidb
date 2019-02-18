@@ -115,13 +115,6 @@ func boolToIntStr(b bool) string {
 	return "0"
 }
 
-func BoolToStatusStr(b bool) string {
-	if b {
-		return "ON"
-	}
-	return "OFF"
-}
-
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "gtid_mode", "OFF"},
