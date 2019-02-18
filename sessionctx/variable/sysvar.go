@@ -115,7 +115,7 @@ func boolToIntStr(b bool) string {
 	return "0"
 }
 func boolToStatusStr(b bool) string {
-	if !b {
+	if b {
 		return "ON"
 	}
 	return "OFF"
