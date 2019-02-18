@@ -101,15 +101,15 @@ type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore MVCCStore
 
-	// store id for current request
+	// storeID stores id for current request
 	storeID uint64
-	// Used for handling normal request.
+	// startKey is used for handling normal request.
 	startKey []byte
 	endKey   []byte
-	// Used for handling coprocessor request.
+	// rawStartKey is used for handling coprocessor request.
 	rawStartKey []byte
 	rawEndKey   []byte
-	// Used for current request.
+	// isolationLevel is used for current request.
 	isolationLevel kvrpcpb.IsolationLevel
 }
 
@@ -171,14 +171,14 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	// Region epoch does not match.
 	if !proto.Equal(region.GetRegionEpoch(), ctx.GetRegionEpoch()) {
 		nextRegion, _ := h.cluster.GetRegionByKey(region.GetEndKey())
-		newRegions := []*metapb.Region{region}
+		currentRegions := []*metapb.Region{region}
 		if nextRegion != nil {
-			newRegions = append(newRegions, nextRegion)
+			currentRegions = append(currentRegions, nextRegion)
 		}
 		return &errorpb.Error{
-			Message: *proto.String("stale epoch"),
-			StaleEpoch: &errorpb.StaleEpoch{
-				NewRegions: newRegions,
+			Message: *proto.String("epoch not match"),
+			EpochNotMatch: &errorpb.EpochNotMatch{
+				CurrentRegions: currentRegions,
 			},
 		}
 	}

@@ -159,7 +159,7 @@ func (c *cancelContextClient) SendRequest(ctx context.Context, addr string, req 
 // mockTikvGrpcServer mock a tikv gprc server for testing.
 type mockTikvGrpcServer struct{}
 
-// KV commands with mvcc/txn supported.
+// KvGet commands with mvcc/txn supported.
 func (s *mockTikvGrpcServer) KvGet(context.Context, *kvrpcpb.GetRequest) (*kvrpcpb.GetResponse, error) {
 	return nil, errors.New("unreachable")
 }

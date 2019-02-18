@@ -78,7 +78,7 @@ type twoPhaseCommitter struct {
 	syncLog  bool
 	connID   uint64 // connID is used for log.
 	cleanWg  sync.WaitGroup
-	// The max time a Txn may use (in ms) from its startTS to commitTS.
+	// maxTxnTimeUse represents max time a Txn may use (in ms) from its startTS to commitTS.
 	// We use it to guarantee GC worker will not influence any active txn. The value
 	// should be less than GC life time.
 	maxTxnTimeUse uint64

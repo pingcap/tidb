@@ -74,10 +74,10 @@ type Client interface {
 type connArray struct {
 	index uint32
 	v     []*grpc.ClientConn
-	// Bind with a background goroutine to process coprocessor streaming timeout.
+	// streamTimeout binds with a background goroutine to process coprocessor streaming timeout.
 	streamTimeout chan *tikvrpc.Lease
 
-	// For batch commands.
+	// batchCommandsCh used for batch commands.
 	batchCommandsCh        chan *batchCommandsEntry
 	batchCommandsClients   []*batchCommandsClient
 	tikvTransportLayerLoad uint64
@@ -90,9 +90,9 @@ type batchCommandsClient struct {
 	idAlloc                uint64
 	tikvTransportLayerLoad *uint64
 
-	// Indicates the batch client is closed explicitly or not.
+	// closed indicates the batch client is closed explicitly or not.
 	closed int32
-	// Protect client when re-create the streaming.
+	// clientLock protects client when re-create the streaming.
 	clientLock sync.Mutex
 }
 
@@ -302,7 +302,7 @@ type batchCommandsEntry struct {
 	req *tikvpb.BatchCommandsRequest_Request
 	res chan *tikvpb.BatchCommandsResponse_Response
 
-	// Indicated the request is canceled or not.
+	// canceled indicated the request is canceled or not.
 	canceled int32
 	err      error
 }
@@ -365,7 +365,9 @@ func fetchMorePendingRequests(
 	}
 	after.Stop()
 
-	// Do an additional non-block try.
+	// Do an additional non-block try. Here we test the lengh with `maxBatchSize` instead
+	// of `batchWaitSize` because trying best to fetch more requests is necessary so that
+	// we can adjust the `batchWaitSize` dynamically.
 	for len(*entries) < maxBatchSize {
 		select {
 		case entry := <-ch:
@@ -396,6 +398,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, 0, cfg.MaxBatchSize)
 	requestIDs := make([]uint64, 0, cfg.MaxBatchSize)
 
+	var bestBatchWaitSize = cfg.BatchWaitSize
 	for {
 		// Choose a connection by round-robbin.
 		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
@@ -413,13 +416,19 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			// If the target TiKV is overload, wait a while to collect more requests.
 			if uint(tikvTransportLayerLoad) >= cfg.OverloadThreshold {
 				fetchMorePendingRequests(
-					a.batchCommandsCh, int(cfg.MaxBatchSize), int(cfg.BatchWaitSize),
+					a.batchCommandsCh, int(cfg.MaxBatchSize), int(bestBatchWaitSize),
 					cfg.MaxBatchWaitTime, &entries, &requests,
 				)
 			}
 		}
-
 		length := len(requests)
+		if uint(length) < bestBatchWaitSize && bestBatchWaitSize > 1 {
+			// Waits too long to collect requests, reduce the target batch size.
+			bestBatchWaitSize -= 1
+		} else if uint(length) > bestBatchWaitSize+4 && bestBatchWaitSize < cfg.MaxBatchSize {
+			bestBatchWaitSize += 1
+		}
+
 		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
 		for i := 0; i < length; i++ {
 			requestID := uint64(i) + maxBatchID - uint64(length)
