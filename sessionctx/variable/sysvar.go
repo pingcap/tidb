@@ -115,6 +115,13 @@ func boolToIntStr(b bool) string {
 	return "0"
 }
 
+func boolToStatusStr(b bool) string {
+	if b {
+		return "ON"
+	}
+	return "OFF"
+}
+
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "gtid_mode", "OFF"},
@@ -386,7 +393,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_syslog_include_pid", ""},
 	{ScopeSession, "last_insert_id", ""},
 	{ScopeNone, "innodb_ft_cache_size", "8000000"},
-	{ScopeNone, "log_bin", "OFF"},
+	{ScopeSession, LogBin, boolToStatusStr(config.GetGlobalConfig().Binlog.Enable)},
 	{ScopeGlobal, "innodb_disable_sort_file_cache", "OFF"},
 	{ScopeGlobal, "log_error_verbosity", ""},
 	{ScopeNone, "performance_schema_hosts_size", "100"},
@@ -741,6 +748,8 @@ const (
 	InnodbLockWaitTimeout = "innodb_lock_wait_timeout"
 	// SQLLogBin is the name for 'sql_log_bin' system variable.
 	SQLLogBin = "sql_log_bin"
+	//LogBin is the name for 'log_bin' system variable.
+	LogBin = "log_bin"
 	// MaxSortLength is the name for 'max_sort_length' system variable.
 	MaxSortLength = "max_sort_length"
 	// MaxSpRecursionDepth is the name for 'max_sp_recursion_depth' system variable.
