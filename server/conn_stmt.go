@@ -433,7 +433,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 
 			if !isNull {
-				args[i] = hack.String(v)
+				args[i] = string(hack.String(v))
 			} else {
 				args[i] = nil
 			}

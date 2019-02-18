@@ -732,6 +732,11 @@ func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
 }
 
+// GetEtcdClient returns the etcd client.
+func (do *Domain) GetEtcdClient() *clientv3.Client {
+	return do.etcdClient
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
@@ -776,7 +781,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			if err != nil {
 				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
 			} else {
-				log.Info("[domain] reload privilege success.")
+				log.Debug("[domain] reload privilege success.")
 			}
 		}
 	}()

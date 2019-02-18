@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -970,5 +971,6 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 		}
 		colObjects = append(colObjects, colDefs[i])
 	}
-	c.Assert(checkDuplicateColumn(colObjects), NotNil)
+	err := checkDuplicateColumn(colObjects)
+	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
 }
