@@ -2499,37 +2499,19 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		return errors.Trace(err)
 	}
 
+	tblInfo := t.Meta()
 	// Check before put the job is put to the queue.
 	// This check is redudant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(t.Meta().Columns, idxColNames)
+	_, err = buildIndexColumns(tblInfo.Columns, idxColNames)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	tblInfo := t.Meta()
-	// Every unique key on the table must use every column in the table's partitioning expression.
-	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
 	if unique && tblInfo.GetPartitionInfo() != nil {
-		// Parse partitioning key, extract the column names in the partitioning key to slice.
-		expr := tblInfo.GetPartitionInfo().Expr
-		e, err := expression.ParseSimpleExprWithTableInfo(ctx, expr, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cols := expression.ExtractColumns(e)
-		partkeys := make([]string, 0, len(cols))
-		for _, col := range cols {
-			partkeys = append(partkeys, col.ColName.L)
-		}
-		constraints := make(map[string]struct{})
-		for _, uniqCol := range idxColNames {
-			constraints[uniqCol.Column.Name.L] = struct{}{}
-		}
-		if !checkConstraintIncludePartKey(partkeys, constraints) {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(primarykey)
+		if err := checkPartitionKeysConstraint(ctx, tblInfo.GetPartitionInfo().Expr, idxColNames, tblInfo); err != nil {
+			return err
 		}
 	}
 

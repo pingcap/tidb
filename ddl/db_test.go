@@ -2368,5 +2368,5 @@ func (s *testDBSuite) TestIssue9100(c *C) {
 	tk.MustExec("use test_db")
 	tk.MustExec("create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));")
 	_, err := tk.Exec("alter table employ add unique index  p_a (a);")
-	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY KEY must include all columns in the table's partitioning function")
+	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 }
