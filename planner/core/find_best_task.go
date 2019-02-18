@@ -213,19 +213,16 @@ type candidatePath struct {
 // (3) 1 means that `l` is a strict superset of `r`.
 func compareColumnSet(l, r *intsets.Sparse) (int, bool) {
 	lLen, rLen := l.Len(), r.Len()
-	if lLen <= rLen {
-		if isSubset := l.SubsetOf(r); !isSubset {
-			return 0, false
-		}
-		if lLen == rLen {
-			return 0, true
-		}
-		return -1, true
+	if lLen < rLen {
+		// -1 is meaningful only when l.SubsetOf(r) is true.
+		return -1, l.SubsetOf(r)
 	}
-	if isSubset := r.SubsetOf(l); !isSubset {
-		return 0, false
+	if lLen == rLen {
+		// 0 is meaningful only when l.SubsetOf(r) is true.
+		return 0, l.SubsetOf(r)
 	}
-	return 1, true
+	// 1 is meaningful only when r.SubsetOf(l) is true.
+	return 1, r.SubsetOf(l)
 }
 
 func compareBool(l, r bool) int {
@@ -273,6 +270,8 @@ func (ds *DataSource) getTableCandidate(path *accessPath, prop *property.Physica
 func (ds *DataSource) getIndexCandidate(path *accessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	all, _ := prop.AllSameOrder()
+	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+	// it needs not to keep order for index scan.
 	if !prop.IsEmpty() && all {
 		for i, col := range path.index.Columns {
 			if col.Name.L == prop.Items[0].Col.ColName.L {
