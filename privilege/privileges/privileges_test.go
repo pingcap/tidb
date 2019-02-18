@@ -283,8 +283,8 @@ func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	// ctx.GetSessionVars().User = "root@localhost"
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `CREATE USER 'selectusr'@'localhost';`)
-	mustExec(c, se, `GRANT Create ON test.* TO  'selectusr'@'localhost';`)
-	mustExec(c, se, `GRANT Select ON test.viewsecurity TO  'selectusr'@'localhost';`)
+	mustExec(c, se, `GRANT CREATE VIEW ON test.* TO  'selectusr'@'localhost';`)
+	mustExec(c, se, `GRANT SELECT ON test.viewsecurity TO  'selectusr'@'localhost';`)
 
 	// ctx.GetSessionVars().User = "selectusr@localhost"
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "selectusr", Hostname: "localhost"}, nil, nil), IsTrue)
