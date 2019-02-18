@@ -393,7 +393,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_syslog_include_pid", ""},
 	{ScopeSession, "last_insert_id", ""},
 	{ScopeNone, "innodb_ft_cache_size", "8000000"},
-	{ScopeSession, LogBin, boolToStatusStr(config.GetGlobalConfig().Binlog.Enable)},
+	{ScopeNone, LogBin, boolToStatusStr(config.GetGlobalConfig().Binlog.Enable)},
 	{ScopeGlobal, "innodb_disable_sort_file_cache", "OFF"},
 	{ScopeGlobal, "log_error_verbosity", ""},
 	{ScopeNone, "performance_schema_hosts_size", "100"},
