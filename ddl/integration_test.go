@@ -118,6 +118,19 @@ func (s *testIntegrationSuite) TestEndIncluded(c *C) {
 	tk.MustExec("admin check table t")
 }
 
+func (s *testIntegrationSuite) TestCaseInsensitiveCharsetAndCollate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database if not exists test_charset_collate")
+	defer tk.MustExec("drop database test_charset_collate")
+	tk.MustExec("use test_charset_collate")
+	tk.MustExec("create table t(id int) ENGINE=InnoDB DEFAULT CHARSET=UTF8 COLLATE=UTF8_BIN;")
+	tk.MustExec("create table t1(id int) ENGINE=InnoDB DEFAULT CHARSET=UTF8 COLLATE=uTF8_BIN;")
+	tk.MustExec("create table t2(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8 COLLATE=utf8_BIN;")
+	tk.MustExec("create table t3(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8mb4 COLLATE=utf8MB4_BIN;")
+	tk.MustExec("create table t4(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8mb4 COLLATE=utf8MB4_general_ci;")
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
