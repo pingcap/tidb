@@ -220,6 +220,20 @@ func rollingbackRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, err error
 	return cancelOnlyNotHandledJob(job)
 }
 
+func rollingbackTruncateTable(t *meta.Meta, job *model.Job) error {
+	_, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// If the job is not started, tidb can cancel this job.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return nil
+}
+
 func rollingbackShardRowID(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	return cancelOnlyNotHandledJob(job)
 }
@@ -242,6 +256,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackRenameIndex(t, job)
 	case model.ActionRebaseAutoID:
 		ver, err = rollingbackRebaseAutoID(t, job)
+	case model.ActionTruncateTable:
+		err = rollingbackTruncateTable(t, job)
 	case model.ActionShardRowID:
 		ver, err = rollingbackShardRowID(t, job)
 	default:
