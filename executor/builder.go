@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/executor/windowfunc"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -1898,28 +1897,17 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	for _, item := range v.PartitionBy {
 		groupByItems = append(groupByItems, item.Col)
 	}
+	aggDesc := aggregation.NewAggFuncDesc(b.ctx, v.WindowFuncDesc.Name, v.WindowFuncDesc.Args, false)
 	resultColIdx := len(v.Schema().Columns) - 1
-	var processor windowProcessor
-	if aggregation.IsAggFuncs(v.WindowFuncDesc.Name) {
-		aggDesc := aggregation.NewAggFuncDesc(b.ctx, v.WindowFuncDesc.Name, v.WindowFuncDesc.Args, false)
-		agg := aggfuncs.Build(b.ctx, aggDesc, resultColIdx)
-		processor = &aggWindowProcessor{
-			windowFunc:    agg,
-			partialResult: agg.AllocPartialResult(),
-		}
-	} else {
-		var wf windowfuncs.WindowFunc
-		wf, b.err = windowfuncs.Build(b.ctx, v.WindowFuncDesc, resultColIdx)
-		if b.err != nil {
-			return nil
-		}
-		processor = &noFrameWindowProcessor{
-			windowFunc:    wf,
-			partialResult: wf.AllocPartialResult(),
-		}
+	agg := aggfuncs.Build(b.ctx, aggDesc, resultColIdx)
+	if agg == nil {
+		b.err = errors.Trace(errors.New("window evaluator only support aggregation functions without frame now"))
+		return nil
 	}
-	return &WindowExec{baseExecutor: base,
-		processor:    processor,
-		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+	e := &WindowExec{baseExecutor: base,
+		windowFunc:    agg,
+		partialResult: agg.AllocPartialResult(),
+		groupChecker:  newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
 	}
+	return e
 }

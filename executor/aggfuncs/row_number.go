@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package windowfuncs
+package aggfuncs
 
 import (
 	"github.com/pingcap/tidb/sessionctx"
@@ -19,29 +19,29 @@ import (
 )
 
 type rowNumber struct {
-	baseWindowFunc
+	baseAggFunc
 }
 
 type partialResult4RowNumber struct {
-	curIdx int
+	curIdx int64
 }
 
-func (wf *rowNumber) ProcessOneChunk(sctx sessionctx.Context, rows []chunk.Row, pr PartialResult, dest *chunk.Chunk, remained int) error {
-	p := (*partialResult4RowNumber)(pr)
-	processedRows, numRows := 0, len(rows)
-	for p.curIdx < numRows && processedRows < remained {
-		p.curIdx++
-		processedRows++
-		dest.AppendInt64(wf.ordinal, int64(p.curIdx))
-	}
-	return nil
-}
-
-func (wf *rowNumber) AllocPartialResult() PartialResult {
+func (rn *rowNumber) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4RowNumber{})
 }
 
-func (wf *rowNumber) ResetPartialResult(pr PartialResult) {
+func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4RowNumber)(pr)
 	p.curIdx = 0
+}
+
+func (rn *rowNumber) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	return nil
+}
+
+func (rn *rowNumber) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4RowNumber)(pr)
+	p.curIdx++
+	chk.AppendInt64(rn.ordinal, p.curIdx)
+	return nil
 }
