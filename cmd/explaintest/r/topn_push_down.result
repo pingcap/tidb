@@ -183,3 +183,8 @@ Projection_12	0.00	root	te.expect_time
     │       └─TableScan_31	10.00	cop	table:te, keep order:false, stats:pseudo
     └─IndexReader_135	10.00	root	index:IndexScan_134
       └─IndexScan_134	10.00	cop	table:p, index:relate_id, range: decided by [tr.id], keep order:false, stats:pseudo
+desc select 1 as a from dual order by a limit 1;
+id	count	task	operator info
+Projection_7	1.00	root	1
+└─Limit_8	1.00	root	offset:0, count:1
+  └─TableDual_11	1.00	root	rows:1
