@@ -287,6 +287,8 @@ func (ds *DataSource) getIndexCandidate(path *accessPath, prop *property.Physica
 	return candidate
 }
 
+// skylinePruning prunes access paths according to different factors. An access path can be pruned only if
+// there exists a path that is not worse than it at all factors and there is at least one better factor.
 func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candidatePath {
 	candidates := make([]*candidatePath, 0, 4)
 	for _, path := range ds.possibleAccessPaths {
@@ -303,8 +305,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			// we have prop to match or
 			// this index is forced to choose.
 			currentCandidate = ds.getIndexCandidate(path, prop)
-		}
-		if currentCandidate == nil {
+		} else {
 			continue
 		}
 		pruned := false
