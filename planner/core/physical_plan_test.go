@@ -19,13 +19,13 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -115,7 +115,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test TopN push down in table single read.
 		{
 			sql:  "select c from t order by t.a + t.b limit 1",
-			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->TopN([plus(test.t.a, test.t.b)],0,1)->Projection",
+			best: "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([col_3],0,1)->Projection",
 		},
 		// Test Limit push down in table single read.
 		{
@@ -1081,11 +1081,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c_str not like 'abc'",
-			best: "TableReader(Table(t)->Sel([not(like(test.t.c_str, abc, 92))]))->Projection",
+			best: `IndexReader(Index(t.c_d_e_str)[[-inf,"abc") ("abc",+inf]])->Projection`,
 		},
 		{
 			sql:  "select a from t where not (c_str like 'abc' or c_str like 'abd')",
-			best: `TableReader(Table(t)->Sel([and(not(like(test.t.c_str, abc, 92)), not(like(test.t.c_str, abd, 92)))]))->Projection`,
+			best: `IndexReader(Index(t.c_d_e_str)[[-inf,"abc") ("abc","abd") ("abd",+inf]])->Projection`,
 		},
 		{
 			sql:  "select a from t where c_str like '_abc'",
@@ -1132,10 +1132,11 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  `select a from t where c_str like 123`,
 			best: "IndexReader(Index(t.c_d_e_str)[[\"123\",\"123\"]])->Projection",
 		},
-		// c is type int which will be added cast to specified type when building function signature, no index can be used.
+		// c is type int which will be added cast to specified type when building function signature,
+		// and rewrite predicate like to predicate '='  when exact match , index still can be used.
 		{
 			sql:  `select a from t where c like '1'`,
-			best: "TableReader(Table(t))->Sel([like(cast(test.t.c), 1, 92)])->Projection",
+			best: "IndexReader(Index(t.c_d_e)[[1,1]])->Projection",
 		},
 		{
 			sql:  `select a from t where c = 1.9 and d > 3`,
@@ -1218,7 +1219,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 		// If max/min contains scalar function, we can still do transformation.
 		{
 			sql:  "select max(a+1) from t;",
-			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->TopN([plus(test.t.a, 1) true],0,1)->Projection->StreamAgg",
+			best: "TableReader(Table(t)->Sel([not(isnull(plus(test.t.a, 1)))])->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([col_1 true],0,1)->Projection->StreamAgg",
 		},
 		// Do nothing to max+min.
 		{

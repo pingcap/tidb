@@ -251,7 +251,8 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	p := &Set{}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 		}
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
@@ -550,6 +551,14 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ShowSlow{ShowSlow: as.ShowSlow}
 		p.SetSchema(buildShowSlowSchema())
 		ret = p
+	case ast.AdminRestoreTable:
+		if len(as.JobIDs) > 0 {
+			ret = &RestoreTable{JobID: as.JobIDs[0]}
+		} else if len(as.Tables) > 0 {
+			ret = &RestoreTable{Table: as.Tables[0], JobNum: as.JobNumber}
+		} else {
+			return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
+		}
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -770,8 +779,14 @@ const (
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	for _, tbl := range as.TableNames {
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", nil)
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", nil)
+		user := b.ctx.GetSessionVars().User
+		var insertErr, selectErr error
+		if user != nil {
+			insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+			selectErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
 	}
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
@@ -799,9 +814,11 @@ func buildShowNextRowID() *expression.Schema {
 func buildShowDDLFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "OWNER_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "OWNER_ADDRESS", mysql.TypeVarchar, 32))
 	schema.Append(buildColumn("", "RUNNING_JOBS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumn("", "SELF_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
 
 	return schema
 }
@@ -943,10 +960,18 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 				return nil, ErrNoDB
 			}
 		case ast.ShowCreateTable:
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", nil)
+			user := b.ctx.GetSessionVars().User
+			var err error
+			if user != nil {
+				err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
 			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 				isView = table.Meta().IsView()
 			}
+		case ast.ShowCreateView:
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, "", "", "", err)
 		}
 		p.SetSchema(buildShowSchema(show, isView))
 	}
@@ -987,7 +1012,8 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 
 	switch raw := node.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", nil)
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
 	case *ast.RevokeStmt:
@@ -1490,13 +1516,18 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
 		if _, ok := plan.(LogicalPlan); ok {
 			b.visitInfo = append(b.visitInfo, visitInfo{
-				// TODO: We should check CreateViewPriv instead of CreatePriv.
-				// See https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_create-view.
-				privilege: mysql.CreatePriv,
+				privilege: mysql.CreateViewPriv,
 				db:        v.ViewName.Schema.L,
 				table:     v.ViewName.Name.L,
 				err:       nil,
 			})
+		}
+		if v.Definer.CurrentUser {
+			v.Definer = b.ctx.GetSessionVars().User
+		}
+		if b.ctx.GetSessionVars().User != nil && v.Definer.String() != b.ctx.GetSessionVars().User.String() {
+			err = ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+			b.visitInfo = append(b.visitInfo, visitInfo{privilege: mysql.SuperPriv, db: "", table: "", err: err})
 		}
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
@@ -1716,6 +1747,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		} else {
 			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 		}
+	case ast.ShowCreateView:
+		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:

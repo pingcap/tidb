@@ -21,9 +21,11 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -682,7 +684,6 @@ commit;`
 	tk.MustExec(testSQL)
 	tk.CheckLastMessage("")
 	testSQL = `SELECT LAST_INSERT_ID();`
-	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
 
@@ -1271,6 +1272,8 @@ func (s *testSuite) TestUpdate(c *C) {
 	r1 := tk.MustQuery("select ts from tsup use index (idx);")
 	r2 := tk.MustQuery("select ts from tsup;")
 	r1.Check(r2.Rows())
+	tk.MustExec("update tsup set ts='2019-01-01';")
+	tk.MustQuery("select ts from tsup;").Check(testkit.Rows("2019-01-01 00:00:00"))
 
 	// issue 5532
 	tk.MustExec("create table decimals (a decimal(20, 0) not null)")
@@ -1333,7 +1336,7 @@ func (s *testSuite) TestUpdate(c *C) {
 
 	tk.MustExec("create view v as select * from t")
 	_, err = tk.Exec("update v set a = '2000-11-11'")
-	c.Assert(err.Error(), Equals, "update view v is not supported now.")
+	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 }
 
@@ -1595,7 +1598,7 @@ func (s *testSuite) TestDelete(c *C) {
 
 	tk.MustExec("create view v as select * from delete_test")
 	_, err = tk.Exec("delete from v where name = 'aaa'")
-	c.Assert(err.Error(), Equals, "delete view v is not supported now.")
+	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 }
 
@@ -2107,6 +2110,15 @@ func (s *testSuite2) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
 }
 
+func (s *testSuite2) TestNotNullDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists t1,t2;")
+	defer tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (a int not null default null default 1);")
+	tk.MustExec("create table t2 (a int);")
+	tk.MustExec("alter table  t2 change column a a int not null default null default 1;")
+}
+
 func (s *testBypassSuite) TestLatch(c *C) {
 	store, err := mockstore.NewMockTikvStore(
 		// Small latch slot size to make conflicts.
@@ -2433,4 +2445,21 @@ func (s *testSuite2) TestDefEnumInsert(c *C) {
 	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
 	tk.MustExec("insert into test (id)  values (1)")
 	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite2) TestAutoIDInRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int not null auto_increment primary key)")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (),()")
+	tk.MustExec("insert into t values ()")
+
+	gofail.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`)
+	tk.MustExec("commit")
+	gofail.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID")
+
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
 }

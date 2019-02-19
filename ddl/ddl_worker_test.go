@@ -23,15 +23,14 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testDDLSuite{})
@@ -41,7 +40,6 @@ type testDDLSuite struct{}
 const testLease = 5 * time.Millisecond
 
 func (s *testDDLSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	WaitTimeWhenErrorOccured = 1 * time.Microsecond
 
 	// We hope that this test is serially executed. So put it here.
@@ -49,7 +47,6 @@ func (s *testDDLSuite) SetUpSuite(c *C) {
 }
 
 func (s *testDDLSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {
@@ -119,10 +116,10 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		job.SchemaID = -1
 		job.TableID = -1
 		t := meta.NewMeta(txn)
-		_, err1 := getTableInfo(t, job, job.SchemaID)
+		_, err1 := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 		c.Assert(err1, NotNil)
 		job.SchemaID = dbInfo.ID
-		_, err1 = getTableInfo(t, job, job.SchemaID)
+		_, err1 = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 		c.Assert(err1, NotNil)
 		return nil
 	})
@@ -328,8 +325,9 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
-		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema {
-			// If the schema state is none, we only test the job is finished.
+		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema && job.Type != model.ActionRebaseAutoID {
+			// If the schema state is none and is not equal to model.JobStateDone, we only test the job is finished.
+			// Unless the job is model.ActionCreateTable, model.ActionCreateSchema, model.ActionRebaseAutoID, we do the cancel anyway.
 		} else {
 			errs, err := admin.CancelJobs(txn, test.jobIDs)
 			if err != nil {
@@ -364,7 +362,6 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddIndex, jobIDs: []int64{firstID + 4}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 4)}, cancelState: model.StatePublic, ddlRetErr: err},
 
 		// Test cancel drop index job , see TestCancelDropIndex.
-
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 5}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly, ddlRetErr: err},
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 6}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly, ddlRetErr: err},
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 7}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization, ddlRetErr: err},
@@ -378,6 +375,8 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 13}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 13)}, cancelState: model.StateDeleteOnly, ddlRetErr: err},
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 14}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 14)}, cancelState: model.StateWriteOnly, ddlRetErr: err},
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 15}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 15)}, cancelState: model.StateWriteReorganization, ddlRetErr: err},
+		{act: model.ActionRebaseAutoID, jobIDs: []int64{firstID + 16}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
+		{act: model.ActionShardRowID, jobIDs: []int64{firstID + 17}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
 	}
 
 	return tests
@@ -432,6 +431,10 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
+	tableAutoID := int64(100)
+	shardRowIDBits := uint64(5)
+	tblInfo.AutoIncID = tableAutoID
+	tblInfo.ShardRowIDBits = shardRowIDBits
 	job := testCreateTable(c, ctx, d, dbInfo, tblInfo)
 	// insert t values (1, 2, 3, 4, 5);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
@@ -449,8 +452,13 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	tests := buildCancelJobTests(firstJobID)
 	var checkErr error
 	var test *testCancelJob
-	tc.onJobUpdated = func(job *model.Job) {
+	hookCancelFunc := func(job *model.Job) {
 		if job.State == model.JobStateSynced || job.State == model.JobStateCancelled || job.State == model.JobStateCancelling {
+			return
+		}
+		// This hook only valid for the related test job.
+		// This is use to avoid parallel test fail.
+		if len(test.jobIDs) > 0 && test.jobIDs[0] != job.ID {
 			return
 		}
 		if checkErr != nil {
@@ -459,8 +467,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 		hookCtx := mock.NewContext()
 		hookCtx.Store = store
-		var err1 error
-		err1 = hookCtx.NewTxn(context.Background())
+		err1 := hookCtx.NewTxn(context.Background())
 		if err1 != nil {
 			checkErr = errors.Trace(err1)
 			return
@@ -480,6 +487,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			return
 		}
 	}
+	tc.onJobUpdated = hookCancelFunc
+	tc.onJobRunBefore = hookCancelFunc
 	d.SetHook(tc)
 
 	// for adding index
@@ -521,8 +530,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
 		Options: []*ast.ColumnOption{},
 	}
-	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil)
+	col, _, err := buildColumnAndConstraint(ctx, 2, newColumnDef, nil, mysql.DefaultCharset, mysql.DefaultCharset)
 	c.Assert(err, IsNil)
+
 	addColumnArgs := []interface{}{col, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 0}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, addColumnArgs, &cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
@@ -579,6 +589,22 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
+
+	// cancel rebase auto id
+	test = &tests[13]
+	rebaseIDArgs := []interface{}{int64(200)}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, rebaseIDArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	changedTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().AutoIncID, Equals, tableAutoID)
+
+	// cancel shard bits
+	test = &tests[14]
+	shardRowIDArgs := []interface{}{uint64(7)}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, shardRowIDArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().ShardRowIDBits, Equals, shardRowIDBits)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

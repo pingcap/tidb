@@ -44,11 +44,10 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level:  logLevel,
-		Format: "highlight",
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, "highlight", "", logutil.EmptyFileLogConfig, false))
+	testleak.BeforeTest()
 	TestingT(t)
+	testleak.AfterTestT(t)()
 }
 
 var _ = Suite(&testFailDBSuite{})
@@ -64,7 +63,6 @@ type testFailDBSuite struct {
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -85,11 +83,11 @@ func (s *testFailDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testFailDBSuite) TearDownSuite(c *C) {
-	s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	c.Assert(err, IsNil)
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
@@ -248,7 +246,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
 	for i := 0; i < 50; i++ {
-		if s.dom.SchemaValidator.IsStarted() == false {
+		if !s.dom.SchemaValidator.IsStarted() {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -261,7 +259,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	s.dom.MockReloadFailed.SetValue(false)
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {
-		if s.dom.SchemaValidator.IsStarted() == true {
+		if s.dom.SchemaValidator.IsStarted() {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)

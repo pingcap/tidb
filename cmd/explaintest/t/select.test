@@ -175,3 +175,9 @@ insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-
 desc select * from th where a=-2;
 desc select * from th;
 desc select * from th partition (p2,p1);
+
+# test != any(subq) and = all(subq)
+drop table if exists t;
+create table t(a int, b int);
+explain select a != any (select a from t t2) from t t1;
+explain select a = all (select a from t t2) from t t1;

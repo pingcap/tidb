@@ -16,7 +16,6 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -171,28 +170,6 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 		}
 	}
 	return newKeys
-}
-
-// Change EqualConditions order, by offsets array
-// offsets array is generate by prop check
-func getNewEqualConditionsByOffsets(oldEqualCond []*expression.ScalarFunction, offsets []int) []*expression.ScalarFunction {
-	newEqualCond := make([]*expression.ScalarFunction, 0, len(oldEqualCond))
-	for _, offset := range offsets {
-		newEqualCond = append(newEqualCond, oldEqualCond[offset])
-	}
-	for pos, condition := range oldEqualCond {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
-		if !isExist {
-			newEqualCond = append(newEqualCond, condition)
-		}
-	}
-	return newEqualCond
 }
 
 func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -551,20 +528,20 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	// In `buildFakeEqCondsForIndexJoin`, we construct the equal conditions for join keys and remove filters that contain the join keys' column.
 	// When t1.a = t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as the access condition.
 	// So the equal conditions we built can be successfully used to build a range if they can be used. They won't be affected by the existing filters.
-	ranges, accesses, moreRemained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, access, idxCols, colLengths)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, access, idxCols, colLengths)
 	if err != nil {
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 		return nil, nil, nil
 	}
 
 	// We should guarantee that all the join's equal condition is used.
 	for _, eqCond := range eqConds {
-		if !expression.Contains(accesses, eqCond) {
+		if !expression.Contains(res.AccessConds, eqCond) {
 			return nil, nil, nil
 		}
 	}
 
-	return ranges, append(remained, moreRemained...), keyOff2IdxOff
+	return res.Ranges, append(remained, res.RemainedConds...), keyOff2IdxOff
 }
 
 func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
@@ -794,12 +771,18 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 }
 
 func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
-	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: p.ByItems, Enforced: true}
+	var byItems []property.Item
+	byItems = append(byItems, p.PartitionBy...)
+	byItems = append(byItems, p.OrderBy...)
+	childProperty := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Items: byItems, Enforced: true}
 	if !prop.IsPrefix(childProperty) {
 		return nil
 	}
 	window := PhysicalWindow{
 		WindowFuncDesc: p.WindowFuncDesc,
+		PartitionBy:    p.PartitionBy,
+		OrderBy:        p.OrderBy,
+		Frame:          p.Frame,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
 	window.SetSchema(p.Schema())
 	return []PhysicalPlan{window}

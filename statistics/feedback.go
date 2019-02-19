@@ -793,10 +793,10 @@ func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
 				return false
 			}
 		} else {
-			if bytes.Compare(fb.lower.GetBytes(), rfb.lower.GetBytes()) != 0 {
+			if !bytes.Equal(fb.lower.GetBytes(), rfb.lower.GetBytes()) {
 				return false
 			}
-			if bytes.Compare(fb.upper.GetBytes(), rfb.upper.GetBytes()) != 0 {
+			if !bytes.Equal(fb.upper.GetBytes(), rfb.upper.GetBytes()) {
 				return false
 			}
 		}
@@ -811,15 +811,15 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 		return nil
 	}
 	tablePseudo := t.Pseudo || t.IsOutdated()
-	if tablePseudo == false {
+	if !tablePseudo {
 		return nil
 	}
 	isIndex := q.hist.Tp.Tp == mysql.TypeBlob
 	id := q.hist.ID
-	if isIndex && (t.Indices[id] == nil || t.Indices[id].NotAccurate() == false) {
+	if isIndex && (t.Indices[id] == nil || !t.Indices[id].NotAccurate()) {
 		return nil
 	}
-	if !isIndex && (t.Columns[id] == nil || t.Columns[id].NotAccurate() == false) {
+	if !isIndex && (t.Columns[id] == nil || !t.Columns[id].NotAccurate()) {
 		return nil
 	}
 

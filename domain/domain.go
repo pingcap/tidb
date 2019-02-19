@@ -23,7 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
 	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
@@ -253,6 +253,15 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 		return nil, errors.Trace(err)
 	}
 	return snapHandle.Get(), nil
+}
+
+// GetSnapshotMeta gets a new snapshot meta at startTS.
+func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
+	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return meta.NewSnapshotMeta(snapshot), nil
 }
 
 // DDL gets DDL from domain.
@@ -723,6 +732,11 @@ func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
 }
 
+// GetEtcdClient returns the etcd client.
+func (do *Domain) GetEtcdClient() *clientv3.Client {
+	return do.etcdClient
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
@@ -767,7 +781,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			if err != nil {
 				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
 			} else {
-				log.Info("[domain] reload privilege success.")
+				log.Debug("[domain] reload privilege success.")
 			}
 		}
 	}()
@@ -846,6 +860,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 }
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+	defer recoverInDomain("updateStatsWorker", false)
 	lease := do.statsLease
 	deltaUpdateDuration := lease * 20
 	loadTicker := time.NewTicker(lease)
@@ -866,11 +881,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	if err != nil {
 		log.Debug("[stats] init stats info failed: ", errors.ErrorStack(err))
 	} else {
-		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
+		log.Info("[stats] init stats info takes ", time.Since(t))
 	}
 	defer func() {
 		do.SetStatsUpdating(false)
-		recoverInDomain("updateStatsWorker", false)
 		do.wg.Done()
 	}()
 	for {
@@ -927,21 +941,18 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 }
 
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
+	defer recoverInDomain("autoAnalyzeWorker", false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
-	defer analyzeTicker.Stop()
 	defer func() {
-		recoverInDomain("autoAnalyzeWorker", false)
+		analyzeTicker.Stop()
 		do.wg.Done()
 	}()
 	for {
 		select {
 		case <-analyzeTicker.C:
 			if owner.IsOwner() {
-				err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
-				if err != nil {
-					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
-				}
+				statsHandle.HandleAutoAnalyze(do.InfoSchema())
 			}
 		case <-do.exit:
 			return

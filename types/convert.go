@@ -329,14 +329,12 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	if intCnt <= 0 {
 		intStr = "0"
 		if intCnt == 0 && len(digits) > 0 {
-			dotIdx = -1
 			intStr = roundIntStr(digits[0], intStr)
 		}
 		return intStr, nil
 	}
 	if intCnt == 1 && (digits[0] == '-' || digits[0] == '+') {
 		intStr = "0"
-		dotIdx = 0
 		if len(digits) > 1 {
 			intStr = roundIntStr(digits[1], intStr)
 		}
@@ -410,7 +408,8 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		u, err := ConvertFloatToUint(sc, f, bound, mysql.TypeDouble)
 		return int64(u), errors.Trace(err)
 	case json.TypeCodeString:
-		return StrToInt(sc, hack.String(j.GetString()))
+		str := string(hack.String(j.GetString()))
+		return StrToInt(sc, str)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
@@ -435,7 +434,8 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 	case json.TypeCodeFloat64:
 		return j.GetFloat64(), nil
 	case json.TypeCodeString:
-		return StrToFloat(sc, hack.String(j.GetString()))
+		str := string(hack.String(j.GetString()))
+		return StrToFloat(sc, str)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }

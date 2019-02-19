@@ -17,12 +17,13 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -138,7 +139,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.id)
+		e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id)
 	}
 	if schema != nil {
 		cols := schema.Columns
@@ -183,7 +184,7 @@ type CancelDDLJobsExec struct {
 func (e *CancelDDLJobsExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
@@ -257,17 +258,33 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 
 	ddlJobs := ""
+	query := ""
 	l := len(e.ddlInfo.Jobs)
 	for i, job := range e.ddlInfo.Jobs {
 		ddlJobs += job.String()
+		query += job.Query
 		if i != l-1 {
 			ddlJobs += "\n"
+			query += "\n"
 		}
 	}
+
+	do := domain.GetDomain(e.ctx)
+	serverInfo, err := do.InfoSyncer().GetServerInfoByID(ctx, e.ddlOwnerID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	serverAddress := serverInfo.IP + ":" +
+		strconv.FormatUint(uint64(serverInfo.Port), 10)
+
 	req.AppendInt64(0, e.ddlInfo.SchemaVer)
 	req.AppendString(1, e.ddlOwnerID)
-	req.AppendString(2, ddlJobs)
-	req.AppendString(3, e.selfID)
+	req.AppendString(2, serverAddress)
+	req.AppendString(3, ddlJobs)
+	req.AppendString(4, e.selfID)
+	req.AppendString(5, query)
+
 	e.done = true
 	return nil
 }
@@ -687,7 +704,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if e.cursor >= e.end {
@@ -810,7 +827,7 @@ func (e *TableDualExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if e.numReturned >= e.numDualRows {
@@ -869,7 +886,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 
@@ -952,7 +969,7 @@ func (e *TableScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 	if e.isVirtualTable {
@@ -1060,7 +1077,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
 	if e.evaluated {
@@ -1213,7 +1230,7 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.GrowAndReset(e.maxChunkSize)
 	if !e.initialized {

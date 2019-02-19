@@ -67,6 +67,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
+	}
 	if e.corColInAccess {
 		ts := e.plans[0].(*plannercore.PhysicalTableScan)
 		access := ts.AccessCondition
@@ -111,7 +115,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), req.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	if err := e.resultHandler.nextChunk(ctx, req.Chunk); err != nil {
 		e.feedback.Invalidate()
@@ -124,7 +128,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 func (e *TableReaderExecutor) Close() error {
 	err := e.resultHandler.Close()
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.plans[0].ExplainID())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -145,7 +149,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

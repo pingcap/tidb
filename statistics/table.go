@@ -534,7 +534,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			totalCount += count
 			continue
 		}
-		selectivity := 1.0
+		var selectivity float64
 		// use CM Sketch to estimate the equal conditions
 		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
 		if err != nil {
@@ -660,8 +660,7 @@ func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount
 		} else if ran.LowVal[colIdx].Kind() == types.KindMinNotNull {
-			var nullCount float64
-			nullCount = tableRowCount / pseudoEqualRate
+			nullCount := tableRowCount / pseudoEqualRate
 			if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 				rowCount += tableRowCount - nullCount
 			} else if err == nil {

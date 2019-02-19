@@ -37,6 +37,10 @@ type Manager interface {
 	// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
 	// this means any privilege would be OK.
 	RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool
+
+	// RequestVerificationWithUser verifies specific user privilege for the request.
+	RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool
+
 	// ConnectionVerification verifies user privilege for connection.
 	ConnectionVerification(user, host string, auth, salt []byte) (string, string, bool)
 
