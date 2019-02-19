@@ -107,6 +107,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowColumns()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateView:
+		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
@@ -761,6 +763,27 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 	}
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateView() error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !tb.Meta().IsView() {
+		return ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "VIEW")
+	}
+
+	var buf bytes.Buffer
+	e.fetchShowCreateTable4View(tb.Meta(), &buf)
+	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
 	return nil
 }
 
