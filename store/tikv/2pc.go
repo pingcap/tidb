@@ -99,7 +99,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	err := txn.us.WalkBuffer(func(k kv.Key, v []byte) error {
 		if len(v) > 0 {
 			op := pb.Op_Put
-			if txn.us.ShouldNotExist(k) {
+			if c := txn.us.LookupConditionPair(k); c != nil && c.ShouldNotExist() {
 				op = pb.Op_Insert
 			}
 			mutations[string(k)] = &pb.Mutation{
@@ -389,12 +389,12 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				err := c.txn.us.LookupConditionErr(key)
-				if err == nil {
-					panic(fmt.Sprintf("con:%d, precondition error for key:%s should not be nil", c.connID, key))
+				conditionPair := c.txn.us.LookupConditionPair(key)
+				if conditionPair == nil {
+					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
 				log.Errorf("con:%d key: %s already exists", c.connID, key)
-				return errors.Trace(err)
+				return errors.Trace(conditionPair.Err())
 			}
 
 			// Extract lock from key error
