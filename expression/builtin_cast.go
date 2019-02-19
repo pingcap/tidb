@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -520,8 +521,11 @@ func (b *builtinCastIntAsStringSig) evalString(row types.Row) (res string, isNul
 		}
 		res = strconv.FormatUint(uVal, 10)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastIntAsTimeSig struct {
@@ -781,8 +785,11 @@ func (b *builtinCastRealAsStringSig) evalString(row types.Row) (res string, isNu
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), b.tp, b.ctx.GetSessionVars().StmtCtx)
-	return res, isNull, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, 64), b.tp, b.ctx.GetSessionVars().StmtCtx, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastRealAsTimeSig struct {
@@ -908,8 +915,11 @@ func (b *builtinCastDecimalAsStringSig) evalString(row types.Row) (res string, i
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, sc)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, sc, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastDecimalAsRealSig struct {
@@ -1000,8 +1010,11 @@ func (b *builtinCastStringAsStringSig) evalString(row types.Row) (res string, is
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastStringAsIntSig struct {
@@ -1291,8 +1304,11 @@ func (b *builtinCastTimeAsStringSig) evalString(row types.Row) (res string, isNu
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
 }
 
 type builtinCastTimeAsDurationSig struct {
@@ -1415,8 +1431,30 @@ func (b *builtinCastDurationAsStringSig) evalString(row types.Row) (res string, 
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc)
-	return res, false, errors.Trace(err)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc, false)
+	if err != nil {
+		return res, false, err
+	}
+	return padZeroForBinaryType(res, b.tp, b.ctx)
+}
+
+func padZeroForBinaryType(s string, tp *types.FieldType, ctx sessionctx.Context) (string, bool, error) {
+	flen := tp.Flen
+	if tp.Tp == mysql.TypeString && types.IsBinaryStr(tp) && len(s) < flen {
+		sc := ctx.GetSessionVars().StmtCtx
+		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			return "", false, err
+		}
+		if uint64(flen) > maxAllowedPacket {
+			sc.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("cast_as_binary", maxAllowedPacket))
+			return "", true, nil
+		}
+		padding := make([]byte, flen-len(s))
+		s = string(append([]byte(s), padding...))
+	}
+	return s, false, nil
 }
 
 type builtinCastDurationAsTimeSig struct {

@@ -76,6 +76,17 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(len(res.GetString()), Equals, 5)
 	c.Assert(res.GetString(), Equals, string([]byte{'a', 0x00, 0x00, 0x00, 0x00}))
 
+	// cast(str as binary(N)), N > len([]byte(str)).
+	// cast("a" as binary(4294967295))
+	tp.Flen = 4294967295
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, tp)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.IsNull(), IsTrue)
+	warnings := sc.GetWarnings()
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
 	origSc := sc
 	sc.InSelectStmt = true
 	sc.OverflowAsWarning = true
@@ -93,8 +104,8 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(res.GetUint64() == math.MaxUint64, IsTrue)
 
-	warnings := sc.GetWarnings()
-	lastWarn := warnings[len(warnings)-1]
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
 
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
