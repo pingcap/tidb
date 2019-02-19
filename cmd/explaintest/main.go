@@ -567,11 +567,6 @@ func loadAllTests() ([]string, error) {
 		if strings.HasSuffix(name, ".test") {
 			name = strings.TrimSuffix(name, ".test")
 
-			// if we use record and the result file exists, skip generating
-			if record && resultExists(name) {
-				continue
-			}
-
 			if create && !strings.HasSuffix(name, "_stats") {
 				continue
 			}
