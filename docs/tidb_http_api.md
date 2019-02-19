@@ -7,6 +7,7 @@
     ```shell
     curl http://{TiDBIP}:10080/status
     ```
+
     ```shell
     $curl http://127.0.0.1:10080/status
     {
@@ -27,6 +28,7 @@
     ```shell
     curl http://{TiDBIP}:10080/regions/meta
     ```
+
     ```shell
     $curl http://127.0.0.1:10080/regions/meta
     [
@@ -54,7 +56,8 @@
 
     ```shell
     curl http://{TiDBIP}:10080/regions/hot
-    ```    
+    ```
+
     ```shell
     $curl http://127.0.0.1:10080/regions/hot
     {
@@ -79,6 +82,7 @@
     ```shell
     curl http://{TiDBIP}:10080/regions/{regionID}
     ```
+
     ```shell
     $curl http://127.0.0.1:10080/regions/4001
     {
@@ -101,6 +105,7 @@
     ```shell
     curl http://{TiDBIP}:10080/tables/{db}/{table}/regions
     ```
+
     ```shell
     $curl http://127.0.0.1:10080/tables/test/t1/regions
     {
@@ -134,6 +139,7 @@
     ```shell
     curl http://{TiDBIP}:10080/schema
     ```
+
     ```shell
     $curl http://127.0.0.1:10080/schema
     [
@@ -173,17 +179,12 @@
     curl http://{TiDBIP}:10080/db-table/{tableID}
     ```
 
-1. Get disk-usage info about db.table
-
-    ```shell
-    curl http://{TiDBIP}:10080/tables/{db}/{table}/disk-usage
-    ```
-
 1. Get MVCC Information of the key with a specified handle ID
 
     ```shell
     curl http://{TiDBIP}:10080/mvcc/key/{db}/{table}/{handle}
     ```
+
     ```shell
     $curl http://127.0.0.1:10080/mvcc/key/test/t1/1
     {
@@ -204,6 +205,7 @@
     ```shell
     curl http://{TiDBIP}:10080/mvcc/txn/{startTS}/{db}/{table}
     ```
+
     ```shell
     $curl http://127.0.0.1:10080/mvcc/txn/405179368526053377/test/t1
     {
@@ -231,8 +233,10 @@
     ```shell
     curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}
     ```
+
     *Hint: For the index column which column type is timezone dependent, e.g. `timestamp`, convert its value to UTC
 timezone.*
+
     ```shell
     $curl http://127.0.0.1:10080/mvcc/index/test/t1/idx/1\?a\=A
     {
@@ -253,7 +257,7 @@ timezone.*
     ```shell
     curl -X POST http://{TiDBIP}:10080/tables/{db}/{table}/scatter
     ```
-    
+
     **Note**: The `scatter-range` scheduler may conflict with the global scheduler, do not use it for long periods on the larger table.
 
 1. Stop scatter the regions, disable the `scatter-range` scheduler for the specified table.
@@ -273,6 +277,7 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/info
     ```
+
     ```shell
     $curl http://127.0.0.1:10080/info
     {
@@ -292,6 +297,7 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/info/all
     ```
+
     ```shell
     $curl http://127.0.0.1:10080/info/all
     {
@@ -350,21 +356,25 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/tables/{colID}/{colFlag}/{colLen}?rowBin={val}
     ```
+
     *Hint: For the column which field type is timezone dependent, e.g. `timestamp`, convert its value to UTC timezone.*
-    
+
 1. Resign the ddl owner, let tidb start a new ddl owner election.
 
     ```shell
     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
-    
+
 1. Get all TiDB DDL job history information.
-	```shell
-	curl http://{TiDBIP}:10080/ddl/history
-	```
+
+    ```shell
+    curl http://{TiDBIP}:10080/ddl/history
+    ```
 
 1. Get count {number} TiDB DDL job history information.
-	```shell
-	curl http://{TiDBIP}:10080/ddl/history?limit={number}
-	```
+
+    ```shell
+    curl http://{TiDBIP}:10080/ddl/history?limit={number}
+    ```
+
     **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -305,18 +306,40 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 	if value != nil && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() &&
 		ctx.GetSessionVars().SQLMode.HasStrictMode() && types.IsTypeTime(col.Tp) {
 		if vv, ok := value.(string); ok {
-			t, err := types.ParseTime(nil, vv, col.Tp, 6)
+			timeValue, err := expression.GetTimeValue(ctx, vv, col.Tp, col.Decimal)
 			if err != nil {
-				// Ignores ParseTime error, because ParseTime error has been dealt in getDefaultValue
-				// Some builtin function like CURRENT_TIMESTAMP() will cause ParseTime error.
-				return hasDefaultValue, value, nil
+				return hasDefaultValue, value, errors.Trace(err)
 			}
-			if t.Time == types.ZeroTime {
+			if timeValue.GetMysqlTime().Time == types.ZeroTime {
 				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 			}
 		}
 	}
 	return hasDefaultValue, value, nil
+}
+
+func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interface{}, col *table.Column) (interface{}, error) {
+	if defaultVal == nil || col.Tp != mysql.TypeTimestamp {
+		return defaultVal, nil
+	}
+	if vv, ok := defaultVal.(string); ok {
+		if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, col.Decimal)
+			if err != nil {
+				return defaultVal, errors.Trace(err)
+			}
+			err = t.ConvertTimeZone(ctx.GetSessionVars().Location(), time.UTC)
+			if err != nil {
+				return defaultVal, errors.Trace(err)
+			}
+			defaultVal = t.String()
+			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
+			//              This will fix bug in version 0.
+			// TODO: remove this version field after there is no old version 0.
+			col.Version = model.ColumnInfoVersion1
+		}
+	}
+	return defaultVal, nil
 }
 
 // isExplicitTimeStamp is used to check if explicit_defaults_for_timestamp is on or off.
@@ -345,7 +368,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			col.Flag |= mysql.NotNullFlag
 		}
 	}
-
+	var err error
 	setOnUpdateNow := false
 	hasDefaultValue := false
 	hasNullFlag := false
@@ -378,14 +401,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:
-				value, err := getDefaultValue(ctx, v, colDef.Tp)
+				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
-					return nil, nil, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
-				}
-				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
-					return nil, nil, errors.Trace(err)
-				}
-				if err = col.SetDefaultValue(value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
 				removeOnUpdateNowFlag(col)
@@ -442,7 +459,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if mysql.HasZerofillFlag(col.Flag) {
 		col.Flag |= mysql.UnsignedFlag
 	}
-	err := checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
+	err = checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1162,7 +1179,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	var oldViewTblID int64
 	if oldView != nil {
 		if !oldView.Meta().IsView() {
-			return ErrTableIsNotView.GenWithStackByArgs(ident.Schema, ident.Name)
+			return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "VIEW")
 		}
 		oldViewTblID = oldView.Meta().ID
 	}
@@ -1425,7 +1442,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 
 	is := d.infoHandle.Get()
 	if is.TableIsView(ident.Schema, ident.Name) {
-		return ErrTableIsNotBaseTable.GenWithStackByArgs(ident.Schema, ident.Name)
+		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
 	for _, spec := range validSpecs {
@@ -1937,16 +1954,25 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 }
 
-func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
+func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
+	hasDefaultValue := false
 	value, err := getDefaultValue(ctx, option, &col.FieldType)
 	if err != nil {
-		return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
+		return hasDefaultValue, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
+	}
+
+	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+		return hasDefaultValue, errors.Trace(err)
+	}
+	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
+	if err != nil {
+		return hasDefaultValue, errors.Trace(err)
 	}
 	err = col.SetDefaultValue(value)
 	if err != nil {
-		return errors.Trace(err)
+		return hasDefaultValue, errors.Trace(err)
 	}
-	return errors.Trace(checkDefaultValue(ctx, col, true))
+	return hasDefaultValue, nil
 }
 
 func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
@@ -1964,17 +1990,12 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		return nil
 	}
 	var hasDefaultValue, setOnUpdateNow bool
+	var err error
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			value, err := getDefaultValue(ctx, opt, &col.FieldType)
+			hasDefaultValue, err = setDefaultValue(ctx, col, opt)
 			if err != nil {
-				return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
-			}
-			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
-				return errors.Trace(err)
-			}
-			if err = col.SetDefaultValue(value); err != nil {
 				return errors.Trace(err)
 			}
 		case ast.ColumnOptionComment:
@@ -2214,8 +2235,11 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		}
 		setNoDefaultValueFlag(col, false)
 	} else {
-		err = setDefaultValue(ctx, col, specNewColumn.Options[0])
+		hasDefaultValue, err := setDefaultValue(ctx, col, specNewColumn.Options[0])
 		if err != nil {
+			return errors.Trace(err)
+		}
+		if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2382,7 +2406,7 @@ func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	if !tb.Meta().IsView() {
-		return ErrTableIsNotView.GenWithStackByArgs(ti.Schema, ti.Name)
+		return ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "VIEW")
 	}
 
 	job := &model.Job{
