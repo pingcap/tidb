@@ -544,7 +544,6 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
 	test = &tests[13]
-
 	dropColName = "c4"
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
