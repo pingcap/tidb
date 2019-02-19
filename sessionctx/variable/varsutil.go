@@ -111,7 +111,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case PluginLoad:
 		return config.GetGlobalConfig().Plugin.Load, true, nil
 	case TiDBCheckMb4ValueInUtf8:
-		return boolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8), true, nil
+		return BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8), true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
