@@ -969,6 +969,9 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
 				isView = table.Meta().IsView()
 			}
+		case ast.ShowCreateView:
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, "", "", "", err)
 		}
 		p.SetSchema(buildShowSchema(show, isView))
 	}
@@ -1513,9 +1516,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
 		if _, ok := plan.(LogicalPlan); ok {
 			b.visitInfo = append(b.visitInfo, visitInfo{
-				// TODO: We should check CreateViewPriv instead of CreatePriv.
-				// See https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_create-view.
-				privilege: mysql.CreatePriv,
+				privilege: mysql.CreateViewPriv,
 				db:        v.ViewName.Schema.L,
 				table:     v.ViewName.Name.L,
 				err:       nil,
@@ -1746,6 +1747,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		} else {
 			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 		}
+	case ast.ShowCreateView:
+		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
 	case ast.ShowGrants:
