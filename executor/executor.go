@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sync"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -689,6 +689,8 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 	for !e.meetFirstBatch {
+		// transfer req's requiredRows to childResult and then adjust it in childResult
+		e.childResult = e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
 		err := e.children[0].Next(ctx, e.childResult)
 		if err != nil {
 			return errors.Trace(err)
@@ -713,6 +715,7 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		e.cursor += batchSize
 	}
+	e.adjustRequiredRows(chk)
 	err := e.children[0].Next(ctx, chk)
 	if err != nil {
 		return errors.Trace(err)
@@ -745,6 +748,24 @@ func (e *LimitExec) Open(ctx context.Context) error {
 func (e *LimitExec) Close() error {
 	e.childResult = nil
 	return errors.Trace(e.baseExecutor.Close())
+}
+
+func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
+	// the limit of maximum number of rows the LimitExec should read
+	limitTotal := int(e.end - e.cursor)
+
+	var limitRequired int
+	if e.cursor < e.begin {
+		// if cursor is less than begin, it have to read (begin-cursor) rows to ignore
+		// and then read chk.RequiredRows() rows to return,
+		// so the limit is (begin-cursor)+chk.RequiredRows().
+		limitRequired = int(e.begin) - int(e.cursor) + chk.RequiredRows()
+	} else {
+		// if cursor is equal or larger than begin, just read chk.RequiredRows() rows to return.
+		limitRequired = chk.RequiredRows()
+	}
+
+	return chk.SetRequiredRows(mathutil.Min(limitTotal, limitRequired), e.maxChunkSize)
 }
 
 func init() {
