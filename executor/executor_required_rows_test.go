@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 
 	"github.com/cznic/mathutil"
@@ -30,13 +31,15 @@ import (
 
 type requiredRowsDataSource struct {
 	baseExecutor
-	totalRows    int
-	count        int
-	requiredLast int // the number of rows required in the last call of Next
-	ctx          sessionctx.Context
+	totalRows int
+	count     int
+	ctx       sessionctx.Context
+
+	expectedRowsRet []int
+	numNextCalled   int
 }
 
-func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int) *requiredRowsDataSource {
+func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRowsRet []int) *requiredRowsDataSource {
 	// the schema of output is fixed now, which is [Double, Long]
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
@@ -45,20 +48,28 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int) *requiredR
 	}
 	schema := expression.NewSchema(cols...)
 	baseExec := newBaseExecutor(ctx, schema, "")
-	return &requiredRowsDataSource{baseExec, totalRows, 0, 0, ctx}
+	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0}
 }
 
 func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	defer func() {
+		rowsRet := req.NumRows()
+		expected := r.expectedRowsRet[r.numNextCalled]
+		if rowsRet != expected {
+			panic(fmt.Sprintf("unexpected number of rows returned, obtain: %v, expected: %v", rowsRet, expected))
+		}
+		r.numNextCalled++
+	}()
+
 	req.Reset()
 	if r.count > r.totalRows {
-		r.requiredLast = 0
 		return nil
 	}
-	r.requiredLast = mathutil.Min(req.RequiredRows(), r.totalRows-r.count)
-	for i := 0; i < r.requiredLast; i++ {
+	required := mathutil.Min(req.RequiredRows(), r.totalRows-r.count)
+	for i := 0; i < required; i++ {
 		req.AppendRow(r.genOneRow())
 	}
-	r.count += r.requiredLast
+	r.count += required
 	return nil
 }
 
@@ -81,7 +92,16 @@ func (r *requiredRowsDataSource) genValue(valType *types.FieldType) interface{} 
 	}
 }
 
+func (r *requiredRowsDataSource) checkNumNextCalled() error {
+	if r.numNextCalled != len(r.expectedRowsRet) {
+		return fmt.Errorf("unexpected number of call on Next, obtain: %v, expected: %v",
+			r.numNextCalled, len(r.expectedRowsRet))
+	}
+	return nil
+}
+
 func (s *testExecSuite) TestLimitRequiredRows(c *C) {
+	sctx := defaultCtx()
 	testCases := []struct {
 		totalRows      int
 		limitOffset    int
@@ -96,7 +116,7 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 			limitCount:     10,
 			requiredRows:   []int{3, 5, 1, 500, 500},
 			expectedRows:   []int{3, 5, 1, 1, 0},
-			expectedRowsDS: []int{3, 5, 1, 1, 1},
+			expectedRowsDS: []int{3, 5, 1, 1},
 		},
 		{
 			totalRows:      20,
@@ -120,14 +140,21 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 			limitCount:     10,
 			requiredRows:   []int{10},
 			expectedRows:   []int{0},
-			expectedRowsDS: []int{0},
+			expectedRowsDS: []int{100, 0},
+		},
+		{
+			totalRows:      sctx.GetSessionVars().MaxChunkSize + 20,
+			limitOffset:    sctx.GetSessionVars().MaxChunkSize + 1,
+			limitCount:     10,
+			requiredRows:   []int{3, 3, 3, 100},
+			expectedRows:   []int{3, 3, 3, 1},
+			expectedRowsDS: []int{sctx.GetSessionVars().MaxChunkSize, 4, 3, 3, 1},
 		},
 	}
 
-	sctx := defaultCtx()
 	ctx := context.Background()
 	for _, testCase := range testCases {
-		ds := newRequiredRowsDataSource(sctx, testCase.totalRows)
+		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
 		exec := buildLimitExec(sctx, ds, testCase.limitOffset, testCase.limitCount)
 		c.Assert(exec.Open(ctx), IsNil)
 		chk := exec.newFirstChunk()
@@ -135,8 +162,8 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 			chk.SetRequiredRows(testCase.requiredRows[i], sctx.GetSessionVars().MaxChunkSize)
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
-			c.Assert(ds.requiredLast, Equals, testCase.expectedRowsDS[i])
 		}
+		c.Assert(ds.checkNumNextCalled(), IsNil)
 	}
 }
 

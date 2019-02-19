@@ -773,14 +773,21 @@ func (e *LimitExec) Close() error {
 }
 
 func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
-	limit1 := int(e.end - e.cursor)
-	var limit2 int
+	// the limit of maximum number of rows the LimitExec should read
+	limitTotal := int(e.end - e.cursor)
+
+	var limitRequired int
 	if e.cursor < e.begin {
-		limit2 = int(e.begin) + chk.RequiredRows() - int(e.cursor)
+		// if cursor is less than begin, it have to read (begin-cursor) rows to ignore
+		// and then read chk.RequiredRows() rows to return,
+		// so the limit is (begin-cursor)+chk.RequiredRows().
+		limitRequired = int(e.begin) - int(e.cursor) + chk.RequiredRows()
 	} else {
-		limit2 = chk.RequiredRows()
+		// if cursor is equal or larger than begin, just read chk.RequiredRows() rows to return.
+		limitRequired = chk.RequiredRows()
 	}
-	return chk.SetRequiredRows(mathutil.Min(limit1, limit2), e.maxChunkSize)
+
+	return chk.SetRequiredRows(mathutil.Min(limitTotal, limitRequired), e.maxChunkSize)
 }
 
 func init() {
