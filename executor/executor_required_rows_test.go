@@ -32,11 +32,12 @@ type requiredRowsDataSource struct {
 	baseExecutor
 	totalRows    int
 	count        int
-	requiredLast int
+	requiredLast int // the number of rows required in the last call of Next
 	ctx          sessionctx.Context
 }
 
 func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int) *requiredRowsDataSource {
+	// the schema of output is fixed now, which is [Double, Long]
 	retTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeLonglong)}
 	cols := make([]*expression.Column, len(retTypes))
 	for i := range retTypes {

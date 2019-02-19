@@ -711,6 +711,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		return nil
 	}
 	for !e.meetFirstBatch {
+		// transfer req's requiredRows to childResult and then adjust it in childResult
 		e.childResult = e.childResult.SetRequiredRows(req.RequiredRows(), e.maxChunkSize)
 		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.adjustRequiredRows(e.childResult)))
 		if err != nil {
