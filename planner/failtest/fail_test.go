@@ -11,18 +11,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package failtest
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 var _ = Suite(&testFailPointSuit{})
 
@@ -33,22 +41,33 @@ type testFailPointSuit struct {
 }
 
 func (s *testFailPointSuit) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-
-	var err error
-	s.store, s.dom, err = newStoreWithBootstrap()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	s.ctx = mock.NewContext()
+	c.Assert(store, NotNil)
+
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	c.Assert(dom, NotNil)
+
+	s.store, s.dom, s.ctx = store, dom, mock.NewContext()
 }
 
 func (s *testFailPointSuit) TearDownSuite(c *C) {
 	s.dom.Close()
-	s.store.Close()
+	err := s.store.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testFailPointSuit) SetUpTest(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testFailPointSuit) TearDownTest(c *C) {
 	testleak.AfterTest(c)()
 }
 
 func (s *testFailPointSuit) TestColumnPruningError(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a int, b int);`)
