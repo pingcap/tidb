@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -35,14 +36,17 @@ type Column struct {
 
 // RowDecoder decodes a byte slice into datums and eval the generated column value.
 type RowDecoder struct {
-	mutRow        chunk.MutRow
-	columns       map[int64]Column
-	colTypes      map[int64]*types.FieldType
-	haveGenColumn bool
+	tbl                 table.Table
+	mutRow              chunk.MutRow
+	columns             map[int64]Column
+	colsInGeneratedExpr map[int64]*table.Column
+	colTypes            map[int64]*types.FieldType
+	haveGenColumn       bool
+	defaultVals         []types.Datum
 }
 
 // NewRowDecoder returns a new RowDecoder.
-func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) *RowDecoder {
+func NewRowDecoder(tbl table.Table, colsInGeneratedExpr map[int64]*table.Column, decodeColMap map[int64]Column) *RowDecoder {
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	haveGenCol := false
 	for id, col := range decodeColMap {
@@ -57,20 +61,24 @@ func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) *RowDeco
 		}
 	}
 
+	cols := tbl.Cols()
 	tps := make([]*types.FieldType, len(cols))
 	for _, col := range cols {
 		tps[col.Offset] = &col.FieldType
 	}
 	return &RowDecoder{
-		mutRow:        chunk.MutRowFromTypes(tps),
-		columns:       decodeColMap,
-		colTypes:      colFieldMap,
-		haveGenColumn: haveGenCol,
+		tbl:                 tbl,
+		mutRow:              chunk.MutRowFromTypes(tps),
+		columns:             decodeColMap,
+		colsInGeneratedExpr: colsInGeneratedExpr,
+		colTypes:            colFieldMap,
+		haveGenColumn:       haveGenCol,
+		defaultVals:         make([]types.Datum, len(cols)),
 	}
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
-func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int64, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	row, err := tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -79,8 +87,29 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, 
 		return row, nil
 	}
 
-	for id, v := range row {
-		rd.mutRow.SetValue(rd.columns[id].Info.Offset, v.GetValue())
+	for _, dCol := range rd.columns {
+		id := dCol.Info.ID
+		val, ok := row[id]
+		c, ok1 := rd.colsInGeneratedExpr[id]
+		if ok || !ok1 {
+			rd.mutRow.SetValue(rd.columns[id].Info.Offset, val.GetValue())
+			continue
+		}
+
+		// Get the default value of the column in the generated column expression.
+		if c.IsPKHandleColumn(rd.tbl.Meta()) {
+			if mysql.HasUnsignedFlag(c.Flag) {
+				val.SetUint64(uint64(handle))
+			} else {
+				val.SetInt64(handle)
+			}
+		} else {
+			val, err = tables.GetColDefaultValue(ctx, c, rd.defaultVals)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		rd.mutRow.SetValue(rd.columns[id].Info.Offset, val.GetValue())
 	}
 	for id, col := range rd.columns {
 		if col.GenExpr == nil {

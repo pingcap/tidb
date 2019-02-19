@@ -2361,4 +2361,16 @@ func (s *testDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	s.mustExec(c, "delete from t where y = 2155")
 	s.mustExec(c, "alter table t add index idx_y(y1)")
 	s.mustExec(c, "alter table t drop index idx_y")
+
+	// Fix issue 9311.
+	s.tk.MustExec("create table gcai_table (id int primary key);")
+	s.tk.MustExec("insert into gcai_table values(1);")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d date DEFAULT '9999-12-31';")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d1 date as (DATE_SUB(d, INTERVAL 31 DAY));")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx(d1);")
+	s.tk.MustExec("admin check table gcai_table")
+	// The column is PKIsHandle in generated column expression.
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN id1 int as (id+1);")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx1(id1);")
+	s.tk.MustExec("admin check table gcai_table")
 }

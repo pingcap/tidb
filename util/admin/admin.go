@@ -588,6 +588,7 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 	cols := t.Cols()
 	tblInfo := t.Meta()
 	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
+	colsInGeneratedExpr := make(map[int64]*table.Column, len(cols))
 	for _, v := range decodeCol {
 		col := cols[v.Offset]
 		tpExpr := decoder.Column{
@@ -599,13 +600,14 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 					decodeColsMap[c.ID] = decoder.Column{
 						Info: c.ToInfo(),
 					}
+					colsInGeneratedExpr[c.ID] = c
 				}
 			}
 			tpExpr.GenExpr = genExpr[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	return decoder.NewRowDecoder(cols, decodeColsMap)
+	return decoder.NewRowDecoder(t, colsInGeneratedExpr, decodeColsMap)
 }
 
 // genExprs use to calculate generated column value.
@@ -633,7 +635,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 	}
 
-	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
+	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, h, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -694,7 +696,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
