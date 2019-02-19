@@ -437,7 +437,7 @@ type indexJoinLookUpContent struct {
 }
 
 func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) error {
-	lookUpContents, err := iw.constructDatumLookupKeys(task)
+	lookUpContents, err := iw.constructLookupContent(task)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -453,7 +453,7 @@ func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) err
 	return nil
 }
 
-func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([]*indexJoinLookUpContent, error) {
+func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoinLookUpContent, error) {
 	lookUpContents := make([]*indexJoinLookUpContent, 0, task.outerResult.NumRows())
 	keyBuf := make([]byte, 0, 64)
 	for i := 0; i < task.outerResult.NumRows(); i++ {

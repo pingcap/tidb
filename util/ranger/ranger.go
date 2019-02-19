@@ -281,10 +281,12 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 	}
 	if colLen != types.UnspecifiedLength {
 		for _, ran := range ranges {
-			fixRangeDatum(&ran.LowVal[0], colLen, tp)
-			ran.LowExclude = false
-			fixRangeDatum(&ran.HighVal[0], colLen, tp)
-			ran.HighExclude = false
+			if fixRangeDatum(&ran.LowVal[0], colLen, tp) {
+				ran.LowExclude = false
+			}
+			if fixRangeDatum(&ran.HighVal[0], colLen, tp) {
+				ran.HighExclude = false
+			}
 		}
 	}
 	return ranges, nil
