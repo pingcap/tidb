@@ -332,23 +332,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
-	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
-		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
+	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
+		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
+		SkipNameResolve, SQLSafeUpdates, TiDBConstraintCheckInPlace:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
 			return "0", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case LogBin:
-		if strings.EqualFold(value, "ON") || value == "1" {
-			return "ON", nil
-		}
-		if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-
 	case AutocommitVar, TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqToJoinAndAgg,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
