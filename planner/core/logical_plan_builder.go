@@ -558,18 +558,29 @@ func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
-func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectField) model.CIStr {
+func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectField) (model.CIStr, error) {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
-		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
+		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
 	}
 
 	innerExpr := getInnerFromParenthesesAndUnaryPlus(field.Expr)
+	funcCall, isFuncCall := innerExpr.(*ast.FuncCallExpr)
+	// When used to produce a result set column, NAME_CONST() causes the column to have the given name.
+	// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_name-const for details
+	if isFuncCall && funcCall.FnName.L == ast.NameConst {
+		if v, err := evalAstExpr(b.ctx, funcCall.Args[0]); err == nil {
+			if s, err := v.ToString(); err == nil {
+				return model.NewCIStr(s), nil
+			}
+		}
+		return model.NewCIStr(""), ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
+	}
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
 	if !isValueExpr {
-		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
+		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment)), nil
 	}
 
 	// Literal: Need special processing
@@ -585,21 +596,21 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 		fieldName := strings.TrimLeftFunc(projName, func(r rune) bool {
 			return !unicode.IsOneOf(mysql.RangeGraph, r)
 		})
-		return model.NewCIStr(fieldName)
+		return model.NewCIStr(fieldName), nil
 	case types.KindNull:
 		// See #4053, #3685
-		return model.NewCIStr("NULL")
+		return model.NewCIStr("NULL"), nil
 	default:
 		// Keep as it is.
 		if innerExpr.Text() != "" {
-			return model.NewCIStr(innerExpr.Text())
+			return model.NewCIStr(innerExpr.Text()), nil
 		}
-		return model.NewCIStr(field.Text())
+		return model.NewCIStr(field.Text()), nil
 	}
 }
 
 // buildProjectionField builds the field object according to SelectField in projection.
-func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
+func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) (*expression.Column, error) {
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
 	if c, ok := expr.(*expression.Column); ok && !c.IsReferenced {
 		// Field is a column reference.
@@ -609,7 +620,10 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 		colName = field.AsName
 	} else {
 		// Other: field is an expression.
-		colName = b.buildProjectionFieldNameFromExpressions(field)
+		var err error
+		if colName, err = b.buildProjectionFieldNameFromExpressions(field); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return &expression.Column{
 		UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -619,7 +633,7 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 		OrigColName: origColName,
 		DBName:      dbName,
 		RetType:     expr.GetType(),
-	}
+	}, nil
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
@@ -648,7 +662,10 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				expr = p.Schema().Columns[i]
 			}
 			proj.Exprs = append(proj.Exprs, expr)
-			col := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
+			col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
+			if err != nil {
+				return nil, 0, errors.Trace(err)
+			}
 			schema.Append(col)
 			continue
 		}
@@ -660,7 +677,10 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		p = np
 		proj.Exprs = append(proj.Exprs, newExpr)
 
-		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
+		col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
 		schema.Append(col)
 	}
 	proj.SetSchema(schema)
