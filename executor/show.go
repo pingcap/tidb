@@ -107,6 +107,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowColumns()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateView:
+		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
@@ -291,7 +293,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	sql := fmt.Sprintf(`SELECT
                table_name, engine, version, row_format, table_rows,
                avg_row_length, data_length, max_data_length, index_length,
-               data_free, auto_increment, create_time, update_time, check_time, 
+               data_free, auto_increment, create_time, update_time, check_time,
                table_collation, IFNULL(checksum,''), create_options, table_comment
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
@@ -357,6 +359,14 @@ func (e *ShowExec) fetchShowColumns() error {
 		if desc.DefaultValue != nil {
 			// SHOW COLUMNS result expects string value
 			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
+			// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
+			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && strings.ToUpper(defaultValStr) != strings.ToUpper(ast.CurrentTimestamp) {
+				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				defaultValStr = timeValue.GetMysqlTime().String()
+			}
 			if col.Tp == mysql.TypeBit {
 				defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
@@ -607,7 +617,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
 		if col.Charset != "binary" {
 			if col.Charset != tblCharset || col.Collate != tblCollate {
-				fmt.Fprintf(&buf, " CHARSET %s COLLATE %s", col.Charset, col.Collate)
+				fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
 			}
 		}
 		if col.IsGenerated() {
@@ -626,7 +636,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if mysql.HasNotNullFlag(col.Flag) {
 				buf.WriteString(" NOT NULL")
 			}
-			if !mysql.HasNoDefaultValueFlag(col.Flag) {
+			// default values are not shown for generated columns in MySQL
+			if !mysql.HasNoDefaultValueFlag(col.Flag) && !col.IsGenerated() {
 				defaultValue := col.GetDefaultValue()
 				switch defaultValue {
 				case nil:
@@ -640,6 +651,15 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
+					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
+					if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr {
+						timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+						if err != nil {
+							return errors.Trace(err)
+						}
+						defaultValStr = timeValue.GetMysqlTime().String()
+					}
+
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(&buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
@@ -743,6 +763,27 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 	}
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateView() error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !tb.Meta().IsView() {
+		return ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "VIEW")
+	}
+
+	var buf bytes.Buffer
+	e.fetchShowCreateTable4View(tb.Meta(), &buf)
+	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
 	return nil
 }
 

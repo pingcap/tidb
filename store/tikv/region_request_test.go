@@ -89,6 +89,23 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	c.Assert(resp.RawPut, NotNil)
 }
 
+func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdRawPut,
+		RawPut: &kvrpcpb.RawPutRequest{
+			Key:   []byte("key"),
+			Value: []byte("value"),
+		},
+	}
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+	resp, ctx, err := s.regionRequestSender.SendReqCtx(s.bo, req, region.Region, time.Second)
+	c.Assert(err, IsNil)
+	c.Assert(resp.RawPut, NotNil)
+	c.Assert(ctx, NotNil)
+}
+
 func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,

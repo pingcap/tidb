@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (s *testSuite) createSelectNormal(batch, totalRows int, c *C) (*selectResult, []*types.FieldType) {
+func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []string) (*selectResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
@@ -60,7 +60,13 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C) (*selectResul
 	colTypes = append(colTypes, colTypes[0])
 
 	// Test Next.
-	response, err := Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
+	var response SelectResult
+	if planIDs == nil {
+		response, err = Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
+	} else {
+		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs)
+	}
+
 	c.Assert(err, IsNil)
 	result, ok := response.(*selectResult)
 	c.Assert(ok, IsTrue)
@@ -77,7 +83,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C) (*selectResul
 }
 
 func (s *testSuite) TestSelectNormal(c *C) {
-	response, colTypes := s.createSelectNormal(1, 2, c)
+	response, colTypes := s.createSelectNormal(1, 2, c, nil)
 	response.Fetch(context.TODO())
 
 	// Test Next.
@@ -97,10 +103,40 @@ func (s *testSuite) TestSelectNormal(c *C) {
 }
 
 func (s *testSuite) TestSelectNormalChunkSize(c *C) {
-	response, colTypes := s.createSelectNormal(100, 1000000, c)
+	response, colTypes := s.createSelectNormal(100, 1000000, c, nil)
 	response.Fetch(context.TODO())
 	s.testChunkSize(response, colTypes, c)
 	c.Assert(response.Close(), IsNil)
+}
+
+func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
+	planIDs := []string{"1", "2", "3"}
+	response, colTypes := s.createSelectNormal(1, 2, c, planIDs)
+	if len(response.copPlanIDs) != len(planIDs) {
+		c.Fatal("invalid copPlanIDs")
+	}
+	for i := range planIDs {
+		if response.copPlanIDs[i] != planIDs[i] {
+			c.Fatal("invalid copPlanIDs")
+		}
+	}
+
+	response.Fetch(context.TODO())
+
+	// Test Next.
+	chk := chunk.New(colTypes, 32, 32)
+	numAllRows := 0
+	for {
+		err := response.Next(context.TODO(), chk)
+		c.Assert(err, IsNil)
+		numAllRows += chk.NumRows()
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	c.Assert(numAllRows, Equals, 2)
+	err := response.Close()
+	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
