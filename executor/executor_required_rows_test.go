@@ -101,7 +101,7 @@ func (r *requiredRowsDataSource) checkNumNextCalled() error {
 }
 
 func (s *testExecSuite) TestLimitRequiredRows(c *C) {
-	sctx := defaultCtx()
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
 		totalRows      int
 		limitOffset    int
@@ -143,17 +143,18 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 			expectedRowsDS: []int{100, 0},
 		},
 		{
-			totalRows:      sctx.GetSessionVars().MaxChunkSize + 20,
-			limitOffset:    sctx.GetSessionVars().MaxChunkSize + 1,
+			totalRows:      maxChunkSize + 20,
+			limitOffset:    maxChunkSize + 1,
 			limitCount:     10,
 			requiredRows:   []int{3, 3, 3, 100},
 			expectedRows:   []int{3, 3, 3, 1},
-			expectedRowsDS: []int{sctx.GetSessionVars().MaxChunkSize, 4, 3, 3, 1},
+			expectedRowsDS: []int{maxChunkSize, 4, 3, 3, 1},
 		},
 	}
 
-	ctx := context.Background()
 	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
 		exec := buildLimitExec(sctx, ds, testCase.limitOffset, testCase.limitCount)
 		c.Assert(exec.Open(ctx), IsNil)
