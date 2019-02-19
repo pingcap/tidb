@@ -945,5 +945,4 @@ drop table t0, t1;
 
 drop table if exists t;
 create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue));
-insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01');
-explain select * from t where a between time'14:19:00' and timestamp'2019-02-16 14:21:00';
+explain select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00';
