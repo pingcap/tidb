@@ -51,7 +51,7 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0}
 }
 
-func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
+func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
 	defer func() {
 		rowsRet := req.NumRows()
 		expected := r.expectedRowsRet[r.numNextCalled]
@@ -161,7 +161,7 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 		chk := exec.newFirstChunk()
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], sctx.GetSessionVars().MaxChunkSize)
-			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(exec.Next(ctx, chk), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
 		c.Assert(ds.checkNumNextCalled(), IsNil)
@@ -182,7 +182,6 @@ func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Exe
 
 func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	return ctx
 }
