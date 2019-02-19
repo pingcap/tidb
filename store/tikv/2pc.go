@@ -16,12 +16,12 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"fmt"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
@@ -393,7 +393,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 				if conditionPair == nil {
 					panic(fmt.Sprintf("con:%d, conditionPair for key:%s should not be nil", c.connID, key))
 				}
-				log.Errorf("con:%d key: %s already exists", c.connID, key)
+				log.Debugf("con:%d key: %s already exists", c.connID, key)
 				return errors.Trace(conditionPair.Err())
 			}
 
