@@ -447,6 +447,7 @@ import (
 	groupConcat		"GROUP_CONCAT"
 	next_row_id		"NEXT_ROW_ID"
 	inplace 		"INPLACE"
+	instant			"INSTANT"
 	internal		"INTERNAL"
 	min			"MIN"
 	max			"MAX"
@@ -617,7 +618,8 @@ import (
 
 %type   <item>
 	AdminShowSlow			"Admin Show Slow statement"
-	AlterTableOptionListOpt		"alter table option list opt"
+	AlterAlgorithm			"Alter table algorithm"
+	AlterTableOptionListOpt		"Alter table option list opt"
 	AlterTableSpec			"Alter table specification"
 	AlterTableSpecList		"Alter table specification list"
 	AnyOrAll			"Any or All for subquery"
@@ -1201,6 +1203,7 @@ AlterTableSpec:
 		// Parse it and ignore it. Just for compatibility.
 		$$ = &ast.AlterTableSpec{
 			Tp:    		ast.AlterTableAlgorithm,
+			Algorithm:	$3.(ast.AlterAlgorithm),
 		}
 	}
 | "FORCE"
@@ -1213,7 +1216,23 @@ AlterTableSpec:
 
 
 AlterAlgorithm:
-	"DEFAULT" | "INPLACE" | "COPY"
+	"DEFAULT"
+	{
+		$$ = ast.AlterAlgorithmDefault
+	}
+| 	"COPY"
+	{
+		$$ = ast.AlterAlgorithmCopy
+	}
+| 	"INPLACE"
+	{
+		$$ = ast.AlterAlgorithmInplace
+	}
+|	"INSTANT"
+	{
+		$$ = ast.AlterAlgorithmInstant
+	}
+
 
 LockClauseOpt:
 	{}
@@ -3007,7 +3026,7 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" | "INTERNAL" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM"
+| "INPLACE" | "INSTANT" | "INTERNAL" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM"
 | "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" | "VARIANCE" | "VAR_POP" | "VAR_SAMP"
 | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM" | "NEXT_ROW_ID"
 
