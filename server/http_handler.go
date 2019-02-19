@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	logutil "github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -94,7 +95,7 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func writeData(w http.ResponseWriter, data interface{}) {
-	js, err := json.Marshal(data)
+	js, err := json.MarshalIndent(data, "", " ")
 	if err != nil {
 		writeError(w, err)
 		return
@@ -598,7 +599,6 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeData(w, val)
-	return
 }
 
 // TableRegions is the response data for list table's regions.
@@ -696,12 +696,19 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			err1 := logutil.SetLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+
 			l, err1 := log.ParseLevel(levelStr)
 			if err1 != nil {
 				writeError(w, err1)
 				return
 			}
 			log.SetLevel(l)
+
 			config.GetGlobalConfig().Log.Level = levelStr
 		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
@@ -729,7 +736,6 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
-	return
 }
 
 // ServeHTTP recovers binlog service.
@@ -796,7 +802,6 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// all databases' schemas
 	writeData(w, schema.AllSchemas())
-	return
 }
 
 // ServeHTTP handles table related requests, such as table's region information, disk usage.
@@ -867,7 +872,6 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	writeData(w, jobs)
-	return
 }
 
 func (h ddlResignOwnerHandler) resignDDLOwner() error {

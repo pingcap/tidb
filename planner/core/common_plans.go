@@ -84,6 +84,14 @@ type RecoverIndex struct {
 	IndexName string
 }
 
+// RestoreTable is used for recover deleted files by mistake.
+type RestoreTable struct {
+	baseSchemaProducer
+	JobID  int64
+	Table  *ast.TableName
+	JobNum int64
+}
+
 // CleanupIndex is used to delete dangling index data.
 type CleanupIndex struct {
 	baseSchemaProducer
@@ -283,15 +291,14 @@ func (e *Execute) rebuildRange(p Plan) error {
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
 	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
-	ranges := ranger.FullRange()
-	if len(idxCols) > 0 {
-		var err error
-		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	if len(idxCols) == 0 {
+		return ranger.FullRange(), nil
 	}
-	return ranges, nil
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
+	if err != nil {
+		return nil, err
+	}
+	return res.Ranges, nil
 }
 
 // Deallocate represents deallocate plan.

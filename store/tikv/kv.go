@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/grpc-ecosystem/go-grpc-prometheus"
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -317,7 +317,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 		if err == nil {
 			return startTS, nil
 		}
-		err = bo.Backoff(boPDRPC, errors.Errorf("get timestamp failed: %v", err))
+		err = bo.Backoff(BoPDRPC, errors.Errorf("get timestamp failed: %v", err))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -335,10 +335,7 @@ func (s *tikvStore) GetOracle() oracle.Oracle {
 }
 
 func (s *tikvStore) SupportDeleteRange() (supported bool) {
-	if s.mock {
-		return false
-	}
-	return true
+	return !s.mock
 }
 
 func (s *tikvStore) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {

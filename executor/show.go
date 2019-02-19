@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -65,8 +67,8 @@ type ShowExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.GrowAndReset(e.maxChunkSize)
+func (e *ShowExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
 		e.result = e.newFirstChunk()
 		err := e.fetchAll()
@@ -89,8 +91,8 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= e.result.NumRows() {
 		return nil
 	}
-	numCurBatch := mathutil.Min(chk.Capacity(), e.result.NumRows()-e.cursor)
-	chk.Append(e.result, e.cursor, e.cursor+numCurBatch)
+	numCurBatch := mathutil.Min(req.Capacity(), e.result.NumRows()-e.cursor)
+	req.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil
 }
@@ -289,7 +291,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	sql := fmt.Sprintf(`SELECT
                table_name, engine, version, row_format, table_rows,
                avg_row_length, data_length, max_data_length, index_length,
-               data_free, auto_increment, create_time, update_time, check_time, 
+               data_free, auto_increment, create_time, update_time, check_time,
                table_collation, IFNULL(checksum,''), create_options, table_comment
                FROM information_schema.tables
 	       WHERE table_schema='%s' ORDER BY table_name`, e.DBName)
@@ -329,6 +331,22 @@ func (e *ShowExec) fetchShowColumns() error {
 	}
 
 	cols := tb.Cols()
+	if tb.Meta().IsView() {
+		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
+		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
+		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is)
+		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(e.DBName, tb.Meta())
+		if err != nil {
+			return err
+		}
+		viewSchema := viewLogicalPlan.Schema()
+		for _, col := range cols {
+			viewColumn := viewSchema.FindColumnByName(col.Name.L)
+			if viewColumn != nil {
+				col.FieldType = *viewColumn.GetType()
+			}
+		}
+	}
 	for _, col := range cols {
 		if e.Column != nil && e.Column.Name.L != col.Name.L {
 			continue
@@ -566,11 +584,32 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
+	if tb.Meta().IsView() {
+		e.fetchShowCreateTable4View(tb.Meta(), &buf)
+		e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
+		return nil
+	}
+
+	tblCharset := tb.Meta().Charset
+	if len(tblCharset) == 0 {
+		tblCharset = mysql.DefaultCharset
+	}
+	tblCollate := tb.Meta().Collate
+	// Set default collate if collate is not specified.
+	if len(tblCollate) == 0 {
+		tblCollate = getDefaultCollate(tblCharset)
+	}
+
 	fmt.Fprintf(&buf, "CREATE TABLE %s (\n", escape(tb.Meta().Name, sqlMode))
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
 		fmt.Fprintf(&buf, "  %s %s", escape(col.Name, sqlMode), col.GetTypeDesc())
+		if col.Charset != "binary" {
+			if col.Charset != tblCharset || col.Collate != tblCollate {
+				fmt.Fprintf(&buf, " CHARACTER SET %s COLLATE %s", col.Charset, col.Collate)
+			}
+		}
 		if col.IsGenerated() {
 			// It's a generated column.
 			fmt.Fprintf(&buf, " GENERATED ALWAYS AS (%s)", col.GeneratedExprString)
@@ -587,7 +626,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			if mysql.HasNotNullFlag(col.Flag) {
 				buf.WriteString(" NOT NULL")
 			}
-			if !mysql.HasNoDefaultValueFlag(col.Flag) {
+			// default values are not shown for generated columns in MySQL
+			if !mysql.HasNoDefaultValueFlag(col.Flag) && !col.IsGenerated() {
 				defaultValue := col.GetDefaultValue()
 				switch defaultValue {
 				case nil:
@@ -667,23 +707,14 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	charsetName := tb.Meta().Charset
-	if len(charsetName) == 0 {
-		charsetName = mysql.DefaultCharset
-	}
-	collate := tb.Meta().Collate
-	// Set default collate if collate is not specified.
-	if len(collate) == 0 {
-		collate = getDefaultCollate(charsetName)
-	}
 	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
-	if len(collate) == 0 {
+	if len(tblCollate) == 0 {
 		// If we can not find default collate for the given charset,
 		// do not show the collate part.
-		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", charsetName)
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s", tblCharset)
 	} else {
-		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate)
+		fmt.Fprintf(&buf, " DEFAULT CHARSET=%s COLLATE=%s", tblCharset, tblCollate)
 	}
 
 	// Displayed if the compression typed is set.
@@ -712,9 +743,24 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if len(tb.Meta().Comment) > 0 {
 		fmt.Fprintf(&buf, " COMMENT='%s'", format.OutputFormat(tb.Meta().Comment))
 	}
-
 	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
 	return nil
+}
+
+func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := e.ctx.GetSessionVars().SQLMode
+
+	fmt.Fprintf(buf, "CREATE ALGORITHM=%s ", tb.View.Algorithm.String())
+	fmt.Fprintf(buf, "DEFINER=%s@%s ", escape(model.NewCIStr(tb.View.Definer.Username), sqlMode), escape(model.NewCIStr(tb.View.Definer.Hostname), sqlMode))
+	fmt.Fprintf(buf, "SQL SECURITY %s ", tb.View.Security.String())
+	fmt.Fprintf(buf, "VIEW %s (", escape(tb.Name, sqlMode))
+	for i, col := range tb.Columns {
+		fmt.Fprintf(buf, "%s", escape(col.Name, sqlMode))
+		if i < len(tb.Columns)-1 {
+			fmt.Fprintf(buf, ", ")
+		}
+	}
+	fmt.Fprintf(buf, ") AS %s", tb.View.SelectStmt)
 }
 
 func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) {
@@ -858,6 +904,12 @@ func (e *ShowExec) fetchShowProcedureStatus() error {
 }
 
 func (e *ShowExec) fetchShowPlugins() error {
+	tiPlugins := plugin.GetAll()
+	for _, ps := range tiPlugins {
+		for _, p := range ps {
+			e.appendRow([]interface{}{p.Name, p.State.String(), p.Kind.String(), p.Path, p.License, strconv.Itoa(int(p.Version))})
+		}
+	}
 	return nil
 }
 

@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -44,7 +44,6 @@ type testColumnSuite struct {
 }
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_column")
 	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 
@@ -58,7 +57,6 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
@@ -132,7 +130,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		c.Assert(data, HasLen, 3)
 		c.Assert(data[0].GetInt64(), Equals, i)
 		c.Assert(data[1].GetInt64(), Equals, 10*i)
@@ -140,6 +138,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 		i++
 		return true, nil
 	})
+	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(num))
 
 	c.Assert(table.FindCol(t.Cols(), "c4"), IsNil)
@@ -835,7 +834,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
@@ -953,7 +952,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil)
+	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, mysql.DefaultCharset, mysql.DefaultCharset)
 	c.Assert(err, IsNil)
 	return &col.FieldType
 }
@@ -972,5 +971,6 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 		}
 		colObjects = append(colObjects, colDefs[i])
 	}
-	c.Assert(checkDuplicateColumn(colObjects), NotNil)
+	err := checkDuplicateColumn(colObjects)
+	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
 }

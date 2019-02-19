@@ -122,6 +122,11 @@ const (
 	gcEnableValue        = "true"
 	gcDisableValue       = "false"
 	gcDefaultEnableValue = true
+
+	gcModeKey         = "tikv_gc_mode"
+	gcModeCentral     = "central"
+	gcModeDistributed = "distributed"
+	gcModeDefault     = gcModeDistributed
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -136,6 +141,7 @@ var gcVariableComments = map[string]string{
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
 	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 2",
 	gcEnableKey:      "Current GC enable status",
+	gcModeKey:        "Mode of GC, \"central\" or \"distributed\"",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -224,7 +230,7 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 	return ver > notBootstrappedVer
 }
 
-// Leader of GC worker checks if it should start a GC job every tick.
+// leaderTick of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
 		log.Infof("[gc worker] leaderTick on %s: there's already a gc job running. skipped.", w.uuid)
@@ -400,18 +406,38 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	err = w.doGC(ctx, safePoint)
+
+	useDistributedGC, err := w.checkUseDistributedGC()
 	if err != nil {
-		log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, errors.ErrorStack(err))
-		w.gcIsRunning = false
-		metrics.GCJobFailureCounter.WithLabelValues("gc").Inc()
-		w.done <- errors.Trace(err)
-		return
+		log.Errorf("[gc worker] %s failed to load gc mode, fall back to central mode. err: %v", w.uuid, errors.ErrorStack(err))
+		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
+		useDistributedGC = false
 	}
+
+	if useDistributedGC {
+		err = w.uploadSafePointToPD(ctx, safePoint)
+		if err != nil {
+			log.Errorf("[gc worker] %s failed to upload safe point to PD: %v", w.uuid, errors.ErrorStack(err))
+			w.gcIsRunning = false
+			metrics.GCJobFailureCounter.WithLabelValues("upload_safe_point").Inc()
+			w.done <- errors.Trace(err)
+			return
+		}
+	} else {
+		err = w.doGC(ctx, safePoint)
+		if err != nil {
+			log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, errors.ErrorStack(err))
+			w.gcIsRunning = false
+			metrics.GCJobFailureCounter.WithLabelValues("gc").Inc()
+			w.done <- errors.Trace(err)
+			return
+		}
+	}
+
 	w.done <- nil
 }
 
-// `deleteRanges` processes all delete range records whose ts < safePoint in table `gc_delete_range`
+// deleteRanges processes all delete range records whose ts < safePoint in table `gc_delete_range`
 func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	metrics.GCWorkerCounter.WithLabelValues("delete_range").Inc()
 
@@ -444,7 +470,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	return nil
 }
 
-// `redoDeleteRanges` checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
+// redoDeleteRanges checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
 func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error {
 	metrics.GCWorkerCounter.WithLabelValues("redo_delete_range").Inc()
 
@@ -484,7 +510,7 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
 	stores, err := w.pdClient.GetAllStores(ctx)
 	if err != nil {
-		log.Errorf("[gc worker] %s delete ranges: got an error while trying to get store list from pd: %v", w.uuid, errors.ErrorStack(err))
+		log.Errorf("[gc worker] %s delete ranges: got an error while trying to get store list from PD: %v", w.uuid, errors.ErrorStack(err))
 		return errors.Trace(err)
 	}
 
@@ -548,6 +574,28 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	}
 
 	return jobConcurrency, nil
+}
+
+func (w *GCWorker) checkUseDistributedGC() (bool, error) {
+	str, err := w.loadValueFromSysTable(gcModeKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if str == "" {
+		err = w.saveValueToSysTable(gcModeKey, gcModeDefault)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		str = gcModeDefault
+	}
+	if strings.EqualFold(str, gcModeDistributed) {
+		return true, nil
+	}
+	if strings.EqualFold(str, gcModeCentral) {
+		return false, nil
+	}
+	log.Warnf("[gc worker] \"%v\" is not a valid gc mode. distributed mode will be used.", str)
+	return true, nil
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
@@ -642,6 +690,34 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 	return nil
 }
 
+func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
+	var newSafePoint uint64
+	var err error
+
+	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
+	for {
+		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
+		if err != nil {
+			if errors.Cause(err) == context.Canceled {
+				return errors.Trace(err)
+			}
+			err = bo.Backoff(tikv.BoPDRPC, errors.Errorf("failed to upload safe point to PD, err: %v", err))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			continue
+		}
+		break
+	}
+
+	if newSafePoint != safePoint {
+		log.Warnf("[gc worker] %s, PD rejected our safe point %v but is using another safe point %v", w.uuid, safePoint, newSafePoint)
+		return errors.Errorf("PD rejected our safe point %v but is using another safe point %v", safePoint, newSafePoint)
+	}
+	log.Infof("[gc worker] %s sent safe point %v to PD", w.uuid, safePoint)
+	return nil
+}
+
 type gcTask struct {
 	startKey  []byte
 	endKey    []byte
@@ -653,7 +729,7 @@ type gcTaskWorker struct {
 	store      tikv.Storage
 	taskCh     chan *gcTask
 	wg         *sync.WaitGroup
-	// use atomic to read and set
+	// successRegions and failedRegions use atomic to read and set.
 	successRegions *int32
 	failedRegions  *int32
 }
@@ -725,6 +801,7 @@ func (w *gcTaskWorker) doGCForRange(startKey []byte, endKey []byte, safePoint ui
 	return nil
 }
 
+// doGCForRegion used for gc for region.
 // these two errors should not return together, for more, see the func 'doGC'
 func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, region tikv.RegionVerID) (*errorpb.Error, error) {
 	req := &tikvrpc.Request{
@@ -995,16 +1072,16 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	chk := rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	req := rs[0].NewRecordBatch()
+	err = rs[0].Next(ctx, req)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	if chk.NumRows() == 0 {
+	if req.NumRows() == 0 {
 		log.Debugf("[gc worker] load kv, %s:nil", key)
 		return "", nil
 	}
-	value := chk.GetRow(0).GetString(0)
+	value := req.GetRow(0).GetString(0)
 	log.Debugf("[gc worker] load kv, %s:%s", key, value)
 	return value, nil
 }

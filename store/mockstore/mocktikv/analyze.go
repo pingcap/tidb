@@ -212,24 +212,24 @@ func (e *analyzeColumnsExec) getNext(ctx context.Context) ([]types.Datum, error)
 	return datumRow, nil
 }
 
-func (e *analyzeColumnsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	row, err := e.getNext(ctx)
 	if row == nil || err != nil {
 		return errors.Trace(err)
 	}
 	for i := 0; i < len(row); i++ {
-		chk.AppendDatum(i, &row[i])
+		req.AppendDatum(i, &row[i])
 	}
 	return nil
 }
 
-func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
+func (e *analyzeColumnsExec) NewRecordBatch() *chunk.RecordBatch {
 	fields := make([]*types.FieldType, 0, len(e.fields))
 	for _, field := range e.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunkWithCapacity(fields, 1)
+	return chunk.NewRecordBatch(chunk.NewChunkWithCapacity(fields, 1))
 }
 
 // Close implements the sqlexec.RecordSet Close interface.
