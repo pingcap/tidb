@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -711,7 +711,8 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		return nil
 	}
 	for !e.meetFirstBatch {
-		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
+		e.childResult = e.childResult.SetRequiredRows(req.RequiredRows(), e.maxChunkSize)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.adjustRequiredRows(e.childResult)))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -735,6 +736,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		}
 		e.cursor += batchSize
 	}
+	e.adjustRequiredRows(req.Chunk)
 	err := e.children[0].Next(ctx, req)
 	if err != nil {
 		return errors.Trace(err)
@@ -767,6 +769,17 @@ func (e *LimitExec) Open(ctx context.Context) error {
 func (e *LimitExec) Close() error {
 	e.childResult = nil
 	return errors.Trace(e.baseExecutor.Close())
+}
+
+func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
+	limit1 := int(e.end - e.cursor)
+	var limit2 int
+	if e.cursor < e.begin {
+		limit2 = int(e.begin) + chk.RequiredRows() - int(e.cursor)
+	} else {
+		limit2 = chk.RequiredRows()
+	}
+	return chk.SetRequiredRows(mathutil.Min(limit1, limit2), e.maxChunkSize)
 }
 
 func init() {
