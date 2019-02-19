@@ -72,6 +72,14 @@ var (
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinUUIDSig{}
+
+	_ builtinFunc = &builtinNameConstIntSig{}
+	_ builtinFunc = &builtinNameConstRealSig{}
+	_ builtinFunc = &builtinNameConstDecimalSig{}
+	_ builtinFunc = &builtinNameConstTimeSig{}
+	_ builtinFunc = &builtinNameConstDurationSig{}
+	_ builtinFunc = &builtinNameConstStringSig{}
+	_ builtinFunc = &builtinNameConstJSONSig{}
 )
 
 type sleepFunctionClass struct {
@@ -228,7 +236,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
 		sig = &builtinTimeAnyValueSig{bf}
 	default:
-		panic("unexpected types.EvalType of builtin function ANY_VALUE")
+		return nil, errIncorrectArgs.GenWithStackByArgs("ANY_VALUE")
 	}
 	return sig, nil
 }
@@ -808,7 +816,133 @@ type nameConstFunctionClass struct {
 }
 
 func (c *nameConstFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "NAME_CONST")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTp := args[1].GetType().EvalType()
+	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, types.ETString, argTp)
+	*bf.tp = *args[1].GetType()
+	var sig builtinFunc
+	switch argTp {
+	case types.ETDecimal:
+		sig = &builtinNameConstDecimalSig{bf}
+	case types.ETDuration:
+		sig = &builtinNameConstDurationSig{bf}
+	case types.ETInt:
+		bf.tp.Decimal = 0
+		sig = &builtinNameConstIntSig{bf}
+	case types.ETJson:
+		sig = &builtinNameConstJSONSig{bf}
+	case types.ETReal:
+		sig = &builtinNameConstRealSig{bf}
+	case types.ETString:
+		bf.tp.Decimal = types.UnspecifiedLength
+		sig = &builtinNameConstStringSig{bf}
+	case types.ETDatetime, types.ETTimestamp:
+		bf.tp.Charset, bf.tp.Collate, bf.tp.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
+		sig = &builtinNameConstTimeSig{bf}
+	default:
+		return nil, errIncorrectArgs.GenWithStackByArgs("NAME_CONST")
+	}
+	return sig, nil
+}
+
+type builtinNameConstDecimalSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNameConstDecimalSig) Clone() builtinFunc {
+	newSig := &builtinNameConstDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNameConstDecimalSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
+	return b.args[1].EvalDecimal(b.ctx, row)
+}
+
+type builtinNameConstIntSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNameConstIntSig) Clone() builtinFunc {
+	newSig := &builtinNameConstIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNameConstIntSig) evalInt(row chunk.Row) (int64, bool, error) {
+	return b.args[1].EvalInt(b.ctx, row)
+}
+
+type builtinNameConstRealSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNameConstRealSig) Clone() builtinFunc {
+	newSig := &builtinNameConstRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNameConstRealSig) evalReal(row chunk.Row) (float64, bool, error) {
+	return b.args[1].EvalReal(b.ctx, row)
+}
+
+type builtinNameConstStringSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNameConstStringSig) Clone() builtinFunc {
+	newSig := &builtinNameConstStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNameConstStringSig) evalString(row chunk.Row) (string, bool, error) {
+	return b.args[1].EvalString(b.ctx, row)
+}
+
+type builtinNameConstJSONSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNameConstJSONSig) Clone() builtinFunc {
+	newSig := &builtinNameConstJSONSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNameConstJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
+	return b.args[1].EvalJSON(b.ctx, row)
+}
+
+type builtinNameConstDurationSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNameConstDurationSig) Clone() builtinFunc {
+	newSig := &builtinNameConstDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNameConstDurationSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
+	return b.args[1].EvalDuration(b.ctx, row)
+}
+
+type builtinNameConstTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNameConstTimeSig) Clone() builtinFunc {
+	newSig := &builtinNameConstTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinNameConstTimeSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	return b.args[1].EvalTime(b.ctx, row)
 }
 
 type releaseAllLocksFunctionClass struct {
