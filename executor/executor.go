@@ -139,7 +139,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.id)
+		e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id)
 	}
 	if schema != nil {
 		cols := schema.Columns
