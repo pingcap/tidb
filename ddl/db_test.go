@@ -869,6 +869,81 @@ LOOP:
 	s.tk.MustExec("drop table test_add_index")
 }
 
+// TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
+func (s *testDBSuite) TestCancelAddTableAndDropTablePartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "create database if not exists test_partition_table")
+	s.mustExec(c, "use test_partition_table")
+	s.mustExec(c, "drop table if exists t_part")
+	s.mustExec(c, `create table t_part (a int key)
+		partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	);`)
+	defer s.mustExec(c, "drop table t_part;")
+	for i := 0; i < 10; i++ {
+		s.mustExec(c, "insert into t_part values (?)", i)
+	}
+
+	testCases := []struct {
+		action         model.ActionType
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+	}{
+		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone},
+		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.Background())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+		var err error
+		sql := ""
+		for i := range testCases {
+			testCase = &testCases[i]
+			if testCase.action == model.ActionAddTablePartition {
+				sql = `alter table t_part add partition (
+				partition p2 values less than (30)
+				);`
+			} else if testCase.action == model.ActionDropTablePartition {
+				sql = "alter table t_part drop partition p1;"
+			}
+			_, err = s.tk.Exec(sql)
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			s.mustExec(c, "insert into t_part values (?)", i)
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+}
+
 func (s *testDBSuite) TestDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
