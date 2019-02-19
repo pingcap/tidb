@@ -756,9 +756,6 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if store == nil {
-		return nil, nil, errors.New("store is nil")
-	}
 
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
