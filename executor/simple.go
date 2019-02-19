@@ -377,16 +377,11 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		defer sysSessionPool.Put(ctx)
 		err = dom.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 		return errors.Trace(err)
-	case ast.FlushStatus:
+	case ast.FlushTiDBPlugin:
 		dom := domain.GetDomain(e.ctx)
-		if plugin.Get(plugin.Audit, "ipwhitelist") != nil {
-			if cli := dom.GetEtcdClient(); cli != nil {
-				const whitelistKey = "/tidb/plugins/whitelist"
-				row := cli.KV
-				_, err := row.Put(context.Background(), whitelistKey, "")
-				if err != nil {
-					log.Warn("notify update whitelist failed:", err)
-				}
+		for _, pluginName := range s.Plugins {
+			err := plugin.NotifyFlush(dom, pluginName)
+			if err != nil {
 				return errors.Trace(err)
 			}
 		}

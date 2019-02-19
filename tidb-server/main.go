@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
@@ -444,7 +445,10 @@ func setGlobalVars() {
 	}
 	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
-	variable.ForcePriority = int32(mysql.Str2Priority(cfg.Performance.ForcePriority))
+
+	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
+	variable.ForcePriority = int32(priority)
+	variable.SysVars[variable.TiDBForcePriority].Value = mysql.Priority2Str[priority]
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
@@ -554,5 +558,6 @@ func cleanup() {
 	} else {
 		svr.TryGracefulDown()
 	}
+	plugin.Shutdown(context.Background())
 	closeDomainAndStorage()
 }

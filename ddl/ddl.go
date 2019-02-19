@@ -205,10 +205,8 @@ var (
 	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
 	// ErrAlterOperationNotSupported returns when alter operations is not supported.
 	ErrAlterOperationNotSupported = terror.ClassDDL.New(codeNotSupportedAlterOperation, mysql.MySQLErrName[mysql.ErrAlterOperationNotSupportedReason])
-	// ErrTableIsNotView returns for table is not view.
-	ErrTableIsNotView = terror.ClassDDL.New(codeErrWrongObject, "'%s.%s' is not VIEW")
-	// ErrTableIsNotBaseTable returns for table is not base table.
-	ErrTableIsNotBaseTable = terror.ClassDDL.New(codeErrWrongObject, "'%s.%s' is not BASE TABLE")
+	// ErrWrongObject returns for wrong object.
+	ErrWrongObject = terror.ClassDDL.New(codeErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
