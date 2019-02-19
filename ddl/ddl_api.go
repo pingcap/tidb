@@ -1179,7 +1179,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	var oldViewTblID int64
 	if oldView != nil {
 		if !oldView.Meta().IsView() {
-			return ErrTableIsNotView.GenWithStackByArgs(ident.Schema, ident.Name)
+			return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "VIEW")
 		}
 		oldViewTblID = oldView.Meta().ID
 	}
@@ -1442,7 +1442,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 
 	is := d.infoHandle.Get()
 	if is.TableIsView(ident.Schema, ident.Name) {
-		return ErrTableIsNotBaseTable.GenWithStackByArgs(ident.Schema, ident.Name)
+		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
 	for _, spec := range validSpecs {
@@ -2406,7 +2406,7 @@ func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	if !tb.Meta().IsView() {
-		return ErrTableIsNotView.GenWithStackByArgs(ti.Schema, ti.Name)
+		return ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "VIEW")
 	}
 
 	job := &model.Job{
