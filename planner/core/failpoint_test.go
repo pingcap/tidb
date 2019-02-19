@@ -14,8 +14,6 @@
 package core_test
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
 	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/tidb/domain"
