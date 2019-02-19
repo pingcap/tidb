@@ -2368,9 +2368,11 @@ func (s *testDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d date DEFAULT '9999-12-31';")
 	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d1 date as (DATE_SUB(d, INTERVAL 31 DAY));")
 	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx(d1);")
+	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30"))
 	s.tk.MustExec("admin check table gcai_table")
 	// The column is PKIsHandle in generated column expression.
 	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN id1 int as (id+1);")
 	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx1(id1);")
+	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30 2"))
 	s.tk.MustExec("admin check table gcai_table")
 }
