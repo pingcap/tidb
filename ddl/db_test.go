@@ -889,16 +889,21 @@ func (s *testDBSuite) TestCancelAddTableAndDropTablePartition(c *C) {
 		action         model.ActionType
 		jobState       model.JobState
 		JobSchemaState model.SchemaState
+		cancelSucc     bool
 	}{
-		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone},
-		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone},
+		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
+		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
+		{model.ActionAddTablePartition, model.JobStateRunning, model.StatePublic, false},
+		{model.ActionDropTablePartition, model.JobStateRunning, model.StatePublic, false},
 	}
 	var checkErr error
 	hook := &ddl.TestDDLCallback{}
 	testCase := &testCases[0]
+	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
 			jobIDs := []int64{job.ID}
+			jobID = job.ID
 			hookCtx := mock.NewContext()
 			hookCtx.Store = s.store
 			err := hookCtx.NewTxn(context.Background())
@@ -934,10 +939,18 @@ func (s *testDBSuite) TestCancelAddTableAndDropTablePartition(c *C) {
 				sql = "alter table t_part drop partition p1;"
 			}
 			_, err = s.tk.Exec(sql)
-			c.Assert(checkErr, IsNil)
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
-			s.mustExec(c, "insert into t_part values (?)", i)
+			if testCase.cancelSucc {
+				c.Assert(checkErr, IsNil)
+				c.Assert(err, NotNil)
+				c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+				s.mustExec(c, "insert into t_part values (?)", i)
+			} else {
+				c.Assert(err, IsNil)
+				c.Assert(checkErr, NotNil)
+				c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+				_, err = s.tk.Exec("insert into t_part values (?)", i)
+				c.Assert(err, NotNil)
+			}
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
