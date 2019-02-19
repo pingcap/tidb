@@ -1424,14 +1424,14 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 	return
 }
 
-// resolveAlterTableSpec resolve alter table algorithm and remove ignore table spec in specs.
+// resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
 // returns valied specs, and the occured error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlterAlgorithmDefault
 	for _, spec := range specs {
 		if spec.Tp == ast.AlterTableAlgorithm {
-			// find the last AlterTableAlgorithm.
+			// Find the last AlterTableAlgorithm.
 			algorithm = spec.Algorithm
 		}
 		if isIgnorableSpec(spec.Tp) {
