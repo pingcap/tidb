@@ -31,6 +31,11 @@ func (s *columnPruner) optimize(lp LogicalPlan) (LogicalPlan, error) {
 }
 
 func getUsedList(usedCols []*expression.Column, schema *expression.Schema) ([]bool, error) {
+	// gofail: var enableGetUsedListErr bool
+	// if enableGetUsedListErr {
+	// 	return nil, errors.New("getUsedList failed, triggered by gofail enableGetUsedListErr")
+	// }
+
 	used := make([]bool, schema.Len())
 	for _, col := range usedCols {
 		idx := schema.ColumnIndex(col)
