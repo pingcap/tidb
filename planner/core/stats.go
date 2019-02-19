@@ -75,6 +75,15 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo) (*proper
 	return profile, nil
 }
 
+func allStatsHasHistColl(stats []*property.StatsInfo) bool {
+	for _, s := range stats {
+		if s.HistColl == nil {
+			return false
+		}
+	}
+	return true
+}
+
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.StatsInfo, *statistics.HistColl) {
 	profile := &property.StatsInfo{
 		RowCount:       float64(ds.statisticTable.Count),
@@ -281,8 +290,8 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 		leftKeys = append(leftKeys, eqCond.GetArgs()[0].(*expression.Column))
 		rightKeys = append(rightKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
-	if p.JoinType == InnerJoin && p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
-		return p.deriveInnerJoinStatsWithHist(leftKeys, rightKeys)
+	if p.JoinType == InnerJoin && p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && allStatsHasHistColl(childStats) {
+		return p.deriveInnerJoinStatsWithHist(leftKeys, rightKeys, childStats)
 	}
 	leftKeyCardinality := getCardinality(leftKeys, p.children[0].Schema(), leftProfile)
 	rightKeyCardinality := getCardinality(rightKeys, p.children[1].Schema(), rightProfile)
@@ -305,53 +314,58 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo) (*property.S
 	return p.stats, nil
 }
 
-func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expression.Column, childStats []*property.StatsInfo) (*property.StatsInfo, error) {
 	leftChild, rightChild := p.children[0], p.children[1]
-	leftProfile, rightProfile := leftChild.statsInfo(), rightChild.statsInfo()
+	leftProfile, rightProfile := childStats[0], childStats[1]
 
 	cardinality := make([]float64, 0, p.schema.Len())
 	cardinality = append(cardinality, leftProfile.Cardinality...)
 	cardinality = append(cardinality, rightProfile.Cardinality...)
 
-	ndv, leftNdv, rightNdv := float64(1), float64(1), float64(1)
+	finalNdv, leftNdv, rightNdv := math.MaxFloat64, float64(1), float64(1)
 	newColID2Hist := make(map[int64]*statistics.Column)
 
 	// TODO: Support using index histogram to calculate the NDV after join and the final row count.
 	for i := range leftKeys {
-		leftHist, ok1 := leftChild.statsInfo().HistColl.Columns[leftKeys[i].UniqueID]
-		rightHist, ok2 := rightChild.statsInfo().HistColl.Columns[rightKeys[i].UniqueID]
+		leftHist, ok1 := leftProfile.HistColl.Columns[leftKeys[i].UniqueID]
+		rightHist, ok2 := rightProfile.HistColl.Columns[rightKeys[i].UniqueID]
 		lPos := leftChild.Schema().ColumnIndex(leftKeys[i])
 		rPos := rightChild.Schema().ColumnIndex(rightKeys[i])
-		leftNdv *= leftProfile.Cardinality[lPos]
-		rightNdv *= rightProfile.Cardinality[rPos]
+		var keyNdv float64
 		if ok1 && ok2 {
 			newHist := statistics.MergeHistogramForInnerJoin(&leftHist.Histogram, &rightHist.Histogram, leftKeys[i].RetType)
 			leftCol := &statistics.Column{Info: leftHist.Info, Histogram: *newHist}
 			rightCol := &statistics.Column{Info: rightHist.Info, Histogram: *newHist}
-			lIncreaseFactor := leftHist.GetIncreaseFactor(leftChild.statsInfo().HistColl.Count)
+			lIncreaseFactor := leftHist.GetIncreaseFactor(leftProfile.HistColl.Count)
 			// The factor is used to scale the NDV. When it's higher than one. NDV doesn't need to be changed.
 			if lIncreaseFactor > 1 {
 				lIncreaseFactor = 1
 			}
-			rIncreaseFactor := rightHist.GetIncreaseFactor(rightChild.statsInfo().HistColl.Count)
+			rIncreaseFactor := rightHist.GetIncreaseFactor(rightProfile.HistColl.Count)
 			if rIncreaseFactor > 1 {
 				rIncreaseFactor = 1
 			}
-			ndv *= float64(newHist.NDV) * lIncreaseFactor * rIncreaseFactor
+			keyNdv = float64(newHist.NDV) * lIncreaseFactor * rIncreaseFactor
 			lPosNew := p.schema.ColumnIndex(leftKeys[i])
 			rPosNew := p.schema.ColumnIndex(rightKeys[i])
 			cardinality[lPosNew] = float64(newHist.NDV)
 			cardinality[rPosNew] = float64(newHist.NDV)
 			newColID2Hist[leftKeys[i].UniqueID] = leftCol
 			newColID2Hist[rightKeys[i].UniqueID] = rightCol
-			continue
+		} else {
+			keyNdv = math.Min(leftChild.statsInfo().Cardinality[lPos], rightChild.statsInfo().Cardinality[rPos])
 		}
-		keyNdv := math.Min(leftChild.statsInfo().Cardinality[lPos], rightChild.statsInfo().Cardinality[rPos])
-		ndv *= keyNdv
+		// Update the finalNdv using the most selective join key.
+		// TODO: support using index to enhance its accuracy
+		if finalNdv > keyNdv {
+			finalNdv = keyNdv
+			leftNdv = leftProfile.Cardinality[lPos]
+			rightNdv = rightProfile.Cardinality[rPos]
+		}
 	}
 	var count float64 = 0
 	if leftNdv != 0 || rightNdv != 0 {
-		count = leftProfile.RowCount / leftNdv * rightProfile.RowCount / rightNdv * ndv
+		count = leftProfile.RowCount / leftNdv * rightProfile.RowCount / rightNdv * finalNdv
 	}
 
 	// Update left column map in `HistColl`.
