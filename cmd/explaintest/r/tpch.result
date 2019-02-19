@@ -932,16 +932,16 @@ id	count	task	operator info
 Sort_13	14.41	root	supplier_cnt:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
 └─Projection_14	14.41	root	tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, 9_col_0
   └─HashAgg_17	14.41	root	group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey), firstrow(tpch.part.p_brand), firstrow(tpch.part.p_type), firstrow(tpch.part.p_size)
-    └─HashLeftJoin_22	3863988.24	root	anti semi join, inner:TableReader_46, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
+    └─HashLeftJoin_22	3863988.24	root	anti semi join, inner:TableReader_45, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
       ├─IndexJoin_26	4829985.30	root	inner join, inner:IndexReader_25, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
-      │ ├─TableReader_41	1200618.43	root	data:Selection_40
-      │ │ └─Selection_40	1200618.43	cop	in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
-      │ │   └─TableScan_39	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
+      │ ├─TableReader_40	1200618.43	root	data:Selection_39
+      │ │ └─Selection_39	1200618.43	cop	in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
+      │ │   └─TableScan_38	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
       │ └─IndexReader_25	1.00	root	index:IndexScan_24
       │   └─IndexScan_24	1.00	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [tpch.part.p_partkey], keep order:false
-      └─TableReader_46	400000.00	root	data:Selection_45
-        └─Selection_45	400000.00	cop	like(tpch.supplier.s_comment, "%Customer%Complaints%", 92)
-          └─TableScan_44	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
+      └─TableReader_45	400000.00	root	data:Selection_44
+        └─Selection_44	400000.00	cop	like(tpch.supplier.s_comment, "%Customer%Complaints%", 92)
+          └─TableScan_43	500000.00	cop	table:supplier, range:[-inf,+inf], keep order:false
 /*
 Q17 Small-Quantity-Order Revenue Query
 This query determines how much average yearly revenue would be lost if orders were no longer filled for small
