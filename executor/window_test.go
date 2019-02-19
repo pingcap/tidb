@@ -40,4 +40,9 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("21", "21", "21", "21", "21", "21", "21", "21", "21"))
 	result = tk.MustQuery("select _tidb_rowid, sum(t.a) over() from t")
 	result.Check(testkit.Rows("1 7", "2 7", "3 7"))
+
+	result = tk.MustQuery("select a, row_number() over() from t")
+	result.Check(testkit.Rows("1 1", "4 2", "2 3"))
+	result = tk.MustQuery("select a, row_number() over(partition by a) from t")
+	result.Check(testkit.Rows("1 1", "2 1", "4 1"))
 }

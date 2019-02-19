@@ -456,6 +456,60 @@ func (s *testChunkSuite) TestCompare(c *check.C) {
 	}
 }
 
+func (s *testChunkSuite) TestCopyTo(c *check.C) {
+	chunk := NewChunkWithCapacity(allTypes, 101)
+	for i := 0; i < len(allTypes); i++ {
+		chunk.AppendNull(i)
+	}
+	for k := 0; k < 100; k++ {
+		for i := 0; i < len(allTypes); i++ {
+			switch allTypes[i].Tp {
+			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+				if mysql.HasUnsignedFlag(allTypes[i].Flag) {
+					chunk.AppendUint64(i, uint64(k))
+				} else {
+					chunk.AppendInt64(i, int64(k))
+				}
+			case mysql.TypeFloat:
+				chunk.AppendFloat32(i, float32(k))
+			case mysql.TypeDouble:
+				chunk.AppendFloat64(i, float64(k))
+			case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
+				mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+				chunk.AppendString(i, fmt.Sprintf("%v", k))
+			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+				chunk.AppendTime(i, types.TimeFromDays(2000*365+int64(k)))
+			case mysql.TypeDuration:
+				chunk.AppendDuration(i, types.Duration{Duration: time.Second * time.Duration(k), Fsp: types.DefaultFsp})
+			case mysql.TypeNewDecimal:
+				chunk.AppendMyDecimal(i, types.NewDecFromInt(int64(k)))
+			case mysql.TypeSet:
+				chunk.AppendSet(i, types.Set{Name: "a", Value: uint64(k)})
+			case mysql.TypeEnum:
+				chunk.AppendEnum(i, types.Enum{Name: "a", Value: uint64(k)})
+			case mysql.TypeBit:
+				chunk.AppendBytes(i, []byte{byte(k)})
+			case mysql.TypeJSON:
+				chunk.AppendJSON(i, json.CreateBinary(int64(k)))
+			default:
+				c.FailNow()
+			}
+		}
+	}
+
+	ck1 := chunk.CopyConstruct()
+
+	for k := 0; k < 101; k++ {
+		row := chunk.GetRow(k)
+		r1 := ck1.GetRow(k)
+		for i := 0; i < len(allTypes); i++ {
+			cmpFunc := GetCompareFunc(allTypes[i])
+			c.Assert(cmpFunc(row, i, r1, i), check.Equals, 0)
+		}
+
+	}
+}
+
 func (s *testChunkSuite) TestGetDecimalDatum(c *check.C) {
 	datum := types.NewDatum(1.01)
 	decType := types.NewFieldType(mysql.TypeNewDecimal)

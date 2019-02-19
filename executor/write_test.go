@@ -2110,6 +2110,15 @@ func (s *testSuite2) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
 }
 
+func (s *testSuite2) TestNotNullDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists t1,t2;")
+	defer tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (a int not null default null default 1);")
+	tk.MustExec("create table t2 (a int);")
+	tk.MustExec("alter table  t2 change column a a int not null default null default 1;")
+}
+
 func (s *testBypassSuite) TestLatch(c *C) {
 	store, err := mockstore.NewMockTikvStore(
 		// Small latch slot size to make conflicts.
