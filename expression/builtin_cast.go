@@ -1448,7 +1448,7 @@ func padZeroForBinaryType(s string, tp *types.FieldType, ctx sessionctx.Context)
 			return "", false, err
 		}
 		if uint64(flen) > maxAllowedPacket {
-			sc.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", maxAllowedPacket))
+			sc.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("cast_as_binary", maxAllowedPacket))
 			return "", true, nil
 		}
 		padding := make([]byte, flen-len(s))
