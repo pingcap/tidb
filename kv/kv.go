@@ -150,6 +150,8 @@ type Transaction interface {
 	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
+	// MemGet get kv from the memory buffer.
+	MemGet(k Key) ([]byte, error)
 }
 
 // Client is used to send request to KV layer.

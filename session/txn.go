@@ -213,6 +213,15 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
+// MemGet overrides the Transaction interface.
+func (st *TxnState) MemGet(k kv.Key) ([]byte, error) {
+	val, err := st.buf.Get(k)
+	if kv.IsErrNotFound(err) {
+		return st.Transaction.MemGet(k)
+	}
+	return val, err
+}
+
 // Set overrides the Transaction interface.
 func (st *TxnState) Set(k kv.Key, v []byte) error {
 	return st.buf.Set(k, v)

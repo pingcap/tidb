@@ -116,6 +116,10 @@ func (t *mockTxn) SetVars(vars *Variables) {
 
 }
 
+func (t *mockTxn) MemGet(k Key) ([]byte, error) {
+	return nil, nil
+}
+
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
 	return &mockTxn{

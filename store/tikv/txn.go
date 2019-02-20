@@ -282,3 +282,7 @@ func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return txn.snapshot
 }
+
+func (txn *tikvTxn) MemGet(k kv.Key) ([]byte, error) {
+	return txn.GetMemBuffer().Get(k)
+}
