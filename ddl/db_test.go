@@ -876,6 +876,94 @@ LOOP:
 	s.tk.MustExec("drop table test_add_index")
 }
 
+// TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
+func (s *testDBSuite) TestCancelAddTableAndDropTablePartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "create database if not exists test_partition_table")
+	s.mustExec(c, "use test_partition_table")
+	s.mustExec(c, "drop table if exists t_part")
+	s.mustExec(c, `create table t_part (a int key)
+		partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	);`)
+	defer s.mustExec(c, "drop table t_part;")
+	for i := 0; i < 10; i++ {
+		s.mustExec(c, "insert into t_part values (?)", i)
+	}
+
+	testCases := []struct {
+		action         model.ActionType
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
+		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
+		{model.ActionAddTablePartition, model.JobStateRunning, model.StatePublic, false},
+		{model.ActionDropTablePartition, model.JobStateRunning, model.StatePublic, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	testCase := &testCases[0]
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			jobID = job.ID
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.Background())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+		var err error
+		sql := ""
+		for i := range testCases {
+			testCase = &testCases[i]
+			if testCase.action == model.ActionAddTablePartition {
+				sql = `alter table t_part add partition (
+				partition p2 values less than (30)
+				);`
+			} else if testCase.action == model.ActionDropTablePartition {
+				sql = "alter table t_part drop partition p1;"
+			}
+			_, err = s.tk.Exec(sql)
+			if testCase.cancelSucc {
+				c.Assert(checkErr, IsNil)
+				c.Assert(err, NotNil)
+				c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+				s.mustExec(c, "insert into t_part values (?)", i)
+			} else {
+				c.Assert(err, IsNil)
+				c.Assert(checkErr, NotNil)
+				c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+				_, err = s.tk.Exec("insert into t_part values (?)", i)
+				c.Assert(err, NotNil)
+			}
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+}
+
 func (s *testDBSuite) TestDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -1794,7 +1882,7 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	// Check show create table with virtual generated column.
 	result = s.tk.MustQuery(`show create table test_gv_ddl`)
 	result.Check(testkit.Rows(
-		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// Check alter table add a stored generated column.
@@ -1807,7 +1895,7 @@ func (s *testDBSuite) TestGeneratedColumnDDL(c *C) {
 	result = s.tk.MustQuery(`show create table table_with_gen_col_blanks`)
 	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` char(20) CHARSET utf8mb4 COLLATE utf8mb4_bin GENERATED ALWAYS AS (CAST(`a` AS CHAR)) VIRTUAL DEFAULT NULL\n" +
+		"  `b` char(20) GENERATED ALWAYS AS (CAST(`a` AS CHAR)) VIRTUAL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	genExprTests := []struct {
@@ -1932,7 +2020,7 @@ func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
 	s.tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
 		"text_default_text CREATE TABLE `text_default_text` (\n"+
-			"  `c1` text CHARSET utf8mb4 COLLATE utf8mb4_bin NOT NULL\n"+
+			"  `c1` text NOT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	ctx := s.tk.Se.(sessionctx.Context)
@@ -2346,4 +2434,41 @@ func (s *testDBSuite) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	re.Check(testkit.Rows("1 2"))
 	s.tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
+}
+
+func (s *testDBSuite) TestAddIndexForGeneratedColumn(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.tk.MustExec("create table t(y year NOT NULL DEFAULT '2155')")
+	defer s.mustExec(c, "drop table t;")
+	for i := 0; i < 50; i++ {
+		s.mustExec(c, "insert into t values (?)", i)
+	}
+	s.tk.MustExec("insert into t values()")
+	s.tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
+	_, err := s.tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
+	c.Assert(err.Error(), Equals, "[ddl:15]cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+
+	t := s.testGetTable(c, "t")
+	for _, idx := range t.Indices() {
+		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
+	}
+	s.mustExec(c, "delete from t where y = 2155")
+	s.mustExec(c, "alter table t add index idx_y(y1)")
+	s.mustExec(c, "alter table t drop index idx_y")
+}
+
+func (s *testDBSuite) TestIssue9100(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));")
+	_, err := tk.Exec("alter table employ add unique index  p_a (a);")
+	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+
+	tk.MustExec("create table issue9100t1 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col2)) partition by range( col1 ) (partition p1 values less than (11))")
+	tk.MustExec("alter table issue9100t1 add unique index  p_col1 (col1)")
+
+	tk.MustExec("create table issue9100t2 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col3)) partition by range( col1 + col3 ) (partition p1 values less than (11))")
+	_, err = tk.Exec("alter table issue9100t2 add unique index  p_col1 (col1)")
+	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 }

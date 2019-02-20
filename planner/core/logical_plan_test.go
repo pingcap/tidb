@@ -16,6 +16,7 @@ package core
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -285,6 +287,12 @@ func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 			left:  "[]",
 			right: "[or(or(eq(t2.a, 3), eq(t2.a, 4)), eq(t2.a, 2))]",
 		},
+		// Duplicate condition would be removed.
+		{
+			sql:   "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1",
+			left:  "[gt(t1.a, 1)]",
+			right: "[]",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -445,6 +453,134 @@ func (s *testPlanSuite) TestAntiSemiJoinConstFalse(c *C) {
 		join, _ := p.(LogicalPlan).Children()[0].(*LogicalJoin)
 		c.Assert(join.JoinType.String(), Equals, ca.joinType, comment)
 	}
+}
+
+func (s *testPlanSuite) TestDeriveNotNullConds(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql   string
+		plan  string
+		left  string
+		right string
+	}{
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e = t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e > t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e = t2.e and t1.e is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e = t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e > t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e = t2.e and t2.e is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[]",
+			right: "[not(isnull(t2.e))]",
+		},
+		{
+			sql:   "select * from t t1 right join t t2 on t1.e = t2.e and t1.e is not null",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[not(isnull(t1.e))]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.e <=> t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.e <=> t2.e",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		// Not deriving if column has NotNull flag already.
+		{
+			sql:   "select * from t t1 inner join t t2 on t1.b = t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.b = t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		{
+			sql:   "select * from t t1 left join t t2 on t1.b > t2.b",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+		// Not deriving for AntiSemiJoin
+		{
+			sql:   "select * from t t1 where not exists (select * from t t2 where t2.e = t1.e)",
+			plan:  "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->Projection",
+			left:  "[]",
+			right: "[]",
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagDecorrelate, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(p), Equals, ca.plan, comment)
+		join := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		left := join.Children()[0].(*DataSource)
+		right := join.Children()[1].(*DataSource)
+		leftConds := fmt.Sprintf("%s", left.pushedDownConds)
+		rightConds := fmt.Sprintf("%s", right.pushedDownConds)
+		c.Assert(leftConds, Equals, ca.left, comment)
+		c.Assert(rightConds, Equals, ca.right, comment)
+	}
+}
+
+func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
+	sql := "select * from t as t1 join t t2 on t1.a > rand() and t1.a > rand()"
+	comment := Commentf("for %s", sql)
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil, comment)
+	p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+	c.Assert(err, IsNil, comment)
+	p, err = logicalOptimize(flagPredicatePushDown, p.(LogicalPlan))
+	c.Assert(err, IsNil, comment)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue, comment)
+	join, ok := proj.children[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue, comment)
+	leftPlan, ok := join.children[0].(*LogicalSelection)
+	c.Assert(ok, IsTrue, comment)
+	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
+	// Condition with mutable function cannot be de-duplicated when push down join conds.
+	c.Assert(leftCond, Equals, "[gt(cast(t1.a), rand()) gt(cast(t1.a), rand())]", comment)
 }
 
 func (s *testPlanSuite) TestTablePartition(c *C) {
@@ -1470,6 +1606,8 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.AlterPriv, "test", "", "", nil},
 				{mysql.ExecutePriv, "test", "", "", nil},
 				{mysql.IndexPriv, "test", "", "", nil},
+				{mysql.CreateViewPriv, "test", "", "", nil},
+				{mysql.ShowViewPriv, "test", "", "", nil},
 			},
 		},
 		{
@@ -1915,23 +2053,23 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 	}{
 		{
 			sql:    "select a, avg(a) over(partition by a) from t",
-			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)) over(partition by test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(partition by b) from t",
-			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(partition by test.t.b))->Projection",
 		},
 		{
 			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
-			result: "TableReader(Table(t))->Projection->Sort->Window(avg(cast(2_proj_window_3)))->Projection",
+			result: "TableReader(Table(t))->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
-			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(order by test.t.a asc, test.t.b desc))->Projection",
 		},
 		{
 			sql:    "select a, b as a, avg(a) over(partition by a) from t",
-			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)) over(partition by test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, b as z, sum(z) over() from t",
@@ -1939,27 +2077,27 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, b as z from t order by (sum(z) over())",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.z)))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.z)) over())->Sort->Projection",
 		},
 		{
 			sql:    "select sum(avg(a)) over() from t",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over())",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over())->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over(partition by a))",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(partition by test.t.a))->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(avg(a)) over())",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Sort->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Sort->Projection",
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
-			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(cast(tt.a)))->MaxOneRow->Sel([w])}->Projection",
+			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(cast(tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
 		},
 		{
 			sql:    "select avg(a) over() as w from t having w > 1",
@@ -1999,11 +2137,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(partition by test.t.a))->Window(avg(cast(test.t.a)) over())->Projection",
 		},
 		{
 			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(partition by test.t.a))->Sort->Projection",
 		},
 		{
 			sql:    "select sum(a) over(groups 1 preceding) from t",
@@ -2082,5 +2220,103 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		p, err = physicalOptimize(lp)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.result, comment)
+	}
+}
+
+func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
+	pp := &property.PhysicalProperty{}
+	for _, item := range byItems {
+		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
+	}
+	return pp
+}
+
+func pathsName(paths []*candidatePath) string {
+	var names []string
+	for _, path := range paths {
+		if path.path.isTablePath {
+			names = append(names, "PRIMARY_KEY")
+		} else {
+			names = append(names, path.path.index.Name.O)
+		}
+	}
+	return strings.Join(names, ",")
+}
+
+func (s *testPlanSuite) TestSkylinePruning(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{
+			sql:    "select * from t",
+			result: "PRIMARY_KEY",
+		},
+		{
+			sql:    "select * from t order by f",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select * from t where a > 1",
+			result: "PRIMARY_KEY",
+		},
+		{
+			sql:    "select * from t where a > 1 order by f",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select * from t where f > 1",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select f from t where f > 1",
+			result: "f,f_g",
+		},
+		{
+			sql:    "select f from t where f > 1 order by a",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select * from t where f > 1 and g > 1",
+			result: "PRIMARY_KEY,f,g,f_g",
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		lp := p.(LogicalPlan)
+		_, err = lp.recursiveDeriveStats()
+		c.Assert(err, IsNil)
+		var ds *DataSource
+		var byItems []*ByItems
+		for ds == nil {
+			switch v := lp.(type) {
+			case *DataSource:
+				ds = v
+			case *LogicalSort:
+				byItems = v.ByItems
+				lp = lp.Children()[0]
+			default:
+				lp = lp.Children()[0]
+			}
+		}
+		paths := ds.skylinePruning(byItemsToProperty(byItems))
+		c.Assert(pathsName(paths), Equals, tt.result)
 	}
 }

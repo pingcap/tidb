@@ -146,6 +146,7 @@ type Status struct {
 	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
+	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
 }
 
 // Performance is the performance section of the config.
@@ -285,12 +286,9 @@ var defaultConf = Config{
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:  "info",
-		Format: "text",
-		File: logutil.FileLogConfig{
-			LogRotate: true,
-			MaxSize:   logutil.DefaultLogMaxSize,
-		},
+		Level:              "info",
+		Format:             "text",
+		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
 		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
 		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
@@ -299,6 +297,7 @@ var defaultConf = Config{
 		ReportStatus:    true,
 		StatusPort:      10080,
 		MetricsInterval: 15,
+		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
 		MaxMemory:           0,
@@ -373,13 +372,7 @@ func (c *Config) Load(confFile string) error {
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
 func (l *Log) ToLogConfig() *logutil.LogConfig {
-	return &logutil.LogConfig{
-		Level:            l.Level,
-		Format:           l.Format,
-		DisableTimestamp: l.DisableTimestamp,
-		File:             l.File,
-		SlowQueryFile:    l.SlowQueryFile,
-	}
+	return logutil.NewLogConfig(l.Level, l.Format, l.SlowQueryFile, l.File, l.DisableTimestamp)
 }
 
 // ToTracingConfig converts *OpenTracing to *tracing.Configuration.
