@@ -725,6 +725,7 @@ func (n *SetPwdStmt) Accept(v Visitor) (Node, bool) {
 type UserSpec struct {
 	User    *auth.UserIdentity
 	AuthOpt *AuthOption
+	IsRole  bool
 }
 
 // Restore implements Node interface.
