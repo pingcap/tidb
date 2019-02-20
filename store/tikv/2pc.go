@@ -615,8 +615,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		}
 	}()
 
+	commitTSFuture := c.store.getTimestampFuture(ctx)
 	binlogChan := c.prewriteBinlog()
 	prewriteBo := NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars)
+
 	start := time.Now()
 	err := c.prewriteKeys(prewriteBo, c.keys)
 	c.detail.PrewriteTime = time.Since(start)
@@ -633,10 +635,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}
 
 	start = time.Now()
-	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
+	commitTS, err := commitTSFuture.Wait()
 	if err != nil {
-		log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
-		return errors.Trace(err)
+		commitTS, err = c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
+		log.Warnf("con: %d async get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
+		if err != nil {
+			log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
+			return errors.Trace(err)
+		}
 	}
 	c.detail.GetCommitTsTime = time.Since(start)
 

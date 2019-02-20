@@ -324,6 +324,10 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	}
 }
 
+func (s *tikvStore) getTimestampFuture(ctx context.Context) oracle.Future {
+	return s.oracle.GetTimestampAsync(ctx)
+}
+
 func (s *tikvStore) GetClient() kv.Client {
 	return &CopClient{
 		store: s,
