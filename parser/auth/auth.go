@@ -33,6 +33,11 @@ type UserIdentity struct {
 	AuthHostname string // Match in privs system (i.e. could be a wildcard)
 }
 
+type RoleIdentity struct {
+	Username string
+	Hostname string
+}
+
 // Restore implements Node interface.
 func (user *UserIdentity) Restore(ctx *RestoreCtx) error {
 	if user.CurrentUser {
