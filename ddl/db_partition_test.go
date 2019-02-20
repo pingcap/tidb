@@ -919,10 +919,10 @@ func (s *testIntegrationSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 		col2 int not null,
 		col3 int not null unique,
 		unique key(col1, col2)
-        )
+	)
 	partition by range (col1 + col2) (
 	partition p1 values less than (11),
-  	partition p2 values less than (15)
+	partition p2 values less than (15)
 	)`
 	s.testErrorCode(c, tk, sql9, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 }

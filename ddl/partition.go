@@ -467,19 +467,6 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 	return nil
 }
 
-func extractPartitionColumns(sctx sessionctx.Context, partExpr string, tblInfo *model.TableInfo) ([]string, error) {
-	e, err := expression.ParseSimpleExprWithTableInfo(sctx, partExpr, tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	cols := expression.ExtractColumns(e)
-	partCols := make([]string, 0, len(cols))
-	for _, col := range cols {
-		partCols = append(partCols, col.ColName.L)
-	}
-	return partCols, nil
-}
-
 func checkPartitionKeysConstraint(sctx sessionctx.Context, partExpr string, idxColNames []*ast.IndexColName, tblInfo *model.TableInfo) error {
 	// Parse partitioning key, extract the column names in the partitioning key to slice.
 	partCols, err := extractPartitionColumns(sctx, partExpr, tblInfo)
@@ -500,23 +487,18 @@ func checkPartitionKeysConstraint(sctx sessionctx.Context, partExpr string, idxC
 	return nil
 }
 
-func extractPartitionColumns(sctx sessionctx.Context, partExpr string, tblInfo *model.TableInfo) ([]string, error) {
+func extractPartitionColumns(sctx sessionctx.Context, partExpr string, tblInfo *model.TableInfo) ([]*expression.Column, error) {
 	e, err := expression.ParseSimpleExprWithTableInfo(sctx, partExpr, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	cols := expression.ExtractColumns(e)
-	partCols := make([]string, 0, len(cols))
-	for _, col := range cols {
-		partCols = append(partCols, col.ColName.L)
-	}
-	return partCols, nil
+	return expression.ExtractColumns(e), nil
 }
 
 // checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
-func checkConstraintIncludePartKey(partkeys []string, constraints map[string]struct{}) bool {
-	for _, pk := range partkeys {
-		if _, ok := constraints[pk]; !ok {
+func checkConstraintIncludePartKey(partCols []*expression.Column, constraints map[string]struct{}) bool {
+	for _, pc := range partCols {
+		if _, ok := constraints[pc.ColName.L]; !ok {
 			return false
 		}
 	}
