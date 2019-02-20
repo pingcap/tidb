@@ -322,7 +322,6 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				fmt.Println(mysql.Col2PrivType)
 				return errInvalidPrivilegeType.GenWithStack(f.ColumnAsName.O)
 			}
 			value.Privileges |= priv
