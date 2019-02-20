@@ -363,7 +363,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_buffer_pool_load_now", "OFF"},
 	{ScopeNone, "performance_schema_max_rwlock_classes", "40"},
 	{ScopeNone, "binlog_gtid_simple_recovery", "OFF"},
-	{ScopeNone, "port", strconv.FormatUint(uint64(config.GetGlobalConfig().Port), 10)},
+	{ScopeNone, Port, strconv.FormatUint(uint64(config.GetGlobalConfig().Port), 10)},
 	{ScopeNone, "performance_schema_digests_size", "10000"},
 	{ScopeGlobal | ScopeSession, "profiling", "OFF"},
 	{ScopeNone, "lower_case_table_names", "2"},
