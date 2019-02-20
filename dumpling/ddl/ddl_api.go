@@ -1424,10 +1424,16 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 	return
 }
 
-func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	// Only handle valid specs.
+// resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
+// returns valied specs, and the occured error.
+func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
+	algorithm := ast.AlterAlgorithmDefault
 	for _, spec := range specs {
+		if spec.Tp == ast.AlterTableAlgorithm {
+			// Find the last AlterTableAlgorithm.
+			algorithm = spec.Algorithm
+		}
 		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
@@ -1437,7 +1443,29 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	if len(validSpecs) != 1 {
 		// TODO: Hanlde len(validSpecs) == 0.
 		// Now we only allow one schema changing at the same time.
-		return errRunMultiSchemaChanges
+		return nil, errRunMultiSchemaChanges
+	}
+
+	// Verify whether the algorithm is supported.
+	for _, spec := range validSpecs {
+		algorithm, err := ResolveAlterAlgorithm(spec, algorithm)
+		if err != nil {
+			// For the compatibility, we return warning instead of error.
+			ctx.GetSessionVars().StmtCtx.AppendError(err)
+			err = nil
+		}
+
+		spec.Algorithm = algorithm
+	}
+
+	// Only handle valid specs.
+	return validSpecs, nil
+}
+
+func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
+	validSpecs, err := resolveAlterTableSpec(ctx, specs)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	is := d.infoHandle.Get()
