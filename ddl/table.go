@@ -680,7 +680,7 @@ func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.Tabl
 
 // checkAddPartitionValue values less than value must be strictly increasing for each partition.
 func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
-	if meta.Partition.Type == model.PartitionTypeRange {
+	if meta.Partition.Type == model.PartitionTypeRange && len(meta.Partition.Columns) == 0 {
 		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
 		rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
 		if strings.EqualFold(rangeValue, "MAXVALUE") {
