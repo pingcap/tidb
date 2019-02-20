@@ -691,7 +691,7 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for !e.meetFirstBatch {
 		// transfer req's requiredRows to childResult and then adjust it in childResult
 		e.childResult = e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
-		err := e.children[0].Next(ctx, e.childResult)
+		err := e.children[0].Next(ctx, e.adjustRequiredRows(e.childResult))
 		if err != nil {
 			return errors.Trace(err)
 		}

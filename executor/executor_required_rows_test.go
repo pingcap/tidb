@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -182,6 +181,6 @@ func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Exe
 
 func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = 1024
 	return ctx
 }
