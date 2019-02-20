@@ -1210,3 +1210,79 @@ func (s *testIntegrationSuite) TestAlterColumn(c *C) {
 	_, err = s.tk.Exec("alter table mc modify column a bigint auto_increment") // Adds auto_increment should throw error
 	c.Assert(err, NotNil)
 }
+
+func (s *testIntegrationSuite) assertWarningExec(c *C, sql string, expectedWarn *terror.Error) {
+	_, err := s.tk.Exec(sql)
+	c.Assert(err, IsNil)
+	st := s.tk.Se.GetSessionVars().StmtCtx
+	c.Assert(st.WarningCount(), Equals, uint16(1))
+	c.Assert(expectedWarn.Equal(st.GetWarnings()[0].Err), IsTrue, Commentf("error:%v", err))
+}
+
+func (s *testIntegrationSuite) assertAlterWarnExec(c *C, sql string) {
+	s.assertWarningExec(c, sql, ddl.ErrAlterOperationNotSupported)
+}
+
+func (s *testIntegrationSuite) TestAlterAlgorithm(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	s.tk.MustExec("drop table if exists t1")
+	defer s.tk.MustExec("drop table if exists t")
+
+	s.tk.MustExec(`create table t(
+	a int, 
+	b varchar(100), 
+	c int, 
+	INDEX idx_c(c)) PARTITION BY RANGE ( a ) (
+	PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+	)`)
+	s.assertAlterWarnExec(c, "alter table t modify column a bigint, ALGORITHM=INPLACE;")
+	s.tk.MustExec("alter table t modify column a bigint, ALGORITHM=INPLACE, ALGORITHM=INSTANT;")
+	s.tk.MustExec("alter table t modify column a bigint, ALGORITHM=DEFAULT;")
+
+	// Test add/drop index
+	s.assertAlterWarnExec(c, "alter table t add index idx_b(b), ALGORITHM=INSTANT")
+	s.assertAlterWarnExec(c, "alter table t add index idx_b1(b), ALGORITHM=COPY")
+	s.tk.MustExec("alter table t add index idx_b2(b), ALGORITHM=INPLACE")
+	s.assertAlterWarnExec(c, "alter table t drop index idx_b, ALGORITHM=INPLACE")
+	s.assertAlterWarnExec(c, "alter table t drop index idx_b1, ALGORITHM=COPY")
+	s.tk.MustExec("alter table t drop index idx_b2, ALGORITHM=INSTANT")
+
+	// Test rename
+	s.assertAlterWarnExec(c, "alter table t rename to t1, ALGORITHM=COPY")
+	s.assertAlterWarnExec(c, "alter table t1 rename to t, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t rename to t1, ALGORITHM=INSTANT")
+	s.tk.MustExec("alter table t1 rename to t, ALGORITHM=DEFAULT")
+
+	// Test rename index
+	s.assertAlterWarnExec(c, "alter table t rename index idx_c to idx_c1, ALGORITHM=COPY")
+	s.assertAlterWarnExec(c, "alter table t rename index idx_c1 to idx_c, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t rename index idx_c to idx_c1, ALGORITHM=INSTANT")
+	s.tk.MustExec("alter table t rename index idx_c1 to idx_c, ALGORITHM=DEFAULT")
+
+	// partition.
+	s.assertAlterWarnExec(c, "alter table t truncate partition p1, ALGORITHM=COPY")
+	s.assertAlterWarnExec(c, "alter table t truncate partition p2, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t truncate partition p3, ALGORITHM=INSTANT")
+
+	s.assertAlterWarnExec(c, "alter table t add partition (partition p4 values less than (2002)), ALGORITHM=COPY")
+	s.assertAlterWarnExec(c, "alter table t add partition (partition p5 values less than (3002)), ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t add partition (partition p6 values less than (4002)), ALGORITHM=INSTANT")
+
+	s.assertAlterWarnExec(c, "alter table t drop partition p4, ALGORITHM=COPY")
+	s.assertAlterWarnExec(c, "alter table t drop partition p5, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t drop partition p6, ALGORITHM=INSTANT")
+
+	// Table options
+	s.assertAlterWarnExec(c, "alter table t comment = 'test', ALGORITHM=COPY")
+	s.assertAlterWarnExec(c, "alter table t comment = 'test', ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t comment = 'test', ALGORITHM=INSTANT")
+
+	s.assertAlterWarnExec(c, "alter table t default charset = utf8mb4, ALGORITHM=COPY")
+	s.assertAlterWarnExec(c, "alter table t default charset = utf8mb4, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
+}
