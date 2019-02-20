@@ -16,7 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
+	"math"
 	"math/rand"
 
 	"github.com/cznic/mathutil"
@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -324,6 +325,15 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 			requiredRows:   []int{1, 2, 3},
 			expectedRows:   []int{0, 0, 0},
 			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, maxChunkSize, maxChunkSize, 10, 0, 0},
+		},
+		{
+			totalRows:      maxChunkSize + maxChunkSize + 10,
+			topNOffset:     10,
+			topNCount:      math.MaxInt64,
+			groupBy:        []int{0, 1},
+			requiredRows:   []int{1, 2, 3, maxChunkSize, maxChunkSize},
+			expectedRows:   []int{1, 2, 3, maxChunkSize, maxChunkSize - 1 - 2 - 3},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, 10, 0, 0},
 		},
 	}
 
