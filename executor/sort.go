@@ -93,10 +93,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		sort.Slice(e.rowPtrs, e.keyColumnsLess)
 		e.fetched = true
 	}
-	for !req.IsFull() {
-		if e.Idx >= len(e.rowPtrs) {
-			return nil
-		}
+	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		rowPtr := e.rowPtrs[e.Idx]
 		req.AppendRow(e.rowChunks.GetRow(rowPtr))
 		e.Idx++
