@@ -182,6 +182,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		stopListenerCh:    make(chan struct{}, 1),
 	}
 	s.loadTLSCertificates()
+	s.initDefaults()
 
 	s.capability = defaultCapability
 	if s.tlsConfig != nil {
@@ -227,6 +228,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
 	return s, nil
+}
+
+func (s *Server) initDefaults() {
+	// workaround for #9382
+	variable.SysVars["port"].Value = fmt.Sprintf("%d", s.cfg.Port)
+	variable.SysVars["socket"].Value = s.cfg.Socket
+	variable.SysVars["datadir"].Value = s.cfg.Path
 }
 
 func (s *Server) loadTLSCertificates() {
