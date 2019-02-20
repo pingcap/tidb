@@ -159,6 +159,45 @@ func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table
 	return tbl, errors.Trace(err)
 }
 
+func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
+	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, schemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if tblInfo.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return nil, ErrInvalidTableState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
+	}
+
+	return tblInfo, nil
+}
+
+func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
+	tableID := job.TableID
+	// Check this table's database.
+	tblInfo, err := t.GetTable(schemaID, tableID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
+				fmt.Sprintf("(Schema ID %d)", schemaID),
+			))
+		}
+		return nil, errors.Trace(err)
+	}
+
+	// Check the table.
+	if tblInfo == nil {
+		job.State = model.JobStateCancelled
+		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", schemaID),
+			fmt.Sprintf("(Table ID %d)", tableID),
+		))
+	}
+	return tblInfo, nil
+}
+
 func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tableID := job.TableID
 	tblInfo, err := t.GetTable(schemaID, tableID)
