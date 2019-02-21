@@ -2189,3 +2189,17 @@ func (s *testSuite) TestAutoIDInRetry(c *C) {
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
+
+func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t;create table t (i int key);`)
+	tk.MustExec(`insert t values (1);`)
+	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
+	tk.MustExec(`begin;`)
+	_, err := tk.Exec(`insert t values (1);`)
+	c.Assert(err, NotNil)
+	tk.MustExec(`update t set i = 2 where i = 1;`)
+	tk.MustExec(`commit;`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
+}

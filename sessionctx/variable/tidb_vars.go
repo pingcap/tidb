@@ -203,6 +203,10 @@ const (
 	// tidb_force_priority defines the operations priority of all statements.
 	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
 	TiDBForcePriority = "tidb_force_priority"
+
+	// tidb_constraint_check_in_place indicates to check the constraint when the SQL executing.
+	// It could hurt the performance of bulking insert when it is ON.
+	TiDBConstraintCheckInPlace = "tidb_constraint_check_in_place"
 )
 
 // Default TiDB system variable values.
@@ -238,6 +242,7 @@ const (
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
 	DefTiDBDisableTxnAutoRetry       = false
+	DefTiDBConstraintCheckInPlace    = false
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
