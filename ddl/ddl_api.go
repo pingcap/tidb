@@ -1461,14 +1461,18 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 
 	// Verify whether the algorithm is supported.
 	for _, spec := range validSpecs {
-		algorithm, err := ResolveAlterAlgorithm(spec, algorithm)
+		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
 		if err != nil {
-			// For the compatibility, we return warning instead of error.
+			if algorithm != ast.AlterAlgorithmCopy {
+				return nil, errors.Trace(err)
+			}
+			// For the compatibility, we return warning instead of error when the algorithm is COPY,
+			// because the COPY ALGORITHM is not supported in TiDB.
 			ctx.GetSessionVars().StmtCtx.AppendError(err)
 			err = nil
 		}
 
-		spec.Algorithm = algorithm
+		spec.Algorithm = resolvedAlgorithm
 	}
 
 	// Only handle valid specs.

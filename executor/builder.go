@@ -1905,14 +1905,22 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	aggDesc := aggregation.NewAggFuncDesc(b.ctx, v.WindowFuncDesc.Name, v.WindowFuncDesc.Args, false)
 	resultColIdx := len(v.Schema().Columns) - 1
 	agg := aggfuncs.Build(b.ctx, aggDesc, resultColIdx)
-	if agg == nil {
-		b.err = errors.Trace(errors.New("window evaluator only support aggregation functions without frame now"))
-		return nil
+	var processor windowProcessor
+	if v.Frame == nil {
+		processor = &aggWindowProcessor{
+			windowFunc:    agg,
+			partialResult: agg.AllocPartialResult(),
+		}
+	} else {
+		processor = &rowFrameWindowProcessor{
+			windowFunc:    agg,
+			partialResult: agg.AllocPartialResult(),
+			start:         v.Frame.Start,
+			end:           v.Frame.End,
+		}
 	}
-	e := &WindowExec{baseExecutor: base,
-		windowFunc:    agg,
-		partialResult: agg.AllocPartialResult(),
-		groupChecker:  newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+	return &WindowExec{baseExecutor: base,
+		processor:    processor,
+		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
 	}
-	return e
 }
