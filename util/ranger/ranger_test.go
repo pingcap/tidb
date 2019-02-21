@@ -594,11 +594,11 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", ranges)
+		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }
@@ -681,11 +681,11 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		}
 		cols, lengths := expression.IndexInfo2Cols(selection.Schema().Columns, tbl.Indices[tt.indexPos])
 		c.Assert(cols, NotNil)
-		ranges, conds, filter, _, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ctx, conds, cols, lengths)
 		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", ranges)
+		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
 	}
 }
