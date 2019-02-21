@@ -803,6 +803,10 @@ const (
 	PluginLoad = "plugin_load"
 	// Port is the name for 'port' system variable.
 	Port = "port"
+	// DataDir is the name for 'datadir' system variable.
+	DataDir = "datadir"
+	// Socket is the name for 'socket' system variable.
+	Socket = "socket"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
