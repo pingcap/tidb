@@ -2158,7 +2158,7 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION';")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set time_zone = '+08:00'")
-	tk.MustExec(`create table t (a int, b timestamp default "0000-00-00 00")`)
+	tk.MustExec(`create table t (a int, b timestamp default "0000-00-00 00:00:00")`)
 	tk.MustExec("insert into t set a=1")
 	r = tk.MustQuery(`show create table t`)
 	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '0000-00-00 00:00:00'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
