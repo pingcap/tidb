@@ -405,7 +405,8 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{expression.One}, false)
 	colCount := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_cnt"),
-		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		FromID:   plan4Agg.id,
+		Position: plan4Agg.schema.Len(),
 		RetType:  funcCount.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcCount)
