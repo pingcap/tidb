@@ -88,7 +88,6 @@ func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
 
 	_, err = tk.Exec("create table test_zero_date(a timestamp default '0000-00-00 00')")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("create table test_zero_date(a timestamp default 0)")
 	c.Assert(err, NotNil)
