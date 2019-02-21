@@ -75,6 +75,18 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 	return convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, occuredErr)
 }
 
+func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
+	// We can only cancel the not handled job.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+
+	job.State = model.JobStateRunning
+
+	return ver, nil
+}
+
 func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	job.State = model.JobStateRollingback
 	col := &model.ColumnInfo{}
@@ -131,6 +143,14 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	return
 }
 
+func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return cancelOnlyNotHandledJob(job)
+}
+
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
@@ -163,14 +183,26 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	return ver, errors.Trace(errCancelledDDLJob)
 }
 
+func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return cancelOnlyNotHandledJob(job)
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddindex(w, d, t, job)
+	case model.ActionAddTablePartition:
+		ver, err = rollingbackAddTablePartition(t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
+	case model.ActionDropTablePartition:
+		ver, err = rollingbackDropTablePartition(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob

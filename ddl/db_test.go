@@ -890,6 +890,94 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
 }
 
+// TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
+func (s *testDBSuite) TestCancelAddTableAndDropTablePartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "create database if not exists test_partition_table")
+	s.mustExec(c, "use test_partition_table")
+	s.mustExec(c, "drop table if exists t_part")
+	s.mustExec(c, `create table t_part (a int key)
+		partition by range(a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20)
+	);`)
+	defer s.mustExec(c, "drop table t_part;")
+	for i := 0; i < 10; i++ {
+		s.mustExec(c, "insert into t_part values (?)", i)
+	}
+
+	testCases := []struct {
+		action         model.ActionType
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
+		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
+		{model.ActionAddTablePartition, model.JobStateRunning, model.StatePublic, false},
+		{model.ActionDropTablePartition, model.JobStateRunning, model.StatePublic, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	testCase := &testCases[0]
+	var jobID int64
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			jobID = job.ID
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn()
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+		var err error
+		sql := ""
+		for i := range testCases {
+			testCase = &testCases[i]
+			if testCase.action == model.ActionAddTablePartition {
+				sql = `alter table t_part add partition (
+				partition p2 values less than (30)
+				);`
+			} else if testCase.action == model.ActionDropTablePartition {
+				sql = "alter table t_part drop partition p1;"
+			}
+			_, err = s.tk.Exec(sql)
+			if testCase.cancelSucc {
+				c.Assert(checkErr, IsNil)
+				c.Assert(err, NotNil)
+				c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+				s.mustExec(c, "insert into t_part values (?)", i)
+			} else {
+				c.Assert(err, IsNil)
+				c.Assert(checkErr, NotNil)
+				c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+				_, err = s.tk.Exec("insert into t_part values (?)", i)
+				c.Assert(err, NotNil)
+			}
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
+}
+
 // TestCancelDropColumn tests cancel ddl job which type is drop column.
 func (s *testDBSuite) TestCancelDropColumn(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
