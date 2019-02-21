@@ -2325,6 +2325,7 @@ func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsR
 	return int64(res), false, nil
 }
 
+// CompareString compares two strings.
 func CompareString(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalString(sctx, lhsRow)
 	if err != nil {
@@ -2342,6 +2343,7 @@ func CompareString(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, r
 	return int64(types.CompareString(arg0, arg1)), false, nil
 }
 
+// CompareReal compares two float-point values.
 func CompareReal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalReal(sctx, lhsRow)
 	if err != nil {
@@ -2359,6 +2361,7 @@ func CompareReal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	return int64(types.CompareFloat64(arg0, arg1)), false, nil
 }
 
+// CompareDecimal compares two decimals.
 func CompareDecimal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalDecimal(sctx, lhsRow)
 	if err != nil {
@@ -2376,6 +2379,7 @@ func CompareDecimal(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, 
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
+// CompareTime compares two datetime or timestamps.
 func CompareTime(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalTime(sctx, lhsRow)
 	if err != nil {
@@ -2393,6 +2397,7 @@ func CompareTime(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
+// CompareDuration compares two durations.
 func CompareDuration(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalDuration(sctx, lhsRow)
 	if err != nil {
@@ -2410,6 +2415,7 @@ func CompareDuration(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow,
 	return int64(arg0.Compare(arg1)), false, nil
 }
 
+// CompareJSON compares two JSONs.
 func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := lhsArg.EvalJSON(sctx, lhsRow)
 	if err != nil {

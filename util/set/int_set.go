@@ -35,7 +35,7 @@ func (s IntSet) Insert(val int) {
 // Int64Set is a int64 set.
 type Int64Set map[int64]struct{}
 
-// NewIntSet builds a Int64Set.
+// NewInt64Set builds a Int64Set.
 func NewInt64Set() Int64Set {
 	return make(map[int64]struct{})
 }
