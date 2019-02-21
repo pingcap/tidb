@@ -213,13 +213,34 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
-// MemGet overrides the Transaction interface.
-func (st *TxnState) MemGet(k kv.Key) ([]byte, error) {
-	val, err := st.buf.Get(k)
-	if kv.IsErrNotFound(err) {
-		return st.Transaction.MemGet(k)
+// BatchGet overrides the Transaction interface.
+func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := st.buf.Get(key)
+		if kv.IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
 	}
-	return val, err
+	storageValues, err := st.Transaction.BatchGet(shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }
 
 // Set overrides the Transaction interface.

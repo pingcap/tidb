@@ -67,6 +67,10 @@ func (t *mockTxn) Get(k Key) ([]byte, error) {
 	return nil, nil
 }
 
+func (t *mockTxn) BatchGet(keys []Key) (map[string][]byte, error) {
+	return nil, nil
+}
+
 func (t *mockTxn) Iter(k Key, upperBound Key) (Iterator, error) {
 	return nil, nil
 }
@@ -98,12 +102,6 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 	return nil
 }
 
-func (t *mockTxn) GetSnapshot() Snapshot {
-	return &mockSnapshot{
-		store: NewMemDbBuffer(DefaultTxnMembufCap),
-	}
-}
-
 func (t *mockTxn) SetCap(cap int) {
 
 }
@@ -114,10 +112,6 @@ func (t *mockTxn) Reset() {
 
 func (t *mockTxn) SetVars(vars *Variables) {
 
-}
-
-func (t *mockTxn) MemGet(k Key) ([]byte, error) {
-	return nil, nil
 }
 
 // NewMockTxn new a mockTxn.
