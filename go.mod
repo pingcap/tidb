@@ -81,3 +81,5 @@ require (
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v2 v2.2.1 // indirect
 )
+
+replace github.com/pingcap/parser => github.com/crazycs520/parser v0.0.0-20190221063202-f830e9210447
