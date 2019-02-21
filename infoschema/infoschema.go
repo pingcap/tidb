@@ -70,6 +70,7 @@ type InfoSchema interface {
 	TableByName(schema, table model.CIStr) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
+	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllocByID(id int64) (autoid.Allocator, bool)
 	AllSchemaNames() []string
@@ -189,6 +190,20 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	for _, v := range is.schemaMap {
 		if v.dbInfo.ID == id {
 			return v.dbInfo, true
+		}
+	}
+	return nil, false
+}
+
+func (is *infoSchema) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
+	if tableInfo == nil {
+		return nil, false
+	}
+	for _, v := range is.schemaMap {
+		if tbl, ok := v.tables[tableInfo.Name.L]; ok {
+			if tbl.Meta().ID == tableInfo.ID {
+				return v.dbInfo, true
+			}
 		}
 	}
 	return nil, false
