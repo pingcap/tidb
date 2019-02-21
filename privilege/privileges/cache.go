@@ -51,7 +51,7 @@ func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
 // UserRecord is used to represent a user record in privilege cache.
 type UserRecord struct {
 	Host          string // max length 60, primary key
-	User          string // max length 16, primary key
+	User          string // max length 32, primary key
 	Password      string // max length 41
 	Privileges    mysql.PrivilegeType
 	AccountLocked bool // A role record when this field is true
