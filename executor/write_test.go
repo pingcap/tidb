@@ -309,7 +309,7 @@ func (s *testSuite) TestMultiBatch(c *C) {
 	tk.MustExec("create table t0 (i int)")
 	tk.MustExec("insert into t0 values (1), (1)")
 	tk.MustExec("create table t (i int unique key)")
-	tk.MustExec("set tidb_dml_batch_size = 1")
+	tk.MustExec("set @@tidb_dml_batch_size = 1")
 	tk.MustExec("insert ignore into t select * from t0")
 	tk.MustExec("admin check table t")
 }
