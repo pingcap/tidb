@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/mysql"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -73,11 +74,26 @@ func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
 
 	tk.MustExec("use test;")
 	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION';")
-	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time date NOT NULL DEFAULT '0000-00-00')", mysql.ErrInvalidDefault)
-	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
-	s.testErrorCode(c, tk, "create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')", mysql.ErrInvalidDefault)
-	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default '0000-00-00 00');", mysql.ErrInvalidDefault)
-	s.testErrorCode(c, tk, "create table test_zero_date(a timestamp default 0);", mysql.ErrInvalidDefault)
+
+	_, err := tk.Exec("create table test_zero_date(agent_start_time date NOT NULL DEFAULT '0000-00-00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table test_zero_date(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table test_zero_date(a timestamp default '0000-00-00 00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table test_zero_date(a timestamp default 0)")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
