@@ -57,3 +57,8 @@ explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
 
 drop table if exists t1, t2, t3, index_prune;
+
+drop table if exists tbl;
+create table tbl(column1 int, column2 int, index idx(column1, column2));
+load stats 's/explain_easy_stats_tbl_dnf.json';
+explain select * from tbl where (column1=0 and column2=1) or (column1=1 and column2=3) or (column1=2 and column2=5);
