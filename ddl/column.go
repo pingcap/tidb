@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"math"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -124,7 +126,15 @@ func (d *ddl) createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnIn
 	return colInfo, position, nil
 }
 
-func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (d *ddl) onAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	// Handle the rolling back job.
+	if job.IsRollingback() {
+		ver, err = d.onDropColumn(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
@@ -233,6 +243,15 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		colInfo.State = model.StateWriteOnly
 		// Set this column's offset to the last and reset all following columns' offsets.
 		d.adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
+		// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
+		// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
+		// And we need consider the column without not-null flag.
+		if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
+			colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only
@@ -255,7 +274,11 @@ func (d *ddl) onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 
 		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		if job.IsRollingback() {
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+		} else {
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		}
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -304,7 +327,7 @@ func (d *ddl) addTableColumn(t table.Table, columnInfo *model.ColumnInfo, reorgI
 	for {
 		startTime := time.Now()
 		handles = handles[:0]
-		err = iterateSnapshotRows(d.store, t, version, seekHandle,
+		err = iterateSnapshotRows(d.store, t, version, seekHandle, math.MaxInt64, true,
 			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 				handles = append(handles, h)
 				if len(handles) == defaultBatchCnt {
@@ -575,4 +598,22 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 func allocateColumnID(tblInfo *model.TableInfo) int64 {
 	tblInfo.MaxColumnID++
 	return tblInfo.MaxColumnID
+}
+
+func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
+	var err error
+	odValue := col.DefaultValue
+	if odValue == nil && mysql.HasNotNullFlag(col.Flag) {
+		zeroVal := table.GetZeroValue(col)
+		odValue, err = zeroVal.ToString()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	if odValue == strings.ToUpper(ast.CurrentTimestamp) &&
+		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
+		odValue = time.Now().Format(types.TimeFormat)
+	}
+	return odValue, nil
 }

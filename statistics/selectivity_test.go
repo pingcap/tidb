@@ -154,7 +154,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01817558299,
+			selectivity: 0.01783264746,
 		},
 		{
 			exprs:       "a >= 1 and c > 1 and a < 2",
@@ -170,7 +170,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "b > 1",
-			selectivity: 0.98148148148,
+			selectivity: 0.96296296296,
 		},
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
@@ -267,6 +267,53 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 2.2)
+
+	testKit.MustExec("truncate table t")
+	testKit.MustExec("insert into t values (null, null)")
+	testKit.MustExec("analyze table t")
+	table, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(1, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int, b int, index idx(b))")
+	testKit.MustExec("insert into t values (1,1)")
+	testKit.MustExec("analyze table t")
+	table, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(2, 2))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	idxID = table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(2, 2))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+}
+
+func (s *testSelectivitySuite) TestPrimaryKeySelectivity(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a char(10) primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > "t"`).Check(testkit.Rows(
+		"IndexScan_8   cop table:t, index:a, range:(t,+inf], keep order:false 3333.33",
+		"TableScan_9   cop table:t, keep order:false 3333.33",
+		"IndexLookUp_10   root index:IndexScan_8, table:TableScan_9 3333.33"))
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int primary key, b int)")
+	testKit.MustQuery(`explain select * from t where a > 1`).Check(testkit.Rows(
+		"TableScan_5   cop table:t, range:(1,+inf], keep order:false 3333.33",
+		"TableReader_6   root data:TableScan_5 3333.33"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {

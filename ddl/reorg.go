@@ -196,7 +196,7 @@ func (d *ddl) getReorgInfo(t *meta.Meta, job *model.Job, tbl table.Table) (*reor
 		}
 
 		// Get the first handle of this table.
-		err = iterateSnapshotRows(d.store, tbl, ver.Ver, math.MinInt64,
+		err = iterateSnapshotRows(d.store, tbl, ver.Ver, math.MinInt64, math.MaxInt64, true,
 			func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 				info.Handle = h
 				return false, nil

@@ -211,6 +211,13 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("off"))
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+
+	tk.MustExec("set tidb_slow_log_threshold = 0")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_slow_log_threshold = 1")
+	tk.MustQuery("select @@session.tidb_slow_log_threshold;").Check(testkit.Rows("1"))
+	_, err = tk.Exec("set global tidb_slow_log_threshold = 0")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
@@ -236,4 +243,24 @@ func (s *testSuite) TestSetCharset(c *C) {
 
 	// Issue 1523
 	tk.MustExec(`SET NAMES binary`)
+}
+
+func (s *testSuite) TestSelectGlobalVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("151"))
+	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("151"))
+
+	tk.MustExec("set @@global.max_connections=100;")
+
+	tk.MustQuery("select @@global.max_connections;").Check(testkit.Rows("100"))
+	tk.MustQuery("select @@max_connections;").Check(testkit.Rows("100"))
+
+	tk.MustExec("set @@global.max_connections=151;")
+
+	// test for unknown variable.
+	_, err := tk.Exec("select @@invalid")
+	c.Assert(err.Error(), Equals, variable.UnknownSystemVar.GenByArgs("invalid").Error())
+	_, err = tk.Exec("select @@global.invalid")
+	c.Assert(err.Error(), Equals, variable.UnknownSystemVar.GenByArgs("invalid").Error())
 }

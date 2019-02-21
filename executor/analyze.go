@@ -69,7 +69,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	close(taskCh)
 	dom := domain.GetDomain(e.ctx)
 	lease := dom.StatsHandle().Lease
-	if lease > 0 {
+	// The analyze result will be consumed by background stats worker.
+	if lease > 0 && dom.StatsUpdating() {
 		var err1 error
 		for i := 0; i < len(e.tasks); i++ {
 			result := <-resultCh
@@ -199,6 +200,9 @@ func (e *AnalyzeIndexExec) open() error {
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		Build()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	ctx := context.TODO()
 	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
 	if err != nil {

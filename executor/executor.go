@@ -22,6 +22,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -49,6 +51,7 @@ var (
 	_ Executor = &ProjectionExec{}
 	_ Executor = &SelectionExec{}
 	_ Executor = &SelectLockExec{}
+	_ Executor = &ShowNextRowIDExec{}
 	_ Executor = &ShowDDLExec{}
 	_ Executor = &ShowDDLJobsExec{}
 	_ Executor = &ShowDDLJobQueriesExec{}
@@ -66,6 +69,7 @@ var (
 
 // Error instances.
 var (
+	ErrGetStartTS                  = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
 	ErrUnknownPlan                 = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti                = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
 	ErrPrepareDDL                  = terror.ClassExecutor.New(codePrepareDDL, "Can not prepare DDL statements")
@@ -93,6 +97,7 @@ const (
 	codePasswordFormat                 terror.ErrCode = 1827 // MySQL error code
 	codeErrCantChangeTxCharacteristics terror.ErrCode = 1568
 	codeErrPsManyParam                 terror.ErrCode = 1390
+	codeGetStartTS                     terror.ErrCode = 11
 )
 
 type baseExecutor struct {
@@ -221,6 +226,43 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
+// ShowNextRowIDExec represents a show the next row ID executor.
+type ShowNextRowIDExec struct {
+	baseExecutor
+	tblName *ast.TableName
+	done    bool
+}
+
+// Next implements the Executor Next interface.
+func (e *ShowNextRowIDExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+	is := domain.GetDomain(e.ctx).InfoSchema()
+	tbl, err := is.TableByName(e.tblName.Schema, e.tblName.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	colName := model.ExtraHandleName
+	for _, col := range tbl.Meta().Columns {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			colName = col.Name
+			break
+		}
+	}
+	nextGlobalID, err := tbl.Allocator(e.ctx).NextGlobalAutoID(tbl.Meta().ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	chk.AppendString(0, e.tblName.Schema.O)
+	chk.AppendString(1, e.tblName.Name.O)
+	chk.AppendString(2, colName.O)
+	chk.AppendInt64(3, nextGlobalID)
+	e.done = true
+	return nil
+}
+
 // ShowDDLExec represents a show DDL executor.
 type ShowDDLExec struct {
 	baseExecutor
@@ -274,12 +316,13 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	jobs, err := admin.GetDDLJobs(txn)
 	// TODO: need to return the job that the user needs.
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
+	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -316,12 +359,16 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	jobs, err := admin.GetDDLJobs(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn())
+	historyJobs, err := admin.GetHistoryDDLJobs(txn)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -379,7 +426,19 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 		for _, idx := range tb.Indices() {
-			txn := e.ctx.Txn()
+			if idx.Meta().State != model.StatePublic {
+				continue
+			}
+			txn, err := e.ctx.Txn(true)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !txn.Valid() {
+				if failer, ok := txn.(sqlexec.Failer); ok && failer.Fail() != nil {
+					return failer.Fail()
+				}
+				return errors.New("active transaction fail")
+			}
 			err = admin.CompareIndexData(e.ctx, txn, tb, idx)
 			if err != nil {
 				return errors.Errorf("%v err:%v", t.Name, err)
@@ -482,7 +541,10 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
 		return nil
 	}
-	txn := e.ctx.Txn()
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	keys := make([]kv.Key, 0, chk.NumRows())
 	iter := chunk.NewIterator4Chunk(chk)
 	for id, cols := range e.Schema().TblID2Handle {
@@ -576,10 +638,6 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
-		err = sctx.ActivePendingTxn()
-		if err != nil {
-			return rows, errors.Trace(err)
-		}
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
@@ -622,7 +680,7 @@ func init() {
 type ProjectionExec struct {
 	baseExecutor
 
-	evaluatorSuit    *expression.EvaluatorSuit
+	evaluatorSuit    *expression.EvaluatorSuite
 	calculateNoDelay bool
 }
 

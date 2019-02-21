@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 const (
@@ -115,6 +116,15 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 		item.ColSize[key] += val
 	}
 	tc.TableDeltaMap[tableID] = item
+}
+
+// Cleanup clears up transaction info that no longer use.
+func (tc *TransactionContext) Cleanup() {
+	//tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
+	tc.DirtyDB = nil
+	tc.Binlog = nil
+	tc.Histroy = nil
+	tc.TableDeltaMap = nil
 }
 
 // ClearDelta clears the delta map.
@@ -237,6 +247,10 @@ type SessionVars struct {
 
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
+
+	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
+	// This variable is currently not recommended to be turned on.
+	AllowWriteRowID bool
 
 	// AllowInSubqueryUnFolding can be set to true to fold in subquery
 	AllowInSubqueryUnFolding bool
@@ -455,7 +469,7 @@ func (s *SessionVars) GetTimeZone() *time.Location {
 func (s *SessionVars) ResetPrevAffectedRows() {
 	s.PrevAffectedRows = 0
 	if s.StmtCtx != nil {
-		if s.StmtCtx.InUpdateOrDeleteStmt || s.StmtCtx.InInsertStmt {
+		if s.StmtCtx.InUpdateStmt || s.StmtCtx.InDeleteStmt || s.StmtCtx.InInsertStmt {
 			s.PrevAffectedRows = int64(s.StmtCtx.AffectedRows())
 		} else if s.StmtCtx.InSelectStmt {
 			s.PrevAffectedRows = -1
@@ -517,6 +531,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptWriteRowID:
+		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqUnFolding:
 		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
@@ -561,6 +577,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+	case TiDBSlowLogThreshold:
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:

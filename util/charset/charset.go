@@ -86,6 +86,7 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 		cs = "utf8"
 	}
 
+	cs = strings.ToLower(cs)
 	c, ok := charsets[cs]
 	if !ok {
 		return false
@@ -94,6 +95,7 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	if co == "" {
 		return true
 	}
+	co = strings.ToLower(co)
 	_, ok = c.Collations[co]
 	if !ok {
 		return false

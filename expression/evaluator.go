@@ -64,36 +64,35 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 	return nil
 }
 
-// EvaluatorSuit is responsible for the evaluation of a list of expressions.
+// EvaluatorSuite is responsible for the evaluation of a list of expressions.
 // It separates them to "column" and "other" expressions and evaluates "other"
 // expressions before "column" expressions.
-type EvaluatorSuit struct {
+type EvaluatorSuite struct {
 	*columnEvaluator  // Evaluator for column expressions.
 	*defaultEvaluator // Evaluator for other expressions.
 }
 
-// NewEvaluatorSuit creates an EvaluatorSuit to evaluate all the exprs.
-func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
-	e := &EvaluatorSuit{}
+// NewEvaluatorSuite creates an EvaluatorSuite to evaluate all the exprs.
+func NewEvaluatorSuite(exprs []Expression, avoidColumnEvaluator bool) *EvaluatorSuite {
+	e := &EvaluatorSuite{}
 
-	for i, expr := range exprs {
-		switch x := expr.(type) {
-		case *Column:
+	for i := 0; i < len(exprs); i++ {
+		if col, isCol := exprs[i].(*Column); isCol && !avoidColumnEvaluator {
 			if e.columnEvaluator == nil {
 				e.columnEvaluator = &columnEvaluator{inputIdxToOutputIdxes: make(map[int][]int)}
 			}
-			inputIdx, outputIdx := x.Index, i
+			inputIdx, outputIdx := col.Index, i
 			e.columnEvaluator.inputIdxToOutputIdxes[inputIdx] = append(e.columnEvaluator.inputIdxToOutputIdxes[inputIdx], outputIdx)
-		default:
-			if e.defaultEvaluator == nil {
-				e.defaultEvaluator = &defaultEvaluator{
-					outputIdxes: make([]int, 0, len(exprs)),
-					exprs:       make([]Expression, 0, len(exprs)),
-				}
-			}
-			e.defaultEvaluator.exprs = append(e.defaultEvaluator.exprs, x)
-			e.defaultEvaluator.outputIdxes = append(e.defaultEvaluator.outputIdxes, i)
+			continue
 		}
+		if e.defaultEvaluator == nil {
+			e.defaultEvaluator = &defaultEvaluator{
+				outputIdxes: make([]int, 0, len(exprs)),
+				exprs:       make([]Expression, 0, len(exprs)),
+			}
+		}
+		e.defaultEvaluator.exprs = append(e.defaultEvaluator.exprs, exprs[i])
+		e.defaultEvaluator.outputIdxes = append(e.defaultEvaluator.outputIdxes, i)
 	}
 
 	if e.defaultEvaluator != nil {
@@ -102,9 +101,9 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 	return e
 }
 
-// Run evaluates all the expressions hold by this EvaluatorSuit.
+// Run evaluates all the expressions hold by this EvaluatorSuite.
 // NOTE: "defaultEvaluator" must be evaluated before "columnEvaluator".
-func (e *EvaluatorSuit) Run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
+func (e *EvaluatorSuite) Run(ctx sessionctx.Context, input, output *chunk.Chunk) error {
 	if e.defaultEvaluator != nil {
 		err := e.defaultEvaluator.run(ctx, input, output)
 		if err != nil {

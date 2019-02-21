@@ -790,6 +790,27 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 	}
 }
 
+func (s *testTypeConvertSuite) TestConvertJSONToDecimal(c *C) {
+	var tests = []struct {
+		In  string
+		Out *MyDecimal
+	}{
+		{`{}`, NewDecFromStringForTest("0")},
+		{`[]`, NewDecFromStringForTest("0")},
+		{`3`, NewDecFromStringForTest("3")},
+		{`-3`, NewDecFromStringForTest("-3")},
+		{`4.5`, NewDecFromStringForTest("4.5")},
+		{`"1234"`, NewDecFromStringForTest("1234")},
+		{`"1234567890123456789012345678901234567890123456789012345"`, NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
+	}
+	for _, tt := range tests {
+		j, err := json.ParseBinaryFromString(tt.In)
+		c.Assert(err, IsNil)
+		casted, _ := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
+		c.Assert(casted.Compare(tt.Out), Equals, 0)
+	}
+}
+
 func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 	var testCases = []struct {
 		number int64

@@ -379,6 +379,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t (a,b) fields terminated by 'ab'", false},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by ''", true},
 
 		// select for update
 		{"SELECT * from t for update", true},
@@ -421,6 +422,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin checksum table t1, t2;", true},
 		{"admin cancel ddl jobs 1", true},
 		{"admin cancel ddl jobs 1, 2", true},
+		{"admin show t1 next_row_id", true},
 		{"admin recover index t1 idx_a", true},
 		{"admin cleanup index t1 idx_a", true},
 

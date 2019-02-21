@@ -89,7 +89,7 @@ var (
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
-	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
+	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
 	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength    = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
@@ -166,7 +166,7 @@ type DDL interface {
 	GetInformationSchema() infoschema.InfoSchema
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
-	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
+	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident, isAlterTable bool) error
 	// SetLease will reset the lease time for online DDL change,
 	// it's a very dangerous function and you must guarantee that all servers have the same lease time.
 	SetLease(ctx context.Context, lease time.Duration)
@@ -264,7 +264,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	var syncer SchemaSyncer
 	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
-		// So we use mockOwnerManager and mockSchemaSyncer.
+		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(id, cancelFunc)
 		syncer = NewMockSchemaSyncer()
 	} else {
@@ -541,7 +541,7 @@ const (
 	codeTooLongIdent                 = 1059
 	codeDupKeyName                   = 1061
 	codeTooLongKey                   = 1071
-	codeKeyColumnDoesNotExits        = 1072
+	codeKeyColumnDoesNotExits        = mysql.ErrKeyColumnDoesNotExits
 	codeIncorrectPrefixKey           = 1089
 	codeCantRemoveAllFields          = 1090
 	codeCantDropFieldOrKey           = 1091

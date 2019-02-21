@@ -60,8 +60,6 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		}
 		if retryable && IsRetryableError(err) {
 			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
-			err1 := txn.Rollback()
-			terror.Log(errors.Trace(err1))
 			BackOff(i)
 			continue
 		}

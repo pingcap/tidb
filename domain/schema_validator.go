@@ -46,6 +46,8 @@ type SchemaValidator interface {
 	Restart()
 	// Reset resets SchemaValidator to initial state.
 	Reset()
+	// IsStarted indicates whether SchemaValidator is started.
+	IsStarted() bool
 }
 
 type deltaSchemaInfo struct {
@@ -70,6 +72,13 @@ func NewSchemaValidator(lease time.Duration) SchemaValidator {
 		lease:            lease,
 		deltaSchemaInfos: make([]deltaSchemaInfo, 0, maxNumberOfDiffsToLoad),
 	}
+}
+
+func (s *schemaValidator) IsStarted() bool {
+	s.mux.Lock()
+	isStarted := s.isStarted
+	s.mux.Unlock()
+	return isStarted
 }
 
 func (s *schemaValidator) Stop() {
@@ -165,7 +174,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	defer s.mux.RUnlock()
 	if !s.isStarted {
 		log.Infof("[domain-ddl] the schema validator stopped before checking")
-		return ResultFail
+		return ResultUnknown
 	}
 	if s.lease == 0 {
 		return ResultSucc

@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -440,4 +441,63 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`create table test ( a  TIMESTAMP, primary key(a) );`)
 	tk.MustExec(`insert into test set a='2015-08-10 04:18:49';`)
 	tk.MustExec(`admin check table test;`)
+
+	// test add index on time type column which have default value
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`CREATE TABLE t1 (c2 YEAR, PRIMARY KEY (c2))`)
+	tk.MustExec(`INSERT INTO t1 SET c2 = '1912'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c3 TIMESTAMP NULL DEFAULT '1976-08-29 16:28:11'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c4 DATE      NULL DEFAULT '1976-08-29'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c5 TIME      NULL DEFAULT '16:28:11'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c6 YEAR      NULL DEFAULT '1976'`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx1 (c2, c3,c4,c5,c6)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx2 (c2)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx3 (c3)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx4 (c4)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx5 (c5)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx6 (c6)`)
+	tk.MustExec(`admin check table t1`)
+}
+
+func (s *testSuite) TestAdminShowNextID(c *C) {
+	step := int64(10)
+	autoIDStep := autoid.GetStep()
+	autoid.SetStep(step)
+	defer autoid.SetStep(autoIDStep)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, c int)")
+	// Start handle is 1.
+	r := tk.MustQuery("admin show t next_row_id")
+	r.Check(testkit.Rows("test t _tidb_rowid 1"))
+	// Row ID is step + 1.
+	tk.MustExec("insert into t values(1, 1)")
+	r = tk.MustQuery("admin show t next_row_id")
+	r.Check(testkit.Rows("test t _tidb_rowid 11"))
+	// Row ID is original + step.
+	for i := 0; i < int(step); i++ {
+		tk.MustExec("insert into t values(10000, 1)")
+	}
+	r = tk.MustQuery("admin show t next_row_id")
+	r.Check(testkit.Rows("test t _tidb_rowid 21"))
+
+	// test for a table with the primary key
+	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
+	// Start handle is 1.
+	r = tk.MustQuery("admin show tt next_row_id")
+	r.Check(testkit.Rows("test tt id 1"))
+	// After rebasing auto ID, row ID is 20 + step + 1.
+	tk.MustExec("insert into tt values(20, 1)")
+	r = tk.MustQuery("admin show tt next_row_id")
+	r.Check(testkit.Rows("test tt id 31"))
+	// test for renaming the table
+	tk.MustExec("create database test1")
+	tk.MustExec("rename table test.tt to test1.tt")
+	tk.MustExec("use test1")
+	r = tk.MustQuery("admin show tt next_row_id")
+	r.Check(testkit.Rows("test1 tt id 31"))
+	tk.MustExec("insert test1.tt values ()")
+	r = tk.MustQuery("admin show tt next_row_id")
+	r.Check(testkit.Rows("test1 tt id 41"))
 }

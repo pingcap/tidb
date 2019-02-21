@@ -25,6 +25,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
+	"github.com/ngaut/sync2"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -41,6 +42,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -51,10 +53,11 @@ type Domain struct {
 	privHandle      *privileges.Handle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
+	statsUpdating   sync2.AtomicInt32
 	ddl             ddl.DDL
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
-	sysSessionPool  *pools.ResourcePool
+	sysSessionPool  *SessionPool
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
@@ -351,13 +354,27 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
+			// The etcd is responsible for schema synchronization, we should ensure there is at most two diffrent schema version
+			// in the TiDB cluster, to make the data/schema be consistent. If we lost connection/session to etcd, the cluster
+			// will treats this TiDB as a down instance, and etcd will remove the key of `/tidb/ddl/all_schema_versions/tidb-id`.
+			// Say the schema version now is 1, the owner is changing the schema version to 2, it will not wait for this down TiDB syncing the schema,
+			// then continue to change the TiDB schema to version 3. Unfortunately, this down TiDB schema version will still be version 1.
+			// And version 1 is not consistent to version 3. So we need to stop the schema validator to prohibit the DML executing.
 			do.SchemaValidator.Stop()
 			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
 			}
+			// The schema maybe changed, must reload schema then the schema validator can restart.
+			exitLoop := do.mustReload()
+			if exitLoop {
+				// domain is closed.
+				log.Errorf("[ddl] domain is closed. exit loadSchemaInLoop")
+				return
+			}
 			do.SchemaValidator.Restart()
+			log.Info("[ddl] schema syncer restarted.")
 		case <-do.exit:
 			return
 		}
@@ -383,6 +400,29 @@ func (do *Domain) mustRestartSyncer() error {
 		}
 		time.Sleep(time.Second)
 		log.Infof("[ddl] restart the schema syncer failed %v", err)
+	}
+}
+
+// mustReload tries to Reload the schema, it returns until it's successful or the domain is closed.
+// it returns false when it is sucessful, returns true when the domain is closed.
+func (do *Domain) mustReload() (exitLoop bool) {
+	for {
+		err := do.Reload()
+		if err == nil {
+			log.Infof("[ddl] mustReload succeed.")
+			return false
+		}
+
+		log.Infof("[ddl] reload the schema failed: %v", err)
+		// If the domain is closed, we returns immediately.
+		select {
+		case <-do.exit:
+			log.Infof("[ddl] domain is closed.")
+			return true
+		default:
+		}
+
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -455,7 +495,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		store:           store,
 		SchemaValidator: NewSchemaValidator(ddlLease),
 		exit:            make(chan struct{}),
-		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
+		sysSessionPool:  newSessionPool(capacity, factory),
 		statsLease:      statsLease,
 		infoHandle:      infoschema.NewHandle(store),
 	}
@@ -471,6 +511,12 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+					grpc.WithBackoffMaxDelay(time.Second * 3),
+					grpc.WithKeepaliveParams(keepalive.ClientParameters{
+						Time:                time.Duration(10) * time.Second,
+						Timeout:             time.Duration(3) * time.Second,
+						PermitWithoutStream: true,
+					}),
 				},
 				TLS: ebd.TLSConfig(),
 			})
@@ -515,8 +561,71 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	return nil
 }
 
+// SessionPool is a pool of session.
+type SessionPool struct {
+	resources chan pools.Resource
+	factory   pools.Factory
+	mu        struct {
+		sync.RWMutex
+		closed bool
+	}
+}
+
+func newSessionPool(cap int, factory pools.Factory) *SessionPool {
+	return &SessionPool{
+		resources: make(chan pools.Resource, cap),
+		factory:   factory,
+	}
+}
+
+// Get gets a resource from the pool.
+func (p *SessionPool) Get() (resource pools.Resource, err error) {
+	var ok bool
+	select {
+	case resource, ok = <-p.resources:
+		if !ok {
+			err = errors.New("session pool closed")
+		}
+	default:
+		resource, err = p.factory()
+	}
+	return
+}
+
+// Put puts a resource into to pool.
+func (p *SessionPool) Put(resource pools.Resource) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.mu.closed {
+		resource.Close()
+		return
+	}
+
+	select {
+	case p.resources <- resource:
+	default:
+		resource.Close()
+	}
+}
+
+// Close closes the pool.
+func (p *SessionPool) Close() {
+	p.mu.Lock()
+	if p.mu.closed {
+		p.mu.Unlock()
+		return
+	}
+	p.mu.closed = true
+	close(p.resources)
+	p.mu.Unlock()
+
+	for r := range p.resources {
+		r.Close()
+	}
+}
+
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() *pools.ResourcePool {
+func (do *Domain) SysSessionPool() *SessionPool {
 	return do.sysSessionPool
 }
 
@@ -564,7 +673,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			if err != nil {
 				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
 			} else {
-				log.Info("[domain] reload privilege success.")
+				log.Debug("[domain] reload privilege success.")
 			}
 		}
 	}()
@@ -586,6 +695,20 @@ func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
+// StatsUpdating checks if the stats worker is updating.
+func (do *Domain) StatsUpdating() bool {
+	return do.statsUpdating.Get() > 0
+}
+
+// SetStatsUpdating sets the value of stats updating.
+func (do *Domain) SetStatsUpdating(val bool) {
+	if val {
+		do.statsUpdating.Set(1)
+	} else {
+		do.statsUpdating.Set(0)
+	}
+}
+
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 
@@ -602,6 +725,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	owner := do.newStatsOwner()
 	do.wg.Add(1)
+	do.SetStatsUpdating(true)
 	go do.updateStatsWorker(ctx, owner)
 	if RunAutoAnalyze {
 		do.wg.Add(1)
@@ -650,7 +774,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	} else {
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
-	defer recoverInDomain("updateStatsWorker", false)
+	defer func() {
+		do.SetStatsUpdating(false)
+		recoverInDomain("updateStatsWorker", false)
+		do.wg.Done()
+	}()
 	for {
 		select {
 		case <-loadTicker.C:
@@ -659,7 +787,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				log.Debug("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
-			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
 		case t := <-statsHandle.DDLEventCh():

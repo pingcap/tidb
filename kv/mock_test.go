@@ -46,8 +46,8 @@ func (s testMockSuite) TestInterface(c *C) {
 	if transaction.IsReadOnly() {
 		transaction.Get(Key("lock"))
 		transaction.Set(Key("lock"), []byte{})
-		transaction.Seek(Key("lock"))
-		transaction.SeekReverse(Key("lock"))
+		transaction.Iter(Key("lock"), nil)
+		transaction.IterReverse(Key("lock"))
 	}
 	transaction.Commit(context.Background())
 

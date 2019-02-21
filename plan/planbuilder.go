@@ -89,17 +89,19 @@ const (
 	whereClause
 	groupByClause
 	showStatement
+	globalOrderByClause
 )
 
 var clauseMsg = map[clauseCode]string{
-	unknowClause:  "",
-	fieldList:     "field list",
-	havingClause:  "having clause",
-	onClause:      "on clause",
-	orderByClause: "order clause",
-	whereClause:   "where clause",
-	groupByClause: "group statement",
-	showStatement: "show statement",
+	unknowClause:        "",
+	fieldList:           "field list",
+	havingClause:        "having clause",
+	onClause:            "on clause",
+	orderByClause:       "order clause",
+	whereClause:         "where clause",
+	groupByClause:       "group statement",
+	showStatement:       "show statement",
+	globalOrderByClause: "global ORDER clause",
 }
 
 // planBuilder builds Plan from an ast.Node.
@@ -374,7 +376,11 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		p.SQLText, _ = x.SQLVar.GetValue().(string)
+		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
+			p.SQLText = v
+		} else {
+			p.SQLText = "NULL"
+		}
 	} else {
 		p.SQLText = x.SQLText
 	}
@@ -474,6 +480,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	case ast.AdminChecksumTable:
 		p := &ChecksumTable{Tables: as.Tables}
 		p.SetSchema(buildChecksumTableSchema())
+		ret = p
+	case ast.AdminShowNextRowID:
+		p := &ShowNextRowID{TableName: as.Tables[0]}
+		p.SetSchema(buildShowNextRowID())
 		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
@@ -626,6 +636,15 @@ func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) Plan {
 		return b.buildAnalyzeIndex(as)
 	}
 	return b.buildAnalyzeTable(as)
+}
+
+func buildShowNextRowID() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
+	schema.Append(buildColumn("", "DB_NAME", mysql.TypeVarchar, mysql.MaxDatabaseNameLength))
+	schema.Append(buildColumn("", "TABLE_NAME", mysql.TypeVarchar, mysql.MaxTableNameLength))
+	schema.Append(buildColumn("", "COLUMN_NAME", mysql.TypeVarchar, mysql.MaxColumnNameLength))
+	schema.Append(buildColumn("", "NEXT_GLOBAL_ROW_ID", mysql.TypeLonglong, 4))
+	return schema
 }
 
 func buildShowDDLFields() *expression.Schema {

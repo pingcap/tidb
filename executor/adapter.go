@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -111,7 +113,7 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.logSlowQuery(a.txnStartTS, a.lastErr == nil)
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	if a.processinfo != nil {
 		a.processinfo.SetProcessInfo("")
 	}
@@ -133,8 +135,9 @@ type ExecStmt struct {
 
 	StmtNode ast.StmtNode
 
-	Ctx            sessionctx.Context
-	startTime      time.Time
+	Ctx sessionctx.Context
+	// StartTime stands for the starting time when executing the statement.
+	StartTime      time.Time
 	isPreparedStmt bool
 }
 
@@ -179,7 +182,7 @@ func (a *ExecStmt) RebuildPlan() error {
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
-	a.startTime = time.Now()
+	a.StartTime = time.Now()
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plan.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
@@ -203,7 +206,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if err := e.Open(ctx); err != nil {
+	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
@@ -231,11 +234,19 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
 	}
 
+	var txnStartTS uint64
+	txn, err1 := sctx.Txn(false)
+	if err1 != nil {
+		return nil, errors.Trace(err1)
+	}
+	if txn.Valid() {
+		txnStartTS = txn.StartTS()
+	}
 	return &recordSet{
 		executor:    e,
 		stmt:        a,
 		processinfo: pi,
-		txnStartTS:  sctx.Txn().StartTS(),
+		txnStartTS:  txnStartTS,
 	}, nil
 }
 
@@ -248,6 +259,16 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		if snapshotTS != 0 {
 			return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 		}
+		txn, err := sctx.Txn(true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !txn.Valid() {
+			if failer, ok := txn.(sqlexec.Failer); ok && failer.Fail() != nil {
+				return nil, failer.Fail()
+			}
+			return nil, errors.New("active transaction fail")
+		}
 	}
 
 	var err error
@@ -257,10 +278,15 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		}
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
-		if sctx.Txn() != nil {
-			txnTS = sctx.Txn().StartTS()
+		// Don't active pending txn here.
+		if txn, err1 := sctx.Txn(false); err1 != nil {
+			log.Error(err1)
+		} else {
+			if txn.Valid() {
+				txnTS = txn.StartTS()
+			}
 		}
-		a.logSlowQuery(txnTS, err == nil)
+		a.LogSlowQuery(txnTS, err == nil)
 	}()
 
 	err = e.Next(ctx, e.newChunk())
@@ -277,14 +303,13 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if _, ok := a.Plan.(*plan.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		var err error
-		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		isPointGet, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if isPointGet {
 			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
-		} else {
-			log.Debugf("con:%d ActivePendingTxn %s", ctx.GetSessionVars().ConnectionID, a.Text)
-			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -328,14 +353,15 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 // QueryReplacer replaces new line and tab for grep result including query string.
 var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
-func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
+// LogSlowQuery is used to print the slow query in the log files.
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	level := log.GetLevel()
 	if level < log.WarnLevel {
 		return
 	}
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.startTime)
-	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	costTime := time.Since(a.StartTime)
+	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	if costTime < threshold && level < log.DebugLevel {
 		return
 	}
@@ -369,23 +395,27 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
-//  2. txn is nil
+//  2. txn is not valid
 //  2. plan is point get by pk or unique key
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan) bool {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan) (bool, error) {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
-		return false
+		return false, nil
 	}
 
 	// check txn
-	if ctx.Txn() != nil {
-		return false
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if txn.Valid() {
+		return false, nil
 	}
 
 	// check plan
 	if proj, ok := p.(*plan.PhysicalProjection); ok {
 		if len(proj.Children()) != 1 {
-			return false
+			return false, nil
 		}
 		p = proj.Children()[0]
 	}
@@ -393,14 +423,14 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan
 	switch v := p.(type) {
 	case *plan.PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *plan.PhysicalIndexLookUpReader:
 		indexScan := v.IndexPlans[0].(*plan.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *plan.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
 	default:
-		return false
+		return false, nil
 	}
 }

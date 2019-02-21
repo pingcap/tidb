@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
@@ -633,6 +632,9 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			fk.RefTable = constr.Refer.Table.Name
 			fk.State = model.StatePublic
 			for _, key := range constr.Keys {
+				if table.FindCol(cols, key.Column.Name.O) == nil {
+					return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
+				}
 				fk.Cols = append(fk.Cols, key.Column.Name)
 			}
 			for _, key := range constr.Refer.IndexColNames {
@@ -991,7 +993,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.AlterColumn(ctx, ident, spec)
 		case ast.AlterTableRenameTable:
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
-			err = d.RenameTable(ctx, ident, newIdent)
+			isAlterTable := true
+			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
 		case ast.AlterTableOption:
@@ -1150,18 +1153,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col.OriginDefaultValue = col.DefaultValue
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		zeroVal := table.GetZeroValue(col.ToInfo())
-		col.OriginDefaultValue, err = zeroVal.ToString()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
-		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
-		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
@@ -1616,7 +1610,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	return errors.Trace(err)
 }
 
-func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) error {
+func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInformationSchema()
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
@@ -1625,6 +1619,10 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) 
 	oldTbl, err := is.TableByName(oldIdent.Schema, oldIdent.Name)
 	if err != nil {
 		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
+	}
+	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
+		// oldIdent is equal to newIdent, do nothing
+		return nil
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {
@@ -1710,13 +1708,16 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	return errors.Trace(err)
 }
 
-func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef) (*model.FKInfo, error) {
+func buildFKInfo(fkName model.CIStr, keys []*ast.IndexColName, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	var fkInfo model.FKInfo
 	fkInfo.Name = fkName
 	fkInfo.RefTable = refer.Table.Name
 
 	fkInfo.Cols = make([]model.CIStr, len(keys))
 	for i, key := range keys {
+		if table.FindCol(cols, key.Column.Name.O) == nil {
+			return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
+		}
 		fkInfo.Cols[i] = key.Column.Name
 	}
 
@@ -1744,7 +1745,7 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
 
-	fkInfo, err := buildFKInfo(fkName, keys, refer)
+	fkInfo, err := buildFKInfo(fkName, keys, refer, t.Cols())
 	if err != nil {
 		return errors.Trace(err)
 	}

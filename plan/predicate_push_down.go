@@ -50,9 +50,24 @@ func (p *baseLogicalPlan) PredicatePushDown(predicates []expression.Expression) 
 	return nil, p.self
 }
 
+func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	canBePushDown := make([]expression.Expression, 0, len(filters))
+	canNotBePushDown := make([]expression.Expression, 0, len(filters))
+	for _, expr := range filters {
+		if expression.HasGetSetVarFunc(expr) {
+			canNotBePushDown = append(canNotBePushDown, expr)
+		} else {
+			canBePushDown = append(canBePushDown, expr)
+		}
+	}
+	return canBePushDown, canNotBePushDown
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	retConditions, child := p.children[0].PredicatePushDown(append(p.Conditions, predicates...))
+	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
+	retConditions, child := p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
+	retConditions = append(canNotBePushDown, retConditions...)
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		return nil, p
@@ -62,12 +77,13 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
-	p.children[0].PredicatePushDown(predicates)
+	retainedPredicates, _ := p.children[0].PredicatePushDown(predicates)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	for _, cond := range predicates {
 		p.conditions = append(p.conditions, cond.Clone())
 	}
-	return nil, p
+	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.
+	return retainedPredicates, p
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
@@ -244,20 +260,12 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		innerTable, outerTable = outerTable, innerTable
 	}
 
-	var fullConditions []expression.Expression
-
 	// first simplify embedded outer join.
-	// When trying to simplify an embedded outer join operation in a query,
-	// we must take into account the join condition for the embedding outer join together with the WHERE condition.
 	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
-		fullConditions = concatOnAndWhereConds(p, predicates)
-		simplifyOuterJoin(innerPlan, fullConditions)
+		simplifyOuterJoin(innerPlan, predicates)
 	}
 	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
-		if fullConditions != nil {
-			fullConditions = concatOnAndWhereConds(p, predicates)
-		}
-		simplifyOuterJoin(outerPlan, fullConditions)
+		simplifyOuterJoin(outerPlan, predicates)
 	}
 
 	if p.JoinType == InnerJoin {
@@ -297,27 +305,20 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 	return false
 }
 
-// concatOnAndWhereConds concatenate ON conditions with WHERE conditions.
-func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression) []expression.Expression {
-	numAllFilters := len(join.EqualConditions) + len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions) + len(predicates)
-	allFilters := make([]expression.Expression, 0, numAllFilters)
-	for _, equalCond := range join.EqualConditions {
-		allFilters = append(allFilters, equalCond)
-	}
-	allFilters = append(allFilters, join.LeftConditions...)
-	allFilters = append(allFilters, join.RightConditions...)
-	allFilters = append(allFilters, join.OtherConditions...)
-	allFilters = append(allFilters, predicates...)
-	return allFilters
-}
-
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
-	var push = make([]expression.Expression, 0, p.Schema().Len())
+	canBePushed := make([]expression.Expression, 0, len(predicates))
+	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	for _, cond := range predicates {
-		push = append(push, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
+		newFilter := expression.ColumnSubstitute(cond, p.Schema(), p.Exprs)
+		if !expression.HasGetSetVarFunc(newFilter) {
+			canBePushed = append(canBePushed, expression.ColumnSubstitute(cond, p.Schema(), p.Exprs))
+		} else {
+			canNotBePushed = append(canNotBePushed, cond)
+		}
 	}
-	return p.baseLogicalPlan.PredicatePushDown(push)
+	remained, child := p.baseLogicalPlan.PredicatePushDown(canBePushed)
+	return append(remained, canNotBePushed...), child
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.

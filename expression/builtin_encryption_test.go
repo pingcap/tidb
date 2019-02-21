@@ -324,6 +324,7 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 	}{
 		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), "hello world"},         // zlib result from MySQL
 		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), "hello world"}, // zlib result from TiDB
+		{decodeHex("02000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), nil},                   // wrong length in the first four bytes
 		{decodeHex(""), ""},
 		{"1", nil},
 		{"1234", nil},

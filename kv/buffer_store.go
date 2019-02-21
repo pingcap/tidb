@@ -74,26 +74,26 @@ func (s *BufferStore) Get(k Key) ([]byte, error) {
 	return val, nil
 }
 
-// Seek implements the Retriever interface.
-func (s *BufferStore) Seek(k Key) (Iterator, error) {
-	bufferIt, err := s.MemBuffer.Seek(k)
+// Iter implements the Retriever interface.
+func (s *BufferStore) Iter(k Key, upperBound Key) (Iterator, error) {
+	bufferIt, err := s.MemBuffer.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := s.r.Seek(k)
+	retrieverIt, err := s.r.Iter(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekReverse implements the Retriever interface.
-func (s *BufferStore) SeekReverse(k Key) (Iterator, error) {
-	bufferIt, err := s.MemBuffer.SeekReverse(k)
+// IterReverse implements the Retriever interface.
+func (s *BufferStore) IterReverse(k Key) (Iterator, error) {
+	bufferIt, err := s.MemBuffer.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := s.r.SeekReverse(k)
+	retrieverIt, err := s.r.IterReverse(k)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

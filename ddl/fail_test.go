@@ -14,8 +14,8 @@
 package ddl
 
 import (
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
@@ -36,7 +36,9 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	row := types.MakeDatums(1, 2)
 	_, err = originTable.AddRecord(ctx, row, false)
 	c.Assert(err, IsNil)
-	err = ctx.Txn().Commit(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}

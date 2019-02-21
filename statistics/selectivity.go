@@ -149,7 +149,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 				return 0, errors.Trace(err)
 			}
 			sets = append(sets, &exprSet{tp: colType, ID: col.ID, mask: maskCovered, ranges: ranges})
-			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
+			if colInfo.isHandle {
 				sets[len(sets)-1].tp = pkType
 			}
 		}
@@ -239,14 +239,13 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 		}
 		if bestCount == 0 {
 			break
-		} else {
-			// update the mask, remove the bit that sets[bestID].mask has.
-			mask &^= sets[bestID].mask
-
-			newBlocks = append(newBlocks, sets[bestID])
-			// remove the chosen one
-			sets = append(sets[:bestID], sets[bestID+1:]...)
 		}
+		// update the mask, remove the bit that sets[bestID].mask has.
+		mask &^= sets[bestID].mask
+
+		newBlocks = append(newBlocks, sets[bestID])
+		// remove the chosen one
+		sets = append(sets[:bestID], sets[bestID+1:]...)
 	}
 	return
 }

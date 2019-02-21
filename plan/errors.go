@@ -46,6 +46,8 @@ const (
 	codeDupFieldName                 = mysql.ErrDupFieldName
 	codeNonUpdatableTable            = mysql.ErrNonUpdatableTable
 	codeInternal                     = mysql.ErrInternal
+	codeTablenameNotAllowedHere      = mysql.ErrTablenameNotAllowedHere
+	codeErrTooBigPrecision           = mysql.ErrTooBigPrecision
 )
 
 // error definitions.
@@ -56,6 +58,7 @@ var (
 	ErrStmtNotFound                = terror.ClassOptimizer.New(codeStmtNotFound, "Prepared statement not found")
 	ErrWrongParamCount             = terror.ClassOptimizer.New(codeWrongParamCount, "Wrong parameter count")
 	ErrSchemaChanged               = terror.ClassOptimizer.New(codeSchemaChanged, "Schema has changed")
+	ErrTablenameNotAllowedHere     = terror.ClassOptimizer.New(codeTablenameNotAllowedHere, "Table '%s' from one of the %ss cannot be used in %s")
 
 	ErrWrongUsage                   = terror.ClassOptimizer.New(codeWrongUsage, mysql.MySQLErrName[mysql.ErrWrongUsage])
 	ErrAmbiguous                    = terror.ClassOptimizer.New(codeAmbiguous, mysql.MySQLErrName[mysql.ErrNonUniq])
@@ -77,6 +80,7 @@ var (
 	ErrDupFieldName                 = terror.ClassOptimizer.New(codeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
 	ErrNonUpdatableTable            = terror.ClassOptimizer.New(codeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
 	ErrInternal                     = terror.ClassOptimizer.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
+	errTooBigPrecision              = terror.ClassExpression.New(mysql.ErrTooBigPrecision, mysql.MySQLErrName[mysql.ErrTooBigPrecision])
 )
 
 func init() {
@@ -101,6 +105,7 @@ func init() {
 		codeDupFieldName:                 mysql.ErrDupFieldName,
 		codeNonUpdatableTable:            mysql.ErrUnknownTable,
 		codeInternal:                     mysql.ErrInternal,
+		codeErrTooBigPrecision:           mysql.ErrTooBigPrecision,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }

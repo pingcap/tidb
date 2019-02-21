@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -75,6 +76,17 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(len(res.GetString()), Equals, 5)
 	c.Assert(res.GetString(), Equals, string([]byte{'a', 0x00, 0x00, 0x00, 0x00}))
 
+	// cast(str as binary(N)), N > len([]byte(str)).
+	// cast("a" as binary(4294967295))
+	tp.Flen = 4294967295
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, tp)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.IsNull(), IsTrue)
+	warnings := sc.GetWarnings()
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
 	origSc := sc
 	sc.InSelectStmt = true
 	sc.OverflowAsWarning = true
@@ -92,8 +104,8 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(res.GetUint64() == math.MaxUint64, IsTrue)
 
-	warnings := sc.GetWarnings()
-	lastWarn := warnings[len(warnings)-1]
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
 
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
@@ -1005,6 +1017,48 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	c.Assert(isNull, Equals, false)
 	c.Assert(err, IsNil)
 	c.Assert(iRes, Equals, int64(0))
+}
+
+func (s *testEvaluatorSuite) TestCastJSONAsDecimalSig(c *C) {
+	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
+	originIgnoreTruncate := sc.IgnoreTruncate
+	sc.IgnoreTruncate = true
+	defer func() {
+		sc.IgnoreTruncate = originIgnoreTruncate
+	}()
+
+	col := &Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0}
+	decFunc := newBaseBuiltinFunc(ctx, []Expression{col})
+	decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
+	decFunc.tp.Flen = 60
+	decFunc.tp.Decimal = 2
+	sig := &builtinCastJSONAsDecimalSig{decFunc}
+
+	var tests = []struct {
+		In  string
+		Out *types.MyDecimal
+	}{
+		{`{}`, types.NewDecFromStringForTest("0")},
+		{`[]`, types.NewDecFromStringForTest("0")},
+		{`3`, types.NewDecFromStringForTest("3")},
+		{`-3`, types.NewDecFromStringForTest("-3")},
+		{`4.5`, types.NewDecFromStringForTest("4.5")},
+		{`"1234"`, types.NewDecFromStringForTest("1234")},
+		// test truncate
+		{`"1234.1234"`, types.NewDecFromStringForTest("1234.12")},
+		{`"1234.4567"`, types.NewDecFromStringForTest("1234.46")},
+		// test big decimal
+		{`"1234567890123456789012345678901234567890123456789012345"`, types.NewDecFromStringForTest("1234567890123456789012345678901234567890123456789012345")},
+	}
+	for _, tt := range tests {
+		j, err := json.ParseBinaryFromString(tt.In)
+		c.Assert(err, IsNil)
+		row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(j)})
+		res, isNull, err := sig.evalDecimal(row.ToRow())
+		c.Assert(isNull, Equals, false)
+		c.Assert(err, IsNil)
+		c.Assert(res.Compare(tt.Out), Equals, 0)
+	}
 }
 
 // TestWrapWithCastAsTypesClasses tests WrapWithCastAsInt/Real/String/Decimal.

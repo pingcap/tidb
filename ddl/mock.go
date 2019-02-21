@@ -25,53 +25,64 @@ import (
 	"golang.org/x/net/context"
 )
 
-var _ SchemaSyncer = &mockSchemaSyncer{}
+var _ SchemaSyncer = &MockSchemaSyncer{}
 
 const mockCheckVersInterval = 2 * time.Millisecond
 
-type mockSchemaSyncer struct {
+// MockSchemaSyncer is a mock schema syncer, it is exported for tesing.
+type MockSchemaSyncer struct {
 	selfSchemaVersion int64
 	globalVerCh       chan clientv3.WatchResponse
+	mockSession       chan struct{}
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
 func NewMockSchemaSyncer() SchemaSyncer {
-	return &mockSchemaSyncer{}
+	return &MockSchemaSyncer{}
 }
 
 // Init implements SchemaSyncer.Init interface.
-func (s *mockSchemaSyncer) Init(ctx context.Context) error {
+func (s *MockSchemaSyncer) Init(ctx context.Context) error {
 	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
+	s.mockSession = make(chan struct{}, 1)
 	return nil
 }
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
-func (s *mockSchemaSyncer) GlobalVersionCh() clientv3.WatchChan {
+func (s *MockSchemaSyncer) GlobalVersionCh() clientv3.WatchChan {
 	return s.globalVerCh
 }
 
 // WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
-func (s *mockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
+func (s *MockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
-func (s *mockSchemaSyncer) UpdateSelfVersion(ctx context.Context, version int64) error {
+func (s *MockSchemaSyncer) UpdateSelfVersion(ctx context.Context, version int64) error {
 	atomic.StoreInt64(&s.selfSchemaVersion, version)
 	return nil
 }
 
 // Done implements SchemaSyncer.Done interface.
-func (s *mockSchemaSyncer) Done() <-chan struct{} {
-	return make(chan struct{}, 1)
+func (s *MockSchemaSyncer) Done() <-chan struct{} {
+	return s.mockSession
+}
+
+// CloseSession mockSession, it is exported for testing.
+func (s *MockSchemaSyncer) CloseSession() {
+	close(s.mockSession)
 }
 
 // Restart implements SchemaSyncer.Restart interface.
-func (s *mockSchemaSyncer) Restart(_ context.Context) error { return nil }
+func (s *MockSchemaSyncer) Restart(_ context.Context) error {
+	s.mockSession = make(chan struct{}, 1)
+	return nil
+}
 
 // RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
-func (s *mockSchemaSyncer) RemoveSelfVersionPath() error { return nil }
+func (s *MockSchemaSyncer) RemoveSelfVersionPath() error { return nil }
 
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
-func (s *mockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
+func (s *MockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
 	select {
 	case s.globalVerCh <- clientv3.WatchResponse{}:
 	default:
@@ -80,12 +91,12 @@ func (s *mockSchemaSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version
 }
 
 // MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
-func (s *mockSchemaSyncer) MustGetGlobalVersion(ctx context.Context) (int64, error) {
+func (s *MockSchemaSyncer) MustGetGlobalVersion(ctx context.Context) (int64, error) {
 	return 0, nil
 }
 
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
-func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer int64) error {
+func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer int64) error {
 	ticker := time.NewTicker(mockCheckVersInterval)
 	defer ticker.Stop()
 

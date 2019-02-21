@@ -128,7 +128,29 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
-	err := e.children[0].Open(ctx)
+	// Be careful, very dirty hack in this line!!!
+	// IndexLookUpJoin need to rebuild executor (the dataReaderBuilder) during
+	// executing. However `executor.Next()` is lazy evaluation when the RecordSet
+	// result is drained.
+	// Lazy evaluation means the saved session context may change during executor's
+	// building and its running.
+	// A specific sequence for example:
+	//
+	// e := buildExecutor()   // txn at build time
+	// recordSet := runStmt(e)
+	// session.CommitTxn()    // txn closed
+	// recordSet.Next()
+	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
+	//
+	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
+	// so even txn is destroyed later, the dataReaderBuilder could still use the
+	// cached start ts to construct DAG.
+	_, err := e.innerCtx.readerBuilder.getStartTS()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = e.children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -453,7 +475,12 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 	dLookupKey := make([]types.Datum, 0, keyLen)
 	for i, keyCol := range iw.outerCtx.keyCols {
 		outerValue := outerRow.GetDatum(keyCol, iw.outerCtx.rowTypes[keyCol])
-
+		// Join-on-condition can be promised to be equal-condition in
+		// IndexNestedLoopJoin, thus the filter will always be false if
+		// outerValue is null, and we don't need to lookup it.
+		if outerValue.IsNull() {
+			return nil, nil
+		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {

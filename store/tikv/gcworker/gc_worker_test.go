@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
@@ -86,6 +86,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare()
 	c.Assert(err, IsNil)
+	c.Assert(ok, IsFalse)
 	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey, s.gcWorker.session)
 	c.Assert(err, IsNil)
 	c.Assert(lastRun, NotNil)

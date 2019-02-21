@@ -1436,7 +1436,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 	}{
 		{
 			sql:  "select a from t union select a from t",
-			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(a))",
 			err:  false,
 		},
 		{
@@ -1446,18 +1446,28 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		},
 		{
 			sql:  "select a from t union select a from t union all select a from t",
-			best: "UnionAll{DataScan(t)->Projection->UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))->Projection}",
+			best: "UnionAll{UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(a))->Projection->DataScan(t)->Projection}",
 			err:  false,
 		},
 		{
 			sql:  "select a from t union select a from t union all select a from t union select a from t union select a from t",
-			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(a))",
 			err:  false,
 		},
 		{
 			sql:  "select a from t union select a, b from t",
 			best: "",
 			err:  true,
+		},
+		{
+			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by a",
+			best: "UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Projection->Sort",
+			err:  false,
+		},
+		{
+			sql:  "select * from (select 1 as a  union select 1 union all select 2) t order by (select a)",
+			best: "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(a))->Projection->Dual->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
+			err:  false,
 		},
 	}
 	for i, tt := range tests {
@@ -1474,7 +1484,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		plan := builder.build(stmt)
 		if tt.err {
 			c.Assert(builder.err, NotNil)
-			return
+			continue
 		}
 		c.Assert(builder.err, IsNil)
 		p := plan.(LogicalPlan)
@@ -1570,12 +1580,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5",
-			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([s.a s.b],0,5)->Projection}->TopN([t.a t.b],0,5)",
+			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,5)->Projection->DataScan(s)->TopN([s.a s.b],0,5)->Projection}->TopN([a b],0,5)",
 		},
 		// Test TopN + UA + Proj.
 		{
 			sql:  "select * from t union all (select * from t s) order by a,b limit 5, 5",
-			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([s.a s.b],0,10)->Projection}->TopN([t.a t.b],5,5)",
+			best: "UnionAll{DataScan(t)->TopN([test.t.a test.t.b],0,10)->Projection->DataScan(s)->TopN([s.a s.b],0,10)->Projection}->TopN([a b],5,5)",
 		},
 		// Test Limit + UA + Proj + Sort.
 		{
@@ -1634,6 +1644,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"select a from t group by t11.c1", "[planner:1054]Unknown column 't11.c1' in 'group statement'"},
 		{"delete a from (select * from t ) as a, t", "[planner:1288]The target table a of the DELETE is not updatable"},
 		{"delete b from (select * from t ) as a, t", "[planner:1109]Unknown table 'b' in MULTI DELETE"},
+		{"select '' as fakeCol from t group by values(fakeCol)", "[planner:1054]Unknown column '' in 'VALUES() function'"},
 	}
 
 	for _, t := range tests {

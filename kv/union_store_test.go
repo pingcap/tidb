@@ -63,46 +63,46 @@ func (s *testUnionStoreSuite) TestSeek(c *C) {
 	s.store.Set([]byte("2"), []byte("2"))
 	s.store.Set([]byte("3"), []byte("3"))
 
-	iter, err := s.us.Seek(nil)
+	iter, err := s.us.Iter(nil, nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("1"), []byte("2"), []byte("3")}, [][]byte{[]byte("1"), []byte("2"), []byte("3")})
 
-	iter, err = s.us.Seek([]byte("2"))
+	iter, err = s.us.Iter([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("3")}, [][]byte{[]byte("2"), []byte("3")})
 
 	s.us.Set([]byte("4"), []byte("4"))
-	iter, err = s.us.Seek([]byte("2"))
+	iter, err = s.us.Iter([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("3"), []byte("4")}, [][]byte{[]byte("2"), []byte("3"), []byte("4")})
 
 	s.us.Delete([]byte("3"))
-	iter, err = s.us.Seek([]byte("2"))
+	iter, err = s.us.Iter([]byte("2"), nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("4")}, [][]byte{[]byte("2"), []byte("4")})
 }
 
-func (s *testUnionStoreSuite) TestSeekReverse(c *C) {
+func (s *testUnionStoreSuite) TestIterReverse(c *C) {
 	defer testleak.AfterTest(c)()
 	s.store.Set([]byte("1"), []byte("1"))
 	s.store.Set([]byte("2"), []byte("2"))
 	s.store.Set([]byte("3"), []byte("3"))
 
-	iter, err := s.us.SeekReverse(nil)
+	iter, err := s.us.IterReverse(nil)
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("3"), []byte("2"), []byte("1")}, [][]byte{[]byte("3"), []byte("2"), []byte("1")})
 
-	iter, err = s.us.SeekReverse([]byte("3"))
+	iter, err = s.us.IterReverse([]byte("3"))
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("1")}, [][]byte{[]byte("2"), []byte("1")})
 
 	s.us.Set([]byte("0"), []byte("0"))
-	iter, err = s.us.SeekReverse([]byte("3"))
+	iter, err = s.us.IterReverse([]byte("3"))
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("1"), []byte("0")}, [][]byte{[]byte("2"), []byte("1"), []byte("0")})
 
 	s.us.Delete([]byte("1"))
-	iter, err = s.us.SeekReverse([]byte("3"))
+	iter, err = s.us.IterReverse([]byte("3"))
 	c.Assert(err, IsNil)
 	checkIterator(c, iter, [][]byte{[]byte("2"), []byte("0")}, [][]byte{[]byte("2"), []byte("0")})
 }

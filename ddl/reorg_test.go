@@ -49,14 +49,18 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
-	ctx.Txn().Set([]byte("a"), []byte("b"))
-	err = ctx.Txn().Rollback()
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	txn.Set([]byte("a"), []byte("b"))
+	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
-	ctx.Txn().Set([]byte("a"), []byte("b"))
-	err = ctx.Txn().Commit(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	txn.Set([]byte("a"), []byte("b"))
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	rowCount := int64(10)
@@ -73,7 +77,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	}
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
-	m := meta.NewMeta(ctx.Txn())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
 	rInfo := &reorgInfo{
 		Job: job,
 	}
@@ -89,12 +95,12 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(d.reorgCtx.rowCount, Equals, int64(0))
 
 			// Test whether reorgInfo's Handle is update.
-			err = ctx.Txn().Commit(context.Background())
+			err = txn.Commit(context.Background())
 			c.Assert(err, IsNil)
 			err = ctx.NewTxn()
 			c.Assert(err, IsNil)
 
-			m = meta.NewMeta(ctx.Txn())
+			m = meta.NewMeta(txn)
 			info, err1 := d.getReorgInfo(m, job, nil)
 			c.Assert(err1, IsNil)
 			c.Assert(info.Handle, Equals, handle)
@@ -110,7 +116,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		return nil
 	})
 	c.Assert(err, NotNil)
-	err = ctx.Txn().Commit(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.start(context.Background())
@@ -172,7 +180,9 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	err := ctx.Txn().Commit(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tc := &TestDDLCallback{}

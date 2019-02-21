@@ -32,7 +32,7 @@ type memDbBuffer struct {
 	db              *memdb.DB
 	entrySizeLimit  int
 	bufferLenLimit  uint64
-	bufferSizeLimit int
+	bufferSizeLimit uint64
 }
 
 type memDbIter struct {
@@ -46,18 +46,14 @@ func NewMemDbBuffer(cap int) MemBuffer {
 		db:              memdb.New(comparer.DefaultComparer, cap),
 		entrySizeLimit:  TxnEntrySizeLimit,
 		bufferLenLimit:  atomic.LoadUint64(&TxnEntryCountLimit),
-		bufferSizeLimit: TxnTotalSizeLimit,
+		bufferSizeLimit: atomic.LoadUint64(&TxnTotalSizeLimit),
 	}
 }
 
-// Seek creates an Iterator.
-func (m *memDbBuffer) Seek(k Key) (Iterator, error) {
-	var i Iterator
-	if k == nil {
-		i = &memDbIter{iter: m.db.NewIterator(&util.Range{}), reverse: false}
-	} else {
-		i = &memDbIter{iter: m.db.NewIterator(&util.Range{Start: []byte(k)}), reverse: false}
-	}
+// Iter creates an Iterator.
+func (m *memDbBuffer) Iter(k Key, upperBound Key) (Iterator, error) {
+	i := &memDbIter{iter: m.db.NewIterator(&util.Range{Start: []byte(k), Limit: []byte(upperBound)}), reverse: false}
+
 	err := i.Next()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -69,7 +65,7 @@ func (m *memDbBuffer) SetCap(cap int) {
 
 }
 
-func (m *memDbBuffer) SeekReverse(k Key) (Iterator, error) {
+func (m *memDbBuffer) IterReverse(k Key) (Iterator, error) {
 	var i *memDbIter
 	if k == nil {
 		i = &memDbIter{iter: m.db.NewIterator(&util.Range{}), reverse: true}
@@ -99,7 +95,7 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 	}
 
 	err := m.db.Put(k, v)
-	if m.Size() > m.bufferSizeLimit {
+	if m.Size() > int(m.bufferSizeLimit) {
 		return ErrTxnTooLarge.Gen("transaction too large, size:%d", m.Size())
 	}
 	if m.Len() > int(m.bufferLenLimit) {
@@ -161,7 +157,7 @@ func (i *memDbIter) Close() {
 
 // WalkMemBuffer iterates all buffered kv pairs in memBuf
 func WalkMemBuffer(memBuf MemBuffer, f func(k Key, v []byte) error) error {
-	iter, err := memBuf.Seek(nil)
+	iter, err := memBuf.Iter(nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

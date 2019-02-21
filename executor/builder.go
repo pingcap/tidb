@@ -104,6 +104,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildSelectLock(v)
 	case *plan.CancelDDLJobs:
 		return b.buildCancelDDLJobs(v)
+	case *plan.ShowNextRowID:
+		return b.buildShowNextRowID(v)
 	case *plan.ShowDDL:
 		return b.buildShowDDL(v)
 	case *plan.ShowDDLJobs:
@@ -169,10 +171,24 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		jobIDs:       v.JobIDs,
 	}
-	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.jobIDs)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+
+	e.errs, b.err = admin.CancelJobs(txn, e.jobIDs)
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
+	}
+	return e
+}
+
+func (b *executorBuilder) buildShowNextRowID(v *plan.ShowNextRowID) Executor {
+	e := &ShowNextRowIDExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		tblName:      v.TableName,
 	}
 	return e
 }
@@ -194,8 +210,13 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 		b.err = errors.Trace(err)
 		return nil
 	}
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 
-	ddlInfo, err := admin.GetDDLInfo(e.ctx.Txn())
+	ddlInfo, err := admin.GetDDLInfo(txn)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -373,7 +394,11 @@ func (b *executorBuilder) buildChecksumTable(v *plan.ChecksumTable) Executor {
 		tables:       make(map[int64]*checksumContext),
 		done:         false,
 	}
-	startTs := b.getStartTS()
+	startTs, err := b.getStartTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	for _, t := range v.Tables {
 		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs)
 	}
@@ -882,7 +907,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	}
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
-		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
+		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
 	return e
@@ -897,23 +922,28 @@ func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		numDualRows:  v.RowCount,
 	}
-	// Init the startTS for later use.
-	b.getStartTS()
 	return e
 }
 
-func (b *executorBuilder) getStartTS() uint64 {
+func (b *executorBuilder) getStartTS() (uint64, error) {
 	if b.startTS != 0 {
 		// Return the cached value.
-		return b.startTS
+		return b.startTS, nil
 	}
 
 	startTS := b.ctx.GetSessionVars().SnapshotTS
-	if startTS == 0 && b.ctx.Txn() != nil {
-		startTS = b.ctx.Txn().StartTS()
+	txn, err := b.ctx.Txn(true)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if startTS == 0 && txn.Valid() {
+		startTS = txn.StartTS()
 	}
 	b.startTS = startTS
-	return startTS
+	if b.startTS == 0 {
+		return 0, errors.Trace(ErrGetStartTS)
+	}
+	return startTS, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
@@ -1035,6 +1065,9 @@ func (b *executorBuilder) buildMaxOneRow(v *plan.PhysicalMaxOneRow) Executor {
 func (b *executorBuilder) buildUnionAll(v *plan.PhysicalUnionAll) Executor {
 	childExecs := make([]Executor, len(v.Children()))
 	for i, child := range v.Children() {
+		if proj, isProj := child.(*plan.PhysicalProjection); isProj {
+			proj.AvoidColumnEvaluator = true
+		}
 		childExecs[i] = b.build(child)
 		if b.err != nil {
 			b.err = errors.Trace(b.err)
@@ -1179,8 +1212,12 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 }
 
 func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (*tipb.DAGRequest, bool, error) {
+	var err error
 	dagReq := &tipb.DAGRequest{}
-	dagReq.StartTs = b.getStartTS()
+	dagReq.StartTs, err = b.getStartTS()
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
 	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)

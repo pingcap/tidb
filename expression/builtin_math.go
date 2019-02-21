@@ -108,6 +108,7 @@ var (
 	_ builtinFunc = &builtinTruncateIntSig{}
 	_ builtinFunc = &builtinTruncateRealSig{}
 	_ builtinFunc = &builtinTruncateDecimalSig{}
+	_ builtinFunc = &builtinTruncateUintSig{}
 )
 
 type absFunctionClass struct {
@@ -139,10 +140,10 @@ func (c *absFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 	case types.ETInt:
 		if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 			sig = &builtinAbsUIntSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_AbsInt)
+			sig.setPbCode(tipb.ScalarFuncSig_AbsUInt)
 		} else {
 			sig = &builtinAbsIntSig{bf}
-			sig.setPbCode(tipb.ScalarFuncSig_AbsUInt)
+			sig.setPbCode(tipb.ScalarFuncSig_AbsInt)
 		}
 	case types.ETDecimal:
 		sig = &builtinAbsDecSig{bf}
@@ -1734,7 +1735,11 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	var sig builtinFunc
 	switch argTp {
 	case types.ETInt:
-		sig = &builtinTruncateIntSig{bf}
+		if mysql.HasUnsignedFlag(args[0].GetType().Flag) {
+			sig = &builtinTruncateUintSig{bf}
+		} else {
+			sig = &builtinTruncateIntSig{bf}
+		}
 	case types.ETReal:
 		sig = &builtinTruncateRealSig{bf}
 	case types.ETDecimal:
@@ -1823,6 +1828,39 @@ func (b *builtinTruncateIntSig) evalInt(row types.Row) (int64, bool, error) {
 		return 0, isNull, errors.Trace(err)
 	}
 
-	floatX := float64(x)
-	return int64(types.Truncate(floatX, int(d))), false, nil
+	if d >= 0 {
+		return x, false, nil
+	}
+	shift := int64(math.Pow10(int(-d)))
+	return x / shift * shift, false, nil
+}
+
+func (b *builtinTruncateUintSig) Clone() builtinFunc {
+	newSig := &builtinTruncateUintSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+type builtinTruncateUintSig struct {
+	baseBuiltinFunc
+}
+
+// evalInt evals a TRUNCATE(X,D).
+// See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
+func (b *builtinTruncateUintSig) evalInt(row types.Row) (int64, bool, error) {
+	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	uintx := uint64(x)
+
+	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	if d >= 0 {
+		return x, false, nil
+	}
+	shift := uint64(math.Pow10(int(-d)))
+	return int64(uintx / shift * shift), false, nil
 }

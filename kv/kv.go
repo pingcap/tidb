@@ -14,6 +14,7 @@
 package kv
 
 import (
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"golang.org/x/net/context"
@@ -67,9 +68,9 @@ var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
 	TxnEntrySizeLimit = 6 * 1024 * 1024
 	// TxnEntryCountLimit  is limit of number of entries in the MemBuffer.
-	TxnEntryCountLimit uint64 = 300 * 1000
+	TxnEntryCountLimit uint64 = config.DefTxnEntryCountLimit
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
-	TxnTotalSizeLimit = 100 * 1024 * 1024
+	TxnTotalSizeLimit uint64 = config.DefTxnTotalSizeLimit
 )
 
 // Retriever is the interface wraps the basic Get and Seek methods.
@@ -77,15 +78,17 @@ type Retriever interface {
 	// Get gets the value for key k from kv store.
 	// If corresponding kv pair does not exist, it returns nil and ErrNotExist.
 	Get(k Key) ([]byte, error)
-	// Seek creates an Iterator positioned on the first entry that k <= entry's key.
+	// Iter creates an Iterator positioned on the first entry that k <= entry's key.
 	// If such entry is not found, it returns an invalid Iterator with no error.
+	// It yields only keys that < upperBound. If upperBound is nil, it means the upperBound is unbounded.
 	// The Iterator must be Closed after use.
-	Seek(k Key) (Iterator, error)
+	Iter(k Key, upperBound Key) (Iterator, error)
 
-	// SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+	// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 	// The returned iterator will iterate from greater key to smaller key.
 	// If k is nil, the returned iterator will be positioned at the last key.
-	SeekReverse(k Key) (Iterator, error)
+	// TODO: Add lower bound limit
+	IterReverse(k Key) (Iterator, error)
 }
 
 // Mutator is the interface wraps the basic Set and Delete methods.

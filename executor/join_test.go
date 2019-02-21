@@ -866,6 +866,23 @@ func (s *testSuite) TestIndexLookupJoin(c *C) {
 		`1 5 1 1`,
 		`1 6 1 2`,
 	))
+
+	tk.MustExec(`drop table if exists t1, t2, t3;`)
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("insert into t1 values(1, 0), (2, null)")
+	tk.MustExec("create table t2(a int primary key)")
+	tk.MustExec("insert into t2 values(0)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t2)*/ * from t1 left join t2 on t1.b = t2.a;").Check(testkit.Rows(
+		`1 0 0`,
+		`2 <nil> <nil>`,
+	))
+
+	tk.MustExec("create table t3(a int, key(a))")
+	tk.MustExec("insert into t3 values(0)")
+	tk.MustQuery("select /*+ TIDB_INLJ(t3)*/ * from t1 left join t3 on t1.b = t3.a;").Check(testkit.Rows(
+		`1 0 0`,
+		`2 <nil> <nil>`,
+	))
 }
 
 func (s *testSuite) TestMergejoinOrder(c *C) {
@@ -910,5 +927,50 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 	tk.MustQuery(`select /*+ TIDB_SMJ(t1) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;`).Check(testkit.Rows(
 		`1.01`,
 		`2.02`,
+	))
+}
+
+func (s *testSuite) TestEmbeddedOuterJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustQuery("select * from (t1 left join t2 on t1.a = t2.a) left join (t2 t3 left join t2 t4 on t3.a = t4.a) on t2.b = 1").
+		Check(testkit.Rows("1 1 <nil> <nil> <nil> <nil> <nil> <nil>"))
+}
+
+func (s *testSuite) TestJoinDifferentDecimals(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("Use test")
+	tk.MustExec("Drop table if exists t1")
+	tk.MustExec("Create table t1 (v int)")
+	tk.MustExec("Insert into t1 value (1)")
+	tk.MustExec("Insert into t1 value (2)")
+	tk.MustExec("Insert into t1 value (3)")
+	tk.MustExec("Drop table if exists t2")
+	tk.MustExec("Create table t2 (v decimal(12, 3))")
+	tk.MustExec("Insert into t2 value (1)")
+	tk.MustExec("Insert into t2 value (2.0)")
+	tk.MustExec("Insert into t2 value (000003.000000)")
+	rst := tk.MustQuery("Select * from t1, t2 where t1.v = t2.v order by t1.v")
+	row := rst.Rows()
+	c.Assert(len(row), Equals, 3)
+	rst.Check(testkit.Rows("1 1.000", "2 2.000", "3 3.000"))
+}
+
+func (s *testSuite) TestSubquery2Join(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("Use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`create table t1(a bigint, b bigint);`)
+	tk.MustExec(`create table t2(a bigint, b bigint);`)
+	tk.MustExec(`insert into t1 values(1, 1);`)
+	tk.MustExec(`insert into t1 values(2, 1);`)
+	tk.MustExec(`insert into t2 values(1, 1);`)
+	tk.MustQuery(`select * from t1 where t1.a in (select t1.b + t2.b from t2);`).Check(testkit.Rows(
+		`2 1`,
 	))
 }

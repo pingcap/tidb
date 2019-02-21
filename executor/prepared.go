@@ -199,11 +199,12 @@ func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // Build builds a prepared statement into an executor.
 // After Build, e.StmtExec will be used to do the real execution.
 func (e *ExecuteExec) Build() error {
-	var err error
-	if IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan) {
+	ok, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(e.ctx, e.plan)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
 		err = e.ctx.InitTxnWithStartTS(math.MaxUint64)
-	} else {
-		err = e.ctx.ActivePendingTxn()
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -285,7 +286,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.InUpdateOrDeleteStmt = true
+		sc.InUpdateStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
@@ -293,7 +294,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.InUpdateOrDeleteStmt = true
+		sc.InDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority

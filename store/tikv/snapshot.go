@@ -275,14 +275,14 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	}
 }
 
-// Seek return a list of key-value pair after `k`.
-func (s *tikvSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, scanBatchSize)
+// Iter return a list of key-value pair after `k`.
+func (s *tikvSnapshot) Iter(k kv.Key, upperBound kv.Key) (kv.Iterator, error) {
+	scanner, err := newScanner(s, k, upperBound, scanBatchSize)
 	return scanner, errors.Trace(err)
 }
 
-// SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
-func (s *tikvSnapshot) SeekReverse(k kv.Key) (kv.Iterator, error) {
+// IterReverse creates a reversed Iterator positioned on the first entry which key is less than k.
+func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 	return nil, kv.ErrNotImplemented
 }
 

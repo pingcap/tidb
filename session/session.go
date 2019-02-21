@@ -282,6 +282,9 @@ func (s *schemaLeaseChecker) Check(txnTS uint64) error {
 	return domain.ErrInfoSchemaExpired
 }
 
+// mockCommitErrorOnce use to make sure gofail mockCommitError only mock commit error once.
+var mockCommitErrorOnce = true
+
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
@@ -290,6 +293,14 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+
+	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
+	// gofail: var mockCommitError bool
+	//if mockCommitError && mockCommitErrorOnce {
+	//	mockCommitErrorOnce = false
+	//	return kv.ErrRetryable
+	//}
+
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
@@ -390,11 +401,18 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		defer span.Finish()
 	}
 
+	stmt := executor.ExecStmt{
+		Text:      "commit",
+		Ctx:       s,
+		StartTime: time.Now(),
+	}
 	err := s.doCommitWithRetry(ctx)
+	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
 	label := metrics.LblOK
 	if err != nil {
 		label = metrics.LblError
 	}
+	s.sessionVars.TxnCtx.Cleanup()
 	metrics.TransactionCounter.WithLabelValues(label).Inc()
 	return errors.Trace(err)
 }
@@ -412,6 +430,7 @@ func (s *session) RollbackTxn(ctx context.Context) error {
 	}
 	s.cleanRetryInfo()
 	s.txn.changeToInvalid()
+	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	return errors.Trace(err)
 }
@@ -460,26 +479,45 @@ func (s *session) isRetryableError(err error) bool {
 	return kv.IsRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
-func (s *session) retry(ctx context.Context, maxCnt uint) error {
+func (s *session) checkTxnAborted(stmt ast.Statement) error {
+	if s.txn.doNotCommit == nil {
+		return nil
+	}
+	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
+	// because they are used to finish the aborted transaction.
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+		return nil
+	}
+	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
+		return nil
+	}
+	return errors.New("current transaction is aborted, commands ignored until end of transaction block")
+}
+
+func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "retry")
 	defer span.Finish()
-
-	connID := s.sessionVars.ConnectionID
-	if s.sessionVars.TxnCtx.ForUpdate {
-		return errors.Errorf("[%d] can not retry select for update statement", connID)
-	}
-	s.sessionVars.RetryInfo.Retrying = true
 	var retryCnt uint
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
-		s.txn.changeToInvalid()
 		// retryCnt only increments on retryable error, so +1 here.
 		metrics.SessionRetry.Observe(float64(retryCnt + 1))
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
+		if err != nil {
+			s.rollbackOnError(ctx)
+		}
+		s.txn.changeToInvalid()
 	}()
 
+	connID := s.sessionVars.ConnectionID
+	s.sessionVars.RetryInfo.Retrying = true
+	if s.sessionVars.TxnCtx.ForUpdate {
+		err = errors.Errorf("[%d] can not retry select for update statement", connID)
+		return err
+	}
+
 	nh := GetHistory(s)
-	var err error
+	orgStartTS := s.GetSessionVars().TxnCtx.StartTS
 	for {
 		s.PrepareTxnCtx(ctx)
 		s.sessionVars.RetryInfo.ResetOffset()
@@ -506,12 +544,18 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 				s.StmtRollback()
 				break
 			}
-			s.StmtCommit()
+			err = s.StmtCommit()
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
+		log.Warnf("con:%d retrying_txn_start_ts:%d original_txn_start_ts:(%d)",
+			connID, s.GetSessionVars().TxnCtx.StartTS, orgStartTS)
 		if hook := ctx.Value("preCommitHook"); hook != nil {
 			// For testing purpose.
 			hook.(func())()
 		}
+
 		if err == nil {
 			err = s.doCommit(ctx)
 			if err == nil {
@@ -544,7 +588,12 @@ func sqlForLog(sql string) string {
 	return executor.QueryReplacer.Replace(sql)
 }
 
-func (s *session) sysSessionPool() *pools.ResourcePool {
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
+func (s *session) sysSessionPool() sessionPool {
 	return domain.GetDomain(s).SysSessionPool()
 }
 
@@ -779,7 +828,11 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 
 	if planCacheEnabled {
 		schemaVersion := domain.GetDomain(s).InfoSchema().SchemaMetaVersion()
-		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
+		txn, err1 := s.Txn(true)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		readOnly := !txn.Valid() || txn.IsReadOnly()
 
 		cacheKey = plan.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
 		cacheValue, hitCache = plan.GlobalPlanCache.Get(cacheKey)
@@ -968,11 +1021,24 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn() kv.Transaction {
-	if !s.txn.Valid() {
-		return nil
+func (s *session) Txn(active bool) (kv.Transaction, error) {
+	if s.txn.pending() && active {
+		// Transaction is lazy initialized.
+		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
+		// If Txn() is called later, wait for the future to get a valid txn.
+		txnCap := s.getMembufCap()
+		if err := s.txn.changePendingToValid(txnCap); err != nil {
+			log.Error("active transaction fail, err = ", err)
+			s.txn.cleanup()
+			s.sessionVars.TxnCtx.StartTS = 0
+			return &s.txn, errors.Trace(err)
+		}
+		s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
+		if !s.sessionVars.IsAutocommit() {
+			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
+		}
 	}
-	return &s.txn
+	return &s.txn, nil
 }
 
 func (s *session) NewTxn() error {
@@ -1104,8 +1170,9 @@ func CreateSession(store kv.Storage) (Session, error) {
 	}
 	privilege.BindPrivilegeManager(s, pm)
 
-	// Add statsUpdateHandle.
-	if do.StatsHandle() != nil {
+	// Add stats collector, and it will be freed by background stats worker
+	// which periodically updates stats using the collected data.
+	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
 	}
 
@@ -1288,6 +1355,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBHashJoinConcurrency + quoteCommaQuote +
 	variable.TiDBDDLReorgWorkerCount + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
+	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBDisableTxnAutoRetry + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.
@@ -1337,9 +1405,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 	}
-	if !s.sessionVars.IsAutocommit() {
-		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
-	}
 }
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
@@ -1349,20 +1414,6 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	}
 
 	return errors.Trace(s.NewTxn())
-}
-
-// ActivePendingTxn implements Context.ActivePendingTxn interface.
-func (s *session) ActivePendingTxn() error {
-	if s.txn.Valid() {
-		return nil
-	}
-	txnCap := s.getMembufCap()
-	// The transaction status should be pending.
-	if err := s.txn.changePendingToValid(txnCap); err != nil {
-		return errors.Trace(err)
-	}
-	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	return nil
 }
 
 // InitTxnWithStartTS create a transaction with startTS.

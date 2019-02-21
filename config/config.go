@@ -28,6 +28,10 @@ import (
 // Config number limitations
 const (
 	MaxLogFileSize = 4096 // MB
+	// DefTxnEntryCountLimit is the default value of TxnEntryCountLimit.
+	DefTxnEntryCountLimit = 300 * 1000
+	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
+	DefTxnTotalSizeLimit = 100 * 1024 * 1024
 )
 
 // Valid config maps
@@ -81,7 +85,7 @@ type Log struct {
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
 	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint   `toml:"slow-threshold" json:"slow-threshold"`
+	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen     uint   `toml:"query-log-max-len" json:"query-log-max-len"`
 }
@@ -152,6 +156,8 @@ type Performance struct {
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	TxnEntryCountLimit  uint64  `toml:"txn-entry-count-limit" json:"txn-entry-count-limit"`
+	TxnTotalSizeLimit   uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -225,6 +231,8 @@ type TiKVClient struct {
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+	// MaxTxnTimeUse is the max time a Txn may use (in seconds) from its startTS to commitTS.
+	MaxTxnTimeUse uint `toml:"max-txn-time-use" json:"max-txn-time-use"`
 }
 
 // Binlog is the config for binlog.
@@ -256,7 +264,7 @@ var defaultConf = Config{
 			LogRotate: true,
 			MaxSize:   logutil.DefaultLogMaxSize,
 		},
-		SlowThreshold:      300,
+		SlowThreshold:      logutil.DefaultSlowThreshold,
 		ExpensiveThreshold: 10000,
 		QueryLogMaxLen:     2048,
 	},
@@ -275,6 +283,8 @@ var defaultConf = Config{
 		FeedbackProbability: 0,
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.7,
+		TxnEntryCountLimit:  DefTxnEntryCountLimit,
+		TxnTotalSizeLimit:   DefTxnTotalSizeLimit,
 	},
 	XProtocol: XProtocol{
 		XHost: "",
@@ -306,6 +316,7 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
+		MaxTxnTimeUse:        590,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

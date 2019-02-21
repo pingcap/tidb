@@ -120,7 +120,11 @@ func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affecte
 }
 
 func (e *kvEncoder) getKvPairsInMemBuffer(tableID int64) (kvPairs []KvPair, affectedRows uint64, err error) {
-	txnMemBuffer := e.se.Txn().GetMemBuffer()
+	txn, err := e.se.Txn(true)
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	txnMemBuffer := txn.GetMemBuffer()
 	kvPairs = make([]KvPair, 0, txnMemBuffer.Len())
 	err = kv.WalkMemBuffer(txnMemBuffer, func(k kv.Key, v []byte) error {
 		if bytes.HasPrefix(k, tablecodec.TablePrefix()) {

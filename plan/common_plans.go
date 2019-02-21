@@ -50,6 +50,12 @@ type ShowDDLJobQueries struct {
 	JobIDs []int64
 }
 
+// ShowNextRowID is for showing the next global row ID.
+type ShowNextRowID struct {
+	baseSchemaProducer
+	TableName *ast.TableName
+}
+
 // CheckTable is used for checking table data, built from the 'admin check table' statement.
 type CheckTable struct {
 	baseSchemaProducer

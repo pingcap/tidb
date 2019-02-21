@@ -752,9 +752,14 @@ func (b *builtinUncompressSig) evalString(row types.Row) (string, bool, error) {
 		sc.AppendWarning(errZlibZData)
 		return "", true, nil
 	}
+	length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
 	bytes, err := inflate([]byte(payload[4:]))
 	if err != nil {
 		sc.AppendWarning(errZlibZData)
+		return "", true, nil
+	}
+	if length < uint32(len(bytes)) {
+		sc.AppendWarning(errZlibZBuf)
 		return "", true, nil
 	}
 	return string(bytes), false, nil

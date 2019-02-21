@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -63,4 +64,30 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 	c.Assert(err, IsNil)
 	tbl := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTbl, tbl)
+}
+
+func (s *testDumpStatsSuite) TestDumpAlteredTable(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	h := s.do.StatsHandle()
+	oriLease := h.Lease
+	h.Lease = 1
+	defer func() { h.Lease = oriLease }()
+	tk.MustExec("create table t(a int, b int)")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	tk.MustExec("analyze table t")
+	t := <-h.AnalyzeResultCh()
+	h.Update(s.do.InfoSchema())
+	for i, hg := range t.Hist {
+		err := statistics.SaveStatsToStorage(tk.Se, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
+		c.Assert(err, IsNil)
+	}
+	h.Update(s.do.InfoSchema())
+	tk.MustExec("alter table t drop column a")
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	_, err = h.DumpStatsToJSON("test", table.Meta())
+	c.Assert(err, IsNil)
 }

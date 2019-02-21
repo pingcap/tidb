@@ -476,12 +476,11 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 				ret, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, nil)
 				if err != nil || ret {
 					continue
-				} else {
-					// If there is condition which is always false, return dual plan directly.
-					dual := LogicalTableDual{}.init(b.ctx)
-					dual.SetSchema(p.Schema())
-					return dual
 				}
+				// If there is condition which is always false, return dual plan directly.
+				dual := LogicalTableDual{}.init(b.ctx)
+				dual.SetSchema(p.Schema())
+				return dual
 			}
 			expressions = append(expressions, item)
 		}
@@ -630,6 +629,9 @@ func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
+	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.Flen < mysql.MaxIntWidth {
+		resultTp.Flen = mysql.MaxIntWidth
+	}
 	resultTp.Charset = a.Charset
 	resultTp.Collate = a.Collate
 	expression.SetBinFlagOrBinStr(b, resultTp)
@@ -651,6 +653,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			}
 		}
 		col.RetType = resultTp
+		col.TblName = model.NewCIStr("")
 		col.DBName = model.NewCIStr("")
 	}
 	// If the types of some child don't match the types of union, we add a projection with cast function.
@@ -669,7 +672,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		}
 		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
 			b.optFlag |= flagEliminateProjection
-			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
+			proj := LogicalProjection{Exprs: exprs, avoidColumnEvaluator: true}.init(b.ctx)
 			if childID == 0 {
 				for _, col := range unionSchema.Columns {
 					col.FromID = proj.ID()
@@ -698,7 +701,8 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	if unionDistinctPlan != nil {
 		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
 		if len(allSelectPlans) > 0 {
-			allSelectPlans = append(allSelectPlans, unionDistinctPlan)
+			// Can't change the statements order in order to get the correct column info.
+			allSelectPlans = append([]LogicalPlan{unionDistinctPlan}, allSelectPlans...)
 		}
 	}
 
@@ -712,6 +716,8 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	if unionAllPlan != nil {
 		unionPlan = unionAllPlan
 	}
+
+	oldLen := unionPlan.Schema().Len()
 
 	if union.OrderBy != nil {
 		unionPlan = b.buildSort(unionPlan, union.OrderBy.Items, nil)
@@ -727,6 +733,20 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 			return nil
 		}
 	}
+
+	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
+	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
+	if oldLen != unionPlan.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(unionPlan.Schema().Columns[:oldLen])}.init(b.ctx)
+		proj.SetChildren(unionPlan)
+		schema := expression.NewSchema(unionPlan.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.FromID = proj.ID()
+		}
+		proj.SetSchema(schema)
+		return proj
+	}
+
 	return unionPlan
 }
 
@@ -790,7 +810,11 @@ func (by *ByItems) Clone() *ByItems {
 }
 
 func (b *planBuilder) buildSort(p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int) LogicalPlan {
-	b.curClause = orderByClause
+	if _, isUnion := p.(*LogicalUnionAll); isUnion {
+		b.curClause = globalOrderByClause
+	} else {
+		b.curClause = orderByClause
+	}
 	sort := LogicalSort{}.init(b.ctx)
 	exprs := make([]*ByItems, 0, len(byItems))
 	for _, item := range byItems {
@@ -862,7 +886,7 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	return li
 }
 
-// colMatch(a,b) means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
+// colMatch means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
 // Because column a want column from database test exactly.
 func colMatch(a *ast.ColumnName, b *ast.ColumnName) bool {
 	if a.Schema.L == "" || a.Schema.L == b.Schema.L {
@@ -912,7 +936,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 	return
 }
 
-// AggregateFuncExtractor visits Expr tree.
+// havingAndOrderbyExprResolver visits Expr tree.
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type havingAndOrderbyExprResolver struct {
 	inAggFunc    bool
@@ -1162,6 +1186,10 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 		return ret, true
+	case *ast.ValuesExpr:
+		if v.Column == nil {
+			g.err = ErrUnknownColumn.GenByArgs("", "VALUES() function")
+		}
 	}
 	return inNode, true
 }
@@ -1803,7 +1831,12 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	// If this SQL is executed in a non-readonly transaction, we need a
 	// "UnionScan" operator to read the modifications of former SQLs, which is
 	// buffered in tidb-server memory.
-	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {
+	txn, err := b.ctx.Txn(false)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	if txn.Valid() && !txn.IsReadOnly() {
 		us := LogicalUnionScan{}.init(b.ctx)
 		us.SetChildren(ds)
 		result = us
@@ -2138,15 +2171,27 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 			asNames[x.tableInfo] = append(asNames[x.tableInfo], alias)
 		}
 	case *LogicalProjection:
-		if x.calculateGenCols {
-			ds := x.Children()[0].(*DataSource)
-			alias := extractTableAlias(x)
-			if alias != nil {
-				if _, ok := asNames[ds.tableInfo]; !ok {
-					asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
-				}
-				asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
+		if !x.calculateGenCols {
+			return
+		}
+
+		ds, isDS := x.Children()[0].(*DataSource)
+		if !isDS {
+			// try to extract the DataSource below a LogicalUnionScan.
+			if us, isUS := x.Children()[0].(*LogicalUnionScan); isUS {
+				ds, isDS = us.Children()[0].(*DataSource)
 			}
+		}
+		if !isDS {
+			return
+		}
+
+		alias := extractTableAlias(x)
+		if alias != nil {
+			if _, ok := asNames[ds.tableInfo]; !ok {
+				asNames[ds.tableInfo] = make([]*model.CIStr, 0, 1)
+			}
+			asNames[ds.tableInfo] = append(asNames[ds.tableInfo], alias)
 		}
 	default:
 		for _, child := range p.Children() {

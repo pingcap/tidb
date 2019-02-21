@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
@@ -187,6 +188,15 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		{
 			sql:  "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
 			best: "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,t1.a)->Limit",
+		},
+		// Test embedded ORDER BY which imposes on different number of columns than outer query.
+		{
+			sql:  "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
+			best: "UnionAll{Dual->Projection->Dual->Projection}->HashAgg->Sort",
+		},
+		{
+			sql:  "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
+			best: "UnionAll{Dual->Projection->Dual->Projection->Dual->Projection}->HashAgg->Sort->Sort",
 		},
 	}
 	for i, tt := range tests {
@@ -657,7 +667,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		// Test TopN + Union.
 		{
 			sql:  "select a from t union all (select c from t) order by a limit 1",
-			best: "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)->Limit}->TopN([t.a],0,1)",
+			best: "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[<nil>,+inf]]->Limit)->Limit}->TopN([a],0,1)",
 		},
 	}
 	for i, tt := range tests {
@@ -730,7 +740,9 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		err = se.NewTxn()
 		c.Assert(err, IsNil)
 		// Make txn not read only.
-		se.Txn().Set(kv.Key("AAA"), []byte("BBB"))
+		txn, err := se.Txn(true)
+		c.Assert(err, IsNil)
+		txn.Set(kv.Key("AAA"), []byte("BBB"))
 		se.StmtCommit()
 		p, err := plan.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -1236,4 +1248,28 @@ func (s *testPlanSuite) TestRequestTypeSupportedOff(c *C) {
 	p, err := plan.Optimize(se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(plan.ToString(p), Equals, expect, Commentf("for %s", sql))
+}
+
+func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	sql := "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2"
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	p, err := plan.Optimize(se, stmt, s.is)
+	c.Assert(err, IsNil)
+	c.Assert(plan.ToString(p), Equals, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}")
+	warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+	lastWarn := warnings[len(warnings)-1]
+	err = plan.ErrInternal.GenByArgs("TIDB_INLJ hint is inapplicable without column equal ON condition")
+	c.Assert(terror.ErrorEqual(err, lastWarn.Err), IsTrue)
 }

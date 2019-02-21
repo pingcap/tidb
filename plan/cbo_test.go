@@ -607,16 +607,16 @@ func (s *testAnalyzeSuite) TestLimit(c *C) {
 	}
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t use index(idx) where a > 1 and b > 1 and c > 1 limit 1").Check(testkit.Rows(
-		"IndexScan_13 Selection_15  cop table:t, index:a, b, range:(1 +inf,+inf +inf], keep order:false 1.10",
-		"Selection_15  IndexScan_13 cop gt(test.t.b, 1) 1.00",
-		"TableScan_14 Selection_16  cop table:t, keep order:false 1.00",
+		"IndexScan_13 Selection_15  cop table:t, index:a, b, range:(1 +inf,+inf +inf], keep order:false 1.56",
+		"Selection_15  IndexScan_13 cop gt(test.t.b, 1) 1.25",
+		"TableScan_14 Selection_16  cop table:t, keep order:false 1.25",
 		"Selection_16 Limit_17 TableScan_14 cop gt(test.t.c, 1) 1.00",
 		"Limit_17  Selection_16 cop offset:0, count:1 1.00",
 		"IndexLookUp_18 Limit_9  root index:Selection_15, table:Limit_17 1.00",
 		"Limit_9  IndexLookUp_18 root offset:0, count:1 1.00",
 	))
 	testKit.MustQuery("explain select * from t where a > 1 and c > 1 limit 1").Check(testkit.Rows(
-		"TableScan_11 Selection_12  cop table:t, range:(1,+inf], keep order:false 1.11",
+		"TableScan_11 Selection_12  cop table:t, range:(1,+inf], keep order:false 1.25",
 		"Selection_12 Limit_15 TableScan_11 cop gt(test.t.c, 1) 1.00",
 		"Limit_15  Selection_12 cop offset:0, count:1 1.00",
 		"TableReader_16 Limit_8  root data:Limit_15 1.00",
@@ -632,6 +632,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	dom, err := session.BootstrapSession(store)
+	dom.SetStatsUpdating(true)
 	return store, dom, errors.Trace(err)
 }
 

@@ -477,6 +477,8 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("100 123 123 120"))
 	result = tk.MustQuery("SELECT truncate(123.456, -2), truncate(123.456, 2), truncate(123.456, 1), truncate(123.456, 3), truncate(1.23, 100), truncate(123456E-3, 2);")
 	result.Check(testkit.Rows("100 123.45 123.4 123.456 1.230000000000000000000000000000 123.45"))
+	result = tk.MustQuery("SELECT truncate(9223372036854775807, -7), truncate(9223372036854775808, -10), truncate(cast(-1 as unsigned), -10);")
+	result.Check(testkit.Rows("9223372036850000000 9223372030000000000 18446744070000000000"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a date, b datetime, c timestamp, d varchar(20));`)
@@ -736,6 +738,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("www.pingcap 12345 45 2017 01:01"))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
 	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
+	tk.MustQuery(`select substring_index('xyz', 'abc', 9223372036854775808)`).Check(testkit.Rows(``))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
 	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
 	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
@@ -870,8 +873,8 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("'121' '0' '中文' <nil>"))
 
 	// for convert
-	result = tk.MustQuery(`select convert("123" using "866"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert(cast("中文" as binary) using "utf8");`)
-	result.Check(testkit.Rows("123 123 中文 中文 中文"))
+	result = tk.MustQuery(`select convert("123" using "866"), convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");`)
+	result.Check(testkit.Rows("123 123 中文 中文 中文 中文"))
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
@@ -3405,4 +3408,144 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	tk.MustExec("insert into t select 0.5999991229316*0.918755041726043;")
 	res := tk.MustQuery("select * from t;")
 	res.Check(testkit.Rows("0.55125221922461136"))
+}
+
+func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);`)
+	tk.MustExec(`insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");`)
+	res := tk.MustQuery(`select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;`)
+	res.Check(testkit.Rows(`<nil> <nil> <nil> <nil> <nil> <nil> <nil>`))
+}
+
+func (s *testIntegrationSuite) TestUserVarMockWindFunc(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a int, b varchar (20), c varchar (20));`)
+	tk.MustExec(`insert into t values
+					(1,'key1-value1','insert_order1'),
+    				(1,'key1-value2','insert_order2'),
+    				(1,'key1-value3','insert_order3'),
+    				(1,'key1-value4','insert_order4'),
+    				(1,'key1-value5','insert_order5'),
+    				(1,'key1-value6','insert_order6'),
+    				(2,'key2-value1','insert_order1'),
+    				(2,'key2-value2','insert_order2'),
+    				(2,'key2-value3','insert_order3'),
+    				(2,'key2-value4','insert_order4'),
+    				(2,'key2-value5','insert_order5'),
+    				(2,'key2-value6','insert_order6'),
+    				(3,'key3-value1','insert_order1'),
+    				(3,'key3-value2','insert_order2'),
+    				(3,'key3-value3','insert_order3'),
+    				(3,'key3-value4','insert_order4'),
+    				(3,'key3-value5','insert_order5'),
+    				(3,'key3-value6','insert_order6');
+					`)
+	tk.MustExec(`SET @LAST_VAL := NULL;`)
+	tk.MustExec(`SET @ROW_NUM := 0;`)
+
+	tk.MustQuery(`select * from (
+					SELECT a,
+    				       @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+    				       @LAST_VAL := a AS LAST_VAL,
+    				       b,
+    				       c
+    				FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+				) t2
+				where t2.ROW_NUM < 2;
+				`).Check(testkit.Rows(
+		`1 1 1 key1-value1 insert_order1`,
+		`2 1 2 key2-value1 insert_order1`,
+		`3 1 3 key3-value1 insert_order1`,
+	))
+
+	tk.MustQuery(`select * from (
+					SELECT a,
+    				       @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+    				       @LAST_VAL := a AS LAST_VAL,
+    				       b,
+    				       c
+    				FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+				) t2;
+				`).Check(testkit.Rows(
+		`1 1 1 key1-value1 insert_order1`,
+		`1 2 1 key1-value2 insert_order2`,
+		`1 3 1 key1-value3 insert_order3`,
+		`1 4 1 key1-value4 insert_order4`,
+		`1 5 1 key1-value5 insert_order5`,
+		`1 6 1 key1-value6 insert_order6`,
+		`2 1 2 key2-value1 insert_order1`,
+		`2 2 2 key2-value2 insert_order2`,
+		`2 3 2 key2-value3 insert_order3`,
+		`2 4 2 key2-value4 insert_order4`,
+		`2 5 2 key2-value5 insert_order5`,
+		`2 6 2 key2-value6 insert_order6`,
+		`3 1 3 key3-value1 insert_order1`,
+		`3 2 3 key3-value2 insert_order2`,
+		`3 3 3 key3-value3 insert_order3`,
+		`3 4 3 key3-value4 insert_order4`,
+		`3 5 3 key3-value5 insert_order5`,
+		`3 6 3 key3-value6 insert_order6`,
+	))
+}
+
+func (s *testIntegrationSuite) TestCastAsTime(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (col1 bigint, col2 double, col3 decimal, col4 varchar(20), col5 json);`)
+	tk.MustExec(`insert into t values (1, 1, 1, "1", "1");`)
+	tk.MustExec(`insert into t values (null, null, null, null, null);`)
+	tk.MustQuery(`select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 = 1;`).Check(testkit.Rows(
+		`00:00:01 00:00:01 00:00:01 00:00:01 00:00:01`,
+	))
+	tk.MustQuery(`select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 is null;`).Check(testkit.Rows(
+		`<nil> <nil> <nil> <nil> <nil>`,
+	))
+
+	rs, err := tk.Exec(`select cast(col1 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(rs, IsNil)
+
+	rs, err = tk.Exec(`select cast(col2 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(rs, IsNil)
+
+	rs, err = tk.Exec(`select cast(col3 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(rs, IsNil)
+
+	rs, err = tk.Exec(`select cast(col4 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(rs, IsNil)
+
+	rs, err = tk.Exec(`select cast(col5 as time(31)) from t where col1 is null;`)
+	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(rs, IsNil)
+}
+
+func (s *testIntegrationSuite) TestValuesFloat32(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (i int key, j float);`)
+	tk.MustExec(`insert into t values (1, 0.01);`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.01`))
+	tk.MustExec(`insert into t values (1, 0.02) on duplicate key update j = values (j);`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.02`))
+}
+
+func (s *testIntegrationSuite) TestValuesEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a bigint primary key, b enum('a','b','c'));`)
+	tk.MustExec(`insert into t values (1, "a");`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 a`))
+	tk.MustExec(`insert into t values (1, "b") on duplicate key update b = values(b);`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 b`))
 }

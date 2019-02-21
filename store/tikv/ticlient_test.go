@@ -61,7 +61,7 @@ func clearStorage(store kv.Storage) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	iter, err := txn.Seek(nil)
+	iter, err := txn.Iter(nil, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -93,7 +93,7 @@ func (s *testTiclientSuite) SetUpSuite(c *C) {
 func (s *testTiclientSuite) TearDownSuite(c *C) {
 	// Clean all data, or it may pollute other data.
 	txn := s.beginTxn(c)
-	scanner, err := txn.Seek(encodeKey(s.prefix, ""))
+	scanner, err := txn.Iter(encodeKey(s.prefix, ""), nil)
 	c.Assert(err, IsNil)
 	c.Assert(scanner, NotNil)
 	for scanner.Valid() {

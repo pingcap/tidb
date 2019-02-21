@@ -217,6 +217,27 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into test values(2, 3)")
 	tk.MustQuery("select * from test use index (id) where id = 2").Check(testkit.Rows("2 2", "2 3"))
 
+	// issue 6360
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint unsigned);")
+	tk.MustExec(" set @orig_sql_mode = @@sql_mode; set @@sql_mode = 'strict_all_tables';")
+	_, err = tk.Exec("insert into t value (-1);")
+	c.Assert(types.ErrWarnDataOutOfRange.Equal(err), IsTrue)
+	tk.MustExec("set @@sql_mode = '';")
+	tk.MustExec("insert into t value (-1);")
+	// TODO: the following warning messages are not consistent with MySQL, fix them in the future PRs
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t select -1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t select cast(-1 as unsigned);")
+	tk.MustExec("insert into t value (-1.111);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
+	tk.MustExec("insert into t value ('-1.111');")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
+	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
+
 	// issue 6424
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6))")
@@ -594,6 +615,12 @@ commit;`
 	INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;`
 	tk.MustExec(testSQL)
 	tk.MustQuery(`SELECT * FROM t1;`).Check(testkit.Rows("1"))
+
+	testSQL = `drop table if exists t1;
+	create table t1(a int key, b int, unique(b));
+	insert into t1 values (1,1),(1,2),(3,1) on duplicate key update a=values(a), b=values(b);`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`SELECT * FROM t1 order by a;`).Check(testkit.Rows("1 2", "3 1"))
 }
 
 func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
@@ -1338,6 +1365,26 @@ func makeLoadDataInfo(column int, specifiedColumns []string, ctx sessionctx.Cont
 	return
 }
 
+// related to issue 6360
+func (s *testSuite) TestLoadDataOverflowBigintUnsigned(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (a bigint unsigned);")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
+	ctx := tk.Se.(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
+	tests := []testCase{
+		{nil, []byte("-1\n-18446744073709551615\n-18446744073709551616\n"), []string{"0", "0", "0"}, nil},
+		{nil, []byte("-9223372036854775809\n18446744073709551616\n"), []string{"0", "18446744073709551615"}, nil},
+	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+}
+
 func (s *testSuite) TestBatchInsertDelete(c *C) {
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	defer func() {
@@ -1627,4 +1674,120 @@ func (s *testSuite) TestUpdateDelete(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table ttt;")
 	tk.MustExec("drop table ttt")
+}
+
+func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`set time_zone="+09:00";`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (id int, c1 datetime not null default CURRENT_TIMESTAMP);`)
+	tk.MustExec(`set TIMESTAMP = 1234;`)
+	tk.MustExec(`insert t (id) values (1);`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
+		`1 1970-01-01 09:20:34`,
+	))
+}
+
+// For issue 7422.
+// There is no need to do the rebase when updating a record if the auto-increment ID not changed.
+// This could make the auto ID increasing speed slower.
+func (s *testSuite) TestRebaseIfNeeded(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int not null primary key auto_increment, b int unique key);`)
+	tk.MustExec(`insert into t (b) values (1);`)
+
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	tbl, err := s.domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.NewTxn(), IsNil)
+	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
+	// which could simulate another TiDB adds a large auto ID.
+	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
+	c.Assert(err, IsNil)
+	txn, err := s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+
+	tk.MustExec(`update t set b = 3 where a = 30001;`)
+	tk.MustExec(`insert into t (b) values (4);`)
+	tk.MustQuery(`select a from t where b = 4;`).Check(testkit.Rows("2"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a;`)
+	tk.MustExec(`insert into t (b) values (5);`)
+	tk.MustQuery(`select a from t where b = 5;`).Check(testkit.Rows("4"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a + 1;`)
+	tk.MustExec(`insert into t (b) values (6);`)
+	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
+}
+
+func (s *testSuite) TestDefEnumInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test (id int, prescription_type enum('a','b','c','d','e','f') NOT NULL, primary key(id));")
+	tk.MustExec("insert into test (id)  values (1)")
+	tk.MustQuery("select prescription_type from test").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table a(id int auto_increment, a int default null, primary key(id))")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set id = id*10 where a = 1001")
+	ctx := tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+
+	tk.MustExec("drop table a")
+	tk.MustExec("create table a ( a bigint, b bigint)")
+	tk.MustExec("insert into a values (1, 1001), (2, 1001), (10001, 1), (3, 1)")
+	tk.MustExec("update a set a = a*10 where b = 1001")
+	ctx = tk.Se.(sessionctx.Context)
+	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+}
+
+func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(a1 bigint primary key, b1 bigint);`)
+	tk.MustExec(`create table t2(a2 bigint primary key, b2 bigint);`)
+	tk.MustExec(`insert into t1 values(1, 100);`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+	tk.MustExec(`insert into t2 values(1, 200);`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(1))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update b1 = 1;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update b1 = 200;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 200"))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update a1 = 1;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 200"))
+
+	tk.MustExec(`insert into t1 values (1, 200) on duplicate key update b1 = 300;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 300"))
+
+	tk.MustExec(`insert into t1 values(1, 1) on duplicate key update b1 = 400;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(2))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 400"))
+
+	tk.MustExec(`insert into t1 select 1, 500 from t2 on duplicate key update b1 = 400;`)
+	c.Assert(tk.Se.AffectedRows(), Equals, uint64(0))
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("1 400"))
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(a bigint primary key, b bigint);`)
+	tk.MustExec(`create table t2(a bigint primary key, b bigint);`)
+	_, err := tk.Exec(`insert into t1 select * from t2 on duplicate key update c = t2.b;`)
+	c.Assert(err.Error(), Equals, `column c not found`)
 }

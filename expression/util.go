@@ -357,3 +357,15 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 	}
 	return extractedExpr, ComposeDNFCondition(ctx, newDNFItems...)
 }
+
+// DisableParseJSONFlag4Expr disables ParseToJSONFlag for `expr` except Column.
+// We should not *PARSE* a string as JSON under some scenarios. ParseToJSONFlag
+// is 0 for JSON column yet, so we can skip it. Moreover, Column.RetType refers
+// to the infoschema, if we modify it, data race may happen if another goroutine
+// read from the infoschema at the same time.
+func DisableParseJSONFlag4Expr(expr Expression) {
+	if _, isColumn := expr.(*Column); isColumn {
+		return
+	}
+	expr.GetType().Flag &= ^mysql.ParseToJSONFlag
+}

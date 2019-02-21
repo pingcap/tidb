@@ -199,3 +199,14 @@ func (s *testSuite) TestIssue2654(c *C) {
 	rows := tk.MustQuery(`SELECT user,host FROM mysql.user WHERE user='test' and host='%'`)
 	rows.Check(testkit.Rows(`test %`))
 }
+
+func (s *testSuite) TestGrantUnderANSIQuotes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Fix a bug that the GrantExec fails in ANSI_QUOTES sql mode
+	// The bug is caused by the improper usage of double quotes like:
+	// INSERT INTO mysql.user ... VALUES ("..", "..", "..")
+	tk.MustExec(`SET SQL_MODE='ANSI_QUOTES'`)
+	tk.MustExec(`GRANT ALL PRIVILEGES ON video_ulimit.* TO web@'%' IDENTIFIED BY 'eDrkrhZ>l2sV'`)
+	tk.MustExec(`REVOKE ALL PRIVILEGES ON video_ulimit.* FROM web@'%';`)
+	tk.MustExec(`DROP USER IF EXISTS 'web'@'%'`)
+}

@@ -16,7 +16,6 @@ package admin
 import (
 	"fmt"
 	"io"
-	"reflect"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -67,6 +66,16 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
+func isJobRollbackable(job *model.Job, id int64) error {
+	switch job.Type {
+	case model.ActionDropColumn:
+		if job.SchemaState != model.StateNone {
+			return ErrCannotCancelDDLJob.GenByArgs(id)
+		}
+	}
+	return nil
+}
+
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
@@ -90,13 +99,18 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			found = true
 			// These states can't be cancelled.
 			if job.IsDone() || job.IsSynced() {
-				errs[i] = errors.New("This job is finished, so can't be cancelled")
+				errs[i] = ErrCancelFinishedDDLJob.GenByArgs(id)
 				continue
 			}
 			// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
 			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
 				continue
 			}
+			errs[i] = isJobRollbackable(job, id)
+			if errs[i] != nil {
+				continue
+			}
+
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
 			err := job.DecodeArgs(job.RawArgs)
@@ -110,7 +124,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			}
 		}
 		if !found {
-			errs[i] = errors.New("Can't find this job")
+			errs[i] = ErrDDLJobNotFound.GenByArgs(id)
 		}
 	}
 	return errs, nil
@@ -284,6 +298,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	if err != nil {
 		return errors.Trace(err)
 	}
+	sc := sessCtx.GetSessionVars().StmtCtx
 	for {
 		vals1, h, err := it.Next()
 		if terror.ErrorEqual(err, io.EOF) {
@@ -304,7 +319,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !reflect.DeepEqual(vals1, vals2) {
+		if !compareDatumSlice(sc, vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}
 			return errDateNotEqual.Gen("index:%v != record:%v", record1, record2)
@@ -312,6 +327,19 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	}
 
 	return nil
+}
+
+func compareDatumSlice(sc *stmtctx.StatementContext, val1s, val2s []types.Datum) bool {
+	if len(val1s) != len(val2s) {
+		return false
+	}
+	for i, v := range val1s {
+		res, err := v.CompareDatum(sc, &val2s[i])
+		if err != nil || res != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckRecordAndIndex is exported for testing.
@@ -433,6 +461,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	}
 
 	startKey := t.RecordKey(0)
+	sc := sessCtx.GetSessionVars().StmtCtx
 	filterFunc := func(h int64, vals []types.Datum, cols []*table.Column) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
@@ -444,7 +473,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 			return true, nil
 		}
 
-		if !reflect.DeepEqual(vals, vals2) {
+		if !compareDatumSlice(sc, vals, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals2}
 			record2 := &RecordData{Handle: h, Values: vals}
 			return false, errDateNotEqual.Gen("data:%v != record:%v", record1, record2)
@@ -527,7 +556,10 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	it, err := retriever.Seek(startKey)
+	prefix := t.RecordPrefix()
+	keyUpperBound := prefix.PrefixNext()
+
+	it, err := retriever.Iter(startKey, keyUpperBound)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -543,7 +575,6 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	for _, col := range cols {
 		colMap[col.ID] = &col.FieldType
 	}
-	prefix := t.RecordPrefix()
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
@@ -585,10 +616,19 @@ const (
 	codeDataNotEqual       terror.ErrCode = 1
 	codeRepeatHandle                      = 2
 	codeInvalidColumnState                = 3
+	codeDDLJobNotFound                    = 4
+	codeCancelFinishedJob                 = 5
+	codeCannotCancelDDLJob                = 6
 )
 
 var (
 	errDateNotEqual       = terror.ClassAdmin.New(codeDataNotEqual, "data isn't equal")
 	errRepeatHandle       = terror.ClassAdmin.New(codeRepeatHandle, "handle is repeated")
 	errInvalidColumnState = terror.ClassAdmin.New(codeInvalidColumnState, "invalid column state")
+	// ErrDDLJobNotFound indicates the job id was not found.
+	ErrDDLJobNotFound = terror.ClassAdmin.New(codeDDLJobNotFound, "DDL Job:%v not found")
+	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
+	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(codeCancelFinishedJob, "This job:%v is finished, so can't be cancelled")
+	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
+	ErrCannotCancelDDLJob = terror.ClassAdmin.New(codeCannotCancelDDLJob, "This job:%v is almost finished, can't be cancelled now")
 )

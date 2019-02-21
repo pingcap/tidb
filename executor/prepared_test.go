@@ -88,6 +88,26 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
 
+		tk.MustExec("delete from prepare_test")
+		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk1.MustExec("insert prepare_test (c1) values (3)")
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+
+		tk.MustExec("delete from prepare_test")
+		query = "select c1 from prepare_test where c1 in (select c1 from prepare_test where c1 = ?)"
+		stmtId, _, _, err = tk.Se.PrepareStmt(query)
+		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk1.MustExec("insert prepare_test (c1) values (3)")
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 3)
+		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("3"))
+
 		tk.MustExec("begin")
 		tk.MustExec("insert prepare_test (c1) values (4)")
 		query = "select c1, c2 from prepare_test where c1 = ?"
@@ -178,6 +198,20 @@ func (s *testSuite) TestPrepared(c *C) {
 		_, _, fields, err = tk.Se.PrepareStmt("update prepare3 set a = ?")
 		c.Assert(err, IsNil)
 		c.Assert(len(fields), Equals, 0)
+
+		// issue 8074
+		tk.MustExec("drop table if exists prepare1;")
+		tk.MustExec("create table prepare1 (a decimal(1))")
+		tk.MustExec("insert into prepare1 values(1);")
+		_, err = tk.Exec("prepare stmt FROM @sql1")
+		c.Assert(err.Error(), Equals, "line 1 column 4 near \"\" (total length 4)")
+		tk.MustExec("SET @sql = 'update prepare1 set a=5 where a=?';")
+		_, err = tk.Exec("prepare stmt FROM @sql")
+		c.Assert(err, IsNil)
+		tk.MustExec("set @var=1;")
+		_, err = tk.Exec("execute stmt using @var")
+		c.Assert(err, IsNil)
+		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("5"))
 
 		// Coverage.
 		exec := &executor.ExecuteExec{}

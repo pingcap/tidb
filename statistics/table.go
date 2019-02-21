@@ -140,16 +140,10 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				return errors.Trace(err)
 			}
 			col = &Column{
-				Histogram: Histogram{
-					ID:                histID,
-					NDV:               distinct,
-					NullCount:         nullCount,
-					tp:                &colInfo.FieldType,
-					LastUpdateVersion: histVer,
-					TotColSize:        totColSize,
-				},
-				Info:  colInfo,
-				Count: count + nullCount,
+				Histogram: *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				Info:      colInfo,
+				Count:     count + nullCount,
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			break
 		}
@@ -167,6 +161,7 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Info:      colInfo,
 				CMSketch:  cms,
 				Count:     int64(hg.totalRowCount()),
+				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 		}
 		break
@@ -312,7 +307,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 		return float64(t.Count) / pseudoEqualRate, nil
 	}
 	hist := t.Columns[colID]
-	result, err := hist.equalRowCount(sc, value)
+	result, err := hist.equalRowCount(sc, value, t.ModifyCount)
 	result *= hist.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -372,7 +367,7 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
-			t.Columns[col.ID] = &Column{Info: col}
+			t.Columns[col.ID] = &Column{Info: col, isHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag)}
 		}
 	}
 	for _, idx := range tblInfo.Indices {

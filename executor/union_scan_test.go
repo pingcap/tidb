@@ -78,3 +78,16 @@ func (s *testSuite) TestDirtyTransaction(c *C) {
 	tk.MustQuery("select * from t use index(idx) where c > 1 and d = 4").Check(testkit.Rows("1 2 3 4"))
 	tk.MustExec("commit")
 }
+
+func (s *testSuite) TestUnionScanWithCastCondition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ta (a varchar(20))")
+	tk.MustExec("insert ta values ('1'), ('2')")
+	tk.MustExec("create table tb (a varchar(20))")
+	tk.MustExec("begin")
+	tk.MustQuery("select * from ta where a = 1").Check(testkit.Rows("1"))
+	tk.MustExec("insert tb values ('0')")
+	tk.MustQuery("select * from ta where a = 1").Check(testkit.Rows("1"))
+	tk.MustExec("rollback")
+}

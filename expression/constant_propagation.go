@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/disjointset"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -39,34 +40,11 @@ var inEqFuncNameMap = map[string]bool{
 	ast.NE: true,
 }
 
-type multiEqualSet struct {
-	parent []int
-}
-
-func (m *multiEqualSet) init(l int) {
-	m.parent = make([]int, l)
-	for i := range m.parent {
-		m.parent[i] = i
-	}
-}
-
-func (m *multiEqualSet) addRelation(a int, b int) {
-	m.parent[m.findRoot(a)] = m.findRoot(b)
-}
-
-func (m *multiEqualSet) findRoot(a int) int {
-	if a == m.parent[a] {
-		return a
-	}
-	m.parent[a] = m.findRoot(m.parent[a])
-	return m.parent[a]
-}
-
 type propagateConstantSolver struct {
-	colMapper  map[string]int // colMapper maps column to its index
-	unionSet   *multiEqualSet // unionSet stores the relations like col_i = col_j
-	eqList     []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
-	columns    []*Column      // columns stores all columns appearing in the conditions
+	colMapper  map[string]int      // colMapper maps column to its index
+	unionSet   *disjointset.IntSet // unionSet stores the relations like col_i = col_j
+	eqList     []*Constant         // if eqList[i] != nil, it means col_i = eqList[i]
+	columns    []*Column           // columns stores all columns appearing in the conditions
 	conditions []Expression
 	ctx        sessionctx.Context
 }
@@ -75,8 +53,7 @@ type propagateConstantSolver struct {
 // e.g. For expression a = b and b = c and c = d and c < 1 , we can get extra a < 1 and b < 1 and d < 1.
 // We maintain a unionSet representing the equivalent for every two columns.
 func (s *propagateConstantSolver) propagateInEQ() {
-	s.unionSet = &multiEqualSet{}
-	s.unionSet.init(len(s.columns))
+	s.unionSet = disjointset.NewIntSet(len(s.columns))
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
@@ -84,7 +61,7 @@ func (s *propagateConstantSolver) propagateInEQ() {
 			if lOk && rOk {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
-				s.unionSet.addRelation(lID, rID)
+				s.unionSet.Union(lID, rID)
 			}
 		}
 	}
@@ -97,7 +74,7 @@ func (s *propagateConstantSolver) propagateInEQ() {
 		}
 		id := s.getColID(col)
 		for j := range s.columns {
-			if id != j && s.unionSet.findRoot(id) == s.unionSet.findRoot(j) {
+			if id != j && s.unionSet.FindRoot(id) == s.unionSet.FindRoot(j) {
 				funName := cond.(*ScalarFunction).FuncName.L
 				var newExpr Expression
 				if _, ok := cond.(*ScalarFunction).GetArgs()[0].(*Column); ok {

@@ -281,7 +281,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			}
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
-				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo, err)
+				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 			d.reorgCtx.cleanNotifyReorgCancel()
@@ -300,29 +300,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		err = ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
-	}
-
-	return ver, errors.Trace(err)
-}
-
-func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
-	job.State = model.JobStateRollingback
-	job.Args = []interface{}{indexInfo.Name}
-	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
-	// Its work is the same as drop index job do.
-	// The write reorganization state in add index job that likes write only state in drop index job.
-	// So the next state is delete only state.
-	indexInfo.State = model.StateDeleteOnly
-	originalState := indexInfo.State
-	job.SchemaState = model.StateDeleteOnly
-	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-	if err1 != nil {
-		return ver, errors.Trace(err1)
-	}
-
-	if kv.ErrKeyExists.Equal(err) {
-		return ver, kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
+		err = ErrInvalidIndexState.Gen("invalid index state %v", indexInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -390,7 +368,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexInfo.ID)
 		}
 	default:
-		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
+		err = ErrInvalidTableState.Gen("invalid index state %v", indexInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
@@ -474,6 +452,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	t := w.table
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
+	zone := w.sessCtx.GetSessionVars().GetTimeZone()
 	_, err := tablecodec.DecodeRowWithMap(rawRecord, w.colFieldMap, time.UTC, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -499,6 +478,17 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+
+		if idxColumnVal.Kind() == types.KindMysqlTime {
+			t := idxColumnVal.GetMysqlTime()
+			if t.Type == mysql.TypeTimestamp && zone != time.UTC {
+				err := t.ConvertTimeZone(zone, time.UTC)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				idxColumnVal.SetMysqlTime(t)
+			}
 		}
 		idxVal[j] = idxColumnVal
 	}
@@ -538,7 +528,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := time.Now()
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle, taskRange.endHandle, taskRange.endIncluded,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals", 0)
@@ -988,7 +978,7 @@ func allocateIndexID(tblInfo *model.TableInfo) int64 {
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
+func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, startHandle int64, endHandle int64, endIncluded bool, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
 
 	snap, err := store.GetSnapshot(ver)
@@ -996,8 +986,22 @@ func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHa
 	if err != nil {
 		return errors.Trace(err)
 	}
-	firstKey := t.RecordKey(seekHandle)
-	it, err := snap.Seek(firstKey)
+	firstKey := t.RecordKey(startHandle)
+
+	// Calculate the exclusive upper bound
+	var upperBound kv.Key
+	if endIncluded {
+		if endHandle == math.MaxInt64 {
+			upperBound = t.RecordKey(endHandle).PrefixNext()
+		} else {
+			// PrefixNext is time costing. Try to avoid it if possible.
+			upperBound = t.RecordKey(endHandle + 1)
+		}
+	} else {
+		upperBound = t.RecordKey(endHandle)
+	}
+
+	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
 		return errors.Trace(err)
 	}
