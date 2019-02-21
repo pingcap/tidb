@@ -191,6 +191,10 @@ func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err
 	return cancelOnlyNotHandledJob(job)
 }
 
+func rollingbackRenameIndex(job *model.Job) (ver int64, err error) {
+	return cancelOnlyNotHandledJob(job)
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -203,6 +207,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = rollingbackDropTablePartition(t, job)
+	case model.ActionRenameIndex:
+		ver, err = rollingbackRenameIndex(job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
