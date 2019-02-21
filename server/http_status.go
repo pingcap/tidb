@@ -58,6 +58,9 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool})
 	router.Handle("/info/all", allServerInfoHandler{tikvHandlerTool})
+	// HTTP path for get db and table info that is related to the tableID.
+	router.Handle("/db-table/{tableID}", dbTableHandler{tikvHandlerTool})
+
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})

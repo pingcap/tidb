@@ -52,6 +52,12 @@
     curl http://{TiDBIP}:10080/schema?table_id={tableID}
     ```
 
+1. Get database information, table information and tidb info schema version by tableID.
+
+    ```shell
+    curl http://{TiDBIP}:10080/db-table/{tableID}
+    ```
+
 1. Get MVCC Information of the key with a specified handle ID
 
     ```shell
