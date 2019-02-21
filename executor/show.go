@@ -276,6 +276,25 @@ func (e *ShowExec) fetchShowColumns() error {
 		}
 
 		desc := table.NewColDesc(col)
+		var columnDefault interface{}
+		if desc.DefaultValue != nil {
+			// SHOW COLUMNS result expects string value
+			defaultValStr := fmt.Sprintf("%v", desc.DefaultValue)
+			// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
+			if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr && strings.ToUpper(defaultValStr) != strings.ToUpper(ast.CurrentTimestamp) {
+				timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				defaultValStr = timeValue.GetMysqlTime().String()
+			}
+			if col.Tp == mysql.TypeBit {
+				defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
+				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+			} else {
+				columnDefault = defaultValStr
+			}
+		}
 
 		// The FULL keyword causes the output to include the column collation and comments,
 		// as well as the privileges you have for each column.
@@ -286,7 +305,7 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Collation,
 				desc.Null,
 				desc.Key,
-				desc.DefaultValue,
+				columnDefault,
 				desc.Extra,
 				desc.Privileges,
 				desc.Comment,
@@ -297,7 +316,7 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Type,
 				desc.Null,
 				desc.Key,
-				desc.DefaultValue,
+				columnDefault,
 				desc.Extra,
 			})
 		}
@@ -543,6 +562,15 @@ func (e *ShowExec) fetchShowCreateTable() error {
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
 					defaultValStr := fmt.Sprintf("%v", defaultValue)
+					// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
+					if col.Tp == mysql.TypeTimestamp && defaultValStr != types.ZeroDatetimeStr {
+						timeValue, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
+						if err != nil {
+							return errors.Trace(err)
+						}
+						defaultValStr = timeValue.GetMysqlTime().String()
+					}
+
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))
