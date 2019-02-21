@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -502,7 +503,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
-			return errors.Trace(err)
+			tz = time.Local
+			log.Errorf("parse time zone error: %v, temporarily ignore now", err)
 		}
 		s.TimeZone = tz
 	case SQLModeVar:
