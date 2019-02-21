@@ -822,9 +822,16 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 	e := &MergeJoinExec{
 		stmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		joiner: newJoiner(b.ctx, v.JoinType, v.JoinType == plannercore.RightOuterJoin,
-			defaultValues, v.OtherConditions,
-			leftExec.retTypes(), rightExec.retTypes()),
+		compareFuncs: v.CompareFuncs,
+		joiner: newJoiner(
+			b.ctx,
+			v.JoinType,
+			v.JoinType == plannercore.RightOuterJoin,
+			defaultValues,
+			v.OtherConditions,
+			leftExec.retTypes(),
+			rightExec.retTypes(),
+		),
 	}
 
 	leftKeys := v.LeftKeys
