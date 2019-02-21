@@ -63,6 +63,14 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 	return nil
 }
 
+func (e *defaultEvaluator) clone() *defaultEvaluator {
+	de := &defaultEvaluator{outputIdxes: e.outputIdxes, vectorizable: e.vectorizable}
+	for i := range e.exprs {
+		de.exprs = append(de.exprs, e.exprs[i].Clone())
+	}
+	return de
+}
+
 // EvaluatorSuite is responsible for the evaluation of a list of expressions.
 // It separates them to "column" and "other" expressions and evaluates "other"
 // expressions before "column" expressions.
@@ -120,4 +128,19 @@ func (e *EvaluatorSuite) Run(ctx sessionctx.Context, input, output *chunk.Chunk)
 		e.columnEvaluator.run(ctx, input, output)
 	}
 	return nil
+}
+
+// Clone clone an EvaluatorSuite.
+// Note: This is NOT deep clone, since all the attributes of columnEvaluator and
+// defaultEvaluator are READ-ONLY during evaluating except for
+// defaultEvaluator.exprs.
+func (e *EvaluatorSuite) Clone() *EvaluatorSuite {
+	if e.defaultEvaluator == nil {
+		return e
+	}
+	es := &EvaluatorSuite{
+		columnEvaluator:  e.columnEvaluator,
+		defaultEvaluator: e.defaultEvaluator.clone(),
+	}
+	return es
 }
