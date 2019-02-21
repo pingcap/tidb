@@ -48,7 +48,7 @@ require (
 	github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3
 	github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030
 	github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929
-	github.com/pingcap/parser v0.0.0-20190218023123-90a796aef0c5
+	github.com/pingcap/parser v0.0.0-20190221074811-3d110205ce12
 	github.com/pingcap/pd v2.1.0-rc.4+incompatible
 	github.com/pingcap/tidb-tools v2.1.3-0.20190116051332-34c808eef588+incompatible
 	github.com/pingcap/tipb v0.0.0-20180910045846-371b48b15d93
@@ -81,5 +81,3 @@ require (
 	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
 	gopkg.in/yaml.v2 v2.2.1 // indirect
 )
-
-replace github.com/pingcap/parser => github.com/crazycs520/parser v0.0.0-20190221063202-f830e9210447
