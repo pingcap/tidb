@@ -165,3 +165,9 @@ desc select * from t where a = 1;
 desc select * from t where a = '1';
 
 desc select sysdate(), sleep(1), sysdate();
+
+# test != any(subq) and = all(subq)
+drop table if exists t;
+create table t(a int, b int);
+explain select a != any (select a from t t2) from t t1;
+explain select a = all (select a from t t2) from t t1;
