@@ -80,9 +80,10 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, index idx (id))")
+	tk.MustExec("create table t (id int)")
 
 	var checkErr error
+	addIndexSeq := 0
 	prevState := model.StateNone
 	callback := &ddl.TestDDLCallback{}
 	callback.OnJobUpdatedExported = func(job *model.Job) {
@@ -94,7 +95,11 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 			got := result.Rows()[0][1]
 			var expected string
 			if job.Type == model.ActionAddIndex {
-				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+				if addIndexSeq == 0 {
+					expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+				} else {
+					expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+				}
 			} else if job.Type == model.ActionAddColumn {
 				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`),\n  KEY `idx1` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 			}
@@ -107,6 +112,9 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 	originalCallback := d.GetHook()
 	defer d.(ddl.DDLForTest).SetHook(originalCallback)
 	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t add index idx(id)")
+	c.Assert(checkErr, IsNil)
+	addIndexSeq++
 	tk.MustExec("alter table t add index idx1(id)")
 	c.Assert(checkErr, IsNil)
 	tk.MustExec("alter table t add column c int")
