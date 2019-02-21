@@ -920,7 +920,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
-			if req.NumRows() >= req.Capacity() {
+			if req.IsFull() {
 				return nil
 			}
 			req.AppendRow(e.inputRow)

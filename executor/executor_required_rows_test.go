@@ -21,6 +21,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -40,6 +41,15 @@ type requiredRowsDataSource struct {
 
 	expectedRowsRet []int
 	numNextCalled   int
+
+	generator func(valType *types.FieldType) interface{}
+}
+
+func newRequiredRowsDataSourceWithGenerator(ctx sessionctx.Context, totalRows int, expectedRowsRet []int,
+	gen func(valType *types.FieldType) interface{}) *requiredRowsDataSource {
+	ds := newRequiredRowsDataSource(ctx, totalRows, expectedRowsRet)
+	ds.generator = gen
+	return ds
 }
 
 func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRowsRet []int) *requiredRowsDataSource {
@@ -51,7 +61,7 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 	}
 	schema := expression.NewSchema(cols...)
 	baseExec := newBaseExecutor(ctx, schema, "")
-	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0}
+	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0, defaultGenerator}
 }
 
 func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
@@ -79,12 +89,12 @@ func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatc
 func (r *requiredRowsDataSource) genOneRow() chunk.Row {
 	row := chunk.MutRowFromTypes(r.retTypes())
 	for i := range r.retTypes() {
-		row.SetValue(i, r.genValue(r.retTypes()[i]))
+		row.SetValue(i, r.generator(r.retTypes()[i]))
 	}
 	return row.ToRow()
 }
 
-func (r *requiredRowsDataSource) genValue(valType *types.FieldType) interface{} {
+func defaultGenerator(valType *types.FieldType) interface{} {
 	switch valType.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -367,5 +377,150 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*planner
 	return &TopNExec{
 		SortExec: sortExec,
 		limit:    &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+	}
+}
+
+func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
+	gen01 := func() func(valType *types.FieldType) interface{} {
+		closureCount := 0
+		return func(valType *types.FieldType) interface{} {
+			switch valType.Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				ret := int64(closureCount % 2)
+				closureCount++
+				return ret
+			case mysql.TypeDouble:
+				return rand.Float64()
+			default:
+				panic("not implement")
+			}
+		}
+	}
+
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		filtersOfCol1  int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+		gen            func(valType *types.FieldType) interface{}
+	}{
+		{
+			totalRows:      20,
+			requiredRows:   []int{1, 2, 3, 4, 5, 20},
+			expectedRows:   []int{1, 2, 3, 4, 5, 5},
+			expectedRowsDS: []int{20, 0},
+		},
+		{
+			totalRows:      20,
+			filtersOfCol1:  0,
+			requiredRows:   []int{1, 3, 5, 7, 9},
+			expectedRows:   []int{1, 3, 5, 1, 0},
+			expectedRowsDS: []int{20, 0, 0},
+			gen:            gen01(),
+		},
+		{
+			totalRows:      maxChunkSize + 20,
+			filtersOfCol1:  1,
+			requiredRows:   []int{1, 3, 5, maxChunkSize},
+			expectedRows:   []int{1, 3, 5, maxChunkSize/2 - 1 - 3 - 5 + 10},
+			expectedRowsDS: []int{maxChunkSize, 20, 0},
+			gen:            gen01(),
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		var filters []expression.Expression
+		var ds *requiredRowsDataSource
+		if testCase.gen == nil {
+			// ignore filters
+			ds = newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
+		} else {
+			ds = newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
+			f, err := expression.NewFunction(
+				sctx, ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
+					Value:   types.NewDatum(testCase.filtersOfCol1),
+					RetType: types.NewFieldType(mysql.TypeTiny),
+				})
+			c.Assert(err, IsNil)
+			filters = append(filters, f)
+		}
+		exec := buildSelectionExec(sctx, filters, ds)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src Executor) Executor {
+	return &SelectionExec{
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), "", src),
+		filters:      filters,
+	}
+}
+
+func (s *testExecSuite) TestProjectionRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+	}{
+		{
+			totalRows:      20,
+			requiredRows:   []int{1, 3, 5, 7, 9},
+			expectedRows:   []int{1, 3, 5, 7, 4},
+			expectedRowsDS: []int{1, 3, 5, 7, 4},
+		},
+		{
+			totalRows:      maxChunkSize + 10,
+			requiredRows:   []int{1, 3, 5, 7, 9, maxChunkSize},
+			expectedRows:   []int{1, 3, 5, 7, 9, maxChunkSize - 1 - 3 - 5 - 7 - 9 + 10},
+			expectedRowsDS: []int{1, 3, 5, 7, 9, maxChunkSize - 1 - 3 - 5 - 7 - 9 + 10},
+		},
+		{
+			totalRows:      maxChunkSize*2 + 10,
+			requiredRows:   []int{1, 7, 9, maxChunkSize, maxChunkSize + 10},
+			expectedRows:   []int{1, 7, 9, maxChunkSize, maxChunkSize + 10 - 1 - 7 - 9},
+			expectedRowsDS: []int{1, 7, 9, maxChunkSize, maxChunkSize + 10 - 1 - 7 - 9},
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
+		exprs := make([]expression.Expression, 0, len(ds.Schema().Columns))
+		if len(exprs) == 0 {
+			for _, col := range ds.Schema().Columns {
+				exprs = append(exprs, col)
+			}
+		}
+		exec := buildProjectionExec(sctx, exprs, ds)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor) Executor {
+	return &ProjectionExec{
+		baseExecutor:  newBaseExecutor(ctx, src.Schema(), "", src),
+		numWorkers:    0, // chunk size control only works on unparallel mode now
+		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}
 }

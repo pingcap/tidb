@@ -17,7 +17,7 @@ import (
 	"context"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -166,6 +166,8 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 }
 
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
+	// transmit the requiredRows
+	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
 	err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
 	if err != nil {
 		return errors.Trace(err)
