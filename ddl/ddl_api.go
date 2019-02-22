@@ -1438,7 +1438,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 }
 
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
-// returns valied specs, and the occured error.
+// returns valied specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlterAlgorithmDefault
@@ -1469,7 +1469,6 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 			// For the compatibility, we return warning instead of error when the algorithm is COPY,
 			// because the COPY ALGORITHM is not supported in TiDB.
 			ctx.GetSessionVars().StmtCtx.AppendError(err)
-			err = nil
 		}
 
 		spec.Algorithm = resolvedAlgorithm
