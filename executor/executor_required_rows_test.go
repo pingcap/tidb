@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"time"
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
@@ -467,7 +468,7 @@ func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression,
 	}
 }
 
-func (s *testExecSuite) TestProjectionRequiredRows(c *C) {
+func (s *testExecSuite) TestProjectionUnparallelRequiredRows(c *C) {
 	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
 		totalRows      int
@@ -505,7 +506,7 @@ func (s *testExecSuite) TestProjectionRequiredRows(c *C) {
 				exprs = append(exprs, col)
 			}
 		}
-		exec := buildProjectionExec(sctx, exprs, ds)
+		exec := buildProjectionExec(sctx, exprs, ds, 0)
 		c.Assert(exec.Open(ctx), IsNil)
 		chk := exec.newFirstChunk()
 		for i := range testCase.requiredRows {
@@ -517,10 +518,68 @@ func (s *testExecSuite) TestProjectionRequiredRows(c *C) {
 	}
 }
 
-func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor) Executor {
+func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		numWorkers     int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+	}{
+		{
+			totalRows:      20,
+			numWorkers:     1,
+			requiredRows:   []int{1, 2, 3, 4, 5, 6, 1, 1},
+			expectedRows:   []int{1, 1, 2, 3, 4, 5, 4, 0},
+			expectedRowsDS: []int{1, 1, 2, 3, 4, 5, 4, 0},
+		},
+		{
+			totalRows:      maxChunkSize * 2,
+			numWorkers:     1,
+			requiredRows:   []int{7, maxChunkSize, maxChunkSize, maxChunkSize},
+			expectedRows:   []int{7, 7, maxChunkSize, maxChunkSize - 14},
+			expectedRowsDS: []int{7, 7, maxChunkSize, maxChunkSize - 14, 0},
+		},
+		{
+			totalRows:      20,
+			numWorkers:     2,
+			requiredRows:   []int{1, 2, 3, 4, 5, 6, 1, 1, 1},
+			expectedRows:   []int{1, 1, 1, 2, 3, 4, 5, 3, 0},
+			expectedRowsDS: []int{1, 1, 1, 2, 3, 4, 5, 3, 0},
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
+		exprs := make([]expression.Expression, 0, len(ds.Schema().Columns))
+		if len(exprs) == 0 {
+			for _, col := range ds.Schema().Columns {
+				exprs = append(exprs, col)
+			}
+		}
+		exec := buildProjectionExec(sctx, exprs, ds, testCase.numWorkers)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+
+			// wait projectionInputFetcher blocked on fetching data
+			// from child in the background.
+			time.Sleep(time.Millisecond * 5)
+		}
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
 	return &ProjectionExec{
 		baseExecutor:  newBaseExecutor(ctx, src.Schema(), "", src),
-		numWorkers:    0, // chunk size control only works on unparallel mode now
+		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}
 }

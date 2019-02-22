@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -62,6 +63,11 @@ type ProjectionExec struct {
 	numWorkers  int64
 	workers     []*projectionWorker
 	childResult *chunk.Chunk
+
+	// requiredRowsNow indicates how many rows the parent executor now.
+	// projectionInputFetcher sets its chunk's RequiredRows to this value while
+	// fetching data from child in the background.
+	requiredRowsNow int64
 }
 
 // Open implements the Executor Open interface.
@@ -71,6 +77,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
+	e.requiredRowsNow = int64(e.maxChunkSize)
 
 	// For now a Projection can not be executed vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
@@ -181,6 +188,7 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 		e.prepare(ctx)
 		e.prepared = true
 	}
+	atomic.StoreInt64(&e.requiredRowsNow, int64(chk.RequiredRows()))
 
 	output, ok := <-e.outputCh
 	if !ok {
@@ -203,6 +211,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 	// Initialize projectionInputFetcher.
 	e.fetcher = projectionInputFetcher{
+		proj:           e,
 		child:          e.children[0],
 		globalFinishCh: e.finishCh,
 		globalOutputCh: e.outputCh,
@@ -255,6 +264,7 @@ func (e *ProjectionExec) Close() error {
 }
 
 type projectionInputFetcher struct {
+	proj           *ProjectionExec
 	child          Executor
 	globalFinishCh <-chan struct{}
 	globalOutputCh chan<- *projectionOutput
@@ -296,6 +306,8 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		f.globalOutputCh <- output
 
+		requiredRows := atomic.LoadInt64(&f.proj.requiredRowsNow)
+		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
 		err := f.child.Next(ctx, chunk.NewRecordBatch(input.chk))
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- errors.Trace(err)
