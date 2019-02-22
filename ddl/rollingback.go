@@ -240,6 +240,10 @@ func rollingbackShardRowID(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	return cancelOnlyNotHandledJob(job)
 }
 
+func rollingbackModifyColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	return cancelOnlyNotHandledJob(job)
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -264,6 +268,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackRebaseAutoID(t, job)
 	case model.ActionShardRowID:
 		ver, err = rollingbackShardRowID(t, job)
+	case model.ActionModifyColumn:
+		ver, err = rollingbackModifyColumn(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
