@@ -177,7 +177,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 		}
 		user := fmt.Sprintf(`('%s', '%s', '%s')`, spec.User.Hostname, spec.User.Username, pwd)
 		if s.IsCreateRole {
-			user := fmt.Sprintf(`('%s', '%s', '%s', 'Y')`, spec.User.Hostname, spec.User.Username, pwd)
+			user = fmt.Sprintf(`('%s', '%s', '%s', 'Y')`, spec.User.Hostname, spec.User.Username, pwd)
 		}
 		users = append(users, user)
 	}
@@ -186,7 +186,7 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
 	if s.IsCreateRole {
-		sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password， account_locked) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
+		sql = fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password， account_locked) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
 	}
 	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
