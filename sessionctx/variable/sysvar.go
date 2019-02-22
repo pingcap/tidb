@@ -71,7 +71,7 @@ const (
 // Variable errors
 var (
 	UnknownStatusVar       = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar       = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	UnknownSystemVar       = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
 	ErrIncorrectScope      = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
 	ErrUnknownTimeZone     = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
 	ErrReadOnly            = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
@@ -245,7 +245,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "myisam_mmap_size", "18446744073709551615"},
 	{ScopeGlobal, "init_slave", ""},
 	{ScopeNone, "innodb_buffer_pool_instances", "8"},
-	{ScopeGlobal | ScopeSession, "block_encryption_mode", "aes-128-ecb"},
+	{ScopeGlobal | ScopeSession, BlockEncryptionMode, "aes-128-ecb"},
 	{ScopeGlobal | ScopeSession, "max_length_for_sort_data", "1024"},
 	{ScopeNone, "character_set_system", "utf8"},
 	{ScopeGlobal | ScopeSession, "interactive_timeout", "28800"},
@@ -740,6 +740,8 @@ const (
 	WarningCount = "warning_count"
 	// ErrorCount is the name for 'error_count' system variable.
 	ErrorCount = "error_count"
+	// BlockEncryptionMode is the name for 'block_encryption_mode' system variable.
+	BlockEncryptionMode = "block_encryption_mode"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
