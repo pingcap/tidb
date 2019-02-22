@@ -7739,6 +7739,14 @@ PrivType:
 	{
 		$$ = mysql.ShowViewPriv
 	}
+|	"CREATE" "ROLE"
+	{
+		$$ = mysql.CreateRolePriv
+	}
+|	"DROP" "ROLE"
+	{
+		$$ = mysql.DropRolePriv
+	}
 |	"CREATE" "ROUTINE"
 	{
 		$$ = mysql.PrivilegeType(0)
