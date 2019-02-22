@@ -457,7 +457,7 @@ func checkRangePartitioningKeysConstraints(sctx sessionctx.Context, s *ast.Creat
 		switch constraint.Tp {
 		case ast.ConstraintPrimaryKey, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			if !checkUniqueKeyIncludePartKey(partCols, constraint.Keys) {
-				if constraint.Tp == ast.ConstraintUniq {
+				if constraint.Tp == ast.ConstraintPrimaryKey {
 					return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 				}
 				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
