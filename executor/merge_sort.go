@@ -57,7 +57,7 @@ type MergeSortExec struct {
 	concurrency   int
 	allColumnExpr bool
 }
-
+// SortWorker represents worker routine to process sort
 type SortWorker struct {
 	MergeSortExec
 	chkIdx  int
@@ -109,7 +109,7 @@ func (e *MergeSortExec) Open(ctx context.Context) error {
 	return errors.Trace(e.children[0].Open(ctx))
 }
 
-func (e *MergeSortExec) newSortWorker(workerId, chk, row, len int) *SortWorker {
+func (e *MergeSortExec) newSortWorker(workerID, chk, row, len int) *SortWorker {
 	sw := &SortWorker{
 		MergeSortExec: *e,
 		chkIdx:        chk,
@@ -117,9 +117,9 @@ func (e *MergeSortExec) newSortWorker(workerId, chk, row, len int) *SortWorker {
 		len:           len,
 		rowPtrs:       make([]chunk.RowPtr, 0, len),
 	}
-	e.workerRowLen[workerId] = len
-	e.workerRowIdx[workerId] = 0
-	e.workerRowPtrs[workerId] = &sw.rowPtrs
+	e.workerRowLen[workerID] = len
+	e.workerRowIdx[workerID] = 0
+	e.workerRowPtrs[workerID] = &sw.rowPtrs
 	return sw
 }
 
@@ -190,12 +190,11 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		go e.wait4WorkerSort(wg, finishedCh)
 
 		for i := 0; i < e.concurrency; i++ {
-			workerId := i
 			// last worker must complete the rest of rows
 			if i == e.concurrency-1 {
 				workerRowsCount += e.rowChunks.Len() % e.concurrency
 			}
-			sw := e.newSortWorker(workerId, workerIdx[i][0], workerIdx[i][1], workerRowsCount)
+			sw := e.newSortWorker(i, workerIdx[i][0], workerIdx[i][1], workerRowsCount)
 			go util.WithRecovery(func() {
 				defer wg.Done()
 				sw.run()
@@ -327,15 +326,15 @@ func (e *MergeSortExec) lessRow(rowI, rowJ chunk.Row) bool {
 }
 
 // keyColumnsLess is the less function for key columns.
-func (e *SortWorker) keyColumnsLess(i, j int) bool {
-	rowI := e.rowChunks.GetRow(e.rowPtrs[i])
-	rowJ := e.rowChunks.GetRow(e.rowPtrs[j])
-	return e.lessRow(rowI, rowJ)
+func (sw *SortWorker) keyColumnsLess(i, j int) bool {
+	rowI := sw.rowChunks.GetRow(sw.rowPtrs[i])
+	rowJ := sw.rowChunks.GetRow(sw.rowPtrs[j])
+	return sw.lessRow(rowI, rowJ)
 }
 
 // keyChunksLess is the less function for key chunk.
-func (e *SortWorker) keyChunksLess(i, j int) bool {
-	keyRowI := e.keyChunks.GetRow(e.rowPtrs[i])
-	keyRowJ := e.keyChunks.GetRow(e.rowPtrs[j])
-	return e.lessRow(keyRowI, keyRowJ)
+func (sw *SortWorker) keyChunksLess(i, j int) bool {
+	keyRowI := sw.keyChunks.GetRow(sw.rowPtrs[i])
+	keyRowJ := sw.keyChunks.GetRow(sw.rowPtrs[j])
+	return sw.lessRow(keyRowI, keyRowJ)
 }
