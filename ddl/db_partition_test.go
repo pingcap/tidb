@@ -788,7 +788,7 @@ func (s *testIntegrationSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 		col3 int not null,
 		col4 int not null,
 		primary key(col1, col2, col4),
-	unique key(col2, col1)
+		unique key(col2, col1)
 	)
 	partition by range( col1 + col2 ) (
 	partition p1 values less than (11),
@@ -890,7 +890,7 @@ func (s *testIntegrationSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 		col3 int not null,
 		col4 int not null,
 		primary key(col1, col3, col4),
-	unique key(col2, col1)
+		unique key(col2, col1)
 	)
 	partition by range( col1 + col2 ) (
 	partition p1 values less than (11),
