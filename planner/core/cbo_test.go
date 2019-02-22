@@ -752,9 +752,15 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
+
 	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	dom.SetStatsUpdating(true)
 	return store, dom, errors.Trace(err)
 }
