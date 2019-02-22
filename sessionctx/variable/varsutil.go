@@ -132,11 +132,229 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if value.IsNull() {
 		return vars.deleteSystemVar(name)
 	}
-	sVal, err := value.ToString()
+	var sVal string
+	var err error
+	sVal, err = value.ToString()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sVal, err = ValidateSetSystemVar(vars, name, sVal)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return vars.SetSystemVar(name, sVal)
+}
+
+// ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
+func ValidateGetSystemVar(name string, isGlobal bool) error {
+	sysVar, exists := SysVars[name]
+	if !exists {
+		return UnknownSystemVar.GenByArgs(name)
+	}
+	switch sysVar.Scope {
+	case ScopeGlobal, ScopeNone:
+		if !isGlobal {
+			return ErrIncorrectScope.GenByArgs(name, "GLOBAL")
+		}
+	case ScopeSession:
+		if isGlobal {
+			return ErrIncorrectScope.GenByArgs(name, "SESSION")
+		}
+	}
+	return nil
+}
+
+// ValidateSetSystemVar checks if system variable satisfies specific restriction.
+func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string, error) {
+	if strings.EqualFold(value, "DEFAULT") {
+		if val := GetSysVar(name); val != nil {
+			return val.Value, nil
+		}
+		return value, UnknownSystemVar.GenByArgs(name)
+	}
+	switch name {
+	case DefaultWeekFormat:
+		val, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
+		}
+		if val > 7 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "7", nil
+		}
+	case DelayKeyWrite:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
+		} else if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "ALL") || value == "2" {
+			return "ALL", nil
+		}
+		return value, ErrWrongValueForVar.GenByArgs(name, value)
+	case FlushTime:
+		val, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
+		}
+	case GroupConcatMaxLen:
+		val, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 4 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "4", nil
+		}
+		if val > 18446744073709551615 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "18446744073709551615", nil
+		}
+	case InteractiveTimeout:
+		val, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 1 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "1", nil
+		}
+	case MaxConnections:
+		val, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 1 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "1", nil
+		}
+		if val > 100000 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "100000", nil
+		}
+	case MaxSortLength:
+		val, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 4 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "4", nil
+		}
+		if val > 8388608 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "8388608", nil
+		}
+	case MaxSpRecursionDepth:
+		val, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
+		}
+		if val > 255 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "255", nil
+		}
+	case OldPasswords:
+		val, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
+		}
+		if val > 2 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "2", nil
+		}
+	case MaxUserConnections:
+		val, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
+		}
+		if val > 4294967295 {
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "4294967295", nil
+		}
+	case SessionTrackGtids:
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "OWN_GTID") || value == "1" {
+			return "OWN_GTID", nil
+		} else if strings.EqualFold(value, "ALL_GTIDS") || value == "2" {
+			return "ALL_GTIDS", nil
+		}
+		return value, ErrWrongValueForVar.GenByArgs(name, value)
+	case TimeZone:
+		if strings.EqualFold(value, "SYSTEM") {
+			return "SYSTEM", nil
+		}
+		_, err := parseTimeZone(value)
+		return value, err
+	case WarningCount, ErrorCount:
+		return value, ErrReadOnly.GenByArgs(name)
+	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
+		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			return "1", nil
+		} else if strings.EqualFold(value, "OFF") || value == "0" {
+			return "0", nil
+		}
+		return value, ErrWrongValueForVar.GenByArgs(name, value)
+	case AutocommitVar, TiDBImportingData, TiDBSkipUTF8Check, TiDBOptAggPushDown,
+		TiDBOptInSubqUnFolding,
+		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
+		TiDBBatchDelete:
+		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
+			return value, nil
+		}
+		return value, ErrWrongValueForVar.GenByArgs(name, value)
+	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
+		TiDBIndexLookupSize,
+		TiDBHashJoinConcurrency,
+		TiDBDistSQLScanConcurrency,
+		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
+		TiDBMaxChunkSize,
+		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel,
+		TiDBGeneralLog:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if v <= 0 {
+			return value, ErrWrongValueForVar.GenByArgs(name, value)
+		}
+		return value, nil
+	case TIDBMemQuotaQuery,
+		TIDBMemQuotaHashJoin,
+		TIDBMemQuotaMergeJoin,
+		TIDBMemQuotaSort,
+		TIDBMemQuotaTopn,
+		TIDBMemQuotaIndexLookupReader,
+		TIDBMemQuotaIndexLookupJoin,
+		TIDBMemQuotaNestedLoopApply:
+		_, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongValueForVar.GenByArgs(name)
+		}
+		return value, nil
+	}
+	return value, nil
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
@@ -161,7 +379,7 @@ func tidbOptInt64(opt string, defaultVal int64) int64 {
 }
 
 func parseTimeZone(s string) (*time.Location, error) {
-	if s == "SYSTEM" {
+	if strings.EqualFold(s, "SYSTEM") {
 		// TODO: Support global time_zone variable, it should be set to global time_zone value.
 		return time.Local, nil
 	}
