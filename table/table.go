@@ -79,8 +79,8 @@ var (
 	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
 	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
 	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
-	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
-	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
+	// ErrNoPartitionForGivenValue returns table has no partition for value.
+	ErrNoPartitionForGivenValue = terror.ClassTable.New(codeNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -203,7 +203,7 @@ const (
 	codeTruncateWrongValue = 1366
 	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
 	// It may happen when inserting some data outside of all table partitions.
-	codeTrgInvalidCreationCtx = 1604
+	codeNoPartitionForGivenValue = mysql.ErrNoPartitionForGivenValue
 )
 
 // Slice is used for table sorting.
@@ -219,12 +219,12 @@ func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeColumnCantNull:        mysql.ErrBadNull,
-		codeUnknownColumn:         mysql.ErrBadField,
-		codeDuplicateColumn:       mysql.ErrFieldSpecifiedTwice,
-		codeNoDefaultValue:        mysql.ErrNoDefaultForField,
-		codeTruncateWrongValue:    mysql.ErrTruncatedWrongValueForField,
-		codeTrgInvalidCreationCtx: mysql.ErrTrgInvalidCreationCtx,
+		codeColumnCantNull:           mysql.ErrBadNull,
+		codeUnknownColumn:            mysql.ErrBadField,
+		codeDuplicateColumn:          mysql.ErrFieldSpecifiedTwice,
+		codeNoDefaultValue:           mysql.ErrNoDefaultForField,
+		codeTruncateWrongValue:       mysql.ErrTruncatedWrongValueForField,
+		codeNoPartitionForGivenValue: mysql.ErrNoPartitionForGivenValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }
