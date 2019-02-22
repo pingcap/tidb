@@ -946,7 +946,7 @@ func batchGetOldValues(ctx sessionctx.Context, t table.Table, handles []int64) (
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	values, err := kv.BatchGetValues(txn, batchKeys)
+	values, err := txn.BatchGet(batchKeys)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1070,7 +1070,7 @@ func batchGetInsertKeys(ctx sessionctx.Context, t table.Table, newRows [][]types
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	values, err := kv.BatchGetValues(txn, batchKeys)
+	values, err := txn.BatchGet(batchKeys)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
