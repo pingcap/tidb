@@ -225,6 +225,10 @@ const (
 	CreateViewPriv
 	// ShowViewPriv is the privilege to show create view.
 	ShowViewPriv
+	// CreateRolePriv the privilege to create a role.
+	CreateRolePriv
+	// DropRolePriv is the privilege to drop a role.
+	DropRolePriv
 	// AllPriv is the privilege for all actions.
 	AllPriv
 )
@@ -286,6 +290,8 @@ var Priv2UserCol = map[PrivilegeType]string{
 	IndexPriv:      "Index_priv",
 	CreateViewPriv: "Create_view_priv",
 	ShowViewPriv:   "Show_view_priv",
+	CreateRolePriv: "Create_role_priv",
+	DropRolePriv:   "Drop_role_priv",
 }
 
 // Command2Str is the command information to command name.
@@ -344,10 +350,12 @@ var Col2PrivType = map[string]PrivilegeType{
 	"Index_priv":       IndexPriv,
 	"Create_view_priv": CreateViewPriv,
 	"Show_view_priv":   ShowViewPriv,
+	"Create_role_priv": CreateRolePriv,
+	"Drop_role_priv":   DropRolePriv,
 }
 
 // AllGlobalPrivs is all the privileges in global scope.
-var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv, CreateViewPriv, ShowViewPriv}
+var AllGlobalPrivs = []PrivilegeType{SelectPriv, InsertPriv, UpdatePriv, DeletePriv, CreatePriv, DropPriv, ProcessPriv, GrantPriv, ReferencesPriv, AlterPriv, ShowDBPriv, SuperPriv, ExecutePriv, IndexPriv, CreateUserPriv, TriggerPriv, CreateViewPriv, ShowViewPriv, CreateRolePriv, DropRolePriv}
 
 // Priv2Str is the map for privilege to string.
 var Priv2Str = map[PrivilegeType]string{
@@ -369,6 +377,8 @@ var Priv2Str = map[PrivilegeType]string{
 	IndexPriv:      "Index",
 	CreateViewPriv: "Create View",
 	ShowViewPriv:   "Show View",
+	CreateRolePriv: "Create Role",
+	DropRolePriv:   "Drop Role",
 }
 
 // Priv2SetStr is the map for privilege to string.
@@ -385,6 +395,8 @@ var Priv2SetStr = map[PrivilegeType]string{
 	IndexPriv:      "Index",
 	CreateViewPriv: "Create View",
 	ShowViewPriv:   "Show View",
+	CreateRolePriv: "Create Role",
+	DropRolePriv:   "Drop Role",
 }
 
 // SetStr2Priv is the map for privilege set string to privilege type.
