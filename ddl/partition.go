@@ -493,20 +493,11 @@ func extractPartitionColumns(sctx sessionctx.Context, partExpr string, tblInfo *
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
 func checkUniqueKeyIncludePartKey(partCols []*expression.Column, idxCols []*ast.IndexColName) bool {
 	for _, partCol := range partCols {
-		if !findColumnInColumns(partCol, idxCols) {
+		if !findColumnInIndexCols(partCol, idxCols) {
 			return false
 		}
 	}
 	return true
-}
-
-func findColumnInColumns(c *expression.Column, cols []*ast.IndexColName) bool {
-	for _, c1 := range cols {
-		if c.ColName.L == c1.Column.Name.L {
-			return true
-		}
-	}
-	return false
 }
 
 // isRangePartitionColUnsignedBigint returns true if the partitioning key column type is unsigned bigint type.
