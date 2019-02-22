@@ -217,6 +217,9 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, false)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	case model.StateWriteOnly:
 		// write only -> public
 		// do restore table.
