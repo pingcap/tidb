@@ -456,6 +456,13 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
+	pc := privilege.GetPrivilegeManager(se)
+	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
+}
+
 func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
