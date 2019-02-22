@@ -613,6 +613,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &test.cancelState)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	changedCol := model.FindColumnInfo(changedTable.Meta().Columns, col.Name.L)
+	c.Assert(changedCol.DefaultValue, IsNil)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
