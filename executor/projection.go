@@ -213,7 +213,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 	for i := int64(0); i < e.numWorkers; i++ {
 		e.workers = append(e.workers, &projectionWorker{
 			sctx:            e.ctx,
-			evaluatorSuit:   e.evaluatorSuit.Clone(),
+			evaluatorSuit:   e.evaluatorSuit,
 			globalFinishCh:  e.finishCh,
 			inputGiveBackCh: e.fetcher.inputCh,
 			inputCh:         make(chan *projectionInput, 1),

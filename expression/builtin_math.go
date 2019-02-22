@@ -965,7 +965,8 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETReal, argTps...)
 	bt := bf
 	if len(args) == 0 {
-		sig = &builtinRandSig{bt, nil}
+		seed := time.Now().UnixNano()
+		sig = &builtinRandSig{bt, rand.New(rand.NewSource(seed))}
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
 		// If an integer argument N is specified, it is used as the seed value:
@@ -976,10 +977,8 @@ func (c *randFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 			return nil, err
 		}
 		if isNull {
-			bf.args = bf.args[1:]
 			seed = time.Now().UnixNano()
 		}
-		bt.args = bt.args[:1]
 		sig = &builtinRandSig{bt, rand.New(rand.NewSource(seed))}
 	} else {
 		sig = &builtinRandWithSeedSig{bt}
@@ -1001,9 +1000,6 @@ func (b *builtinRandSig) Clone() builtinFunc {
 // evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
-	if b.randGen == nil {
-		b.randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
-	}
 	return b.randGen.Float64(), false, nil
 }
 
