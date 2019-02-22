@@ -113,8 +113,6 @@ github.com/pingcap/kvproto v0.0.0-20190215154024-7f2fc73ef562 h1:32oF1/8lVnBR2JV
 github.com/pingcap/kvproto v0.0.0-20190215154024-7f2fc73ef562/go.mod h1:QMdbTAXCHzzygQzqcG9uVUgU2fKeSN1GmfMiykdSzzY=
 github.com/pingcap/log v0.0.0-20190214045112-b37da76f67a7 h1:kOHAMalwF69bJrtWrOdVaCSvZjLucrJhP4NQKIu6uM4=
 github.com/pingcap/log v0.0.0-20190214045112-b37da76f67a7/go.mod h1:xsfkWVaFVV5B8e1K9seWfyJWFrIhbtUTAD8NV1Pq3+w=
-github.com/pingcap/parser v0.0.0-20190219084020-362712b5ab93 h1:jRnleVTpcisLEHNRYHBu4ilwEPyUkslJJfhYNEQlz2g=
-github.com/pingcap/parser v0.0.0-20190219084020-362712b5ab93/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20190222082040-fe59ebfc9e10 h1:d1B868IJnYxcLn9yCv0GMJ+JnxDX/7j6QonVOA7voRA=
 github.com/pingcap/parser v0.0.0-20190222082040-fe59ebfc9e10/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/pd v2.1.0-rc.4+incompatible h1:/buwGk04aHO5odk/+O8ZOXGs4qkUjYTJ2UpCJXna8NE=
@@ -159,14 +157,6 @@ github.com/struCoder/pidusage v0.1.2 h1:fFPTThlcWFQyizv3xKs5Lyq1lpG5lZ36arEGNhWz
 github.com/struCoder/pidusage v0.1.2/go.mod h1:pWBlW3YuSwRl6h7R5KbvA4N8oOqe9LjaKW5CwT1SPjI=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
-github.com/tiancaiamao/parser v0.0.0-20181108133527-afafb63df286 h1:796qdQ14HjES75vnLKm1V6qQWQilLtJ5xgQTzeFpiUI=
-github.com/tiancaiamao/parser v0.0.0-20181108133527-afafb63df286/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
-github.com/tiancaiamao/parser v0.0.0-20190220081732-a62069f784e1 h1:PDTDm4sda1ttOHHnFD/D1O63AYKY0BHffu4lBqOijBs=
-github.com/tiancaiamao/parser v0.0.0-20190220081732-a62069f784e1/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
-github.com/tiancaiamao/parser v0.0.0-20190220092335-5283d3931c53 h1:i9XNqwHKzTSA13Q+q5xv+CgtVrj5cscGbA8AUkdlx4I=
-github.com/tiancaiamao/parser v0.0.0-20190220092335-5283d3931c53/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
-github.com/tiancaiamao/parser v0.0.0-20190220094742-cdc55803ced1 h1:aN7oiBEdbdB/y9Z8Q8kb2JyZ9NOd4kuvHs8ITh1WTUM=
-github.com/tiancaiamao/parser v0.0.0-20190220094742-cdc55803ced1/go.mod h1:vqvanuOAAZ9O2rVI51fUrA9P3nV7HoILjLby0/OKOqA=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6 h1:lYIiVDtZnyTWlNwiAxLj0bbpTcx1BWCFhXjfsvmPdNc=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
 github.com/twinj/uuid v1.0.0 h1:fzz7COZnDrXGTAOHGuUGYd6sG+JMq+AoE7+Jlu0przk=
