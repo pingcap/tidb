@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -146,7 +147,15 @@ type dirtyTableOperation struct {
 	row    []types.Datum
 }
 
-var hasMockAutoIDRetry = false
+var hasMockAutoIDRetry = int64(0)
+
+func enableMockAutoIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIDRetry, 1)
+}
+
+func mockAutoIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIDRetry) == 1
+}
 
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
@@ -175,8 +184,8 @@ func (st *TxnState) Commit(ctx context.Context) error {
 
 	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
 	// gofail: var mockCommitRetryForAutoID bool
-	// if mockCommitRetryForAutoID && !hasMockAutoIDRetry {
-	//  hasMockAutoIDRetry = true
+	// if mockCommitRetryForAutoID && !mockAutoIDRetry() {
+	//	enableMockAutoIDRetry()
 	//	return kv.ErrRetryable
 	// }
 
