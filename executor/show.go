@@ -107,6 +107,10 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowColumns()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateUser:
+		return e.fetchShowCreateUser()
+	case ast.ShowCreateView:
+		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
 		return e.fetchShowCreateDatabase()
 	case ast.ShowDatabases:
@@ -764,6 +768,27 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	return nil
 }
 
+func (e *ShowExec) fetchShowCreateView() error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !tb.Meta().IsView() {
+		return ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "VIEW")
+	}
+
+	var buf bytes.Buffer
+	e.fetchShowCreateTable4View(tb.Meta(), &buf)
+	e.appendRow([]interface{}{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
+	return nil
+}
+
 func (e *ShowExec) fetchShowCreateTable4View(tb *model.TableInfo, buf *bytes.Buffer) {
 	sqlMode := e.ctx.GetSessionVars().SQLMode
 
@@ -857,6 +882,29 @@ func (e *ShowExec) fetchShowCollation() error {
 			1,
 		})
 	}
+	return nil
+}
+
+// fetchShowCreateUser composes show create create user result.
+func (e *ShowExec) fetchShowCreateUser() error {
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`,
+		mysql.SystemDB, mysql.UserTable, e.User.Username, e.User.Hostname)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
+			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
+	}
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH 'mysql_native_password' AS '%s' %s",
+		e.User.Username, e.User.Hostname, checker.GetEncodedPassword(e.User.Username, e.User.Hostname),
+		"REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
+	e.appendRow([]interface{}{showStr})
 	return nil
 }
 

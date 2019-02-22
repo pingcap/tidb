@@ -1059,7 +1059,11 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if pi != nil {
 		switch pi.Type {
 		case model.PartitionTypeRange:
-			err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
+			if len(pi.Columns) == 0 {
+				err = checkPartitionByRange(ctx, tbInfo, pi, s, cols, newConstraints)
+			} else {
+				err = checkPartitionByRangeColumn(ctx, tbInfo, pi, s)
+			}
 		case model.PartitionTypeHash:
 			err = checkPartitionByHash(pi)
 		}
@@ -1179,7 +1183,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 	var oldViewTblID int64
 	if oldView != nil {
 		if !oldView.Meta().IsView() {
-			return ErrTableIsNotView.GenWithStackByArgs(ident.Schema, ident.Name)
+			return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "VIEW")
 		}
 		oldViewTblID = oldView.Meta().ID
 	}
@@ -1271,11 +1275,6 @@ func checkPartitionByHash(pi *model.PartitionInfo) error {
 }
 
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt, cols []*table.Column, newConstraints []*ast.Constraint) error {
-	// Range columns partition only implements the parser, so it will not be checked.
-	if s.Partition.ColumnNames != nil {
-		return nil
-	}
-
 	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
 		return errors.Trace(err)
 	}
@@ -1296,6 +1295,20 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func checkPartitionByRangeColumn(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo, s *ast.CreateTableStmt) error {
+	if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
+		return err
+	}
+
+	// TODO: Check CreatePartitionValue.
+	// Range columns partition key supports multiple data types with integer、datetime、string.
+	// if err := checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+	// 	return errors.Trace(err)
+	// }
+
+	return checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions)))
 }
 
 func checkCharsetAndCollation(cs string, co string) error {
@@ -1424,10 +1437,16 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 	return
 }
 
-func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
-	// Only handle valid specs.
+// resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
+// returns valied specs, and the occured error.
+func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
+	algorithm := ast.AlterAlgorithmDefault
 	for _, spec := range specs {
+		if spec.Tp == ast.AlterTableAlgorithm {
+			// Find the last AlterTableAlgorithm.
+			algorithm = spec.Algorithm
+		}
 		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
@@ -1437,12 +1456,38 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	if len(validSpecs) != 1 {
 		// TODO: Hanlde len(validSpecs) == 0.
 		// Now we only allow one schema changing at the same time.
-		return errRunMultiSchemaChanges
+		return nil, errRunMultiSchemaChanges
+	}
+
+	// Verify whether the algorithm is supported.
+	for _, spec := range validSpecs {
+		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
+		if err != nil {
+			if algorithm != ast.AlterAlgorithmCopy {
+				return nil, errors.Trace(err)
+			}
+			// For the compatibility, we return warning instead of error when the algorithm is COPY,
+			// because the COPY ALGORITHM is not supported in TiDB.
+			ctx.GetSessionVars().StmtCtx.AppendError(err)
+			err = nil
+		}
+
+		spec.Algorithm = resolvedAlgorithm
+	}
+
+	// Only handle valid specs.
+	return validSpecs, nil
+}
+
+func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
+	validSpecs, err := resolveAlterTableSpec(ctx, specs)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	is := d.infoHandle.Get()
 	if is.TableIsView(ident.Schema, ident.Name) {
-		return ErrTableIsNotBaseTable.GenWithStackByArgs(ident.Schema, ident.Name)
+		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
 	}
 
 	for _, spec := range validSpecs {
@@ -2406,7 +2451,7 @@ func (d *ddl) DropView(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	}
 
 	if !tb.Meta().IsView() {
-		return ErrTableIsNotView.GenWithStackByArgs(ti.Schema, ti.Name)
+		return ErrWrongObject.GenWithStackByArgs(ti.Schema, ti.Name, "VIEW")
 	}
 
 	job := &model.Job{
@@ -2523,14 +2568,20 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		return errors.Trace(err)
 	}
 
+	tblInfo := t.Meta()
 	// Check before put the job is put to the queue.
 	// This check is redudant, but useful. If DDL check fail before the job is put
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
-	_, err = buildIndexColumns(t.Meta().Columns, idxColNames)
+	_, err = buildIndexColumns(tblInfo.Columns, idxColNames)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if unique && tblInfo.GetPartitionInfo() != nil {
+		if err := checkPartitionKeysConstraint(ctx, tblInfo.GetPartitionInfo().Expr, idxColNames, tblInfo); err != nil {
+			return err
+		}
 	}
 
 	if indexOption != nil {
@@ -2716,14 +2767,18 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 	for _, def := range spec.PartDefinitions {
 		for _, expr := range def.LessThan {
 			tp := expr.GetType().Tp
-			if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
-				expr.Format(buf)
-				if strings.EqualFold(buf.String(), "MAXVALUE") {
-					continue
+			if len(part.Columns) == 0 {
+				// Partition by range.
+				if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
+					expr.Format(buf)
+					if strings.EqualFold(buf.String(), "MAXVALUE") {
+						continue
+					}
+					buf.Reset()
+					return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(buf.String(), "partition function")
 				}
-				buf.Reset()
-				return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(buf.String(), "partition function")
 			}
+			// Partition by range columns if len(part.Columns) != 0.
 		}
 		pid, err1 := d.genGlobalID()
 		if err1 != nil {

@@ -217,6 +217,9 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, false)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	case model.StateWriteOnly:
 		// write only -> public
 		// do restore table.
@@ -680,7 +683,7 @@ func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.Tabl
 
 // checkAddPartitionValue values less than value must be strictly increasing for each partition.
 func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
-	if meta.Partition.Type == model.PartitionTypeRange {
+	if meta.Partition.Type == model.PartitionTypeRange && len(meta.Partition.Columns) == 0 {
 		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
 		rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
 		if strings.EqualFold(rangeValue, "MAXVALUE") {
