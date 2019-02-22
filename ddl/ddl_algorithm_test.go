@@ -100,7 +100,7 @@ Loop:
 
 	// Test unsupported.
 	for _, alm := range unsupported {
-		algorithm, err = ddl.ResolveAlterAlgorithm(&tc.alterSpec, alm)
+		_, err = ddl.ResolveAlterAlgorithm(&tc.alterSpec, alm)
 		c.Assert(err, NotNil, Commentf("Tp:%v, alm:%s", tc.alterSpec.Tp, alm))
 		c.Assert(ddl.ErrAlterOperationNotSupported.Equal(err), IsTrue)
 	}
