@@ -1747,6 +1747,10 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		} else {
 			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 		}
+	case ast.ShowCreateUser:
+		if s.User != nil {
+			names = []string{fmt.Sprintf("CREATE USER for %s", s.User)}
+		}
 	case ast.ShowCreateView:
 		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateDatabase:

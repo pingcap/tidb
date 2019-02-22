@@ -94,10 +94,9 @@ var (
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
 	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
-
-	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
-	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
-	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
+	errBlobKeyWithoutLength      = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
+	errIncorrectPrefixKey        = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
+	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
 	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
@@ -128,6 +127,9 @@ var (
 	ErrUnsupportedAddPartition = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
 	ErrUnsupportedCoalescePartition = terror.ClassDDL.New(codeUnsupportedCoalescePartition, "unsupported coalesce partitions")
+	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
+	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(codeUnsupportedPartitionByRangeColumns,
+		"unsupported partition by range columns")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
@@ -626,16 +628,17 @@ const (
 	codeInvalidIndexState      = 103
 	codeInvalidForeignKeyState = 104
 
-	codeCantDropColWithIndex         = 201
-	codeUnsupportedAddColumn         = 202
-	codeUnsupportedModifyColumn      = 203
-	codeUnsupportedDropPKHandle      = 204
-	codeUnsupportedCharset           = 205
-	codeUnsupportedModifyPrimaryKey  = 206
-	codeUnsupportedShardRowIDBits    = 207
-	codeUnsupportedAddPartition      = 208
-	codeUnsupportedCoalescePartition = 209
-	codeUnsupportedModifyCharset     = 210
+	codeCantDropColWithIndex               = 201
+	codeUnsupportedAddColumn               = 202
+	codeUnsupportedModifyColumn            = 203
+	codeUnsupportedDropPKHandle            = 204
+	codeUnsupportedCharset                 = 205
+	codeUnsupportedModifyPrimaryKey        = 206
+	codeUnsupportedShardRowIDBits          = 207
+	codeUnsupportedAddPartition            = 208
+	codeUnsupportedCoalescePartition       = 209
+	codeUnsupportedModifyCharset           = 210
+	codeUnsupportedPartitionByRangeColumns = 211
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025
