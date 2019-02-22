@@ -57,6 +57,7 @@ type MergeSortExec struct {
 	concurrency   int
 	allColumnExpr bool
 }
+
 // SortWorker represents worker routine to process sort
 type SortWorker struct {
 	MergeSortExec
