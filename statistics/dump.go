@@ -212,11 +212,12 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize
 			col := &Column{
-				Histogram: *hist,
-				CMSketch:  CMSketchFromProto(jsonCol.CMSketch),
-				Info:      colInfo,
-				Count:     count,
-				isHandle:  tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+				PhysicalID: physicalID,
+				Histogram:  *hist,
+				CMSketch:   CMSketchFromProto(jsonCol.CMSketch),
+				Info:       colInfo,
+				Count:      count,
+				isHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 			}
 			tbl.Columns[col.ID] = col
 		}
