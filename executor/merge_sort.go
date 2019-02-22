@@ -27,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
-	log "github.com/sirupsen/logrus"
-
 )
 
 // MergeSortExec represents sorting executor.
@@ -36,7 +34,6 @@ type MergeSortExec struct {
 	baseExecutor
 
 	ByItems []*plannercore.ByItems
-	Idx     int
 	fetched bool
 	schema  *expression.Schema
 
@@ -56,15 +53,9 @@ type MergeSortExec struct {
 	workerRowLen []int
 	workerRowIdx []int
 
-	memTracker *memory.Tracker
-
-	concurrency int
-
+	memTracker    *memory.Tracker
+	concurrency   int
 	allColumnExpr bool
-
-	workerWg *sync.WaitGroup
-
-	finishedCh chan struct{}
 }
 
 type SortWorker struct {
@@ -75,7 +66,7 @@ type SortWorker struct {
 	rowPtrs []chunk.RowPtr
 }
 
-func (sw *SortWorker) run(workerId int) {
+func (sw *SortWorker) run() {
 	//sw.memTracker.Consume(int64(8 * sw.rowChunks.Len()))
 	for chkIdx := sw.chkIdx; chkIdx < sw.rowChunks.NumChunks() && len(sw.rowPtrs) < sw.len; chkIdx++ {
 		rowChk := sw.rowChunks.GetChunk(chkIdx)
@@ -83,14 +74,10 @@ func (sw *SortWorker) run(workerId int) {
 		if chkIdx == sw.chkIdx {
 			rowIdx = sw.rowIdx
 		}
-		//log.Infof("workerId %d chkIdx %d rowIdx %d rowChkNum %d rowPtrs %d", workerId,chkIdx, rowIdx, rowChk.NumRows(), len(sw.rowPtrs))
 		for ; rowIdx < rowChk.NumRows() && len(sw.rowPtrs) < sw.len; rowIdx++ {
 			sw.rowPtrs = append(sw.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
-		//log.Infof("workerId %d chkIdx %d rowPtrs %d", workerId,chkIdx, len(sw.rowPtrs))
 	}
-	//log.Infof("workerId %d chkIdx %d rowIdx %d workerlen %d, rowPtrsLen %d", workerId, sw.chkIdx, sw.rowIdx, sw.len, len(sw.rowPtrs))
-
 	if sw.allColumnExpr {
 		sort.Slice(sw.rowPtrs, sw.keyColumnsLess)
 	} else {
@@ -109,8 +96,8 @@ func (e *MergeSortExec) Close() error {
 // Open implements the Executor Open interface.
 func (e *MergeSortExec) Open(ctx context.Context) error {
 	e.fetched = false
-	e.Idx = 0
-	e.concurrency = 8
+	e.concurrency = e.ctx.GetSessionVars().MergeSortConcurrency
+
 	e.workerRowIdx = make([]int, e.concurrency)
 	e.workerRowLen = make([]int, e.concurrency)
 	e.workerRowPtrs = make([]*[]chunk.RowPtr, e.concurrency)
@@ -122,19 +109,49 @@ func (e *MergeSortExec) Open(ctx context.Context) error {
 	return errors.Trace(e.children[0].Open(ctx))
 }
 
-func (e *MergeSortExec) newSortWorker(chk, row, len int) *SortWorker {
-	return &SortWorker{
+func (e *MergeSortExec) newSortWorker(workerId, chk, row, len int) *SortWorker {
+	sw := &SortWorker{
 		MergeSortExec: *e,
 		chkIdx:        chk,
 		rowIdx:        row,
 		len:           len,
 		rowPtrs:       make([]chunk.RowPtr, 0, len),
 	}
+	e.workerRowLen[workerId] = len
+	e.workerRowIdx[workerId] = 0
+	e.workerRowPtrs[workerId] = &sw.rowPtrs
+	return sw
 }
 
 func (e *MergeSortExec) wait4WorkerSort(wg *sync.WaitGroup, finishedCh chan struct{}) {
 	wg.Wait()
 	close(finishedCh)
+}
+
+//sortWorkerIndex calc the chunk index and row index with every worker start to sort, first column of swIdx is chunk idx, second columm of swIdx is row idx
+func (e *MergeSortExec) sortWorkerIndex(workerRowsCount int) [][]int {
+	chkIdx := 0
+	rowIdx := 0
+	swIdx := make([][]int, e.concurrency)
+	swIdx[0] = []int{0, 0}
+	for i := 1; i < e.concurrency; i++ {
+		count := 0
+		swIdx[i] = []int{0, 0}
+		for j := chkIdx; j < e.rowChunks.NumChunks(); j++ {
+			curChk := e.rowChunks.GetChunk(j)
+			count += curChk.NumRows()
+			if j == chkIdx {
+				count -= rowIdx
+			}
+			if count > workerRowsCount {
+				rowIdx = curChk.NumRows() - (count - workerRowsCount)
+				chkIdx = j
+				swIdx[i] = []int{chkIdx, rowIdx}
+				break
+			}
+		}
+	}
+	return swIdx
 }
 
 // Next implements the Executor Next interface.
@@ -163,64 +180,46 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 				return err
 			}
 		}
-		e.finishedCh = make(chan struct{})
+		finishedCh := make(chan struct{})
+
+		workerRowsCount := e.rowChunks.Len() / e.concurrency
+		workerIdx := e.sortWorkerIndex(workerRowsCount)
+
 		wg := &sync.WaitGroup{}
 		wg.Add(int(e.concurrency))
-		go e.wait4WorkerSort(wg, e.finishedCh)
-		avgLen := 0
-		avgLen = e.rowChunks.Len() / e.concurrency
-		log.Infof("allcolumnExpr %v row count %d  row chunk %d avgLen %d", e.allColumnExpr, e.rowChunks.Len(),e.rowChunks.NumChunks(),  avgLen)
+		go e.wait4WorkerSort(wg, finishedCh)
 
 		for i := 0; i < e.concurrency; i++ {
-			chkIdx := (avgLen * i) / e.maxChunkSize
-			rowIdx := (avgLen * i) % e.maxChunkSize
-			if i == e.concurrency-1 {
-				avgLen = e.rowChunks.Len()%e.concurrency + avgLen
-			}
-			//log.Infof("worker %d chunkIdx %d rowIdx %d rowLen %d maxChunkSize %d", i, chkIdx, rowIdx, avgLen, e.maxChunkSize)
-
-			sortWorker := e.newSortWorker(chkIdx, rowIdx, avgLen)
-			e.workerRowLen[i] = avgLen
-			e.workerRowIdx[i] = 0
-			e.workerRowPtrs[i] = &sortWorker.rowPtrs
 			workerId := i
+			// last worker must complete the rest of rows
+			if i == e.concurrency-1 {
+				workerRowsCount += e.rowChunks.Len() % e.concurrency
+			}
+			sw := e.newSortWorker(workerId, workerIdx[i][0], workerIdx[i][1], workerRowsCount)
 			go util.WithRecovery(func() {
 				defer wg.Done()
-				sortWorker.run(workerId)
+				sw.run()
 			}, nil)
 		}
 
+		<-finishedCh
 		e.fetched = true
-		<-e.finishedCh
-		for i := 0; i < e.concurrency; i++ {
-			log.Infof("worker %d row count %d row len %d",i, len(*e.workerRowPtrs[i]), e.workerRowLen[i])
-		//	for j := 0; j < len(*e.workerRowPtrs[i]); j++ {
-		//		//log.Infof("worker %d row %d ptr %v",i, j, (*e.workerRowPtrs[i])[j])
-		//	}
-		}
 	}
+
 	for req.NumRows() < e.maxChunkSize {
 		j := 0
-		for; j < e.concurrency && e.workerRowIdx[j] >= e.workerRowLen[j];{
+		for j < e.concurrency && e.workerRowIdx[j] >= e.workerRowLen[j] {
 			j++
 		}
 		if j >= e.concurrency {
 			break
 		}
-		//log.Infof("start worker %d ptr len %d idx %d len %d",j , len(*e.workerRowPtrs[j]), e.workerRowIdx[j], e.workerRowLen[j] )
-
 		minRowPtr := (*e.workerRowPtrs[j])[e.workerRowIdx[j]]
-		//log.Infof("%v", e.rowChunks.GetRow(minRowPtr))
-		for i := j + 1; i < e.concurrency ; i++ {
+		for i := j + 1; i < e.concurrency; i++ {
 			if e.workerRowIdx[i] < e.workerRowLen[i] {
 				flag := false
 				if e.allColumnExpr {
 					keyRowI := e.rowChunks.GetRow(minRowPtr)
-					//log.Infof("compare worker %d ptr len %d idx %d len %d",i , len(*e.workerRowPtrs[i]), e.workerRowIdx[i], e.workerRowLen[i] )
-					//if e.workerRowIdx[i] == 8850 {
-					//	log.Infof("compare worker %d reach 8874", i)
-					//	break
-					//}
 					keyRowJ := e.rowChunks.GetRow((*e.workerRowPtrs[i])[e.workerRowIdx[i]])
 					flag = e.lessRow(keyRowI, keyRowJ)
 				} else {
@@ -234,7 +233,6 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 				}
 			}
 		}
-		//log.Infof("worker %d idx %d append rowPtr %v", j, e.workerRowIdx[j], (*e.workerRowPtrs[j])[e.workerRowIdx[j]])
 		e.workerRowIdx[j]++
 		req.AppendRow(e.rowChunks.GetRow(minRowPtr))
 	}
@@ -260,17 +258,6 @@ func (e *MergeSortExec) fetchRowChunks(ctx context.Context) error {
 	}
 	return nil
 }
-
-//func (e *MergeSortExec) initPointers() {
-//	e.rowPtrs = make([]chunk.RowPtr, 0, e.rowChunks.Len())
-//	e.memTracker.Consume(int64(8 * e.rowChunks.Len()))
-//	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
-//		rowChk := e.rowChunks.GetChunk(chkIdx)
-//		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
-//			e.rowPtrs = append(e.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
-//		}
-//	}
-//}
 
 func (e *MergeSortExec) initCompareFuncs() {
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))

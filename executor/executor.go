@@ -71,6 +71,7 @@ var (
 	_ Executor = &HashJoinExec{}
 	_ Executor = &IndexLookUpExecutor{}
 	_ Executor = &MergeJoinExec{}
+	_ Executor = &MergeSortExec{}
 )
 
 type baseExecutor struct {
