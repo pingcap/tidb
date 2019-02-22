@@ -743,9 +743,10 @@ func (e *ErrorRate) merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
-	Count    int64
-	Info     *model.ColumnInfo
-	isHandle bool
+	PhysicalID int64
+	Count      int64
+	Info       *model.ColumnInfo
+	isHandle   bool
 	ErrorRate
 }
 
@@ -1001,7 +1002,12 @@ func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, sta
 		if !ok {
 			continue
 		}
-		newCol := &Column{Info: oldCol.Info, isHandle: oldCol.isHandle, CMSketch: oldCol.CMSketch}
+		newCol := &Column{
+			PhysicalID: oldCol.PhysicalID,
+			Info:       oldCol.Info,
+			isHandle:   oldCol.isHandle,
+			CMSketch:   oldCol.CMSketch,
+		}
 		newCol.Histogram = *NewHistogram(oldCol.ID, int64(float64(oldCol.NDV)*node.Selectivity), 0, 0, oldCol.Tp, chunk.InitialCapacity, 0)
 		var err error
 		splitRanges := oldCol.Histogram.SplitRange(sc, node.Ranges, false)
