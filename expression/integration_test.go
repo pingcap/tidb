@@ -903,12 +903,12 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
 	// Charset 866 does not have a default collation configured currently, so this will return error.
 	err = tk.ExecToErr(`select convert("123" using "866");`)
-	c.Assert(err.Error(), Equals, "Unknown charset 866")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: '866'")
 	// Test case in issue #4436.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a char(20));")
 	err = tk.ExecToErr("select convert(a using a) from t;")
-	c.Assert(err.Error(), Equals, "[expression:1115]Unknown character set: 'a'")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'a'")
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
@@ -2310,11 +2310,8 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("ad\x01\x00Y"))
 	result = tk.MustQuery("select char(97, null, 100, 256, 89 using ascii)")
 	result.Check(testkit.Rows("ad\x01\x00Y"))
-	charRecordSet, err := tk.Exec("select char(97, null, 100, 256, 89 using tidb)")
-	c.Assert(err, IsNil)
-	c.Assert(charRecordSet, NotNil)
-	_, err = session.GetRows4Test(ctx, tk.Se, charRecordSet)
-	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
+	err = tk.ExecToErr("select char(97, null, 100, 256, 89 using tidb)")
+	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'tidb'")
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")

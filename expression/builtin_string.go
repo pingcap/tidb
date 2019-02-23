@@ -923,26 +923,23 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
 
-	// Validate charset before evaluating conversion, to make charset and flag of `bf.tp` correct
-	// even if it's not evaluated. (#4436)
-	transcodingName, isNull, err := args[1].EvalString(ctx, chunk.Row{})
-	if isNull || err != nil {
-		return nil, err
+	charsetArg, ok := args[1].(*Constant)
+	if !ok {
+		// `args[1]` is limited by parser to be a constant string,
+		// should never go into here.
+		return nil, errIncorrectArgs.GenWithStackByArgs("charset")
 	}
-	encoding, _ := charset.Lookup(transcodingName)
-	if encoding == nil {
-		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
-	}
-
+	transcodingName := charsetArg.Value.GetString()
 	bf.tp.Charset = strings.ToLower(transcodingName)
 	// Quoted about the behavior of syntax CONVERT(expr, type) to CHAR():
 	// In all cases, the string has the default collation for the character set.
 	// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_convert
 	// Here in syntax CONVERT(expr USING transcoding_name), behavior is kept the same,
 	// picking the default collation of target charset.
+	var err error
 	bf.tp.Collate, err = charset.GetDefaultCollation(bf.tp.Charset)
 	if err != nil {
-		return nil, err
+		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
 	}
 	// Result will be a binary string if converts charset to BINARY.
 	// See https://dev.mysql.com/doc/refman/5.7/en/charset-binary-set.html

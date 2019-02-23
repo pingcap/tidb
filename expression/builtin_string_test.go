@@ -708,17 +708,17 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 
 	// Test case for getFunction() error
 	errTbl := []struct {
-		str    interface{}
-		cs     string
-		result string
+		str interface{}
+		cs  string
+		err string
 	}{
-		{"haha", "wrongcharset", "haha"},
-		{"haha", "cp866", "haha"},
+		{"haha", "wrongcharset", "[expression:1115]Unknown character set: 'wrongcharset'"},
+		{"haha", "cp866", "[expression:1115]Unknown character set: 'cp866'"},
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.Convert]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(v.str, v.cs)))
-		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Equals, v.err)
 		c.Assert(f, IsNil)
 	}
 
@@ -730,7 +730,7 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 	wrongFunction := f.(*builtinConvertSig)
 	wrongFunction.tp.Charset = "wrongcharset"
 	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1115]Unknown character set: 'wrongcharset'")
 }
 
 func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
@@ -1219,6 +1219,13 @@ func (s *testEvaluatorSuite) TestChar(c *C) {
 	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum("AB"))
+
+	// Test unsupported charset.
+	fc = funcs[ast.CharFunc]
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("65", "tidb")))
+	c.Assert(err, IsNil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err.Error(), Equals, "unknown encoding: tidb")
 }
 
 func (s *testEvaluatorSuite) TestCharLength(c *C) {
