@@ -73,21 +73,17 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	tk.MustExec("create table t1(a int, b int, c int, key idx(a, b))")
 	tk.MustExec("create table t2(a int, b int)")
-	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
-	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5)")
+	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5)")
 	tk.MustExec("analyze table t1, t2")
 	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
-	c.Assert(len(rs.Rows()), Equals, 11)
+	c.Assert(len(rs.Rows()), Equals, 10)
 	for _, row := range rs.Rows() {
 		c.Assert(len(row), Equals, 5)
-		taskType := row[2].(string)
-		id := row[0].(string)
-		if taskType == "root" || strings.Contains(id, "Scan") {
-			execInfo := row[4].(string)
-			c.Assert(strings.Contains(execInfo, "time"), Equals, true)
-			c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
-			c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
-		}
+		execInfo := row[4].(string)
+		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
+		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
+		c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
 	}
 }
 
@@ -413,7 +409,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		},
 		{
 			sql:  "select * from t where c1 in (select c1 from t1)",
-			best: "RightHashJoin{TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))])->HashAgg)->HashAgg->TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))}(test.t1.c1,test.t.c1)->Projection",
+			best: "LeftHashJoin{TableReader(Table(t)->Sel([not(isnull(test.t.c1))]))->TableReader(Table(t1)->Sel([not(isnull(test.t1.c1))])->HashAgg)->HashAgg}(test.t.c1,test.t1.c1)->Projection",
 		},
 		{
 			sql:  "select * from t, t1 where t.c1 = t1.c1",
@@ -756,9 +752,15 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
+
 	dom, err := session.BootstrapSession(store)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	dom.SetStatsUpdating(true)
 	return store, dom, errors.Trace(err)
 }

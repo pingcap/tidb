@@ -170,7 +170,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			continue
 		}
 
-		if coll.ColumnIsInvalid(sc, c.UniqueID) {
+		if colHist := coll.Columns[c.UniqueID]; colHist == nil || colHist.IsInvalid(sc, coll.Pseudo) {
 			ret *= 1.0 / pseudoEqualRate
 			continue
 		}

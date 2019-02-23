@@ -120,7 +120,13 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables stat
 				continue
 			}
 			hist := NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
-			table.Columns[hist.ID] = &Column{Histogram: *hist, Info: colInfo, Count: nullCount, isHandle: tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag)}
+			table.Columns[hist.ID] = &Column{
+				Histogram:  *hist,
+				PhysicalID: table.PhysicalID,
+				Info:       colInfo,
+				Count:      nullCount,
+				isHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
+			}
 		}
 	}
 }

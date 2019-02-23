@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -34,14 +35,14 @@ type exprSet struct {
 	constfalse bool
 }
 
-func (s *exprSet) Append(e Expression) bool {
-	if _, ok := s.exists[string(e.HashCode(nil))]; ok {
+func (s *exprSet) Append(sc *stmtctx.StatementContext, e Expression) bool {
+	if _, ok := s.exists[string(e.HashCode(sc))]; ok {
 		return false
 	}
 
 	s.data = append(s.data, e)
 	s.tombstone = append(s.tombstone, false)
-	s.exists[string(e.HashCode(nil))] = struct{}{}
+	s.exists[string(e.HashCode(sc))] = struct{}{}
 	return true
 }
 
@@ -68,13 +69,14 @@ func (s *exprSet) SetConstFalse() {
 	s.constfalse = true
 }
 
-func newExprSet(conditions []Expression) *exprSet {
+func newExprSet(ctx sessionctx.Context, conditions []Expression) *exprSet {
 	var exprs exprSet
 	exprs.data = make([]Expression, 0, len(conditions))
 	exprs.tombstone = make([]bool, 0, len(conditions))
 	exprs.exists = make(map[string]struct{}, len(conditions))
+	sc := ctx.GetSessionVars().StmtCtx
 	for _, v := range conditions {
-		exprs.Append(v)
+		exprs.Append(sc, v)
 	}
 	return &exprs
 }
@@ -94,7 +96,7 @@ func (s pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expres
 
 // Solve propagate constraint according to the rules in the constraintSolver.
 func (s constraintSolver) Solve(ctx sessionctx.Context, conditions []Expression) []Expression {
-	exprs := newExprSet(conditions)
+	exprs := newExprSet(ctx, conditions)
 	s.fixPoint(ctx, exprs)
 	return exprs.Slice()
 }
@@ -165,7 +167,7 @@ func ruleColumnEQConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 		expr := ColumnSubstitute(exprs.data[j], NewSchema(col), []Expression{cons})
 		stmtctx := ctx.GetSessionVars().StmtCtx
 		if !bytes.Equal(expr.HashCode(stmtctx), exprs.data[j].HashCode(stmtctx)) {
-			exprs.Append(expr)
+			exprs.Append(stmtctx, expr)
 			exprs.tombstone[j] = true
 		}
 	}
