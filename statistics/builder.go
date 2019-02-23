@@ -165,7 +165,8 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	//    (sampleNum-1)*sampleNum / 2
 	// and sum(X^2) = sum(Y^2) =
 	//    (sampleNum-1)*sampleNum*(2*sampleNum-1) / 6
-	// The formula for computing correlation is borrowed from PostgreSQL.
+	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
+	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
 	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
 	itemsCount := float64(sampleNum)
 	corrXSum := (itemsCount - 1) * itemsCount / 2.0
