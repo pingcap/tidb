@@ -18,7 +18,18 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 )
+
+// extractSampleItemsDatums is for test purpose only to extract Datum slice
+// from SampleItem slice.
+func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
+	datums := make([]types.Datum, len(items))
+	for i, item := range items {
+		datums[i] = item.Value
+	}
+	return datums
+}
 
 func (s *testStatisticsSuite) TestSketch(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}

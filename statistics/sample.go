@@ -46,16 +46,6 @@ func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	return sorter.err
 }
 
-// extractSampleItemsDatums is for test purpose only to extract Datum slice
-// from SampleItem slice.
-func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
-	datums := make([]types.Datum, len(items))
-	for i, item := range items {
-		datums[i] = item.Value
-	}
-	return datums
-}
-
 type sampleItemSorter struct {
 	items []*SampleItem
 	sc    *stmtctx.StatementContext
