@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -267,6 +269,24 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	return cmp, nil
 }
 
+// rowWithColsInTxn gets the row from the transaction buffer.
+func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
+	key := t.RecordKey(h)
+	txn, err := us.ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	value, err := txn.GetMemBuffer().Get(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	v, _, err := tables.DecodeRawRowData(us.ctx, t.Meta(), h, cols, value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return v, nil
+}
+
 func (us *UnionScanExec) buildAndSortAddedRows() error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
@@ -279,7 +299,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())
-		data, err := t.RowWithCols(us.ctx, h, cols)
+		data, err := us.rowWithColsInTxn(t, h, cols)
 		if err != nil {
 			return err
 		}
