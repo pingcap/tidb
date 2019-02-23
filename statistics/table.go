@@ -350,7 +350,7 @@ func (c *Column) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	if c.NDV > 0 && c.Len() == 0 {
+	if c.NDV > 0 && c.Len() == 0 && sc != nil {
 		sc.SetHistogramsNotLoad()
 		histogramNeededColumns.insert(tableColumnID{tableID: c.PhysicalID, columnID: c.Info.ID})
 	}

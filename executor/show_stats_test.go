@@ -40,13 +40,26 @@ func (s *testSuite1) TestShowStatsHistograms(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("analyze table t")
-	result := tk.MustQuery("show stats_histograms").Sort()
+	result := tk.MustQuery("show stats_histograms")
+	c.Assert(len(result.Rows()), Equals, 0)
+	tk.MustExec("insert into t values(1,1)")
+	tk.MustExec("analyze table t")
+	result = tk.MustQuery("show stats_histograms").Sort()
 	c.Assert(len(result.Rows()), Equals, 2)
 	c.Assert(result.Rows()[0][3], Equals, "a")
 	c.Assert(result.Rows()[1][3], Equals, "b")
 	result = tk.MustQuery("show stats_histograms where column_name = 'a'")
 	c.Assert(len(result.Rows()), Equals, 1)
 	c.Assert(result.Rows()[0][3], Equals, "a")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
+	tk.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null)")
+	res := tk.MustQuery("show stats_histograms where table_name = 't'")
+	c.Assert(len(res.Rows()), Equals, 0)
+	tk.MustExec("analyze table t index idx_b")
+	res = tk.MustQuery("show stats_histograms where table_name = 't' and column_name = 'idx_b'")
+	c.Assert(len(res.Rows()), Equals, 1)
 }
 
 func (s *testSuite1) TestShowStatsBuckets(c *C) {
