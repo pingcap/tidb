@@ -195,6 +195,14 @@ func rollingbackRenameIndex(job *model.Job) (ver int64, err error) {
 	return cancelOnlyNotHandledJob(job)
 }
 
+func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return cancelOnlyNotHandledJob(job)
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -209,6 +217,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackDropTablePartition(t, job)
 	case model.ActionRenameIndex:
 		ver, err = rollingbackRenameIndex(job)
+	case model.ActionTruncateTable:
+		ver, err = rollingbackTruncateTable(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
