@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
@@ -41,8 +42,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
+	"go.uber.org/zap"
 )
 
 // tableCommon is shared by both Table and partition.
@@ -109,7 +110,9 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		// Print some information when the column's offset isn't equal to i.
 		if colInfo.Offset != i {
-			log.Errorf("[tables] table %#v schema is wrong, no.%d col %#v, cols len %v", tblInfo, i, tblInfo.Columns[i], colsLen)
+			tblInfoStr := fmt.Sprintf("%#v", tblInfo)
+			colInfoStr := fmt.Sprintf("%#v", colInfo)
+			log.Error("Wrong table schema", zap.String("table", tblInfoStr), zap.String("column", colInfoStr), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("number of columns", colsLen))
 		}
 
 		col := table.ToColumn(colInfo)
@@ -783,14 +786,17 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
-			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, txn.StartTS(), h, rec)
+			indexStr := fmt.Sprintf("%v", v.Meta())
+			recStr := fmt.Sprintf("%v", rec)
+			log.Info("Remove row index fails", zap.String("index", indexStr), zap.Uint64("txn", txn.StartTS()), zap.Int64("handle", h), zap.String("record", recStr), zap.Error(err))
 			return errors.Trace(err)
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h, txn); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), txn.StartTS(), h)
+				indexStr := fmt.Sprintf("%v", v.Meta())
+				log.Debug("Row index not exist", zap.String("index", indexStr), zap.Uint64("txn", txn.StartTS()), zap.Int64("handle", h))
 				continue
 			}
 			return errors.Trace(err)
@@ -844,7 +850,7 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		return nil
 	}
 
-	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
+	log.Debug("Iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
 
 	colMap := make(map[int64]*types.FieldType)
 	for _, col := range cols {
