@@ -187,7 +187,12 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		if ok && binop.FuncName.L == ast.EQ {
 			ln, lOK := binop.GetArgs()[0].(*expression.Column)
 			rn, rOK := binop.GetArgs()[1].(*expression.Column)
-			if lOK && rOK {
+			// For quries like `select a in (select a from s where s.b = t.b) from t`,
+			// if subquery is empty caused by `s.b = t.b`, the result should always be
+			// false even if t.a is null or s.a is null. To make this join "empty aware",
+			// we should differentiate `t.a = s.a` from other column equal conditions, so
+			// we put it into OtherConditions instead of EqualConditions of join.
+			if lOK && rOK && !ln.InOperand && !rn.InOperand {
 				if left.Schema().Contains(ln) && right.Schema().Contains(rn) {
 					eqCond = append(eqCond, binop)
 					continue
@@ -472,7 +477,7 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok {
-				ret, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
+				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue
 				}

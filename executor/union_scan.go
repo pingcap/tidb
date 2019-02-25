@@ -286,7 +286,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 			}
 		}
 		mutableRow.SetDatums(newData...)
-		matched, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}

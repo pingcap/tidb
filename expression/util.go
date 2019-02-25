@@ -113,6 +113,21 @@ func extractColumnSet(expr Expression, set *intsets.Sparse) {
 	}
 }
 
+func setExprColumnInOperand(expr Expression) Expression {
+	switch v := expr.(type) {
+	case *Column:
+		col := v.Clone().(*Column)
+		col.InOperand = true
+		return col
+	case *ScalarFunction:
+		args := v.GetArgs()
+		for i, arg := range args {
+			args[i] = setExprColumnInOperand(arg)
+		}
+	}
+	return expr
+}
+
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
@@ -122,7 +137,11 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 		if id == -1 {
 			return v
 		}
-		return newExprs[id]
+		newExpr := newExprs[id]
+		if v.InOperand {
+			newExpr = setExprColumnInOperand(newExpr)
+		}
+		return newExpr
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)
