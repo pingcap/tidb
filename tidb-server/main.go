@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
@@ -104,7 +105,7 @@ var (
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
-	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(seperated by comma)")
+	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -444,10 +445,18 @@ func setGlobalVars() {
 	}
 	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
-	variable.ForcePriority = int32(mysql.Str2Priority(cfg.Performance.ForcePriority))
+
+	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
+	variable.ForcePriority = int32(priority)
+	variable.SysVars[variable.TiDBForcePriority].Value = mysql.Priority2Str[priority]
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
+	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
+
+	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
+	variable.SysVars[variable.Socket].Value = cfg.Socket
+	variable.SysVars[variable.DataDir].Value = cfg.Path
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
@@ -554,5 +563,6 @@ func cleanup() {
 	} else {
 		svr.TryGracefulDown()
 	}
+	plugin.Shutdown(context.Background())
 	closeDomainAndStorage()
 }

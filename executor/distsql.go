@@ -240,7 +240,7 @@ func (e *IndexReaderExecutor) Close() error {
 	err := e.result.Close()
 	e.result = nil
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.plans[0].ExplainID())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -290,6 +290,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		}
 	}
 
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
+	}
+
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -302,7 +307,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	e.result, err = distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -415,6 +420,11 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask) error {
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
+	}
+
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -427,7 +437,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.Select(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback)
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.idxPlans))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -456,9 +466,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 			log.Error("close Select result failed:", errors.ErrorStack(err))
 		}
 		if e.runtimeStats != nil {
-			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.idxPlans[len(e.idxPlans)-1].ExplainID())
+			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ExplainID())
 			copStats.SetRowNum(count)
-			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.tblPlans[0].ExplainID())
+			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID())
 			copStats.SetRowNum(count)
 		}
 		e.ctx.StoreQueryFeedback(e.feedback)
@@ -504,9 +514,6 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		corColInFilter:  e.corColInTblSide,
 		plans:           e.tblPlans,
 	}
-	// We assign `nil` to `runtimeStats` to forbidden `TableWorker` driven `IndexLookupExecutor`'s runtime stats collecting,
-	// because TableWorker information isn't showing in explain result now.
-	tableReaderExec.runtimeStats = nil
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
 	if err != nil {
 		log.Error(err)
@@ -532,7 +539,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.idxPlans[0].ExplainID())
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ExplainID())
 		copStats.SetRowNum(e.feedback.Actual())
 	}
 	return nil
@@ -810,4 +817,12 @@ func GetLackHandles(expectedHandles []int64, obtainedHandlesMap map[int64]struct
 	}
 
 	return diffHandles
+}
+
+func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []string {
+	planIDs := make([]string, 0, len(plans))
+	for _, p := range plans {
+		planIDs = append(planIDs, p.ExplainID())
+	}
+	return planIDs
 }

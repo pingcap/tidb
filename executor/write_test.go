@@ -303,6 +303,17 @@ func (s *testSuite2) TestInsert(c *C) {
 	tk.MustExec("drop view v")
 }
 
+func (s *testSuite) TestMultiBatch(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t0 (i int)")
+	tk.MustExec("insert into t0 values (1), (1)")
+	tk.MustExec("create table t (i int unique key)")
+	tk.MustExec("set @@tidb_dml_batch_size = 1")
+	tk.MustExec("insert ignore into t select * from t0")
+	tk.MustExec("admin check table t")
+}
+
 func (s *testSuite2) TestInsertAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2127,6 +2138,15 @@ func (s *testSuite2) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>"))
 	tk.MustExec("insert into test_null_default values ()")
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
+}
+
+func (s *testSuite2) TestNotNullDefault(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists t1,t2;")
+	defer tk.MustExec("drop table t1,t2")
+	tk.MustExec("create table t1 (a int not null default null default 1);")
+	tk.MustExec("create table t2 (a int);")
+	tk.MustExec("alter table  t2 change column a a int not null default null default 1;")
 }
 
 func (s *testBypassSuite) TestLatch(c *C) {
