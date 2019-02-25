@@ -236,6 +236,11 @@ type IndexReaderExecutor struct {
 	idxCols        []*expression.Column
 	colLens        []int
 	plans          []plannercore.PhysicalPlan
+
+	// selectWithRuntimeStats should be distsql.SelectWithRuntimeStats,
+	// but it can be rewritten while testing.
+	selectWithRuntimeStats func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
 }
 
 // Close clears all resources hold by current object.
@@ -276,6 +281,9 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
+	if e.selectWithRuntimeStats == nil {
+		e.selectWithRuntimeStats = distsql.SelectWithRuntimeStats
+	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -310,7 +318,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	e.result, err = e.selectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)

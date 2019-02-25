@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/model"
 	"math/rand"
 
 	"github.com/cznic/mathutil"
@@ -122,15 +123,6 @@ func buildTableReader(sctx sessionctx.Context) Executor {
 	e := &TableReaderExecutor{
 		baseExecutor:           buildMockBaseExec(sctx),
 		dagPB:                  buildMockDAGRequest(sctx),
-		physicalTableID:        0,
-		table:                  nil,
-		keepOrder:              false,
-		desc:                   false,
-		columns:                nil,
-		streaming:              false,
-		corColInFilter:         false,
-		corColInAccess:         false,
-		plans:                  nil,
 		selectWithRuntimeStats: mockSelectWithRuntimeStats,
 	}
 	return e
@@ -188,6 +180,59 @@ func (s *testExecSuite) TestTableReaderRequiredRows(c *C) {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
 		exec := buildTableReader(sctx)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(exec.Close(), IsNil)
+	}
+}
+
+func buildIndexReader(sctx sessionctx.Context) Executor {
+	e := &IndexReaderExecutor{
+		baseExecutor:           buildMockBaseExec(sctx),
+		dagPB:                  buildMockDAGRequest(sctx),
+		index:                  &model.IndexInfo{},
+		selectWithRuntimeStats: mockSelectWithRuntimeStats,
+	}
+	return e
+}
+
+func (s *testExecSuite) TestIndexReaderRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+	}{
+		{
+			totalRows:      10,
+			requiredRows:   []int{1, 5, 3, 10},
+			expectedRows:   []int{1, 5, 3, 1},
+			expectedRowsDS: []int{1, 5, 3, 1},
+		},
+		{
+			totalRows:      maxChunkSize + 1,
+			requiredRows:   []int{1, 5, 3, 10, maxChunkSize},
+			expectedRows:   []int{1, 5, 3, 10, (maxChunkSize + 1) - 1 - 5 - 3 - 10},
+			expectedRowsDS: []int{1, 5, 3, 10, (maxChunkSize + 1) - 1 - 5 - 3 - 10},
+		},
+		{
+			totalRows:      3*maxChunkSize + 1,
+			requiredRows:   []int{3, 10, maxChunkSize},
+			expectedRows:   []int{3, 10, maxChunkSize},
+			expectedRowsDS: []int{3, 10, maxChunkSize},
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
+		exec := buildIndexReader(sctx)
 		c.Assert(exec.Open(ctx), IsNil)
 		chk := exec.newFirstChunk()
 		for i := range testCase.requiredRows {
