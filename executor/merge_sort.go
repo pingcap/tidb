@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/util"
 	"sort"
 	"sync"
 	"time"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 )
@@ -58,8 +58,8 @@ type MergeSortExec struct {
 	allColumnExpr bool
 }
 
-// SortWorker represents worker routine to process sort
-type SortWorker struct {
+// sortWorker represents worker routine to process sort.
+type sortWorker struct {
 	MergeSortExec
 	chkIdx  int
 	rowIdx  int
@@ -67,7 +67,7 @@ type SortWorker struct {
 	rowPtrs []chunk.RowPtr
 }
 
-func (sw *SortWorker) run() {
+func (sw *sortWorker) run() {
 	//sw.memTracker.Consume(int64(8 * sw.rowChunks.Len()))
 	for chkIdx := sw.chkIdx; chkIdx < sw.rowChunks.NumChunks() && len(sw.rowPtrs) < sw.len; chkIdx++ {
 		rowChk := sw.rowChunks.GetChunk(chkIdx)
@@ -91,7 +91,7 @@ func (sw *SortWorker) run() {
 func (e *MergeSortExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
-	return errors.Trace(e.children[0].Close())
+	return e.children[0].Close()
 }
 
 // Open implements the Executor Open interface.
@@ -110,8 +110,8 @@ func (e *MergeSortExec) Open(ctx context.Context) error {
 	return errors.Trace(e.children[0].Open(ctx))
 }
 
-func (e *MergeSortExec) newSortWorker(workerID, chk, row, len int) *SortWorker {
-	sw := &SortWorker{
+func (e *MergeSortExec) newsortWorker(workerID, chk, row, len int) *sortWorker {
+	sw := &sortWorker{
 		MergeSortExec: *e,
 		chkIdx:        chk,
 		rowIdx:        row,
@@ -195,7 +195,7 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 			if i == e.concurrency-1 {
 				workerRowsCount += e.rowChunks.Len() % e.concurrency
 			}
-			sw := e.newSortWorker(i, workerIdx[i][0], workerIdx[i][1], workerRowsCount)
+			sw := e.newsortWorker(i, workerIdx[i][0], workerIdx[i][1], workerRowsCount)
 			go util.WithRecovery(func() {
 				defer wg.Done()
 				sw.run()
@@ -327,14 +327,14 @@ func (e *MergeSortExec) lessRow(rowI, rowJ chunk.Row) bool {
 }
 
 // keyColumnsLess is the less function for key columns.
-func (sw *SortWorker) keyColumnsLess(i, j int) bool {
+func (sw *sortWorker) keyColumnsLess(i, j int) bool {
 	rowI := sw.rowChunks.GetRow(sw.rowPtrs[i])
 	rowJ := sw.rowChunks.GetRow(sw.rowPtrs[j])
 	return sw.lessRow(rowI, rowJ)
 }
 
 // keyChunksLess is the less function for key chunk.
-func (sw *SortWorker) keyChunksLess(i, j int) bool {
+func (sw *sortWorker) keyChunksLess(i, j int) bool {
 	keyRowI := sw.keyChunks.GetRow(sw.rowPtrs[i])
 	keyRowJ := sw.keyChunks.GetRow(sw.rowPtrs[j])
 	return sw.lessRow(keyRowI, keyRowJ)

@@ -61,6 +61,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.IndexLookupSize, Equals, DefIndexLookupSize)
 	c.Assert(vars.IndexLookupConcurrency, Equals, DefIndexLookupConcurrency)
 	c.Assert(vars.IndexSerialScanConcurrency, Equals, DefIndexSerialScanConcurrency)
+	//c.Assert(vars.MergeSortConcurrency, Equals, DefTiDBMergeSortConcurrency)
 	c.Assert(vars.IndexLookupJoinConcurrency, Equals, DefIndexLookupJoinConcurrency)
 	c.Assert(vars.HashJoinConcurrency, Equals, DefTiDBHashJoinConcurrency)
 	c.Assert(vars.ProjectionConcurrency, Equals, int64(DefTiDBProjectionConcurrency))
