@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -977,4 +978,393 @@ func (s *testSuite2) TestJoinDifferentDecimals(c *C) {
 	row := rst.Rows()
 	c.Assert(len(row), Equals, 3)
 	rst.Check(testkit.Rows("1 1.000", "2 2.000", "3 3.000"))
+}
+
+func (s *testSuite2) TestNullEmptyAwareSemiJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idb_b(b), index idx_c(c))")
+	tk.MustExec("insert into t values(null, 1, 0), (1, 2, 0)")
+	tests := []struct {
+		sql string
+	}{
+		{
+			"a, b from t t1 where a not in (select b from t t2)",
+		},
+		{
+			"a, b from t t1 where a not in (select b from t t2 where t1.b = t2.a)",
+		},
+		{
+			"a, b from t t1 where a not in (select a from t t2)",
+		},
+		{
+			"a, b from t t1 where a not in (select a from t t2 where t1.b = t2.b)",
+		},
+		{
+			"a, b from t t1 where a != all (select b from t t2)",
+		},
+		{
+			"a, b from t t1 where a != all (select b from t t2 where t1.b = t2.a)",
+		},
+		{
+			"a, b from t t1 where a != all (select a from t t2)",
+		},
+		{
+			"a, b from t t1 where a != all (select a from t t2 where t1.b = t2.b)",
+		},
+		{
+			"a, b from t t1 where not exists (select * from t t2 where t1.a = t2.b)",
+		},
+		{
+			"a, b from t t1 where not exists (select * from t t2 where t1.a = t2.a)",
+		},
+	}
+	results := []struct {
+		result [][]interface{}
+	}{
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 2"),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 2"),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("<nil> 1"),
+		},
+		{
+			testkit.Rows("<nil> 1"),
+		},
+	}
+	hints := [3]string{"/*+ TIDB_HJ(t1, t2) */", "/*+ TIDB_INLJ(t1, t2) */", "/*+ TIDB_SMJ(t1, t2) */"}
+	for i, tt := range tests {
+		for _, hint := range hints {
+			sql := fmt.Sprintf("select %s %s", hint, tt.sql)
+			result := tk.MustQuery(sql)
+			result.Check(results[i].result)
+		}
+	}
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1, null, 0), (2, 1, 0)")
+	results = []struct {
+		result [][]interface{}
+	}{
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 <nil>"),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 <nil>"),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 <nil>"),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 <nil>"),
+		},
+		{
+			testkit.Rows("2 1"),
+		},
+		{
+			testkit.Rows(),
+		},
+	}
+	for i, tt := range tests {
+		for _, hint := range hints {
+			sql := fmt.Sprintf("select %s %s", hint, tt.sql)
+			result := tk.MustQuery(sql)
+			result.Check(results[i].result)
+		}
+	}
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1, null, 0), (2, 1, 0), (null, 2, 0)")
+	results = []struct {
+		result [][]interface{}
+	}{
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 <nil>"),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 <nil>"),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 <nil>"),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows("1 <nil>"),
+		},
+		{
+			testkit.Rows("<nil> 2"),
+		},
+		{
+			testkit.Rows("<nil> 2"),
+		},
+	}
+	for i, tt := range tests {
+		for _, hint := range hints {
+			sql := fmt.Sprintf("select %s %s", hint, tt.sql)
+			result := tk.MustQuery(sql)
+			result.Check(results[i].result)
+		}
+	}
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1, null, 0), (2, null, 0)")
+	tests = []struct {
+		sql string
+	}{
+		{
+			"a, b from t t1 where b not in (select a from t t2)",
+		},
+	}
+	results = []struct {
+		result [][]interface{}
+	}{
+		{
+			testkit.Rows(),
+		},
+	}
+	for i, tt := range tests {
+		for _, hint := range hints {
+			sql := fmt.Sprintf("select %s %s", hint, tt.sql)
+			result := tk.MustQuery(sql)
+			result.Check(results[i].result)
+		}
+	}
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(null, 1, 1), (2, 2, 2), (3, null, 3), (4, 4, 3)")
+	tests = []struct {
+		sql string
+	}{
+		{
+			"a, b, a not in (select b from t t2) from t t1 order by a",
+		},
+		{
+			"a, c, a not in (select c from t t2) from t t1 order by a",
+		},
+		{
+			"a, b, a in (select b from t t2) from t t1 order by a",
+		},
+		{
+			"a, c, a in (select c from t t2) from t t1 order by a",
+		},
+	}
+	results = []struct {
+		result [][]interface{}
+	}{
+		{
+			testkit.Rows(
+				"<nil> 1 <nil>",
+				"2 2 0",
+				"3 <nil> <nil>",
+				"4 4 0",
+			),
+		},
+		{
+			testkit.Rows(
+				"<nil> 1 <nil>",
+				"2 2 0",
+				"3 3 0",
+				"4 3 1",
+			),
+		},
+		{
+			testkit.Rows(
+				"<nil> 1 <nil>",
+				"2 2 1",
+				"3 <nil> <nil>",
+				"4 4 1",
+			),
+		},
+		{
+			testkit.Rows(
+				"<nil> 1 <nil>",
+				"2 2 1",
+				"3 3 1",
+				"4 3 0",
+			),
+		},
+	}
+	for i, tt := range tests {
+		for _, hint := range hints {
+			sql := fmt.Sprintf("select %s %s", hint, tt.sql)
+			result := tk.MustQuery(sql)
+			result.Check(results[i].result)
+		}
+	}
+
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s(a int, b int)")
+	tk.MustExec("insert into s values(1, 2)")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(null, null, 0)")
+	tests = []struct {
+		sql string
+	}{
+		{
+			"a in (select b from t t2 where t2.a = t1.b) from s t1",
+		},
+		{
+			"a in (select b from s t2 where t2.a = t1.b) from t t1",
+		},
+	}
+	results = []struct {
+		result [][]interface{}
+	}{
+		{
+			testkit.Rows("0"),
+		},
+		{
+			testkit.Rows("0"),
+		},
+	}
+	for i, tt := range tests {
+		for _, hint := range hints {
+			sql := fmt.Sprintf("select %s %s", hint, tt.sql)
+			result := tk.MustQuery(sql)
+			result.Check(results[i].result)
+		}
+	}
+
+	tk.MustExec("truncate table s")
+	tk.MustExec("insert into s values(2, 2)")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(null, 1, 0)")
+	tests = []struct {
+		sql string
+	}{
+		{
+			"a in (select a from s t2 where t2.b = t1.b) from t t1",
+		},
+		{
+			"a in (select a from s t2 where t2.b < t1.b) from t t1",
+		},
+	}
+	results = []struct {
+		result [][]interface{}
+	}{
+		{
+			testkit.Rows("0"),
+		},
+		{
+			testkit.Rows("0"),
+		},
+	}
+	for i, tt := range tests {
+		for _, hint := range hints {
+			sql := fmt.Sprintf("select %s %s", hint, tt.sql)
+			result := tk.MustQuery(sql)
+			result.Check(results[i].result)
+		}
+	}
+
+	tk.MustExec("truncate table s")
+	tk.MustExec("insert into s values(null, 2)")
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(1, 1, 0)")
+	tests = []struct {
+		sql string
+	}{
+		{
+			"a in (select a from s t2 where t2.b = t1.b) from t t1",
+		},
+		{
+			"b in (select a from s t2) from t t1",
+		},
+		{
+			"* from t t1 where a not in (select a from s t2 where t2.b = t1.b)",
+		},
+		{
+			"* from t t1 where a not in (select a from s t2)",
+		},
+		{
+			"* from s t1 where a not in (select a from t t2)",
+		},
+	}
+	results = []struct {
+		result [][]interface{}
+	}{
+		{
+			testkit.Rows("0"),
+		},
+		{
+			testkit.Rows("<nil>"),
+		},
+		{
+			testkit.Rows("1 1 0"),
+		},
+		{
+			testkit.Rows(),
+		},
+		{
+			testkit.Rows(),
+		},
+	}
+	for i, tt := range tests {
+		for _, hint := range hints {
+			sql := fmt.Sprintf("select %s %s", hint, tt.sql)
+			result := tk.MustQuery(sql)
+			result.Check(results[i].result)
+		}
+	}
+}
+
+func (s *testSuite2) TestScalarFuncNullSemiJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(null, 1), (1, 2)")
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s(a varchar(20), b varchar(20))")
+	tk.MustExec("insert into s values(null, '1')")
+	tk.MustQuery("select a in (select a from s) from t").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustExec("drop table s")
+	tk.MustExec("create table s(a int, b int)")
+	tk.MustExec("insert into s values(null, 1)")
+	tk.MustQuery("select a in (select a+b from s) from t").Check(testkit.Rows("<nil>", "<nil>"))
 }
