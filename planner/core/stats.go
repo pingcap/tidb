@@ -329,6 +329,12 @@ func (p *LogicalJoin) deriveInnerJoinStatsWithHist(leftKeys, rightKeys []*expres
 	for i := range leftKeys {
 		leftHist, ok1 := leftProfile.HistColl.Columns[leftKeys[i].UniqueID]
 		rightHist, ok2 := rightProfile.HistColl.Columns[rightKeys[i].UniqueID]
+		if ok1 {
+			ok1 = !leftHist.IsInvalid(p.ctx.GetSessionVars().StmtCtx, leftProfile.HistColl.Pseudo)
+		}
+		if ok2 {
+			ok2 = !rightHist.IsInvalid(p.ctx.GetSessionVars().StmtCtx, rightProfile.HistColl.Pseudo)
+		}
 		lPos := leftChild.Schema().ColumnIndex(leftKeys[i])
 		rPos := rightChild.Schema().ColumnIndex(rightKeys[i])
 		var keyNdv float64
