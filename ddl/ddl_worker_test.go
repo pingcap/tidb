@@ -394,6 +394,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 19}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 20)}, cancelState: model.StatePublic},
 		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 21}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 20)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -633,15 +634,15 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	changedCol := model.FindColumnInfo(changedTable.Meta().Columns, col.Name.L)
 	c.Assert(changedCol.DefaultValue, IsNil)
 
-	// add foreign key
+	// Test add foreign key failed cause by canceled.
 	test = &tests[16]
 	addForeignKeyArgs := []interface{}{model.FKInfo{Name: model.NewCIStr("fk1")}}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, addForeignKeyArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
-	c.Assert(changedTable.Meta().ForeignKeys, IsNil)
+	c.Assert(len(changedTable.Meta().ForeignKeys), Equals, 0)
 
-	// add foreign key
+	// Test add foreign key successful.
 	test = &tests[17]
 	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, addForeignKeyArgs)
 	c.Check(checkErr, IsNil)
@@ -649,14 +650,21 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(len(changedTable.Meta().ForeignKeys), Equals, 1)
 	c.Assert(changedTable.Meta().ForeignKeys[0].Name, Equals, addForeignKeyArgs[0].(model.FKInfo).Name)
 
-	// drop foreign key
+	// Test drop foreign key failed cause by canceled.
 	test = &tests[18]
-	dropForeignKeyArgs := addForeignKeyArgs
+	dropForeignKeyArgs := []interface{}{addForeignKeyArgs[0].(model.FKInfo).Name}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, dropForeignKeyArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(len(changedTable.Meta().ForeignKeys), Equals, 1)
-	c.Assert(changedTable.Meta().ForeignKeys[0].Name, Equals, dropForeignKeyArgs[0].(model.FKInfo).Name)
+	c.Assert(changedTable.Meta().ForeignKeys[0].Name, Equals, dropForeignKeyArgs[0].(model.CIStr))
+
+	// Test drop foreign key successful.
+	test = &tests[19]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, dropForeignKeyArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(len(changedTable.Meta().ForeignKeys), Equals, 0)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
