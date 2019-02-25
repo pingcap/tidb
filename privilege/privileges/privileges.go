@@ -113,6 +113,13 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	u = record.User
 	h = record.Host
 
+	locked := record.AccountLocked
+	if locked {
+		log.Errorf("Try to login a locked account: user: %v, host: %v", user, host)
+		success = false
+		return
+	}
+
 	pwd := record.Password
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
