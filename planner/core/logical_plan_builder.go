@@ -220,7 +220,12 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 						}
 					}
 				}
-				if leftCol != nil && binop.FuncName.L == ast.EQ {
+				// For quries like `select a in (select a from s where s.b = t.b) from t`,
+				// if subquery is empty caused by `s.b = t.b`, the result should always be
+				// false even if t.a is null or s.a is null. To make this join "empty aware",
+				// we should differentiate `t.a = s.a` from other column equal conditions, so
+				// we put it into OtherConditions instead of EqualConditions of join.
+				if leftCol != nil && binop.FuncName.L == ast.EQ && !leftCol.InOperand && !rightCol.InOperand {
 					cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
@@ -518,7 +523,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil {
-				ret, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
+				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue
 				}
@@ -2980,7 +2985,6 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			if x.AsName.L != "" && asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
-				s.Name = x.AsName
 				input = append(input, &newTableName)
 			} else {
 				input = append(input, s)
