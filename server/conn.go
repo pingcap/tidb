@@ -954,19 +954,24 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	}
 	loadDataInfo.SetMessage()
 
-	if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
-		return errors.Trace(err)
-	}
-	txn, err := loadDataInfo.Ctx.Txn(true)
 	if err != nil {
-		if txn != nil && txn.Valid() {
-			if err1 := txn.Rollback(); err1 != nil {
-				log.Errorf("load data rollback failed: %v", err1)
-			}
-		}
-		return errors.Trace(err)
+		loadDataInfo.Ctx.StmtRollback()
+	} else {
+		err = loadDataInfo.Ctx.StmtCommit()
 	}
 
+	if txn, err1 := loadDataInfo.Ctx.Txn(true); err1 == nil {
+		if txn != nil && txn.Valid() {
+			if err != nil {
+				if err1 := txn.Rollback(); err1 != nil {
+					log.Errorf("load data rollback failed: %v", err1)
+				}
+				return errors.Trace(err)
+			}
+		}
+	} else {
+		log.Error(err1)
+	}
 	return errors.Trace(cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
 }
 
