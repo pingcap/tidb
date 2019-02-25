@@ -1,3 +1,15 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
 package core
 
 import (
@@ -54,12 +66,12 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			}
 		}
 		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-			ctx: ctx,
+			ctx:        ctx,
 			otherConds: otherConds,
 		}
 		groupSolver := &joinReorderGreedySingleGroupSolver{
 			baseSingleGroupJoinOrderSolver: baseGroupSolver,
-			eqEdges:    eqEdges,
+			eqEdges:                        eqEdges,
 		}
 		p, err = groupSolver.solve(curJoinGroup)
 		if err != nil {
@@ -80,9 +92,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 }
 
 type baseSingleGroupJoinOrderSolver struct {
-	ctx        sessionctx.Context
+	ctx          sessionctx.Context
 	curJoinGroup []*jrNode
-	otherConds []expression.Expression
+	otherConds   []expression.Expression
 }
 
 func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) float64 {
@@ -92,7 +104,6 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) 
 	}
 	return cost
 }
-
 
 func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) LogicalPlan {
 	resultJoinGroup := make([]LogicalPlan, 0, (len(cartesianJoinGroup)+1)/2)
