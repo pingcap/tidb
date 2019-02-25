@@ -62,7 +62,7 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Password, Select_priv) VALUES ("%", "root", "", "Y")`)
 	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Password, Insert_priv) VALUES ("%", "root1", "admin", "Y")`)
 	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Password, Update_priv, Show_db_priv, References_priv) VALUES ("%", "root11", "", "Y", "Y", "Y")`)
-	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Password, Create_user_priv, Index_priv, Execute_priv, Show_db_priv, Super_priv, Trigger_priv) VALUES ("%", "root111", "", "Y",  "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user (Host, User, Password, Create_user_priv, Index_priv, Execute_priv, Create_view_priv, Show_view_priv, Show_db_priv, Super_priv, Trigger_priv) VALUES ("%", "root111", "", "Y",  "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
@@ -72,7 +72,7 @@ func (s *testCacheSuite) TestLoadUserTable(c *C) {
 	c.Assert(user[0].Privileges, Equals, mysql.SelectPriv)
 	c.Assert(user[1].Privileges, Equals, mysql.InsertPriv)
 	c.Assert(user[2].Privileges, Equals, mysql.UpdatePriv|mysql.ShowDBPriv|mysql.ReferencesPriv)
-	c.Assert(user[3].Privileges, Equals, mysql.CreateUserPriv|mysql.IndexPriv|mysql.ExecutePriv|mysql.ShowDBPriv|mysql.SuperPriv|mysql.TriggerPriv)
+	c.Assert(user[3].Privileges, Equals, mysql.CreateUserPriv|mysql.IndexPriv|mysql.ExecutePriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ShowDBPriv|mysql.SuperPriv|mysql.TriggerPriv)
 }
 
 func (s *testCacheSuite) TestLoadDBTable(c *C) {
@@ -83,13 +83,13 @@ func (s *testCacheSuite) TestLoadDBTable(c *C) {
 	mustExec(c, se, "truncate table db;")
 
 	mustExec(c, se, `INSERT INTO mysql.db (Host, DB, User, Select_priv, Insert_priv, Update_priv, Delete_priv, Create_priv) VALUES ("%", "information_schema", "root", "Y", "Y", "Y", "Y", "Y")`)
-	mustExec(c, se, `INSERT INTO mysql.db (Host, DB, User, Drop_priv, Grant_priv, Index_priv, Alter_priv, Execute_priv) VALUES ("%", "mysql", "root1", "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.db (Host, DB, User, Drop_priv, Grant_priv, Index_priv, Alter_priv, Create_view_priv, Show_view_priv, Execute_priv) VALUES ("%", "mysql", "root1", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 
 	var p privileges.MySQLPrivilege
 	err = p.LoadDBTable(se)
 	c.Assert(err, IsNil)
 	c.Assert(p.DB[0].Privileges, Equals, mysql.SelectPriv|mysql.InsertPriv|mysql.UpdatePriv|mysql.DeletePriv|mysql.CreatePriv)
-	c.Assert(p.DB[1].Privileges, Equals, mysql.DropPriv|mysql.GrantPriv|mysql.IndexPriv|mysql.AlterPriv|mysql.ExecutePriv)
+	c.Assert(p.DB[1].Privileges, Equals, mysql.DropPriv|mysql.GrantPriv|mysql.IndexPriv|mysql.AlterPriv|mysql.CreateViewPriv|mysql.ShowViewPriv|mysql.ExecutePriv)
 }
 
 func (s *testCacheSuite) TestLoadTablesPrivTable(c *C) {
@@ -140,7 +140,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	defer se.Close()
 	mustExec(c, se, "USE MYSQL;")
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("10.0.%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("10.0.%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
@@ -152,7 +152,7 @@ func (s *testCacheSuite) TestPatternMatch(c *C) {
 	c.Assert(p.RequestVerification("root", "114.114.114.114", "test", "", "", mysql.PrivilegeType(0)), IsTrue)
 
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+	mustExec(c, se, `INSERT INTO mysql.user VALUES ("", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
 	p = privileges.MySQLPrivilege{}
 	err = p.LoadUserTable(se)
 	c.Assert(err, IsNil)
@@ -236,6 +236,9 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
   Event_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   Trigger_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   Create_tablespace_priv enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
+  Create_role_priv ENUM('N','Y') NOT NULL DEFAULT 'N',
+  Drop_role_priv ENUM('N','Y') NOT NULL DEFAULT 'N',
+  Account_locked ENUM('N','Y') NOT NULL DEFAULT 'N',
   ssl_type enum('','ANY','X509','SPECIFIED') CHARACTER SET utf8 NOT NULL DEFAULT '',
   ssl_cipher blob NOT NULL,
   x509_issuer blob NOT NULL,
@@ -249,7 +252,7 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
   password_expired enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N',
   PRIMARY KEY (Host,User)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Users and global privileges';`)
-	mustExec(c, se, `INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N');
+	mustExec(c, se, `INSERT INTO user VALUES ('localhost','root','','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','Y','','','','',0,0,0,0,'mysql_native_password','','N');
 `)
 	var p privileges.MySQLPrivilege
 	err = p.LoadUserTable(se)

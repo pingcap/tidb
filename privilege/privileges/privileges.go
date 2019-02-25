@@ -57,6 +57,42 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 	return mysqlPriv.RequestVerification(p.user, p.host, db, table, column, priv)
 }
 
+// RequestVerificationWithUser implements the Manager interface.
+func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool {
+	if SkipWithGrant {
+		return true
+	}
+
+	if user == nil {
+		return false
+	}
+
+	// Skip check for INFORMATION_SCHEMA database.
+	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
+	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
+		return true
+	}
+
+	mysqlPriv := p.Handle.Get()
+	return mysqlPriv.RequestVerification(user.Username, user.Hostname, db, table, column, priv)
+}
+
+// GetEncodedPassword implements the Manager interface.
+func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		log.Errorf("Get user privilege record fail: user %v, host %v", user, host)
+		return ""
+	}
+	pwd := record.Password
+	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
+		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
+		return ""
+	}
+	return pwd
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte) (u string, h string, success bool) {
 

@@ -41,7 +41,10 @@ func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
 	if constArg, isConst := foldedArg0.(*Constant); isConst {
 		arg0, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), chunk.Row{})
 		if err != nil {
-			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
+			// Failed to fold this expr to a constant, print the DEBUG log and
+			// return the original expression to let the error to be evaluated
+			// again, in that time, the error is returned to the client.
+			log.Debugf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
 			return expr, false
 		}
 		if !isNull0 && arg0 != 0 {
@@ -59,16 +62,15 @@ func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
 
 func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 	args := expr.GetArgs()
-	foldedArg0, _ := foldConstant(args[0])
+	foldedArg0, isDeferred := foldConstant(args[0])
 	if constArg, isConst := foldedArg0.(*Constant); isConst {
-		_, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), chunk.Row{})
-		if err != nil {
-			log.Warnf("fold constant %s: %s", expr.ExplainInfo(), err.Error())
-			return expr, false
-		}
-		if isNull0 {
+		// Only check constArg.Value here. Because deferred expression is
+		// evaluated to constArg.Value after foldConstant(args[0]), it's not
+		// needed to be checked.
+		if constArg.Value.IsNull() {
 			return foldConstant(args[1])
 		}
+		return constArg, isDeferred
 	}
 	var isDeferredConst bool
 	expr.GetArgs()[1], isDeferredConst = foldConstant(args[1])
