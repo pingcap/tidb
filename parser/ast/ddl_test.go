@@ -186,7 +186,9 @@ func (ts *testDDLSuite) TestDDLColumnOptionRestore(c *C) {
 		{"UNIQUE KEY", "UNIQUE KEY"},
 		{"on update CURRENT_TIMESTAMP", "ON UPDATE CURRENT_TIMESTAMP()"},
 		{"comment 'hello'", "COMMENT 'hello'"},
-		{"generated always as(id + 1)", "GENERATED ALWAYS AS(`id`+1)"},
+		{"generated always as(id + 1)", "GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
+		{"generated always as(id + 1) virtual", "GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
+		{"generated always as(id + 1) stored", "GENERATED ALWAYS AS(`id`+1) STORED"},
 		{"REFERENCES parent(id)", "REFERENCES `parent`(`id`)"},
 	}
 	extractNodeFunc := func(node Node) Node {
@@ -248,7 +250,7 @@ func (ts *testDDLSuite) TestDDLColumnDefRestore(c *C) {
 		{"id INT(11) UNIQUE KEY", "`id` INT(11) UNIQUE KEY"},
 		{"id INT(11) on update CURRENT_TIMESTAMP", "`id` INT(11) ON UPDATE CURRENT_TIMESTAMP()"},
 		{"id INT(11) comment 'hello'", "`id` INT(11) COMMENT 'hello'"},
-		{"id INT(11) generated always as(id + 1)", "`id` INT(11) GENERATED ALWAYS AS(`id`+1)"},
+		{"id INT(11) generated always as(id + 1)", "`id` INT(11) GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
 		{"id INT(11) REFERENCES parent(id)", "`id` INT(11) REFERENCES `parent`(`id`)"},
 	}
 	extractNodeFunc := func(node Node) Node {
