@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
@@ -588,4 +589,13 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 		}
 	}
 	return odValue, nil
+}
+
+func findColumnInIndexCols(c *expression.Column, cols []*ast.IndexColName) bool {
+	for _, c1 := range cols {
+		if c.ColName.L == c1.Column.Name.L {
+			return true
+		}
+	}
+	return false
 }
