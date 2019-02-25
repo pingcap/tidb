@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package core
 
 import (
@@ -158,5 +159,5 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(eqEdges []*expression.
 }
 
 func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode, rNode *jrNode) float64 {
-	return join.stats.RowCount + lNode.cumCost + rNode.cumCost
+	return join.statsInfo().RowCount + lNode.cumCost + rNode.cumCost
 }
