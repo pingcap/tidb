@@ -491,6 +491,10 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
+		if !t.canSkipInsertBinlog(col, value) {
+			binlogColIDs = append(binlogColIDs, col.ID)
+			binlogRow = append(binlogRow, value)
+		}
 	}
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
@@ -513,9 +517,6 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID, r)
 	}
 	if shouldWriteBinlog(ctx) {
-		// For insert, TiDB and Binlog can use same row and schema.
-		binlogRow = row
-		binlogColIDs = colIDs
 		err = t.addInsertBinlog(ctx, recordID, binlogRow, binlogColIDs)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -1027,11 +1028,24 @@ func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
 	return false
 }
 
-// canSkipUpdateBinlog checks whether the column can be skiped or not.
+// canSkipUpdateBinlog checks whether the column can be skipped or not.
 func (t *tableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
 	if col.IsGenerated() && !col.GeneratedStored {
 		return true
 	}
+	return false
+}
+
+// canSkipInsertBinlog checks whether the column can be skipped or not.
+func (t *tableCommon) canSkipInsertBinlog(col *table.Column, value types.Datum) bool {
+	if col.IsPKHandleColumn(t.Meta()) {
+		return true
+	}
+
+	if col.IsGenerated() && !col.GeneratedStored {
+		return true
+	}
+
 	return false
 }
 
