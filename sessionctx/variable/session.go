@@ -606,6 +606,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
+	case TiDBCheckMb4ValueInUtf8:
+		config.GetGlobalConfig().CheckMb4ValueInUtf8 = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
