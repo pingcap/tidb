@@ -276,6 +276,29 @@ func (s *testPrivilegeSuite) TestSetPasswdStmt(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	ctx, _ := se.(sessionctx.Context)
+	mustExec(c, se, `CREATE TABLE viewsecurity(c int);`)
+	// ctx.GetSessionVars().User = "root@localhost"
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE USER 'selectusr'@'localhost';`)
+	mustExec(c, se, `GRANT CREATE VIEW ON test.* TO  'selectusr'@'localhost';`)
+	mustExec(c, se, `GRANT SELECT ON test.viewsecurity TO  'selectusr'@'localhost';`)
+
+	// ctx.GetSessionVars().User = "selectusr@localhost"
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "selectusr", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `SELECT * FROM test.viewsecurity;`)
+	mustExec(c, se, `CREATE ALGORITHM = UNDEFINED SQL SECURITY DEFINER VIEW test.selectviewsecurity as select * FROM test.viewsecurity;`)
+
+	se = newSession(c, s.store, s.dbName)
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	mustExec(c, se, "SELECT * FROM test.selectviewsecurity")
+	mustExec(c, se, `REVOKE Select ON test.viewsecurity FROM  'selectusr'@'localhost';`)
+	_, err := se.Execute(context.Background(), "select * from test.selectviewsecurity")
+	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
+}
+
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
@@ -431,6 +454,13 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
 	c.Assert(err, IsNil)
+}
+
+func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
+	pc := privilege.GetPrivilegeManager(se)
+	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
 }
 
 func mustExec(c *C, se session.Session, sql string) {

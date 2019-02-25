@@ -188,8 +188,11 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	} else {
 		rate = math.Abs(expected-float64(q.actual)) / float64(q.actual)
 	}
-	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) && log.GetLevel() == log.DebugLevel {
-		q.logDetailedInfo(h)
+	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) {
+		metrics.SignificantFeedbackCounter.Inc()
+		if log.GetLevel() == log.DebugLevel {
+			q.logDetailedInfo(h)
+		}
 	}
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()

@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	logutil "github.com/pingcap/tidb/util/logutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -695,12 +696,19 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			err1 := logutil.SetLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+
 			l, err1 := log.ParseLevel(levelStr)
 			if err1 != nil {
 				writeError(w, err1)
 				return
 			}
 			log.SetLevel(l)
+
 			config.GetGlobalConfig().Log.Level = levelStr
 		}
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
@@ -724,7 +732,17 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				atomic.StoreUint32(&variable.DDLSlowOprThreshold, uint32(threshold))
 			}
 		}
-
+		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
+			switch checkMb4ValueInUtf8 {
+			case "0":
+				config.GetGlobalConfig().CheckMb4ValueInUtf8 = false
+			case "1":
+				config.GetGlobalConfig().CheckMb4ValueInUtf8 = true
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}

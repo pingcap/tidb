@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"unsafe"
 
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -42,6 +43,8 @@ type Manifest struct {
 	Validate       func(ctx context.Context, manifest *Manifest) error
 	OnInit         func(ctx context.Context, manifest *Manifest) error
 	OnShutdown     func(ctx context.Context, manifest *Manifest) error
+	OnFlush        func(ctx context.Context, manifest *Manifest) error
+	flushWatcher   *flushWatcher
 }
 
 // ExportManifest exports a manifest to TiDB as a known format.
@@ -54,7 +57,8 @@ func ExportManifest(m interface{}) *Manifest {
 // AuditManifest presents a sub-manifest that every audit plugin must provide.
 type AuditManifest struct {
 	Manifest
-	NotifyEvent func(ctx context.Context, sctx *variable.SessionVars) error
+	NotifyEvent       func(ctx context.Context, sctx *variable.SessionVars) error
+	OnConnectionEvent func(ctx context.Context, u *auth.UserIdentity) error
 }
 
 // AuthenticationManifest presents a sub-manifest that every audit plugin must provide.
