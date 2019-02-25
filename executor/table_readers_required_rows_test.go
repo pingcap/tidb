@@ -33,22 +33,22 @@ import (
 )
 
 type requiredRowsSelectResult struct {
-	retTypes []*types.FieldType
-
+	retTypes        []*types.FieldType
 	totalRows       int
 	count           int
 	expectedRowsRet []int
 	numNextCalled   int
 }
 
-func (r *requiredRowsSelectResult) Fetch(context.Context) {}
-
-func (r *requiredRowsSelectResult) NextRaw(context.Context) ([]byte, error) {
-	return nil, nil
-}
+func (r *requiredRowsSelectResult) Fetch(context.Context)                   {}
+func (r *requiredRowsSelectResult) NextRaw(context.Context) ([]byte, error) { return nil, nil }
+func (r *requiredRowsSelectResult) Close() error                            { return nil }
 
 func (r *requiredRowsSelectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	defer func() {
+		if r.numNextCalled >= len(r.expectedRowsRet) {
+			return
+		}
 		rowsRet := chk.NumRows()
 		expected := r.expectedRowsRet[r.numNextCalled]
 		if rowsRet != expected {
@@ -56,7 +56,6 @@ func (r *requiredRowsSelectResult) Next(ctx context.Context, chk *chunk.Chunk) e
 		}
 		r.numNextCalled++
 	}()
-
 	chk.Reset()
 	if r.count > r.totalRows {
 		return nil
@@ -88,14 +87,6 @@ func (r *requiredRowsSelectResult) genValue(valType *types.FieldType) interface{
 	}
 }
 
-func (r *requiredRowsSelectResult) Close() error {
-	if r.numNextCalled != len(r.expectedRowsRet) {
-		return fmt.Errorf("unexpected number of call on Next, obtain: %v, expected: %v",
-			r.numNextCalled, len(r.expectedRowsRet))
-	}
-	return nil
-}
-
 func mockDistsqlSelectCtxSet(totalRows int, expectedRowsRet []int) context.Context {
 	ctx := context.Background()
 	ctx = context.WithValue(ctx, "totalRows", totalRows)
@@ -109,7 +100,7 @@ func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRe
 	return
 }
 
-func mockSelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{
@@ -119,11 +110,16 @@ func mockSelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kv
 	}, nil
 }
 
+func mockSelectResultWithoutCheck(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error) {
+	return &requiredRowsSelectResult{retTypes: fieldTypes}, nil
+}
+
 func buildTableReader(sctx sessionctx.Context) Executor {
 	e := &TableReaderExecutor{
 		baseExecutor:           buildMockBaseExec(sctx),
 		dagPB:                  buildMockDAGRequest(sctx),
-		selectWithRuntimeStats: mockSelectWithRuntimeStats,
+		selectWithRuntimeStats: mockSelectResult,
 	}
 	return e
 }
@@ -175,7 +171,6 @@ func (s *testExecSuite) TestTableReaderRequiredRows(c *C) {
 			expectedRowsDS: []int{3, 10, maxChunkSize},
 		},
 	}
-
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
@@ -196,7 +191,7 @@ func buildIndexReader(sctx sessionctx.Context) Executor {
 		baseExecutor:           buildMockBaseExec(sctx),
 		dagPB:                  buildMockDAGRequest(sctx),
 		index:                  &model.IndexInfo{},
-		selectWithRuntimeStats: mockSelectWithRuntimeStats,
+		selectWithRuntimeStats: mockSelectResult,
 	}
 	return e
 }
@@ -228,7 +223,6 @@ func (s *testExecSuite) TestIndexReaderRequiredRows(c *C) {
 			expectedRowsDS: []int{3, 10, maxChunkSize},
 		},
 	}
-
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
@@ -251,8 +245,16 @@ func buildIndexLookupReader(sctx sessionctx.Context) Executor {
 		index:        &model.IndexInfo{},
 		tableRequest: buildMockDAGRequest(sctx),
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: newExecutorBuilder(sctx, nil),
-			selectWithRuntimeStats: mockSelectWithRuntimeStats},
-		selectWithRuntimeStats: mockSelectWithRuntimeStats,
+			// All tableWorkers run in the background asynchronously and numbers of rows returned
+			// by them are decided by kv.Request.KeyRanges which is complex and built from IdxHandles,
+			// so it's difficult for us to trace their states and control their output.
+			// According to IndexLookUpExecutor's implementation, the number of rows returned by
+			// tableWorker is equal to the length of IdxHandles, which is the output of indexWorker,
+			// so if we can control the output of indexWorker, we control the output of tableWorker.
+			// Then for simplicity, we don't control and check the output of tableWorker, we use
+			// mockSelectResultWithoutCheck to create mockSelectResult for them.
+			selectWithRuntimeStats: mockSelectResultWithoutCheck},
+		selectWithRuntimeStats: mockSelectResult,
 	}
 	return e
 }
@@ -262,29 +264,24 @@ func (s *testExecSuite) TestIndexLookupRequiredRows(c *C) {
 	testCases := []struct {
 		totalRows      int
 		requiredRows   []int
-		expectedRows   []int
 		expectedRowsDS []int
 	}{
 		{
 			totalRows:      10,
 			requiredRows:   []int{1},
-			expectedRows:   []int{1},
-			expectedRowsDS: []int{1},
+			expectedRowsDS: []int{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0}, // workers in the background will drain all data
 		},
-		//{
-		//	totalRows:      maxChunkSize + 1,
-		//	requiredRows:   []int{1, 5, 3, 10, maxChunkSize},
-		//	expectedRows:   []int{1, 5, 3, 10, (maxChunkSize + 1) - 1 - 5 - 3 - 10},
-		//	expectedRowsDS: []int{1, 5, 3, 10, (maxChunkSize + 1) - 1 - 5 - 3 - 10},
-		//},
-		//{
-		//	totalRows:      3*maxChunkSize + 1,
-		//	requiredRows:   []int{3, 10, maxChunkSize},
-		//	expectedRows:   []int{3, 10, maxChunkSize},
-		//	expectedRowsDS: []int{3, 10, maxChunkSize},
-		//},
+		{
+			totalRows:      30,
+			requiredRows:   []int{12},
+			expectedRowsDS: []int{12, 12, 6, 0},
+		},
+		{
+			totalRows:      3*maxChunkSize + 1,
+			requiredRows:   []int{15},
+			expectedRowsDS: []int{15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15},
+		},
 	}
-
 	for _, testCase := range testCases {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
@@ -294,7 +291,9 @@ func (s *testExecSuite) TestIndexLookupRequiredRows(c *C) {
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
-			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+			// since we create SelectResult for tableWorker by mockSelectResultWithoutCheck,
+			// the number of output rows is always zero.
+			c.Assert(chk.NumRows(), Equals, 0)
 		}
 		c.Assert(exec.Close(), IsNil)
 	}

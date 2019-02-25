@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"runtime"
 	"sort"
@@ -352,8 +351,10 @@ type IndexLookUpExecutor struct {
 	tblWorkerWg sync.WaitGroup
 	finished    chan struct{}
 
-	kvRanges []kv.KeyRange
-	started  bool
+	// parentReqRows indicates how many rows the parent want now.
+	parentReqRows int64
+	kvRanges      []kv.KeyRange
+	started       bool
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
@@ -364,9 +365,6 @@ type IndexLookUpExecutor struct {
 
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
 	isCheckOp bool
-
-	// parentReqRows indicates how many rows the parent want now.
-	parentReqRows int64
 
 	corColInIdxSide bool
 	idxPlans        []plannercore.PhysicalPlan
@@ -413,6 +411,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	e.parentReqRows = int64(e.maxChunkSize)
 
 	var err error
 	if e.corColInIdxSide {
@@ -428,8 +427,19 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
+	return nil
+}
 
-	e.parentReqRows = int64(e.maxChunkSize)
+func (e *IndexLookUpExecutor) startWorkers(ctx context.Context) (err error) {
+	// indexWorker will write to workCh and tableWorker will read from workCh,
+	// so fetching index and getting table data can run concurrently.
+	workCh := make(chan *lookupTableTask, 1)
+	err = e.startIndexWorker(ctx, e.kvRanges, workCh)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.startTableWorker(ctx, workCh)
+	e.started = true
 	return nil
 }
 
@@ -458,11 +468,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	result.Fetch(ctx)
 	worker := &indexWorker{
-		indexLookUp: e,
-		workCh:      workCh,
-		finished:    e.finished,
-		resultCh:    e.resultCh,
-		keepOrder:   e.keepOrder,
+		idxLookup: e,
+		workCh:    workCh,
+		finished:  e.finished,
+		resultCh:  e.resultCh,
+		keepOrder: e.keepOrder,
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
@@ -560,18 +570,12 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
+	atomic.StoreInt64(&e.parentReqRows, int64(req.RequiredRows()))
 	if !e.started {
-		// indexWorker will write to workCh and tableWorker will read from workCh,
-		// so fetching index and getting table data can run concurrently.
-		workCh := make(chan *lookupTableTask, 1)
-		err := e.startIndexWorker(ctx, e.kvRanges, workCh)
-		if err != nil {
+		if err := e.startWorkers(ctx); err != nil {
 			return errors.Trace(err)
 		}
-		e.startTableWorker(ctx, workCh)
-		e.started = true
 	}
-	atomic.StoreInt64(&e.parentReqRows, int64(req.RequiredRows()))
 	req.Reset()
 	for {
 		resultTask, err := e.getResultTask()
@@ -613,8 +617,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
 type indexWorker struct {
-	indexLookUp *IndexLookUpExecutor
-
+	idxLookup *IndexLookUpExecutor
 	workCh    chan<- *lookupTableTask
 	finished  <-chan struct{}
 	resultCh  chan<- *lookupTableTask
@@ -642,8 +645,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
 	for {
-		handles, err := w.extractTaskHandles(ctx, result)
+		handles, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- errors.Trace(err)
@@ -668,13 +672,11 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	}
 }
 
-func (w *indexWorker) extractTaskHandles(ctx context.Context, idxResult distsql.SelectResult) (handles []int64, err error) {
-	requiredNow := int(atomic.LoadInt64(&w.indexLookUp.parentReqRows))
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, requiredNow)
+func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
+	requiredNow := int(atomic.LoadInt64(&w.idxLookup.parentReqRows))
 	handles = make([]int64, 0, requiredNow)
 	for len(handles) < requiredNow {
-		chk.SetRequiredRows(requiredNow-len(handles), w.indexLookUp.maxChunkSize)
-		fmt.Println("----------->>> ", chk.RequiredRows())
+		chk.SetRequiredRows(requiredNow-len(handles), w.idxLookup.maxChunkSize)
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, err
@@ -686,7 +688,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, idxResult distsql.
 			handles = append(handles, chk.GetRow(i).GetInt64(0))
 		}
 	}
-	fmt.Println("~~~~~> ", len(handles))
 	return handles, nil
 }
 
@@ -767,7 +768,6 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.memUsage = memUsage
 	task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
-	fmt.Println("+++++++++++>> ", handleCnt)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := tableReader.newFirstChunk()

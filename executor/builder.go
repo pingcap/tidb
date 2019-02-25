@@ -1557,9 +1557,8 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			filter:   outerFilter,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{innerPlan, b,
-				distsql.SelectWithRuntimeStats},
-			rowTypes: innerTypes,
+			readerBuilder: &dataReaderBuilder{innerPlan, b, distsql.SelectWithRuntimeStats},
+			rowTypes:      innerTypes,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
@@ -1825,8 +1824,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
 	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
-	childBuilder := &dataReaderBuilder{v.Children()[0], builder.executorBuilder,
-		distsql.SelectWithRuntimeStats}
+	childBuilder := &dataReaderBuilder{v.Children()[0], builder.executorBuilder, distsql.SelectWithRuntimeStats}
 	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
 		return nil, err
