@@ -188,3 +188,28 @@ id	count	task	operator info
 Projection_7	1.00	root	1
 └─Limit_8	1.00	root	offset:0, count:1
   └─TableDual_11	1.00	root	rows:1
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
+id	count	task	operator info
+Apply_14	10000.00	root	semi join, inner:Limit_17, equal:[eq(test.t1.a, test.t2.a)]
+├─TableReader_16	10000.00	root	data:TableScan_15
+│ └─TableScan_15	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Limit_17	1.00	root	offset:0, count:1
+  └─TableReader_23	1.00	root	data:Limit_22
+    └─Limit_22	1.00	cop	offset:0, count:1
+      └─Selection_21	1.00	cop	gt(test.t2.b, test.t1.b)
+        └─TableScan_20	1.25	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
+id	count	task	operator info
+Apply_16	10000.00	root	semi join, inner:Projection_19, equal:[eq(test.t1.a, x.a)]
+├─TableReader_18	10000.00	root	data:TableScan_17
+│ └─TableScan_17	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Projection_19	1.00	root	test.t2.a, test.t1.b
+  └─Limit_20	1.00	root	offset:0, count:1
+    └─TableReader_26	1.00	root	data:Limit_25
+      └─Limit_25	1.00	cop	offset:0, count:1
+        └─Selection_24	1.00	cop	gt(test.t2.b, test.t1.b)
+          └─TableScan_23	1.25	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
