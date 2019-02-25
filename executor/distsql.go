@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"runtime"
 	"sort"
@@ -351,6 +352,9 @@ type IndexLookUpExecutor struct {
 	tblWorkerWg sync.WaitGroup
 	finished    chan struct{}
 
+	kvRanges []kv.KeyRange
+	started  bool
+
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 	feedback   *statistics.QueryFeedback
@@ -371,6 +375,11 @@ type IndexLookUpExecutor struct {
 	corColInAccess  bool
 	idxCols         []*expression.Column
 	colLens         []int
+
+	// selectWithRuntimeStats should be distsql.SelectWithRuntimeStats,
+	// but it can be rewritten while testing.
+	selectWithRuntimeStats func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
 }
 
 // Open implements the Executor Open interface.
@@ -382,19 +391,19 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	err = e.open(ctx, kvRanges)
+	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
 	return errors.Trace(err)
 }
 
-func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
+func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	// We have to initialize "memTracker" and other execution resources in here
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
@@ -420,14 +429,6 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		}
 	}
 
-	// indexWorker will write to workCh and tableWorker will read from workCh,
-	// so fetching index and getting table data can run concurrently.
-	workCh := make(chan *lookupTableTask, 1)
-	err = e.startIndexWorker(ctx, kvRanges, workCh)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.startTableWorker(ctx, workCh)
 	e.parentReqRows = int64(e.maxChunkSize)
 	return nil
 }
@@ -451,7 +452,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.idxPlans))
+	result, err := e.selectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.idxPlans))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -559,6 +560,17 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
+	if !e.started {
+		// indexWorker will write to workCh and tableWorker will read from workCh,
+		// so fetching index and getting table data can run concurrently.
+		workCh := make(chan *lookupTableTask, 1)
+		err := e.startIndexWorker(ctx, e.kvRanges, workCh)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.startTableWorker(ctx, workCh)
+		e.started = true
+	}
 	atomic.StoreInt64(&e.parentReqRows, int64(req.RequiredRows()))
 	req.Reset()
 	for {
@@ -662,6 +674,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, idxResult distsql.
 	handles = make([]int64, 0, requiredNow)
 	for len(handles) < requiredNow {
 		chk.SetRequiredRows(requiredNow-len(handles), w.indexLookUp.maxChunkSize)
+		fmt.Println("----------->>> ", chk.RequiredRows())
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, err
@@ -673,6 +686,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, idxResult distsql.
 			handles = append(handles, chk.GetRow(i).GetInt64(0))
 		}
 	}
+	fmt.Println("~~~~~> ", len(handles))
 	return handles, nil
 }
 
@@ -753,6 +767,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.memUsage = memUsage
 	task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
+	fmt.Println("+++++++++++>> ", handleCnt)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := tableReader.newFirstChunk()

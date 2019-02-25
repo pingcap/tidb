@@ -1557,8 +1557,9 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			filter:   outerFilter,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{innerPlan, b},
-			rowTypes:      innerTypes,
+			readerBuilder: &dataReaderBuilder{innerPlan, b,
+				distsql.SelectWithRuntimeStats},
+			rowTypes: innerTypes,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
@@ -1734,24 +1735,25 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		tbl = pt.GetPartition(physicalTableID)
 	}
 	e := &IndexLookUpExecutor{
-		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		dagPB:             indexReq,
-		table:             tbl,
-		index:             is.Index,
-		keepOrder:         is.KeepOrder,
-		desc:              is.Desc,
-		tableRequest:      tableReq,
-		columns:           ts.Columns,
-		indexStreaming:    indexStreaming,
-		tableStreaming:    tableStreaming,
-		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
-		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
-		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
-		corColInAccess:    b.corColInAccess(v.IndexPlans[0]),
-		idxCols:           is.IdxCols,
-		colLens:           is.IdxColLens,
-		idxPlans:          v.IndexPlans,
-		tblPlans:          v.TablePlans,
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		dagPB:          indexReq,
+		table:          tbl,
+		index:          is.Index,
+		keepOrder:      is.KeepOrder,
+		desc:           is.Desc,
+		tableRequest:   tableReq,
+		columns:        ts.Columns,
+		indexStreaming: indexStreaming,
+		tableStreaming: tableStreaming,
+		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b,
+			selectWithRuntimeStats: distsql.SelectWithRuntimeStats},
+		corColInIdxSide: b.corColInDistPlan(v.IndexPlans),
+		corColInTblSide: b.corColInDistPlan(v.TablePlans),
+		corColInAccess:  b.corColInAccess(v.IndexPlans[0]),
+		idxCols:         is.IdxCols,
+		colLens:         is.IdxColLens,
+		idxPlans:        v.IndexPlans,
+		tblPlans:        v.TablePlans,
 	}
 
 	if containsLimit(indexReq.Executors) {
@@ -1799,6 +1801,11 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 type dataReaderBuilder struct {
 	plannercore.Plan
 	*executorBuilder
+
+	// selectWithRuntimeStats should be distsql.SelectWithRuntimeStats,
+	// but it can be rewritten while testing.
+	selectWithRuntimeStats func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, datums [][]types.Datum,
@@ -1818,7 +1825,8 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
 	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
-	childBuilder := &dataReaderBuilder{v.Children()[0], builder.executorBuilder}
+	childBuilder := &dataReaderBuilder{v.Children()[0], builder.executorBuilder,
+		distsql.SelectWithRuntimeStats}
 	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
 		return nil, err
@@ -1863,7 +1871,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	e.resultHandler = &tableResultHandler{}
-	result, err := distsql.SelectWithRuntimeStats(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	result, err := builder.selectWithRuntimeStats(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1882,7 +1890,8 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = e.open(ctx, kvRanges)
+	e.kvRanges = kvRanges
+	err = e.open(ctx)
 	return e, errors.Trace(err)
 }
 

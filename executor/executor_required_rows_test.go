@@ -207,6 +207,7 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().MemQuotaSort = variable.DefTiDBMemQuotaSort
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker("", ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().SnapshotTS = uint64(time.Now().UnixNano())
+	ctx.GetSessionVars().IndexLookupConcurrency = 1
 	return ctx
 }
 

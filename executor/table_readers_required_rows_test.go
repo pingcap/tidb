@@ -16,11 +16,11 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/parser/model"
 	"math/rand"
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -233,6 +233,62 @@ func (s *testExecSuite) TestIndexReaderRequiredRows(c *C) {
 		sctx := defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
 		exec := buildIndexReader(sctx)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(exec.Close(), IsNil)
+	}
+}
+
+func buildIndexLookupReader(sctx sessionctx.Context) Executor {
+	e := &IndexLookUpExecutor{
+		baseExecutor: buildMockBaseExec(sctx),
+		dagPB:        buildMockDAGRequest(sctx),
+		index:        &model.IndexInfo{},
+		tableRequest: buildMockDAGRequest(sctx),
+		dataReaderBuilder: &dataReaderBuilder{executorBuilder: newExecutorBuilder(sctx, nil),
+			selectWithRuntimeStats: mockSelectWithRuntimeStats},
+		selectWithRuntimeStats: mockSelectWithRuntimeStats,
+	}
+	return e
+}
+
+func (s *testExecSuite) TestIndexLookupRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+	}{
+		{
+			totalRows:      10,
+			requiredRows:   []int{1},
+			expectedRows:   []int{1},
+			expectedRowsDS: []int{1},
+		},
+		//{
+		//	totalRows:      maxChunkSize + 1,
+		//	requiredRows:   []int{1, 5, 3, 10, maxChunkSize},
+		//	expectedRows:   []int{1, 5, 3, 10, (maxChunkSize + 1) - 1 - 5 - 3 - 10},
+		//	expectedRowsDS: []int{1, 5, 3, 10, (maxChunkSize + 1) - 1 - 5 - 3 - 10},
+		//},
+		//{
+		//	totalRows:      3*maxChunkSize + 1,
+		//	requiredRows:   []int{3, 10, maxChunkSize},
+		//	expectedRows:   []int{3, 10, maxChunkSize},
+		//	expectedRowsDS: []int{3, 10, maxChunkSize},
+		//},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
+		exec := buildIndexLookupReader(sctx)
 		c.Assert(exec.Open(ctx), IsNil)
 		chk := exec.newFirstChunk()
 		for i := range testCase.requiredRows {
