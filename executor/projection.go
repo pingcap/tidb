@@ -64,7 +64,7 @@ type ProjectionExec struct {
 	workers     []*projectionWorker
 	childResult *chunk.Chunk
 
-	// requiredRowsNow indicates how many rows the parent executor is
+	// parentReqRows indicates how many rows the parent executor is
 	// requiring. It is set when parallelExecute() is called and used by the
 	// concurrent projectionInputFetcher.
 	//
