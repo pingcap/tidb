@@ -353,6 +353,9 @@ type IndexLookUpExecutor struct {
 	// isCheckOp is used to determine whether we need to check the consistency of the index data.
 	isCheckOp bool
 
+	// parentReqRows indicates how many rows the parent want now.
+	parentReqRows int64
+
 	corColInIdxSide bool
 	idxPlans        []plannercore.PhysicalPlan
 	corColInTblSide bool
@@ -417,6 +420,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		return errors.Trace(err)
 	}
 	e.startTableWorker(ctx, workCh)
+	e.parentReqRows = int64(e.maxChunkSize)
 	return nil
 }
 
@@ -445,16 +449,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	result.Fetch(ctx)
 	worker := &indexWorker{
-		workCh:       workCh,
-		finished:     e.finished,
-		resultCh:     e.resultCh,
-		keepOrder:    e.keepOrder,
-		batchSize:    e.maxChunkSize,
-		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
-		maxChunkSize: e.maxChunkSize,
-	}
-	if worker.batchSize > worker.maxBatchSize {
-		worker.batchSize = worker.maxBatchSize
+		indexLookUp: e,
+		workCh:      workCh,
+		finished:    e.finished,
+		resultCh:    e.resultCh,
+		keepOrder:   e.keepOrder,
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
@@ -552,6 +551,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		start := time.Now()
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
+	atomic.StoreInt64(&e.parentReqRows, int64(req.RequiredRows()))
 	req.Reset()
 	for {
 		resultTask, err := e.getResultTask()
@@ -564,7 +564,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		for resultTask.cursor < len(resultTask.rows) {
 			req.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if req.NumRows() >= e.maxChunkSize {
+			if req.IsFull() {
 				return nil
 			}
 		}
@@ -593,15 +593,12 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
 type indexWorker struct {
+	indexLookUp *IndexLookUpExecutor
+
 	workCh    chan<- *lookupTableTask
 	finished  <-chan struct{}
 	resultCh  chan<- *lookupTableTask
 	keepOrder bool
-
-	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
-	batchSize    int
-	maxBatchSize int
-	maxChunkSize int
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -625,9 +622,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
 	for {
-		handles, err := w.extractTaskHandles(ctx, chk, result)
+		handles, err := w.extractTaskHandles(ctx, result)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- errors.Trace(err)
@@ -652,9 +648,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	}
 }
 
-func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
-	handles = make([]int64, 0, w.batchSize)
-	for len(handles) < w.batchSize {
+func (w *indexWorker) extractTaskHandles(ctx context.Context, idxResult distsql.SelectResult) (handles []int64, err error) {
+	requiredNow := int(atomic.LoadInt64(&w.indexLookUp.parentReqRows))
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, requiredNow)
+	handles = make([]int64, 0, requiredNow)
+	for len(handles) < requiredNow {
+		chk.SetRequiredRows(requiredNow-len(handles), w.indexLookUp.maxChunkSize)
 		err = errors.Trace(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, err
@@ -665,10 +664,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		for i := 0; i < chk.NumRows(); i++ {
 			handles = append(handles, chk.GetRow(i).GetInt64(0))
 		}
-	}
-	w.batchSize *= 2
-	if w.batchSize > w.maxBatchSize {
-		w.batchSize = w.maxBatchSize
 	}
 	return handles, nil
 }
