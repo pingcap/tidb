@@ -161,9 +161,9 @@ id	count	task	operator info
 Projection_10	428.32	root	dt.id, dt.aid, dt.pt, dt.dic, dt.cm, rr.gid, rr.acd, rr.t, dt.p1, dt.p2, dt.p3, dt.p4, dt.p5, dt.p6_md5, dt.p7_md5
 └─Limit_13	428.32	root	offset:0, count:2000
   └─IndexJoin_19	428.32	root	inner join, inner:IndexLookUp_18, outer key:dt.aid, dt.dic, inner key:rr.aid, rr.dic
-    ├─TableReader_47	428.32	root	data:Selection_46
-    │ └─Selection_46	428.32	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592), not(isnull(dt.dic))
-    │   └─TableScan_45	2000.00	cop	table:dt, range:[0,+inf], keep order:false
+    ├─TableReader_43	428.32	root	data:Selection_42
+    │ └─Selection_42	428.32	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592), not(isnull(dt.dic))
+    │   └─TableScan_41	2000.00	cop	table:dt, range:[0,+inf], keep order:false
     └─IndexLookUp_18	970.00	root	
       ├─IndexScan_15	1.00	cop	table:rr, index:aid, dic, range: decided by [ eq(rr.aid, dt.aid) eq(rr.dic, dt.dic) ], keep order:false
       └─Selection_17	970.00	cop	eq(rr.pt, "ios"), gt(rr.t, 1478185592)
@@ -172,10 +172,10 @@ explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,su
 id	count	task	operator info
 Projection_5	207.86	root	test.pp.pc, test.pp.cr, 3_col_0, 3_col_1, 3_col_2
 └─HashAgg_7	207.86	root	group by:test.pp.cr, test.pp.pc, funcs:count(distinct test.pp.uid), count(test.pp.oid), sum(test.pp.am), firstrow(test.pp.pc), firstrow(test.pp.cr)
-  └─IndexLookUp_28	207.86	root	
-    ├─IndexScan_22	627.00	cop	table:pp, index:ps, range:[2,2], keep order:false
-    └─Selection_24	207.86	cop	ge(test.pp.ppt, 1478188800), in(test.pp.pi, 510017, 520017), in(test.pp.uid, 18089709, 18090780), lt(test.pp.ppt, 1478275200)
-      └─TableScan_23	627.00	cop	table:pp, keep order:false
+  └─IndexLookUp_24	207.86	root	
+    ├─IndexScan_18	627.00	cop	table:pp, index:ps, range:[2,2], keep order:false
+    └─Selection_20	207.86	cop	ge(test.pp.ppt, 1478188800), in(test.pp.pi, 510017, 520017), in(test.pp.uid, 18089709, 18090780), lt(test.pp.ppt, 1478275200)
+      └─TableScan_19	627.00	cop	table:pp, keep order:false
 drop table if exists tbl_001;
 CREATE TABLE tbl_001 (a int, b int);
 load stats 's/explain_complex_stats_tbl_001.json';

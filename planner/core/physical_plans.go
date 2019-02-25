@@ -249,6 +249,7 @@ type PhysicalMergeJoin struct {
 
 	JoinType JoinType
 
+	CompareFuncs    []expression.CompareFunc
 	LeftConditions  []expression.Expression
 	RightConditions []expression.Expression
 	OtherConditions []expression.Expression

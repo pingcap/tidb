@@ -153,9 +153,9 @@ id	count	task	operator info
 Projection_10	0.00	root	dt.id, dt.aid, dt.pt, dt.dic, dt.cm, rr.gid, rr.acd, rr.t, dt.p1, dt.p2, dt.p3, dt.p4, dt.p5, dt.p6_md5, dt.p7_md5
 └─Limit_13	0.00	root	offset:0, count:2000
   └─IndexJoin_19	0.00	root	inner join, inner:IndexLookUp_18, outer key:dt.aid, dt.dic, inner key:rr.aid, rr.dic
-    ├─TableReader_47	0.00	root	data:Selection_46
-    │ └─Selection_46	0.00	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592), not(isnull(dt.dic))
-    │   └─TableScan_45	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
+    ├─TableReader_43	0.00	root	data:Selection_42
+    │ └─Selection_42	0.00	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592), not(isnull(dt.dic))
+    │   └─TableScan_41	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
     └─IndexLookUp_18	3.33	root	
       ├─IndexScan_15	10.00	cop	table:rr, index:aid, dic, range: decided by [ eq(rr.aid, dt.aid) eq(rr.dic, dt.dic) ], keep order:false, stats:pseudo
       └─Selection_17	3.33	cop	eq(rr.pt, "ios"), gt(rr.t, 1478185592)
@@ -164,10 +164,10 @@ explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,su
 id	count	task	operator info
 Projection_5	1.00	root	test.pp.pc, test.pp.cr, 3_col_0, 3_col_1, 3_col_2
 └─HashAgg_7	1.00	root	group by:test.pp.cr, test.pp.pc, funcs:count(distinct test.pp.uid), count(test.pp.oid), sum(test.pp.am), firstrow(test.pp.pc), firstrow(test.pp.cr)
-  └─IndexLookUp_28	0.00	root	
-    ├─IndexScan_25	0.40	cop	table:pp, index:uid, pi, range:[18089709 510017,18089709 510017], [18089709 520017,18089709 520017], [18090780 510017,18090780 510017], [18090780 520017,18090780 520017], keep order:false, stats:pseudo
-    └─Selection_27	0.00	cop	eq(test.pp.ps, 2), ge(test.pp.ppt, 1478188800), lt(test.pp.ppt, 1478275200)
-      └─TableScan_26	0.40	cop	table:pp, keep order:false, stats:pseudo
+  └─IndexLookUp_24	0.00	root	
+    ├─IndexScan_21	0.40	cop	table:pp, index:uid, pi, range:[18089709 510017,18089709 510017], [18089709 520017,18089709 520017], [18090780 510017,18090780 510017], [18090780 520017,18090780 520017], keep order:false, stats:pseudo
+    └─Selection_23	0.00	cop	eq(test.pp.ps, 2), ge(test.pp.ppt, 1478188800), lt(test.pp.ppt, 1478275200)
+      └─TableScan_22	0.40	cop	table:pp, keep order:false, stats:pseudo
 CREATE TABLE `tbl_001` (`a` int, `b` int);
 CREATE TABLE `tbl_002` (`a` int, `b` int);
 CREATE TABLE `tbl_003` (`a` int, `b` int);
