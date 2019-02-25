@@ -161,6 +161,10 @@ type Column struct {
 	Index int
 
 	hashcode []byte
+
+	// InOperand indicates whether this column is the inner operand of column equal condition converted
+	// from `[not] in (subq)`.
+	InOperand bool
 }
 
 // Equal implements Expression interface.
