@@ -21,9 +21,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -55,6 +58,11 @@ type TableReaderExecutor struct {
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
 	plans          []plannercore.PhysicalPlan
+
+	// selectWithRuntimeStats should be distsql.SelectWithRuntimeStats,
+	// but it can be rewritten while testing.
+	selectWithRuntimeStats func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -80,6 +88,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 
+	if e.selectWithRuntimeStats == nil {
+		e.selectWithRuntimeStats = distsql.SelectWithRuntimeStats
+	}
 	e.resultHandler = &tableResultHandler{}
 	if e.feedback != nil && e.feedback.Hist() != nil {
 		// EncodeInt don't need *statement.Context.
@@ -148,7 +159,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	result, err := e.selectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
