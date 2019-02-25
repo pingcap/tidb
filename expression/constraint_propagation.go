@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -34,14 +35,14 @@ type exprSet struct {
 	constfalse bool
 }
 
-func (s *exprSet) Append(e Expression) bool {
-	if _, ok := s.exists[string(e.HashCode(nil))]; ok {
+func (s *exprSet) Append(sc *stmtctx.StatementContext, e Expression) bool {
+	if _, ok := s.exists[string(e.HashCode(sc))]; ok {
 		return false
 	}
 
 	s.data = append(s.data, e)
 	s.tombstone = append(s.tombstone, false)
-	s.exists[string(e.HashCode(nil))] = struct{}{}
+	s.exists[string(e.HashCode(sc))] = struct{}{}
 	return true
 }
 
@@ -68,13 +69,14 @@ func (s *exprSet) SetConstFalse() {
 	s.constfalse = true
 }
 
-func newExprSet(conditions []Expression) *exprSet {
+func newExprSet(ctx sessionctx.Context, conditions []Expression) *exprSet {
 	var exprs exprSet
 	exprs.data = make([]Expression, 0, len(conditions))
 	exprs.tombstone = make([]bool, 0, len(conditions))
 	exprs.exists = make(map[string]struct{}, len(conditions))
+	sc := ctx.GetSessionVars().StmtCtx
 	for _, v := range conditions {
-		exprs.Append(v)
+		exprs.Append(sc, v)
 	}
 	return &exprs
 }
@@ -94,7 +96,7 @@ func (s pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expres
 
 // Solve propagate constraint according to the rules in the constraintSolver.
 func (s constraintSolver) Solve(ctx sessionctx.Context, conditions []Expression) []Expression {
-	exprs := newExprSet(conditions)
+	exprs := newExprSet(ctx, conditions)
 	s.fixPoint(ctx, exprs)
 	return exprs.Slice()
 }
@@ -112,7 +114,6 @@ func (s constraintSolver) fixPoint(ctx sessionctx.Context, exprs *exprSet) {
 			break
 		}
 	}
-	return
 }
 
 // iterOnce picks two expressions from the set, try to propagate new conditions from them.
@@ -165,8 +166,8 @@ func ruleColumnEQConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	if col != nil {
 		expr := ColumnSubstitute(exprs.data[j], NewSchema(col), []Expression{cons})
 		stmtctx := ctx.GetSessionVars().StmtCtx
-		if bytes.Compare(expr.HashCode(stmtctx), exprs.data[j].HashCode(stmtctx)) != 0 {
-			exprs.Append(expr)
+		if !bytes.Equal(expr.HashCode(stmtctx), exprs.data[j].HashCode(stmtctx)) {
+			exprs.Append(stmtctx, expr)
 			exprs.tombstone[j] = true
 		}
 	}
@@ -250,7 +251,21 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 			return
 		}
 	}
-	if !col1.Equal(ctx, col2) {
+
+	// Make sure col1 and col2 are the same column.
+	// Can't use col1.Equal(ctx, col2) here, because they are not generated in one
+	// expression and their UniqueID are not the same.
+	if col1.ColName.L != col2.ColName.L {
+		return
+	}
+	if col1.OrigColName.L != "" &&
+		col2.OrigColName.L != "" &&
+		col1.OrigColName.L != col2.OrigColName.L {
+		return
+	}
+	if col1.OrigTblName.L != "" &&
+		col2.OrigTblName.L != "" &&
+		col1.OrigColName.L != col2.OrigColName.L {
 		return
 	}
 	v, isNull, err := compareConstant(ctx, negOP(OP2), fc1, con2)
@@ -261,7 +276,6 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	if !isNull && v > 0 {
 		exprs.SetConstFalse()
 	}
-	return
 }
 
 // opsiteOP the opsite direction of a compare operation, used in ruleColumnOPConst.
@@ -301,4 +315,9 @@ func compareConstant(ctx sessionctx.Context, fn string, c1, c2 Expression) (int6
 		return 0, false, err
 	}
 	return cmp.EvalInt(ctx, chunk.Row{})
+}
+
+// NewPartitionPruneSolver returns a constraintSolver for partition pruning.
+func NewPartitionPruneSolver() constraintSolver {
+	return newConstraintSolver(ruleColumnOPConst)
 }

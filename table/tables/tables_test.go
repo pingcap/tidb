@@ -169,10 +169,10 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	chk := rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	req := rs[0].NewRecordBatch()
+	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
+	c.Assert(req.NumRows() == 0, IsFalse)
 	c.Assert(rs[0].Close(), IsNil)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
@@ -183,11 +183,11 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select * from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	chk = rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	req = rs[0].NewRecordBatch()
+	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	row := chk.GetRow(0)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row := req.GetRow(0)
 	c.Assert(types.BinaryLiteral(row.GetBytes(5)), DeepEquals, types.NewBinaryLiteralFromUint(6, -1))
 	c.Assert(rs[0].Close(), IsNil)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
@@ -199,11 +199,11 @@ func (ts *testSuite) TestTypes(c *C) {
 	c.Assert(err, IsNil)
 	rs, err = ts.se.Execute(ctx, "select c1 + 1 from test.t where c1 = 1")
 	c.Assert(err, IsNil)
-	chk = rs[0].NewChunk()
-	err = rs[0].Next(ctx, chk)
+	req = rs[0].NewRecordBatch()
+	err = rs[0].Next(ctx, req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	c.Assert(chk.GetRow(0).GetFloat64(0), DeepEquals, float64(2))
+	c.Assert(req.NumRows() == 0, IsFalse)
+	c.Assert(req.GetRow(0).GetFloat64(0), DeepEquals, float64(2))
 	c.Assert(rs[0].Close(), IsNil)
 	_, err = ts.se.Execute(ctx, "drop table test.t")
 	c.Assert(err, IsNil)
@@ -396,7 +396,7 @@ PARTITION BY RANGE ( id ) (
 
 	// Value must locates in one partition.
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
-	c.Assert(table.ErrTrgInvalidCreationCtx.Equal(err), IsTrue)
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 	ts.se.Execute(context.Background(), "rollback")
 
 	createTable2 := `CREATE TABLE test.t2 (id int(11))
@@ -409,9 +409,36 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(ts.se.NewTxn(ctx), IsNil)
 	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
-	tbInfo = tb.Meta()
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22))
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
+
+	createTable3 := `create table test.t3 (id int) partition by range (id) 
+	(
+       partition p0 values less than (10)
+	)`
+	_, err = ts.se.Execute(context.Background(), createTable3)
+	c.Assert(err, IsNil)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(11))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(10))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(0))
+	c.Assert(err, IsNil)
+
+	createTable4 := `create table test.t4 (a int,b int) partition by range (a+b)
+	(
+	partition p0 values less than (10)
+	);`
+	_, err = ts.se.Execute(context.Background(), createTable4)
+	c.Assert(err, IsNil)
+	c.Assert(ts.se.NewTxn(ctx), IsNil)
+	tb, err = ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	_, err = tb.AddRecord(ts.se, types.MakeDatums(1, 11))
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 
 func (ts *testSuite) TestHashPartitionAddRecord(c *C) {

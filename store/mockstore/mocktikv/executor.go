@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -41,6 +42,20 @@ var (
 	_ executor = &topNExec{}
 )
 
+type execDetail struct {
+	timeProcessed   time.Duration
+	numProducedRows int
+	numIterations   int
+}
+
+func (e *execDetail) update(begin time.Time, row [][]byte) {
+	e.timeProcessed += time.Since(begin)
+	e.numIterations++
+	if row != nil {
+		e.numProducedRows++
+	}
+}
+
 type executor interface {
 	SetSrcExec(executor)
 	GetSrcExec() executor
@@ -49,6 +64,9 @@ type executor interface {
 	Next(ctx context.Context) ([][]byte, error)
 	// Cursor returns the key gonna to be scanned by the Next() function.
 	Cursor() (key []byte, desc bool)
+	// ExecDetails returns its and its children's execution details.
+	// The order is same as DAGRequest.Executors, which children are in front of parents.
+	ExecDetails() []*execDetail
 }
 
 type tableScanExec struct {
@@ -62,8 +80,17 @@ type tableScanExec struct {
 	seekKey        []byte
 	start          int
 	counts         []int64
+	execDetail     *execDetail
 
 	src executor
+}
+
+func (e *tableScanExec) ExecDetails() []*execDetail {
+	var suffix []*execDetail
+	if e.src != nil {
+		suffix = e.src.ExecDetails()
+	}
+	return append(suffix, e.execDetail)
 }
 
 func (e *tableScanExec) SetSrcExec(exec executor) {
@@ -115,6 +142,9 @@ func (e *tableScanExec) Cursor() ([]byte, bool) {
 }
 
 func (e *tableScanExec) Next(ctx context.Context) (value [][]byte, err error) {
+	defer func(begin time.Time) {
+		e.execDetail.update(begin, value)
+	}(time.Now())
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() {
@@ -234,8 +264,17 @@ type indexScanExec struct {
 	pkStatus       int
 	start          int
 	counts         []int64
+	execDetail     *execDetail
 
 	src executor
+}
+
+func (e *indexScanExec) ExecDetails() []*execDetail {
+	var suffix []*execDetail
+	if e.src != nil {
+		suffix = e.src.ExecDetails()
+	}
+	return append(suffix, e.execDetail)
 }
 
 func (e *indexScanExec) SetSrcExec(exec executor) {
@@ -288,6 +327,9 @@ func (e *indexScanExec) Cursor() ([]byte, bool) {
 }
 
 func (e *indexScanExec) Next(ctx context.Context) (value [][]byte, err error) {
+	defer func(begin time.Time) {
+		e.execDetail.update(begin, value)
+	}(time.Now())
 	for e.cursor < len(e.kvRanges) {
 		ran := e.kvRanges[e.cursor]
 		if ran.IsPoint() && e.isUnique() {
@@ -410,6 +452,15 @@ type selectionExec struct {
 	row               []types.Datum
 	evalCtx           *evalContext
 	src               executor
+	execDetail        *execDetail
+}
+
+func (e *selectionExec) ExecDetails() []*execDetail {
+	var suffix []*execDetail
+	if e.src != nil {
+		suffix = e.src.ExecDetails()
+	}
+	return append(suffix, e.execDetail)
 }
 
 func (e *selectionExec) SetSrcExec(exec executor) {
@@ -455,6 +506,9 @@ func (e *selectionExec) Cursor() ([]byte, bool) {
 }
 
 func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
+	defer func(begin time.Time) {
+		e.execDetail.update(begin, value)
+	}(time.Now())
 	for {
 		value, err = e.src.Next(ctx)
 		if err != nil {
@@ -486,8 +540,17 @@ type topNExec struct {
 	row               []types.Datum
 	cursor            int
 	executed          bool
+	execDetail        *execDetail
 
 	src executor
+}
+
+func (e *topNExec) ExecDetails() []*execDetail {
+	var suffix []*execDetail
+	if e.src != nil {
+		suffix = e.src.ExecDetails()
+	}
+	return append(suffix, e.execDetail)
 }
 
 func (e *topNExec) SetSrcExec(src executor) {
@@ -526,6 +589,9 @@ func (e *topNExec) Cursor() ([]byte, bool) {
 }
 
 func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
+	defer func(begin time.Time) {
+		e.execDetail.update(begin, value)
+	}(time.Now())
 	if !e.executed {
 		for {
 			hasMore, err := e.innerNext(ctx)
@@ -566,9 +632,7 @@ func (e *topNExec) evalTopN(value [][]byte) error {
 	}
 
 	if e.heap.tryToAddRow(newRow) {
-		for _, val := range value {
-			newRow.data = append(newRow.data, val)
-		}
+		newRow.data = append(newRow.data, value...)
 	}
 	return errors.Trace(e.heap.err)
 }
@@ -578,6 +642,16 @@ type limitExec struct {
 	cursor uint64
 
 	src executor
+
+	execDetail *execDetail
+}
+
+func (e *limitExec) ExecDetails() []*execDetail {
+	var suffix []*execDetail
+	if e.src != nil {
+		suffix = e.src.ExecDetails()
+	}
+	return append(suffix, e.execDetail)
 }
 
 func (e *limitExec) SetSrcExec(src executor) {
@@ -601,6 +675,9 @@ func (e *limitExec) Cursor() ([]byte, bool) {
 }
 
 func (e *limitExec) Next(ctx context.Context) (value [][]byte, err error) {
+	defer func(begin time.Time) {
+		e.execDetail.update(begin, value)
+	}(time.Now())
 	if e.cursor >= e.limit {
 		return nil, nil
 	}

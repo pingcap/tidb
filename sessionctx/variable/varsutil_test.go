@@ -217,10 +217,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
 
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
-
 	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
 	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
@@ -249,4 +245,15 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "5")
 	c.Assert(v.TiDBOptJoinOrderAlgoThreshold, Equals, 5)
+
+	SetSessionSystemVar(v, TiDBCheckMb4ValueInUtf8, types.NewStringDatum("1"))
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUtf8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, true)
+	SetSessionSystemVar(v, TiDBCheckMb4ValueInUtf8, types.NewStringDatum("0"))
+	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUtf8)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "0")
+	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUtf8, Equals, false)
 }

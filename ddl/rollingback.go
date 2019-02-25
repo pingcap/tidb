@@ -50,7 +50,7 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -160,8 +160,16 @@ func rollingbackAddindex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	return
 }
 
+func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return cancelOnlyNotHandledJob(job)
+}
+
 func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
-	tblInfo, err := checkTableExist(t, job, job.SchemaID)
+	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, job.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -173,6 +181,14 @@ func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 	}
 	job.State = model.JobStateRunning
 	return nil
+}
+
+func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return cancelOnlyNotHandledJob(job)
 }
 
 func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
@@ -190,20 +206,74 @@ func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
 	return nil
 }
 
+func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, from, _, err := checkRenameIndex(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Here rename index is done in a transaction, if the job is not completed, it can be canceled.
+	idx := schemautil.FindIndexByName(from.L, tblInfo.Indices)
+	if idx.State == model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+	job.State = model.JobStateRunning
+	return ver, errors.Trace(err)
+}
+
+func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
+	// We can only cancel the not handled job.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+
+	job.State = model.JobStateRunning
+
+	return ver, nil
+}
+func rollingbackRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	return cancelOnlyNotHandledJob(job)
+}
+
+func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return cancelOnlyNotHandledJob(job)
+}
+
+func rollingbackShardRowID(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	return cancelOnlyNotHandledJob(job)
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
 		ver, err = rollingbackAddColumn(t, job)
 	case model.ActionAddIndex:
 		ver, err = rollingbackAddindex(w, d, t, job)
+	case model.ActionAddTablePartition:
+		ver, err = rollingbackAddTablePartition(t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
 	case model.ActionDropIndex:
 		ver, err = rollingbackDropIndex(t, job)
 	case model.ActionDropTable, model.ActionDropView:
 		err = rollingbackDropTableOrView(t, job)
+	case model.ActionDropTablePartition:
+		ver, err = rollingbackDropTablePartition(t, job)
 	case model.ActionDropSchema:
 		err = rollingbackDropSchema(t, job)
+	case model.ActionRenameIndex:
+		ver, err = rollingbackRenameIndex(t, job)
+	case model.ActionRebaseAutoID:
+		ver, err = rollingbackRebaseAutoID(t, job)
+	case model.ActionTruncateTable:
+		ver, err = rollingbackTruncateTable(t, job)
+	case model.ActionShardRowID:
+		ver, err = rollingbackShardRowID(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob

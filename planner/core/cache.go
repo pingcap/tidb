@@ -54,10 +54,7 @@ func SetPreparedPlanCache(isEnabled bool) {
 // PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
 func PreparedPlanCacheEnabled() bool {
 	isEnabled := atomic.LoadInt32(&preparedPlanCacheEnabledValue)
-	if isEnabled == preparedPlanCacheEnabled {
-		return true
-	}
-	return false
+	return isEnabled == preparedPlanCacheEnabled
 }
 
 type pstmtPlanCacheKey struct {

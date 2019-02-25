@@ -686,10 +686,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
 		s.EnableTablePartition = val
-	case TiDBDDLReorgWorkerCount:
-		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
-	case TiDBDDLReorgBatchSize:
-		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
@@ -700,9 +696,21 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableWindowFunction = TiDBOptOn(val)
 	case TiDBOptJoinOrderAlgoThreshold:
 		s.TiDBOptJoinOrderAlgoThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinOrderAlgoThreshold)
+	case TiDBCheckMb4ValueInUtf8:
+		config.GetGlobalConfig().CheckMb4ValueInUtf8 = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
+}
+
+// SetLocalSystemVar sets values of the local variables which in "server" scope.
+func SetLocalSystemVar(name string, val string) {
+	switch name {
+	case TiDBDDLReorgWorkerCount:
+		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+	case TiDBDDLReorgBatchSize:
+		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
+	}
 }
 
 // special session variables.

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hack"
+	"golang.org/x/tools/container/intsets"
 )
 
 // Filter the input expressions, append the results to result.
@@ -91,6 +91,26 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 		}
 	}
 	return result
+}
+
+// ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
+func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
+	set := &intsets.Sparse{}
+	for _, expr := range exprs {
+		extractColumnSet(expr, set)
+	}
+	return set
+}
+
+func extractColumnSet(expr Expression, set *intsets.Sparse) {
+	switch v := expr.(type) {
+	case *Column:
+		set.Insert(int(v.UniqueID))
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			extractColumnSet(arg, set)
+		}
+	}
 }
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
@@ -321,15 +341,15 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 		for _, cnfItem := range cnfItems {
 			code := cnfItem.HashCode(sc)
 			if i == 0 {
-				codeMap[hack.String(code)] = 1
-				hashcode2Expr[hack.String(code)] = cnfItem
-			} else if _, ok := codeMap[hack.String(code)]; ok {
+				codeMap[string(code)] = 1
+				hashcode2Expr[string(code)] = cnfItem
+			} else if _, ok := codeMap[string(code)]; ok {
 				// We need this check because there may be the case like `select * from t, t1 where (t.a=t1.a and t.a=t1.a) or (something).
 				// We should make sure that the two `t.a=t1.a` contributes only once.
 				// TODO: do this out of this function.
-				if _, ok = innerMap[hack.String(code)]; !ok {
-					codeMap[hack.String(code)]++
-					innerMap[hack.String(code)] = struct{}{}
+				if _, ok = innerMap[string(code)]; !ok {
+					codeMap[string(code)]++
+					innerMap[string(code)] = struct{}{}
 				}
 			}
 		}
@@ -350,7 +370,7 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 		newCNFItems := make([]Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
 			code := cnfItem.HashCode(sc)
-			_, ok := hashcode2Expr[hack.String(code)]
+			_, ok := hashcode2Expr[string(code)]
 			if !ok {
 				newCNFItems = append(newCNFItems, cnfItem)
 			}
@@ -586,4 +606,48 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 		return 0, true, nil
 	}
 	return intNum, false, nil
+}
+
+// BuildNotNullExpr wraps up `not(isnull())` for given expression.
+func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
+	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
+	return notNull
+}
+
+// isMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
+func isMutableEffectsExpr(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := mutableEffectsFunctions[x.FuncName.L]; ok {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if isMutableEffectsExpr(arg) {
+				return true
+			}
+		}
+	case *Column:
+	case *Constant:
+		if x.DeferredExpr != nil {
+			return isMutableEffectsExpr(x.DeferredExpr)
+		}
+	}
+	return false
+}
+
+// RemoveDupExprs removes identical exprs. Not that if expr contains functions which
+// are mutable or have side effects, we cannot remove it even if it has duplicates.
+func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
+	res := make([]Expression, 0, len(exprs))
+	exists := make(map[string]struct{}, len(exprs))
+	sc := ctx.GetSessionVars().StmtCtx
+	for _, expr := range exprs {
+		key := string(expr.HashCode(sc))
+		if _, ok := exists[key]; !ok || isMutableEffectsExpr(expr) {
+			res = append(res, expr)
+			exists[key] = struct{}{}
+		}
+	}
+	return res
 }

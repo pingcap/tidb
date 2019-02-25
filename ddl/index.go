@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -200,26 +201,11 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 }
 
 func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var from, to model.CIStr
-	if err := job.DecodeArgs(&from, &to); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	tblInfo, from, to, err := checkRenameIndex(t, job)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	// Double check. See function `RenameIndex` in ddl_api.go
-	duplicate, err := validateRenameIndex(from, to, tblInfo)
-	if duplicate {
-		return ver, nil
-	}
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
 	idx := schemautil.FindIndexByName(from.L, tblInfo.Indices)
 	idx.Name = to
 	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
@@ -242,7 +228,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 
 	// Handle normal job.
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -332,7 +318,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 				// if timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) {
+			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeIndex.Equal(err) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
 				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
@@ -417,7 +403,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -434,6 +420,31 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 	return tblInfo, indexInfo, nil
+}
+
+func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, model.CIStr, error) {
+	var from, to model.CIStr
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, from, to, errors.Trace(err)
+	}
+
+	if err := job.DecodeArgs(&from, &to); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, from, to, errors.Trace(err)
+	}
+
+	// Double check. See function `RenameIndex` in ddl_api.go
+	duplicate, err := validateRenameIndex(from, to, tblInfo)
+	if duplicate {
+		return nil, from, to, nil
+	}
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, from, to, errors.Trace(err)
+	}
+	return tblInfo, from, to, errors.Trace(err)
 }
 
 const (
@@ -538,7 +549,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	sysZone := timeutil.SystemLocation()
 	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
 	}
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
@@ -699,7 +710,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
 	}
 
-	batchVals, err := kv.BatchGetValues(txn, w.batchCheckKeys)
+	batchVals, err := txn.BatchGet(w.batchCheckKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1065,10 +1076,21 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 
 var (
 	// TestCheckWorkerNumCh use for test adjust add index worker.
-	TestCheckWorkerNumCh = make(chan struct{}, 0)
+	TestCheckWorkerNumCh = make(chan struct{})
 	// TestCheckWorkerNumber use for test adjust add index worker.
 	TestCheckWorkerNumber = int32(16)
 )
+
+func loadDDLReorgVars(w *worker) error {
+	// Get sessionctx from context resource pool.
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+	return ddlutil.LoadDDLReorgVars(ctx)
+}
 
 // addPhysicalTableIndex handles the add index reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
@@ -1110,6 +1132,9 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 		}
 
 		// For dynamic adjust add index worker number.
+		if err := loadDDLReorgVars(w); err != nil {
+			log.Error(err)
+		}
 		workerCnt = variable.GetDDLReorgWorkerCounter()
 		// If only have 1 range, we can only start 1 worker.
 		if len(kvRanges) < int(workerCnt) {

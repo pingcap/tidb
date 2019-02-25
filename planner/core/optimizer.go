@@ -114,9 +114,7 @@ func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 
 func postOptimize(plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
-
-	// build projection below aggregation
-	plan = buildProjBelowAgg(plan)
+	plan = injectExtraProjection(plan)
 	return plan
 }
 
@@ -157,8 +155,8 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
-	t.plan().ResolveIndices()
-	return t.plan(), nil
+	err = t.plan().ResolveIndices()
+	return t.plan(), err
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {

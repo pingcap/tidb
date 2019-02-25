@@ -53,9 +53,14 @@ type joinReOrderSolver struct {
 
 type joinReorderGreedySingleGroupSolver struct {
 	ctx          sessionctx.Context
-	curJoinGroup []LogicalPlan
+	curJoinGroup []*jrNode
 	eqEdges      []*expression.ScalarFunction
 	otherConds   []expression.Expression
+}
+
+type jrNode struct {
+	p       LogicalPlan
+	cumCost float64
 }
 
 // solve reorders the join nodes in the group based on a greedy algorithm.
@@ -65,20 +70,26 @@ type joinReorderGreedySingleGroupSolver struct {
 // tree, choose the node with the smallest cumulative cost to join with the
 // current join tree.
 //
-// cumulative join cost = RowCount(lhs) + RowCount(rhs) + RowCount(join)
-// TODO: this formula can be updated to fit more case.
+// cumulative join cost = CumCount(lhs) + CumCount(rhs) + RowCount(join)
+//   For base node, its CumCount equals to the sum of the count of its subtree.
+//   See baseNodeCumCost for more details.
+// TODO: this formula can be changed to real physical cost in future.
 //
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
-func (s *joinReorderGreedySingleGroupSolver) solve() (LogicalPlan, error) {
-	for _, node := range s.curJoinGroup {
+func (s *joinReorderGreedySingleGroupSolver) solve(joinNodePlans []LogicalPlan) (LogicalPlan, error) {
+	for _, node := range joinNodePlans {
 		_, err := node.recursiveDeriveStats()
 		if err != nil {
 			return nil, err
 		}
+		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
+			p:       node,
+			cumCost: s.baseNodeCumCost(node),
+		})
 	}
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
-		return s.curJoinGroup[i].statsInfo().RowCount < s.curJoinGroup[j].statsInfo().RowCount
+		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
 	var cartesianGroup []LogicalPlan
@@ -87,13 +98,21 @@ func (s *joinReorderGreedySingleGroupSolver) solve() (LogicalPlan, error) {
 		if err != nil {
 			return nil, err
 		}
-		cartesianGroup = append(cartesianGroup, newNode)
+		cartesianGroup = append(cartesianGroup, newNode.p)
 	}
 
 	return s.makeBushyJoin(cartesianGroup), nil
 }
 
-func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (LogicalPlan, error) {
+func (s *joinReorderGreedySingleGroupSolver) baseNodeCumCost(groupNode LogicalPlan) float64 {
+	cost := groupNode.statsInfo().RowCount
+	for _, child := range groupNode.Children() {
+		cost += s.baseNodeCumCost(child)
+	}
+	return cost
+}
+
+func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
@@ -102,7 +121,7 @@ func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (Logic
 		var finalRemainOthers []expression.Expression
 		var bestJoin LogicalPlan
 		for i, node := range s.curJoinGroup {
-			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree, node)
+			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
 			if newJoin == nil {
 				continue
 			}
@@ -110,7 +129,7 @@ func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (Logic
 			if err != nil {
 				return nil, err
 			}
-			curCost := curJoinTree.statsInfo().RowCount + newJoin.statsInfo().RowCount + node.statsInfo().RowCount
+			curCost := curJoinTree.cumCost + newJoin.statsInfo().RowCount + node.cumCost
 			if bestCost > curCost {
 				bestCost = curCost
 				bestJoin = newJoin
@@ -122,7 +141,10 @@ func (s *joinReorderGreedySingleGroupSolver) constructConnectedJoinTree() (Logic
 		if bestJoin == nil {
 			break
 		}
-		curJoinTree = bestJoin
+		curJoinTree = &jrNode{
+			p:       bestJoin,
+			cumCost: bestCost,
+		}
 		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
 		s.otherConds = finalRemainOthers
 	}
@@ -211,13 +233,12 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			}
 		}
 		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinOrderAlgoThreshold {
-			greedySolver := &joinReorderGreedySingleGroupSolver{
-				ctx:          ctx,
-				curJoinGroup: curJoinGroup,
-				eqEdges:      eqEdges,
-				otherConds:   otherConds,
+			groupSolver := &joinReorderGreedySingleGroupSolver{
+				ctx:        ctx,
+				eqEdges:    eqEdges,
+				otherConds: otherConds,
 			}
-			p, err = greedySolver.solve()
+			p, err = groupSolver.solve(curJoinGroup)
 			if err != nil {
 				return nil, err
 			}

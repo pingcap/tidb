@@ -76,6 +76,7 @@ var (
 	errInvalidWorker = terror.ClassDDL.New(codeInvalidWorker, "invalid worker")
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(codeNotOwner, "not Owner")
+	errCantDecodeIndex       = terror.ClassDDL.New(codeCantDecodeIndex, "cannot decode index value, because %s")
 	errInvalidDDLJob         = terror.ClassDDL.New(codeInvalidDDLJob, "invalid DDL job")
 	errCancelledDDLJob       = terror.ClassDDL.New(codeCancelledDDLJob, "cancelled DDL job")
 	errInvalidJobFlag        = terror.ClassDDL.New(codeInvalidJobFlag, "invalid job flag")
@@ -83,7 +84,6 @@ var (
 	errWaitReorgTimeout      = terror.ClassDDL.New(codeWaitReorgTimeout, "wait for reorganization timeout")
 	errInvalidStoreVer       = terror.ClassDDL.New(codeInvalidStoreVer, "invalid storage current version")
 
-	errUnknownPartition = terror.ClassDDL.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex     = terror.ClassDDL.New(codeCantDropColWithIndex, "can't drop column with index")
 	errUnsupportedAddColumn     = terror.ClassDDL.New(codeUnsupportedAddColumn, "unsupported add column")
@@ -94,10 +94,9 @@ var (
 	errUnsupportedCharset = terror.ClassDDL.New(codeUnsupportedCharset, "unsupported charset %s collate %s")
 
 	errUnsupportedShardRowIDBits = terror.ClassDDL.New(codeUnsupportedShardRowIDBits, "unsupported shard_row_id_bits for table with auto_increment column.")
-
-	errBlobKeyWithoutLength = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
-	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
-	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
+	errBlobKeyWithoutLength      = terror.ClassDDL.New(codeBlobKeyWithoutLength, "index for BLOB/TEXT column must specify a key length")
+	errIncorrectPrefixKey        = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
+	errTooLongKey                = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
 	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
 	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
@@ -128,6 +127,9 @@ var (
 	ErrUnsupportedAddPartition = terror.ClassDDL.New(codeUnsupportedAddPartition, "unsupported add partitions")
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
 	ErrUnsupportedCoalescePartition = terror.ClassDDL.New(codeUnsupportedCoalescePartition, "unsupported coalesce partitions")
+	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
+	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(codeUnsupportedPartitionByRangeColumns,
+		"unsupported partition by range columns")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
@@ -203,8 +205,10 @@ var (
 	ErrCoalesceOnlyOnHashPartition = terror.ClassDDL.New(codeCoalesceOnlyOnHashPartition, mysql.MySQLErrName[mysql.ErrCoalesceOnlyOnHashPartition])
 	// ErrViewWrongList returns create view must include all columns in the select clause
 	ErrViewWrongList = terror.ClassDDL.New(codeViewWrongList, mysql.MySQLErrName[mysql.ErrViewWrongList])
-	// ErrTableIsNotView returns for table is not base table.
-	ErrTableIsNotView = terror.ClassDDL.New(codeErrWrongObject, "'%s.%s' is not VIEW")
+	// ErrAlterOperationNotSupported returns when alter operations is not supported.
+	ErrAlterOperationNotSupported = terror.ClassDDL.New(codeNotSupportedAlterOperation, mysql.MySQLErrName[mysql.ErrAlterOperationNotSupportedReason])
+	// ErrWrongObject returns for wrong object.
+	ErrWrongObject = terror.ClassDDL.New(codeErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -215,6 +219,7 @@ type DDL interface {
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
+	RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error)
 	DropView(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
@@ -458,8 +463,10 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-// GetInformationSchema gets the infoschema binding to d. It's expoted for testing.
-func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema {
+// GetInfoSchemaWithInterceptor gets the infoschema binding to d. It's exported for testing.
+// Please don't use this function, it is used by TestParallelDDLBeforeRunDDLJob to intercept the calling of d.infoHandle.Get(), use d.infoHandle.Get() instead.
+// Otherwise, the TestParallelDDLBeforeRunDDLJob will hang up forever.
+func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.InfoSchema {
 	is := d.infoHandle.Get()
 
 	d.mu.RLock()
@@ -613,6 +620,7 @@ const (
 	codeCancelledDDLJob                      = 12
 	codeInvalidRanges                        = 13
 	codeReorgWorkerPanic                     = 14
+	codeCantDecodeIndex                      = 15
 
 	codeInvalidDBState         = 100
 	codeInvalidTableState      = 101
@@ -620,16 +628,17 @@ const (
 	codeInvalidIndexState      = 103
 	codeInvalidForeignKeyState = 104
 
-	codeCantDropColWithIndex         = 201
-	codeUnsupportedAddColumn         = 202
-	codeUnsupportedModifyColumn      = 203
-	codeUnsupportedDropPKHandle      = 204
-	codeUnsupportedCharset           = 205
-	codeUnsupportedModifyPrimaryKey  = 206
-	codeUnsupportedShardRowIDBits    = 207
-	codeUnsupportedAddPartition      = 208
-	codeUnsupportedCoalescePartition = 209
-	codeUnsupportedModifyCharset     = 210
+	codeCantDropColWithIndex               = 201
+	codeUnsupportedAddColumn               = 202
+	codeUnsupportedModifyColumn            = 203
+	codeUnsupportedDropPKHandle            = 204
+	codeUnsupportedCharset                 = 205
+	codeUnsupportedModifyPrimaryKey        = 206
+	codeUnsupportedShardRowIDBits          = 207
+	codeUnsupportedAddPartition            = 208
+	codeUnsupportedCoalescePartition       = 209
+	codeUnsupportedModifyCharset           = 210
+	codeUnsupportedPartitionByRangeColumns = 211
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025
@@ -637,6 +646,7 @@ const (
 	codeBadField                               = 1054
 	codeTooLongIdent                           = 1059
 	codeDupKeyName                             = 1061
+	codeInvalidDefaultValue                    = 1067
 	codeTooLongKey                             = 1071
 	codeKeyColumnDoesNotExits                  = mysql.ErrKeyColumnDoesNotExits
 	codeIncorrectPrefixKey                     = 1089
@@ -680,6 +690,7 @@ const (
 	codeWarnDataTruncated                      = terror.ErrCode(mysql.WarnDataTruncated)
 	codeCoalesceOnlyOnHashPartition            = terror.ErrCode(mysql.ErrCoalesceOnlyOnHashPartition)
 	codeUnknownPartition                       = terror.ErrCode(mysql.ErrUnknownPartition)
+	codeNotSupportedAlterOperation             = terror.ErrCode(mysql.ErrAlterOperationNotSupportedReason)
 )
 
 func init() {
@@ -731,6 +742,7 @@ func init() {
 		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
 		codeCoalesceOnlyOnHashPartition:            mysql.ErrCoalesceOnlyOnHashPartition,
 		codeUnknownPartition:                       mysql.ErrUnknownPartition,
+		codeNotSupportedAlterOperation:             mysql.ErrAlterOperationNotSupportedReason,
 		codeErrWrongObject:                         mysql.ErrWrongObject,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
