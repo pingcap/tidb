@@ -3707,7 +3707,7 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = plannercore.Preprocess(ctx, stmts[0], is, false)
+		err = plannercore.Preprocess(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
 		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))

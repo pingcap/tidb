@@ -178,7 +178,7 @@ func (a *ExecStmt) IsReadOnly() bool {
 func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
+	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.PreprocessOpt{InTxRetry: true}); err != nil {
 		return 0, errors.Trace(err)
 	}
 	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
