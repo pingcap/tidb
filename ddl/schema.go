@@ -70,6 +70,8 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 }
 
+var gofailMockDropSchemaOnceGuard bool
+
 func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := checkDropSchema(t, job)
 	if err != nil {
@@ -77,8 +79,8 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	// gofail: var dropSchemaErr bool
-	// if dropSchemaErr {
-	// job.State = model.JobStateCancelled
+	// if dropSchemaErr && !gofailMockDropSchemaOnceGuard {
+	// gofailMockDropSchemaOnceGuard = true
 	// return ver, errors.New("occur an error after drop schema.")
 	// }
 

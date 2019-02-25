@@ -224,6 +224,8 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
+var gofailMockDropColumnErrOnceGuard bool
+
 func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, colInfo, err := checkDropColumn(t, job)
 	if err != nil {
@@ -231,8 +233,8 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	// gofail: var dropColumnErr bool
-	// if dropColumnErr {
-	// job.State = model.JobStateCancelled
+	// if dropColumnErr && !gofailMockDropColumnErrOnceGuard {
+	//gofailMockDropColumnErrOnceGuard = true
 	// return ver, errors.New("occur an error after drop column.")
 	// }
 
