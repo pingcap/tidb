@@ -245,11 +245,11 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"└─TableReader_12 10000.00 root data:TableScan_11",
 		"  └─TableScan_11 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
-	// Constant propagation over left outer semi join, filter with aux column should be be derived.
+	// Constant propagation over left outer semi join, filter with aux column should not be derived.
 	tk.MustQuery("explain select * from t1 where t1.b > 1 or t1.b in (select b from t2);").Check(testkit.Rows(
 		"Projection_7 8000.00 root test.t1.id, test.t1.a, test.t1.b",
 		"└─Selection_8 8000.00 root or(gt(test.t1.b, 1), 5_aux_0)",
-		"  └─HashLeftJoin_9 10000.00 root left outer semi join, inner:TableReader_13, equal:[eq(test.t1.b, test.t2.b)]",
+		"  └─HashLeftJoin_9 10000.00 root left outer semi join, inner:TableReader_13, other cond:eq(test.t1.b, test.t2.b)",
 		"    ├─TableReader_11 10000.00 root data:TableScan_10",
 		"    │ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"    └─TableReader_13 10000.00 root data:TableScan_12",

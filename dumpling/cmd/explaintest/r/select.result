@@ -382,3 +382,35 @@ Projection_9	10000.00	root	or(and(and(le(col_count, 1), eq(t1.a, col_firstrow)),
     └─Projection_27	10000.00	root	t2.a, t2.a, cast(isnull(t2.a))
       └─TableReader_24	10000.00	root	data:TableScan_23
         └─TableScan_23	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int);
+drop table if exists s;
+create table s(a varchar(20), b varchar(20));
+explain select a in (select a from s where s.b = t.b) from t;
+id	count	task	operator info
+Projection_9	10000.00	root	6_aux_0
+└─HashLeftJoin_10	10000.00	root	left outer semi join, inner:Projection_14, equal:[eq(cast(test.t.b), cast(test.s.b))], other cond:eq(cast(test.t.a), cast(test.s.a))
+  ├─Projection_11	10000.00	root	test.t.a, test.t.b, cast(test.t.b)
+  │ └─TableReader_13	10000.00	root	data:TableScan_12
+  │   └─TableScan_12	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─Projection_14	10000.00	root	test.s.a, test.s.b, cast(test.s.b)
+    └─TableReader_16	10000.00	root	data:TableScan_15
+      └─TableScan_15	10000.00	cop	table:s, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
+id	count	task	operator info
+Projection_7	10000.00	root	6_aux_0
+└─HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(t1.b, t2.b)], other cond:eq(t1.a, plus(t2.a, t2.b))
+  ├─TableReader_10	10000.00	root	data:TableScan_9
+  │ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_12	10000.00	root	data:TableScan_11
+    └─TableScan_11	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table t;
+create table t(a int not null, b int);
+explain select a in (select a from t t2 where t2.b = t1.b) from t t1;
+id	count	task	operator info
+Projection_7	10000.00	root	6_aux_0
+└─HashLeftJoin_8	10000.00	root	left outer semi join, inner:TableReader_12, equal:[eq(t1.b, t2.b) eq(t1.a, t2.a)]
+  ├─TableReader_10	10000.00	root	data:TableScan_9
+  │ └─TableScan_9	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_12	10000.00	root	data:TableScan_11
+    └─TableScan_11	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
