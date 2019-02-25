@@ -109,7 +109,7 @@ func (s *testStatsSuite) TestInnerJoinStats(c *C) {
 	join := LogicalJoin{}.Init(s.ctx)
 	join.SetChildren(t1Child, t2Child)
 	join.schema = expression.MergeSchema(t1Child.schema, t2Child.schema)
-	finalStats, err := join.deriveInnerJoinStatsWithHist([]*expression.Column{t1Child.schema.Columns[0]}, []*expression.Column{t2Child.schema.Columns[0]})
+	finalStats, err := join.deriveInnerJoinStatsWithHist([]*expression.Column{t1Child.schema.Columns[0]}, []*expression.Column{t2Child.schema.Columns[0]}, []*property.StatsInfo{t1StatsInfo, t2StatsInfo})
 	c.Assert(err, IsNil)
 	c.Assert(finalStats.RowCount, Equals, float64(2))
 	c.Assert(len(finalStats.HistColl.Columns), Equals, 4)
@@ -144,7 +144,7 @@ num: 1 lower_bound: 15 upper_bound: 15 repeats: 1`
 	for i := range t2StatsInfo.Cardinality {
 		t2StatsInfo.Cardinality[i] /= 2
 	}
-	finalStats, err = join.deriveInnerJoinStatsWithHist([]*expression.Column{t1Child.schema.Columns[0]}, []*expression.Column{t2Child.schema.Columns[0]})
+	finalStats, err = join.deriveInnerJoinStatsWithHist([]*expression.Column{t1Child.schema.Columns[0]}, []*expression.Column{t2Child.schema.Columns[0]}, []*property.StatsInfo{t1StatsInfo, t2StatsInfo})
 	c.Assert(err, IsNil)
 	c.Assert(finalStats.RowCount, Equals, float64(1))
 }
