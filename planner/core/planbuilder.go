@@ -688,23 +688,17 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 // getColsInfo returns the info of index columns, normal columns and primary key.
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
-	if tbl.PKIsHandle {
-		for _, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkCol = col
-			}
+	for _, col := range tbl.Columns {
+		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			pkCol = col
+		} else {
+			colsInfo = append(colsInfo, col)
 		}
 	}
 	for _, idx := range tn.TableInfo.Indices {
 		if idx.State == model.StatePublic {
 			indicesInfo = append(indicesInfo, idx)
 		}
-	}
-	for _, col := range tbl.Columns {
-		if col == pkCol {
-			continue
-		}
-		colsInfo = append(colsInfo, col)
 	}
 	return
 }
