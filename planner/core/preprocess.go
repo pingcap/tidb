@@ -27,12 +27,24 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 )
 
+// PreprocessOpt presents optional parameters to `Preprocess` method.
+type PreprocessOpt struct {
+	// InPrepare indicates preprocess is executing under prepare statement.
+	InPrepare bool
+	// InTxRetry indicates preprocess is executing under transaction retry.
+	InTxRetry bool
+}
+
 // Preprocess resolves table names of the node, and checks some statements validation.
-func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
-	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare, tableAliasInJoin: make([]map[string]interface{}, 0)}
+func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
+	var opt PreprocessOpt
+	if len(preprocessOpt) > 0 {
+		opt = preprocessOpt[0]
+	}
+	v := preprocessor{is: is, ctx: ctx, inPrepare: opt.InPrepare, inTxnRetry: opt.InTxRetry, tableAliasInJoin: make([]map[string]interface{}, 0)}
 	node.Accept(&v)
 	return errors.Trace(v.err)
 }
@@ -52,6 +64,7 @@ type preprocessor struct {
 	tableAliasInJoin []map[string]interface{}
 
 	parentIsJoin bool
+	inTxnRetry   bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -145,6 +158,13 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 				}
 			}
 			break
+		}
+
+		// no need sleep when retry transaction and avoid unexpect sleep caused by retry.
+		if p.inPrepare && x.FnName.L == ast.Sleep {
+			if len(x.Args) == 1 {
+				x.Args[0] = ast.NewValueExpr(0)
+			}
 		}
 	}
 

@@ -377,7 +377,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -427,7 +427,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -543,7 +543,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -620,7 +620,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, true)
+		err = core.Preprocess(ctx, stmt, is, core.PreprocessOpt{InPrepare: true})
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -874,7 +874,7 @@ func BenchmarkOptimize(b *testing.B) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 
 		b.Run(tt.sql, func(b *testing.B) {
