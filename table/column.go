@@ -23,7 +23,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -140,7 +140,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 		if err != nil {
 			if sc.DupKeyAsWarning {
 				sc.AppendWarning(err)
-				log.Warn("CastValue fails", zap.Error(err))
+				logutil.Logger(ctx).Warn("CastValues failed", zap.Error(err))
 			} else {
 				return errors.Trace(err)
 			}
@@ -153,7 +153,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	err := ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-	log.Error("Incorrect UTF-8 value", zap.Uint64("connection", ctx.GetSessionVars().ConnectionID), zap.Error(err))
+	logutil.Logger(ctx).Error("incorrect UTF-8 value", zap.Error(err))
 	// Truncate to valid utf8 string.
 	truncateVal := types.NewStringDatum(str[:i])
 	err = sc.HandleTruncate(err)
