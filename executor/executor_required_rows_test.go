@@ -572,6 +572,7 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 			// from child in the background.
 			time.Sleep(time.Millisecond * 5)
 		}
+		c.Assert(exec.Close(), IsNil)
 		c.Assert(ds.checkNumNextCalled(), IsNil)
 	}
 }
