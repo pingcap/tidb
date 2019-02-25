@@ -191,7 +191,7 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		go e.wait4WorkerSort(wg, finishedCh)
 
 		for i := 0; i < e.concurrency; i++ {
-			// last worker must complete the rest of rows
+			// Last worker must complete the rest of rows.
 			if i == e.concurrency-1 {
 				workerRowsCount += e.rowChunks.Len() % e.concurrency
 			}
