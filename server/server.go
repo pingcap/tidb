@@ -46,10 +46,12 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
@@ -306,6 +308,26 @@ func (s *Server) Run() error {
 			terror.Log(errors.Trace(err))
 			break
 		}
+
+		for _, p := range plugin.GetByKind(plugin.Audit) {
+			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+			if authPlugin.OnConnectionEvent != nil {
+				host, err := getPeerHost(conn)
+				if err != nil {
+					log.Error(err)
+					terror.Log(conn.Close())
+					continue
+				}
+
+				err = authPlugin.OnConnectionEvent(context.Background(), &auth.UserIdentity{Hostname: host})
+				if err != nil {
+					log.Info(err)
+					terror.Log(conn.Close())
+					continue
+				}
+			}
+		}
+
 		go s.onConn(conn)
 	}
 	err := s.listener.Close()
@@ -316,6 +338,15 @@ func (s *Server) Run() error {
 		log.Errorf("listener stopped, waiting for manual kill.")
 		time.Sleep(time.Minute)
 	}
+}
+
+func getPeerHost(conn net.Conn) (string, error) {
+	addr := conn.RemoteAddr().String()
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return host, nil
 }
 
 func (s *Server) shouldStopListener() bool {

@@ -16,6 +16,7 @@ package core
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -1604,6 +1606,8 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 				{mysql.AlterPriv, "test", "", "", nil},
 				{mysql.ExecutePriv, "test", "", "", nil},
 				{mysql.IndexPriv, "test", "", "", nil},
+				{mysql.CreateViewPriv, "test", "", "", nil},
+				{mysql.ShowViewPriv, "test", "", "", nil},
 			},
 		},
 		{
@@ -2049,23 +2053,23 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 	}{
 		{
 			sql:    "select a, avg(a) over(partition by a) from t",
-			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)) over(partition by test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(partition by b) from t",
-			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(partition by test.t.b))->Projection",
 		},
 		{
 			sql:    "select a, avg(a+1) over(partition by (a+1)) from t",
-			result: "TableReader(Table(t))->Projection->Sort->Window(avg(cast(2_proj_window_3)))->Projection",
+			result: "TableReader(Table(t))->Projection->Sort->Window(avg(cast(2_proj_window_3)) over(partition by 2_proj_window_2))->Projection",
 		},
 		{
 			sql:    "select a, avg(a) over(order by a asc, b desc) from t order by a asc, b desc",
-			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a)) over(order by test.t.a asc, test.t.b desc))->Projection",
 		},
 		{
 			sql:    "select a, b as a, avg(a) over(partition by a) from t",
-			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Window(avg(cast(test.t.a)) over(partition by test.t.a))->Projection",
 		},
 		{
 			sql:    "select a, b as z, sum(z) over() from t",
@@ -2073,27 +2077,27 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select a, b as z from t order by (sum(z) over())",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.z)))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.z)) over())->Sort->Projection",
 		},
 		{
 			sql:    "select sum(avg(a)) over() from t",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over())",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over())->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(a) over(partition by a))",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(partition by test.t.a))->Sort->Projection",
 		},
 		{
 			sql:    "select b from t order by(sum(avg(a)) over())",
-			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2))->Sort->Projection",
+			result: "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(sel_agg_2) over())->Sort->Projection",
 		},
 		{
 			sql:    "select a from t having (select sum(a) over() as w from t tt where a > t.a)",
-			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(cast(tt.a)))->MaxOneRow->Sel([w])}->Projection",
+			result: "Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([gt(tt.a, test.t.a)]))->Window(sum(cast(tt.a)) over())->MaxOneRow->Sel([w])}->Projection",
 		},
 		{
 			sql:    "select avg(a) over() as w from t having w > 1",
@@ -2133,11 +2137,11 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over(w1), avg(a) over(w2) from t window w1 as (partition by a), w2 as (w1)",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Window(avg(cast(test.t.a)))->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(partition by test.t.a))->Window(avg(cast(test.t.a)) over())->Projection",
 		},
 		{
 			sql:    "select a from t window w1 as (partition by a) order by (sum(a) over(w1))",
-			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)))->Sort->Projection",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(partition by test.t.a))->Sort->Projection",
 		},
 		{
 			sql:    "select sum(a) over(groups 1 preceding) from t",
@@ -2216,5 +2220,103 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		p, err = physicalOptimize(lp)
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.result, comment)
+	}
+}
+
+func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
+	pp := &property.PhysicalProperty{}
+	for _, item := range byItems {
+		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
+	}
+	return pp
+}
+
+func pathsName(paths []*candidatePath) string {
+	var names []string
+	for _, path := range paths {
+		if path.path.isTablePath {
+			names = append(names, "PRIMARY_KEY")
+		} else {
+			names = append(names, path.path.index.Name.O)
+		}
+	}
+	return strings.Join(names, ",")
+}
+
+func (s *testPlanSuite) TestSkylinePruning(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{
+			sql:    "select * from t",
+			result: "PRIMARY_KEY",
+		},
+		{
+			sql:    "select * from t order by f",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select * from t where a > 1",
+			result: "PRIMARY_KEY",
+		},
+		{
+			sql:    "select * from t where a > 1 order by f",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select * from t where f > 1",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select f from t where f > 1",
+			result: "f,f_g",
+		},
+		{
+			sql:    "select f from t where f > 1 order by a",
+			result: "PRIMARY_KEY,f,f_g",
+		},
+		{
+			sql:    "select * from t where f > 1 and g > 1",
+			result: "PRIMARY_KEY,f,g,f_g",
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       MockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		if err != nil {
+			c.Assert(err.Error(), Equals, tt.result, comment)
+			continue
+		}
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		lp := p.(LogicalPlan)
+		_, err = lp.recursiveDeriveStats()
+		c.Assert(err, IsNil)
+		var ds *DataSource
+		var byItems []*ByItems
+		for ds == nil {
+			switch v := lp.(type) {
+			case *DataSource:
+				ds = v
+			case *LogicalSort:
+				byItems = v.ByItems
+				lp = lp.Children()[0]
+			default:
+				lp = lp.Children()[0]
+			}
+		}
+		paths := ds.skylinePruning(byItemsToProperty(byItems))
+		c.Assert(pathsName(paths), Equals, tt.result)
 	}
 }
