@@ -388,3 +388,36 @@ func (s *testSuite1) Test3WaysMergeJoin(c *C) {
 	result = checkPlanAndRun(tk, c, plan3, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
 }
+
+func (s *testSuite1) TestMergeJoinDifferentTypes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`create table t1(a bigint, b bit(1), index idx_a(a));`)
+	tk.MustExec(`create table t2(a bit(1) not null, b bit(1), index idx_a(a));`)
+	tk.MustExec(`insert into t1 values(1, 1);`)
+	tk.MustExec(`insert into t2 values(1, 1);`)
+	tk.MustQuery(`select hex(t1.a), hex(t2.a) from t1 inner join t2 on t1.a=t2.a;`).Check(testkit.Rows(`1 1`))
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`create table t1(a float, b double, index idx_a(a));`)
+	tk.MustExec(`create table t2(a double not null, b double, index idx_a(a));`)
+	tk.MustExec(`insert into t1 values(1, 1);`)
+	tk.MustExec(`insert into t2 values(1, 1);`)
+	tk.MustQuery(`select t1.a, t2.a from t1 inner join t2 on t1.a=t2.a;`).Check(testkit.Rows(`1 1`))
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`drop table if exists t2;`)
+	tk.MustExec(`create table t1(a bigint signed, b bigint, index idx_a(a));`)
+	tk.MustExec(`create table t2(a bigint unsigned, b bigint, index idx_a(a));`)
+	tk.MustExec(`insert into t1 values(-1, 0), (-1, 0), (0, 0), (0, 0), (pow(2, 63), 0), (pow(2, 63), 0);`)
+	tk.MustExec(`insert into t2 values(18446744073709551615, 0), (18446744073709551615, 0), (0, 0), (0, 0), (pow(2, 63), 0), (pow(2, 63), 0);`)
+	tk.MustQuery(`select t1.a, t2.a from t1 join t2 on t1.a=t2.a order by t1.a;`).Check(testkit.Rows(
+		`0 0`,
+		`0 0`,
+		`0 0`,
+		`0 0`,
+	))
+}
