@@ -69,7 +69,7 @@ type ProjectionExec struct {
 	// concurrent projectionInputFetcher.
 	//
 	// NOTE: It should be protected by atomic operations.
-	requiredRowsNow int64
+	parentReqRows int64
 }
 
 // Open implements the Executor Open interface.
@@ -79,7 +79,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	e.requiredRowsNow = int64(e.maxChunkSize)
+	e.parentReqRows = int64(e.maxChunkSize)
 
 	// For now a Projection can not be executed vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
@@ -190,7 +190,7 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 		e.prepare(ctx)
 		e.prepared = true
 	}
-	atomic.StoreInt64(&e.requiredRowsNow, int64(chk.RequiredRows()))
+	atomic.StoreInt64(&e.parentReqRows, int64(chk.RequiredRows()))
 
 	output, ok := <-e.outputCh
 	if !ok {
@@ -308,7 +308,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		f.globalOutputCh <- output
 
-		requiredRows := atomic.LoadInt64(&f.proj.requiredRowsNow)
+		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
 		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
 		err := f.child.Next(ctx, chunk.NewRecordBatch(input.chk))
 		if err != nil || input.chk.NumRows() == 0 {
