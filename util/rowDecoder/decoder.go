@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -30,27 +29,26 @@ import (
 
 // Column contains the info and generated expr of column.
 type Column struct {
-	Info    *model.ColumnInfo
+	Col     *table.Column
 	GenExpr expression.Expression
 }
 
 // RowDecoder decodes a byte slice into datums and eval the generated column value.
 type RowDecoder struct {
-	tbl                 table.Table
-	mutRow              chunk.MutRow
-	columns             map[int64]Column
-	colsInGeneratedExpr map[int64]*table.Column
-	colTypes            map[int64]*types.FieldType
-	haveGenColumn       bool
-	defaultVals         []types.Datum
+	tbl           table.Table
+	mutRow        chunk.MutRow
+	columns       map[int64]Column
+	colTypes      map[int64]*types.FieldType
+	haveGenColumn bool
+	defaultVals   []types.Datum
 }
 
 // NewRowDecoder returns a new RowDecoder.
-func NewRowDecoder(tbl table.Table, colsInGeneratedExpr map[int64]*table.Column, decodeColMap map[int64]Column) *RowDecoder {
+func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	haveGenCol := false
 	for id, col := range decodeColMap {
-		colFieldMap[id] = &col.Info.FieldType
+		colFieldMap[id] = &col.Col.ColumnInfo.FieldType
 		if col.GenExpr != nil {
 			haveGenCol = true
 		}
@@ -67,13 +65,12 @@ func NewRowDecoder(tbl table.Table, colsInGeneratedExpr map[int64]*table.Column,
 		tps[col.Offset] = &col.FieldType
 	}
 	return &RowDecoder{
-		tbl:                 tbl,
-		mutRow:              chunk.MutRowFromTypes(tps),
-		columns:             decodeColMap,
-		colsInGeneratedExpr: colsInGeneratedExpr,
-		colTypes:            colFieldMap,
-		haveGenColumn:       haveGenCol,
-		defaultVals:         make([]types.Datum, len(cols)),
+		tbl:           tbl,
+		mutRow:        chunk.MutRowFromTypes(tps),
+		columns:       decodeColMap,
+		colTypes:      colFieldMap,
+		haveGenColumn: haveGenCol,
+		defaultVals:   make([]types.Datum, len(cols)),
 	}
 }
 
@@ -88,28 +85,27 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 	}
 
 	for _, dCol := range rd.columns {
-		id := dCol.Info.ID
-		val, ok := row[id]
-		c, ok1 := rd.colsInGeneratedExpr[id]
-		if ok || !ok1 {
-			rd.mutRow.SetValue(rd.columns[id].Info.Offset, val.GetValue())
+		colInfo := dCol.Col.ColumnInfo
+		val, ok := row[colInfo.ID]
+		if ok || dCol.GenExpr != nil {
+			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
 		}
 
 		// Get the default value of the column in the generated column expression.
-		if c.IsPKHandleColumn(rd.tbl.Meta()) {
-			if mysql.HasUnsignedFlag(c.Flag) {
+		if dCol.Col.IsPKHandleColumn(rd.tbl.Meta()) {
+			if mysql.HasUnsignedFlag(colInfo.Flag) {
 				val.SetUint64(uint64(handle))
 			} else {
 				val.SetInt64(handle)
 			}
 		} else {
-			val, err = tables.GetColDefaultValue(ctx, c, rd.defaultVals)
+			val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		rd.mutRow.SetValue(rd.columns[id].Info.Offset, val.GetValue())
+		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
 	for id, col := range rd.columns {
 		if col.GenExpr == nil {
@@ -120,7 +116,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle int
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		val, err = table.CastValue(ctx, val, col.Info)
+		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
