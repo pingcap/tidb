@@ -94,6 +94,8 @@ type batchCommandsClient struct {
 	closed int32
 	// clientLock protects client when re-create the streaming.
 	clientLock sync.Mutex
+	// streamRecreateCh is for recreating the gRPC stream.
+	streamRecreateCh chan struct{}
 }
 
 func (c *batchCommandsClient) isStopped() bool {
@@ -109,6 +111,28 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 		c.batched.Delete(id)
 		return true
 	})
+}
+
+// recreate the gRPC stream.
+func (c *batchCommandsClient) recreateStreamLoop() {
+	for {
+		// try to re-create the streaming in the loop.
+		select {
+		case <-c.streamRecreateCh:
+			c.clientLock.Lock() // Forbid batchSendLoop using the old client.
+			// Re-establish a application layer stream. TCP layer is handled by gRPC.
+			tikvClient := tikvpb.NewTikvClient(c.conn)
+			streamClient, err := tikvClient.BatchCommands(context.TODO())
+			if err == nil {
+				c.client = streamClient
+				c.clientLock.Unlock()
+				log.Infof("batchRecvLoop re-create streaming success")
+				return
+			}
+			c.clientLock.Unlock()
+			log.Errorf("batchRecvLoop re-create streaming fail: %v", err)
+		}
+	}
 }
 
 func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
@@ -130,24 +154,9 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient) {
 				return
 			}
 			log.Errorf("batchRecvLoop error when receive: %v", err)
-
-			// Hold the lock to forbid batchSendLoop using the old client.
-			c.clientLock.Lock()
-			c.failPendingRequests(err) // fail all pending requests.
-			for {                      // try to re-create the streaming in the loop.
-				// Re-establish a application layer stream. TCP layer is handled by gRPC.
-				tikvClient := tikvpb.NewTikvClient(c.conn)
-				streamClient, err := tikvClient.BatchCommands(context.TODO())
-				if err == nil {
-					log.Infof("batchRecvLoop re-create streaming success")
-					c.client = streamClient
-					break
-				}
-				log.Errorf("batchRecvLoop re-create streaming fail: %v", err)
-				// TODO: Use a more smart backoff strategy.
-				time.Sleep(time.Second)
-			}
-			c.clientLock.Unlock()
+			c.failPendingRequests(err) // Fail all pending requests.
+			c.streamRecreateCh <- struct{}{}
+			c.recreateStreamLoop()
 			continue
 		}
 
@@ -262,6 +271,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				idAlloc:                0,
 				tikvTransportLayerLoad: &a.tikvTransportLayerLoad,
 				closed:                 0,
+				streamRecreateCh:       make(chan struct{}, 8),
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 			go batchClient.batchRecvLoop(cfg.TiKVClient)
@@ -451,6 +461,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		if err != nil {
 			log.Errorf("batch commands send error: %v", err)
 			batchCommandsClient.failPendingRequests(err)
+			batchCommandsClient.streamRecreateCh <- struct{}{}
 		}
 	}
 }
