@@ -113,6 +113,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	u = record.User
 	h = record.Host
 
+	// Login a locked account is not allowed.
 	locked := record.AccountLocked
 	if locked {
 		log.Errorf("Try to login a locked account: user: %v, host: %v", user, host)
