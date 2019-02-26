@@ -1869,6 +1869,9 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	e.resultHandler = &tableResultHandler{}
+	if builder.selectWithRuntimeStats == nil {
+		builder.selectWithRuntimeStats = distsql.SelectWithRuntimeStats
+	}
 	result, err := builder.selectWithRuntimeStats(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, errors.Trace(err)
