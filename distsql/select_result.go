@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -68,6 +69,10 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+
+	// copPlanIDs contains all copTasks' planIDs,
+	// which help to collect copTasks' runtime stats.
+	copPlanIDs []string
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -157,6 +162,7 @@ func (r *selectResult) getSelectResp() error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
+		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress)
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
@@ -164,6 +170,26 @@ func (r *selectResult) getSelectResp() error {
 			continue
 		}
 		return nil
+	}
+}
+
+func (r *selectResult) updateCopRuntimeStats(callee string) {
+	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+		return
+	}
+	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+		log.Errorf("invalid cop task execution summaries length, expected: %v, received: %v",
+			len(r.copPlanIDs), len(r.selectResp.GetExecutionSummaries()))
+		return
+	}
+
+	for i, detail := range r.selectResp.GetExecutionSummaries() {
+		if detail != nil && detail.TimeProcessedNs != nil &&
+			detail.NumProducedRows != nil && detail.NumIterations != nil {
+			planID := r.copPlanIDs[i]
+			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+				RecordOneCopTask(planID, callee, detail)
+		}
 	}
 }
 

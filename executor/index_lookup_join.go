@@ -94,6 +94,7 @@ type lookUpJoinTask struct {
 	doneCh   chan error
 	cursor   int
 	hasMatch bool
+	hasNull  bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -234,18 +235,20 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) erro
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, err := e.joiner.tryToMatch(outerRow, e.innerIter, req.Chunk)
+			matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req.Chunk)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			task.hasMatch = task.hasMatch || matched
+			task.hasNull = task.hasNull || isNull
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
 			if !task.hasMatch {
-				e.joiner.onMissMatch(outerRow, req.Chunk)
+				e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
 			}
 			task.cursor++
 			task.hasMatch = false
+			task.hasNull = false
 		}
 		if req.NumRows() == e.maxChunkSize {
 			return nil
