@@ -122,7 +122,7 @@ func (e *ShowExec) fetchAll() error {
 	case ast.ShowDatabases:
 		return e.fetchShowDatabases()
 	case ast.ShowDrainerStatus:
-		return e.fetchShowDrainerStatus()
+		return e.fetchShowPumpOrDrainerStatus(node.DrainerNode)
 	case ast.ShowEngines:
 		return e.fetchShowEngines()
 	case ast.ShowGrants:
@@ -132,7 +132,7 @@ func (e *ShowExec) fetchAll() error {
 	case ast.ShowProcedureStatus:
 		return e.fetchShowProcedureStatus()
 	case ast.ShowPumpStatus:
-		return e.fetchShowPumpStatus()
+		return e.fetchShowPumpOrDrainerStatus(node.PumpNode)
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
 	case ast.ShowTables:
@@ -1006,39 +1006,21 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 	return nil
 }
 
-// fetchShowPumpStatus gets status of all pumps and fill them into e.rows.
-func (e *ShowExec) fetchShowPumpStatus() error {
+// fetchShowPumpOrDrainerStatus gets status of all pumps or drainers and fill them into e.rows.
+func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	registry, err := createRegistry(config.GetGlobalConfig().Path)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer registry.Close()
 
-	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[node.PumpNode])
+	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	for _, n := range nodes {
-		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS)})
-	}
-
-	return nil
-}
-
-// fetchShowDrainerStatus gets status of all drainers and fill them into e.rows.
-func (e *ShowExec) fetchShowDrainerStatus() error {
-	registry, err := createRegistry(config.GetGlobalConfig().Path)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[node.DrainerNode])
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, n := range nodes {
-		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS)})
+		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format("2006-01-02 15:04:05")})
 	}
 
 	return nil
