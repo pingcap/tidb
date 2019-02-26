@@ -325,6 +325,18 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	se2 := newSession(c, s.store, s.dbName)
+	mustExec(c, se2, "create role 'r1'@'localhost'")
+	mustExec(c, se2, "create role 'r2'@'localhost'")
+	mustExec(c, se2, "create role 'r3@example.com'@'localhost'")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	mustExec(c, se1, "drop user 'r1'@'localhost'")
+	mustExec(c, se1, "drop user 'r2'@'localhost'")
+	mustExec(c, se1, "drop user 'r3@example.com'@'localhost'")
 }
 
 func (s *testPrivilegeSuite) TestUseDb(c *C) {
