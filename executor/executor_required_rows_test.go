@@ -178,6 +178,7 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
+		c.Assert(exec.Close(), IsNil)
 		c.Assert(ds.checkNumNextCalled(), IsNil)
 	}
 }
@@ -259,6 +260,7 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
+		c.Assert(exec.Close(), IsNil)
 		c.Assert(ds.checkNumNextCalled(), IsNil)
 	}
 }
@@ -365,6 +367,7 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
+		c.Assert(exec.Close(), IsNil)
 		c.Assert(ds.checkNumNextCalled(), IsNil)
 	}
 }
@@ -457,6 +460,7 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
+		c.Assert(exec.Close(), IsNil)
 		c.Assert(ds.checkNumNextCalled(), IsNil)
 	}
 }
@@ -514,6 +518,7 @@ func (s *testExecSuite) TestProjectionUnparallelRequiredRows(c *C) {
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
+		c.Assert(exec.Close(), IsNil)
 		c.Assert(ds.checkNumNextCalled(), IsNil)
 	}
 }
@@ -541,13 +546,13 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 			expectedRows:   []int{7, 7, maxChunkSize, maxChunkSize - 14},
 			expectedRowsDS: []int{7, 7, maxChunkSize, maxChunkSize - 14, 0},
 		},
-		//{
-		//	totalRows:      20,
-		//	numWorkers:     2,
-		//	requiredRows:   []int{1, 2, 3, 4, 5, 6, 1, 1, 1},
-		//	expectedRows:   []int{1, 1, 1, 2, 3, 4, 5, 3, 0},
-		//	expectedRowsDS: []int{1, 1, 1, 2, 3, 4, 5, 3, 0},
-		//},
+		{
+			totalRows:      20,
+			numWorkers:     2,
+			requiredRows:   []int{1, 2, 3, 4, 5, 6, 1, 1, 1},
+			expectedRows:   []int{1, 1, 1, 2, 3, 4, 5, 3, 0},
+			expectedRowsDS: []int{1, 1, 1, 2, 3, 4, 5, 3, 0},
+		},
 	}
 
 	for _, testCase := range testCases {
