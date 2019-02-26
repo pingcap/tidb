@@ -993,6 +993,10 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 	}
 }
 
+// minAdjustFactor is the minimum adjust factor of each index feedback.
+// We use it to avoid adjusting too much when the assumption of independence failed.
+const minAdjustFactor = 0.7
+
 // getNewCount adjust the estimated `eqCount` and `rangeCount` according to the real count.
 // We assumes that `eqCount` and `rangeCount` contribute the same error rate.
 func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (float64, float64) {
@@ -1001,6 +1005,7 @@ func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (fl
 		return eqCount, rangeCount
 	}
 	adjustFactor := math.Sqrt(realCount / estimate)
+	adjustFactor = math.Max(adjustFactor, minAdjustFactor)
 	return eqCount * adjustFactor, rangeCount * adjustFactor
 }
 
