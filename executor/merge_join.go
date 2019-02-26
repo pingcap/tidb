@@ -15,6 +15,9 @@ package executor
 
 import (
 	"context"
+	"github.com/opentracing/opentracing-go/log"
+	"github.com/pingcap/tidb/sessionctx"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -50,6 +53,14 @@ type MergeJoinExec struct {
 	childrenResults []*chunk.Chunk
 
 	memTracker *memory.Tracker
+
+	joinResultCh chan *mergejoinWorkerResult
+
+	closeCh chan struct{}
+
+	innerMergeJoinFetchWorker *innerMergeJoinFetchWorker
+	outerMergeJoinFetchWorker *outerMergeJoinFetchWorker
+	mergeJoinMergeWorker      *mergeJoinMergeWorker
 }
 
 type mergeJoinOuterTable struct {
@@ -87,6 +98,262 @@ type mergeJoinInnerTable struct {
 	memTracker *memory.Tracker
 }
 
+type mergejoinWorkerResult struct {
+	chk *chunk.Chunk
+	err error
+	src chan<- *chunk.Chunk
+}
+
+type mergeJoinMergeWorker struct {
+	innerFetchResultCh <-chan *innerFetchResult
+	outerFetchResultCh <-chan *outerFetchResult
+
+	innerFetchResult *innerFetchResult
+	outerFetchResult *outerFetchResult
+
+	joinResultCh      chan<- *mergejoinWorkerResult
+	joinChkResourceCh chan *chunk.Chunk
+
+	outerTable *mergeJoinOuterTable
+
+	joinKeys     []*expression.Column
+	compareFuncs []chunk.CompareFunc
+	joiner       joiner
+	maxChunkSize int
+
+	innerIter4Row chunk.Iterator
+
+	closeCh <-chan struct{}
+
+	curJoinResult *mergejoinWorkerResult
+}
+
+const closed int64 = 1
+const opened int64 = 0
+
+type outerFetchResult struct {
+	selected    []bool
+	iter        *chunk.Iterator4Chunk
+	resultChunk *chunk.Chunk
+	err         error
+}
+
+type innerFetchResult struct {
+	innerRowChunk []chunk.Row
+	err           error
+}
+
+type innerMergeJoinFetchWorker struct {
+	innerResultCh chan<- *innerFetchResult
+	innerTable    *mergeJoinInnerTable
+	isClosed      int64
+}
+
+type outerMergeJoinFetchWorker struct {
+	fetchResultCh chan<- *outerFetchResult
+	ctx           sessionctx.Context
+
+	filter []expression.Expression
+	reader Executor
+
+	isClosed int64
+}
+
+func (ow outerMergeJoinFetchWorker) run(ctx context.Context) {
+	defer func() {
+		close(ow.fetchResultCh)
+	}()
+
+	for atomic.LoadInt64(&ow.isClosed) != closed {
+		fetchResult := &outerFetchResult{resultChunk: ow.reader.newFirstChunk()}
+		err := ow.reader.Next(ctx, chunk.NewRecordBatch(fetchResult.resultChunk))
+		if err != nil {
+			fetchResult.err = err
+			ow.fetchResultCh <- fetchResult
+			return
+		}
+
+		if fetchResult.resultChunk.NumRows() == 0 {
+			return //outer fetch 结束了
+		}
+
+		fetchResult.iter = chunk.NewIterator4Chunk(fetchResult.resultChunk)
+		fetchResult.iter.Begin()
+		fetchResult.selected, err = expression.VectorizedFilter(ow.ctx, ow.filter, fetchResult.iter, fetchResult.selected)
+		if err != nil {
+			fetchResult.err = err
+			ow.fetchResultCh <- fetchResult
+			return
+		}
+
+		{
+			chk := fetchResult.resultChunk
+			iter := chunk.NewIterator4Chunk(chk)
+			row := iter.Begin()
+
+			for {
+				row = iter.Next()
+
+				if row == iter.End() {
+					break
+				}
+			}
+		}
+		ow.fetchResultCh <- fetchResult
+	}
+}
+
+func (iw innerMergeJoinFetchWorker) run(ctx context.Context) {
+	defer func() {
+		close(iw.innerResultCh)
+	}()
+
+	for atomic.LoadInt64(&iw.isClosed) != closed {
+		innerRows, err := iw.innerTable.rowsWithSameKey()
+		if len(innerRows) == 0 {
+			return
+		}
+
+		innerFetchResult := &innerFetchResult{
+			innerRowChunk: innerRows,
+			err:           errors.Trace(err),
+		}
+
+		iw.innerResultCh <- innerFetchResult
+
+		if err != nil {
+			log.Error(errors.Trace(err))
+			return
+		}
+	}
+}
+
+func (mw *mergeJoinMergeWorker) run(ctx context.Context) {
+	defer func() {
+		if mw.curJoinResult != nil {
+			mw.joinResultCh <- mw.curJoinResult
+		}
+		close(mw.joinResultCh)
+	}()
+	var ok bool
+	var err error
+	for {
+		if mw.outerFetchResult == nil {
+			mw.outerFetchResult, ok = <-mw.outerFetchResultCh
+			if !ok {
+				return
+			}
+
+			mw.outerTable.chk = mw.outerFetchResult.resultChunk
+			mw.outerTable.iter = chunk.NewIterator4Chunk(mw.outerTable.chk)
+			mw.outerTable.row = mw.outerTable.iter.Begin()
+			mw.outerTable.selected = mw.outerFetchResult.selected
+		}
+
+		if mw.innerFetchResult == nil {
+			mw.innerFetchResult, ok = <-mw.innerFetchResultCh
+			if ok {
+				mw.innerIter4Row = chunk.NewIterator4Slice(mw.innerFetchResult.innerRowChunk)
+				mw.innerIter4Row.Begin()
+			}
+
+			if !ok || mw.innerFetchResult.err != nil {
+				return
+			}
+
+		}
+
+		ok, err = mw.joinToChunk(ctx)
+		if err != nil || !ok {
+			mw.curJoinResult = nil
+			return
+		}
+	}
+}
+
+func (mw *mergeJoinMergeWorker) joinToChunk(ctx context.Context) (bool, error) {
+	var ok bool
+	for {
+		if mw.curJoinResult == nil {
+			ok, mw.curJoinResult = mw.getNewJoinResult()
+			if !ok {
+				return false, nil
+			}
+		}
+		if mw.outerTable.row == mw.outerTable.iter.End() {
+			mw.outerFetchResult = nil
+			return true, nil
+		}
+
+		cmpResult := -1
+		if mw.outerTable.selected[mw.outerTable.row.Idx()] && mw.innerFetchResult != nil && len(mw.innerFetchResult.innerRowChunk) > 0 {
+			cmpResult = compareChunkRow(mw.compareFuncs, mw.outerTable.row, mw.innerFetchResult.innerRowChunk[0], mw.outerTable.keys, mw.joinKeys)
+		}
+
+		if cmpResult > 0 {
+			mw.innerFetchResult = nil
+			return true, nil
+		}
+
+		if cmpResult < 0 {
+			mw.joiner.onMissMatch(mw.outerTable.row, mw.curJoinResult.chk)
+
+			mw.outerTable.row = mw.outerTable.iter.Next()
+			mw.outerTable.hasMatch = false
+
+			if mw.curJoinResult.chk.NumRows() == mw.maxChunkSize {
+				mw.joinResultCh <- mw.curJoinResult
+				mw.curJoinResult = nil
+				ok, mw.curJoinResult = mw.getNewJoinResult()
+				if !ok {
+					return false, nil
+				}
+			}
+			continue
+		}
+
+		matched, err := mw.joiner.tryToMatch(mw.outerTable.row, mw.innerIter4Row, mw.curJoinResult.chk)
+		if err != nil {
+			mw.curJoinResult.err = errors.Trace(err)
+			mw.joinResultCh <- mw.curJoinResult
+			mw.curJoinResult = nil
+			return false, errors.Trace(err)
+		}
+		mw.outerTable.hasMatch = mw.outerTable.hasMatch || matched
+
+		if mw.innerIter4Row.Current() == mw.innerIter4Row.End() {
+			if !mw.outerTable.hasMatch {
+				mw.joiner.onMissMatch(mw.outerTable.row, mw.curJoinResult.chk)
+			}
+			mw.outerTable.row = mw.outerTable.iter.Next()
+			mw.outerTable.hasMatch = false
+			mw.innerIter4Row.Begin()
+		}
+
+		if mw.curJoinResult.chk.NumRows() >= mw.maxChunkSize {
+			mw.joinResultCh <- mw.curJoinResult
+			mw.curJoinResult = nil
+			ok, mw.curJoinResult = mw.getNewJoinResult()
+			if !ok {
+				return false, nil
+			}
+		}
+	}
+}
+
+func (mw *mergeJoinMergeWorker) getNewJoinResult() (bool, *mergejoinWorkerResult) {
+	joinResult := &mergejoinWorkerResult{
+		src: mw.joinChkResourceCh, //用来给next函数归还chunk的
+	}
+	ok := true
+	select {
+	case <-mw.closeCh:
+		ok = false
+	case joinResult.chk, ok = <-mw.joinChkResourceCh:
+	}
+	return ok, joinResult
+}
+
 func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk) (err error) {
 	if t.reader == nil || ctx == nil {
 		return errors.Errorf("Invalid arguments: Empty arguments detected.")
@@ -114,7 +381,7 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 	if t.firstRow4Key == t.curIter.End() {
 		return nil, nil
 	}
-	t.sameKeyRows = t.sameKeyRows[:0]
+	t.sameKeyRows = make([]chunk.Row, 0)
 	t.sameKeyRows = append(t.sameKeyRows, t.firstRow4Key)
 	for {
 		selectedRow, err := t.nextRow()
@@ -136,7 +403,9 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 	for {
 		if t.curRow == t.curIter.End() {
-			t.reallocReaderResult()
+			//			t.reallocReaderResult()
+			t.curResult = t.reader.newFirstChunk()
+			t.curIter = chunk.NewIterator4Chunk(t.curResult)
 			oldMemUsage := t.curResult.MemoryUsage()
 			err := t.reader.Next(t.ctx, chunk.NewRecordBatch(t.curResult))
 			// error happens or no more data.
@@ -201,6 +470,17 @@ func (e *MergeJoinExec) Close() error {
 	e.childrenResults = nil
 	e.memTracker = nil
 
+	close(e.closeCh)
+	for range e.joinResultCh {
+	}
+	atomic.StoreInt64(&e.innerMergeJoinFetchWorker.isClosed, closed)
+	atomic.StoreInt64(&e.outerMergeJoinFetchWorker.isClosed, closed)
+
+	for range e.mergeJoinMergeWorker.outerFetchResultCh {
+	}
+
+	for range e.mergeJoinMergeWorker.innerFetchResultCh {
+	}
 	return errors.Trace(e.baseExecutor.Close())
 }
 
@@ -222,6 +502,52 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 	e.innerTable.memTracker = memory.NewTracker("innerTable", -1)
 	e.innerTable.memTracker.AttachTo(e.memTracker)
 
+	innerResultCh := make(chan *innerFetchResult)
+
+	if err := e.innerTable.init(ctx, e.newFirstChunk()); err != nil {
+		return errors.Trace(err)
+	}
+
+	innerMergeJoinFetchWorker := &innerMergeJoinFetchWorker{
+		innerResultCh: innerResultCh,
+		innerTable:    e.innerTable,
+		isClosed:      opened,
+	}
+	e.innerMergeJoinFetchWorker = innerMergeJoinFetchWorker
+	go innerMergeJoinFetchWorker.run(ctx)
+
+	outerFetchResultCh := make(chan *outerFetchResult)
+	outerMergeJoinFetchWorker := &outerMergeJoinFetchWorker{
+		fetchResultCh: outerFetchResultCh,
+		ctx:           e.ctx,
+		reader:        e.outerTable.reader,
+		filter:        e.outerTable.filter,
+		isClosed:      opened,
+	}
+	e.outerMergeJoinFetchWorker = outerMergeJoinFetchWorker
+	go outerMergeJoinFetchWorker.run(ctx)
+
+	joinChkResourceCh := make(chan *chunk.Chunk, 1)
+	joinChkResourceCh <- e.newFirstChunk()
+	joinResultCh := make(chan *mergejoinWorkerResult)
+	closeCh := make(chan struct{})
+	mergeJoinMergeWorker := &mergeJoinMergeWorker{
+		innerFetchResultCh: innerResultCh,
+		outerFetchResultCh: outerFetchResultCh,
+		outerTable:         e.outerTable,
+		joinKeys:           e.innerTable.joinKeys,
+		compareFuncs:       e.innerTable.compareFuncs,
+		joiner:             e.joiner,
+		maxChunkSize:       e.maxChunkSize,
+		joinResultCh:       joinResultCh,
+		closeCh:            closeCh,
+		joinChkResourceCh:  joinChkResourceCh,
+	}
+	e.closeCh = closeCh
+	e.joinResultCh = joinResultCh
+	e.mergeJoinMergeWorker = mergeJoinMergeWorker
+
+	go mergeJoinMergeWorker.run(ctx)
 	return nil
 }
 
@@ -235,33 +561,6 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 	return 0
 }
 
-func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
-	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = e.fetchNextInnerRows()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// init outer table.
-	e.outerTable.chk = e.childrenResults[e.outerIdx]
-	e.outerTable.iter = chunk.NewIterator4Chunk(e.outerTable.chk)
-	e.outerTable.selected = make([]bool, 0, e.maxChunkSize)
-
-	err = e.fetchNextOuterRows(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	e.compareFuncs = e.innerTable.compareFuncs
-	e.prepared = true
-	return nil
-}
-
-// Next implements the Executor Next interface.
 func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
@@ -269,103 +568,21 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	req.Reset()
 	if !e.prepared {
-		if err := e.prepare(ctx, req.Chunk); err != nil {
-			return errors.Trace(err)
-		}
+		//todo 进行prepared，应该做懒加载，不过现在先不管啦
 	}
 
-	for req.NumRows() < e.maxChunkSize {
-		hasMore, err := e.joinToChunk(ctx, req.Chunk)
-		if err != nil || !hasMore {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasMore bool, err error) {
-	for {
-		if e.outerTable.row == e.outerTable.iter.End() {
-			err = e.fetchNextOuterRows(ctx)
-			if err != nil || e.outerTable.chk.NumRows() == 0 {
-				return false, errors.Trace(err)
-			}
-		}
-
-		cmpResult := -1
-		if e.outerTable.selected[e.outerTable.row.Idx()] && len(e.innerRows) > 0 {
-			cmpResult = compareChunkRow(e.compareFuncs, e.outerTable.row, e.innerRows[0], e.outerTable.keys, e.innerTable.joinKeys)
-		}
-
-		if cmpResult > 0 {
-			if err = e.fetchNextInnerRows(); err != nil {
-				return false, errors.Trace(err)
-			}
-			continue
-		}
-
-		if cmpResult < 0 {
-			e.joiner.onMissMatch(e.outerTable.row, chk)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-
-			e.outerTable.row = e.outerTable.iter.Next()
-			e.outerTable.hasMatch = false
-
-			if chk.NumRows() == e.maxChunkSize {
-				return true, nil
-			}
-			continue
-		}
-
-		matched, err := e.joiner.tryToMatch(e.outerTable.row, e.innerIter4Row, chk)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		e.outerTable.hasMatch = e.outerTable.hasMatch || matched
-
-		if e.innerIter4Row.Current() == e.innerIter4Row.End() {
-			if !e.outerTable.hasMatch {
-				e.joiner.onMissMatch(e.outerTable.row, chk)
-			}
-			e.outerTable.row = e.outerTable.iter.Next()
-			e.outerTable.hasMatch = false
-			e.innerIter4Row.Begin()
-		}
-
-		if chk.NumRows() >= e.maxChunkSize {
-			return true, errors.Trace(err)
-		}
-	}
-}
-
-// fetchNextInnerRows fetches the next join group, within which all the rows
-// have the same join key, from the inner table.
-func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
-	e.innerRows, err = e.innerTable.rowsWithSameKey()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.innerIter4Row = chunk.NewIterator4Slice(e.innerRows)
-	e.innerIter4Row.Begin()
-	return nil
-}
-
-// fetchNextOuterRows fetches the next Chunk of outer table. Rows in a Chunk
-// may not all belong to the same join key, but are guaranteed to be sorted
-// according to the join key.
-func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
-	err = e.outerTable.reader.Next(ctx, chunk.NewRecordBatch(e.outerTable.chk))
-	if err != nil {
-		return errors.Trace(err)
+	if e.joinResultCh == nil {
+		return nil
 	}
 
-	e.outerTable.iter.Begin()
-	e.outerTable.selected, err = expression.VectorizedFilter(e.ctx, e.outerTable.filter, e.outerTable.iter, e.outerTable.selected)
-	if err != nil {
-		return errors.Trace(err)
+	result, ok := <-e.joinResultCh //把join结果读到result里面
+	if !ok {
+		return nil
 	}
-	e.outerTable.row = e.outerTable.iter.Begin()
+	if result.err != nil {
+		return errors.Trace(result.err)
+	}
+	req.SwapColumns(result.chk)
+	result.src <- result.chk
 	return nil
 }
