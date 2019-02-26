@@ -1012,9 +1012,12 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer registry.Close()
 
 	nodes, _, err := registry.Nodes(context.Background(), node.NodePrefix[kind])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = registry.Close()
 	if err != nil {
 		return errors.Trace(err)
 	}
