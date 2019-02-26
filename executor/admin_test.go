@@ -458,6 +458,14 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx5 (c5)`)
 	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx6 (c6)`)
 	tk.MustExec(`admin check table t1`)
+
+	// Test add not null column, then add index.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1 (a int);`)
+	tk.MustExec(`insert into t1 set a=2;`)
+	tk.MustExec(`alter table t1 add column b timestamp not null;`)
+	tk.MustExec(`alter table t1 add index(b);`)
+	tk.MustExec(`admin check table t1;`)
 }
 
 func (s *testSuite) TestAdminShowNextID(c *C) {
