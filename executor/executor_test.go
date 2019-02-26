@@ -2084,8 +2084,9 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("set time_zone = '+08:00'")
-	tk.MustExec(`create table t (a int, b timestamp default "2019-01-17 14:46:14")`)
+	tk.MustExec(`create table t (a int, b timestamp default "2019-01-17 14:46:14") CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 	tk.MustExec("insert into t set a=1")
 	r := tk.MustQuery(`show create table t`)
 	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '2019-01-17 14:46:14'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -2107,7 +2108,7 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION';")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set time_zone = '+08:00'")
-	tk.MustExec(`create table t (a int, b timestamp default "0000-00-00 00")`)
+tk.MustExec(`create table t (a int, b timestamp default "0000-00-00 00:00:00") CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
 	tk.MustExec("insert into t set a=1")
 	r = tk.MustQuery(`show create table t`)
 	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '0000-00-00 00:00:00'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -2140,12 +2141,6 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	err = tIn8To0.ConvertTimeZone(timeZoneIn8, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(timeIn0 == tIn8To0.String(), IsTrue, Commentf("%v != %v", timeIn0, tIn8To0.String()))
-
-	// test add index.
-	tk.MustExec(`alter table t add index(b);`)
-	tk.MustExec("admin check table t")
-	tk.MustExec(`set time_zone = '+05:00'`)
-	tk.MustExec("admin check table t")
 }
 
 func (s *testSuite) TestTiDBCurrentTS(c *C) {

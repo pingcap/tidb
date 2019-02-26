@@ -299,7 +299,6 @@ func (e *ShowExec) fetchShowColumns() error {
 				desc.Null,
 				desc.Key,
 				columnDefault,
-				desc.DefaultValue,
 				desc.Extra,
 				desc.Privileges,
 				desc.Comment,

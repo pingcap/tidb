@@ -322,8 +322,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	if col.Tp != mysql.TypeTimestamp && col.Tp != mysql.TypeDatetime {
 		value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
 		if err != nil {
-			return types.Datum{}, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
-				col.Name, errors.Trace(err))
+			return types.Datum{}, errors.Trace(err)
 		}
 		return value, nil
 	}
@@ -342,7 +341,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 			if col.Version == model.ColumnInfoVersion1 {
 				defaultTimeZone = time.UTC
 			}
-			err = t.ConvertTimeZone(defaultTimeZone, ctx.GetSessionVars().TimeZone)
+			err = t.ConvertTimeZone(defaultTimeZone, ctx.GetSessionVars().GetTimeZone())
 			if err != nil {
 				return value, errors.Trace(err)
 			}
