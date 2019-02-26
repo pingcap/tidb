@@ -186,11 +186,11 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 }
 
 func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) error {
+	atomic.StoreInt64(&e.parentReqRows, int64(chk.RequiredRows()))
 	if !e.prepared {
 		e.prepare(ctx)
 		e.prepared = true
 	}
-	atomic.StoreInt64(&e.parentReqRows, int64(chk.RequiredRows()))
 
 	output, ok := <-e.outputCh
 	if !ok {
