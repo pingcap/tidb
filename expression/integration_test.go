@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -542,6 +543,13 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	// for radians
 	result = tk.MustQuery("SELECT radians(1.0), radians(pi()), radians(pi()/2), radians(180), radians(1.009);")
 	result.Check(testkit.Rows("0.017453292519943295 0.05483113556160754 0.02741556778080377 3.141592653589793 0.01761037215262278"))
+
+	// for rand
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.MustQuery("select rand(a) from t").Check(testkit.Rows("0.6046602879796196", "0.16729663442585624", "0.7199826688373036"))
+	tk.MustQuery("select rand(1), rand(2), rand(3)").Check(testkit.Rows("0.6046602879796196 0.16729663442585624 0.7199826688373036"))
 }
 
 func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
@@ -2489,6 +2497,42 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select row_count();")
 	result.Check(testkit.Rows("-1"))
+
+	// for benchmark
+	success := testkit.Rows("0")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	result = tk.MustQuery(`select benchmark(3, benchmark(2, length("abc")))`)
+	result.Check(success)
+	err := tk.ExecToErr(`select benchmark(3, length("a", "b"))`)
+	c.Assert(err, NotNil)
+	// Quoted from https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_benchmark
+	// Although the expression can be a subquery, it must return a single column and at most a single row.
+	// For example, BENCHMARK(10, (SELECT * FROM t)) will fail if the table t has more than one column or
+	// more than one row.
+	oneColumnQuery := "select benchmark(10, (select a from t))"
+	twoColumnQuery := "select benchmark(10, (select * from t))"
+	// rows * columns:
+	// 0 * 1, success;
+	result = tk.MustQuery(oneColumnQuery)
+	result.Check(success)
+	// 0 * 2, error;
+	err = tk.ExecToErr(twoColumnQuery)
+	c.Assert(err, NotNil)
+	// 1 * 1, success;
+	tk.MustExec("insert t values (1, 2)")
+	result = tk.MustQuery(oneColumnQuery)
+	result.Check(success)
+	// 1 * 2, error;
+	err = tk.ExecToErr(twoColumnQuery)
+	c.Assert(err, NotNil)
+	// 2 * 1, error;
+	tk.MustExec("insert t values (3, 4)")
+	err = tk.ExecToErr(oneColumnQuery)
+	c.Assert(err, NotNil)
+	// 2 * 2, error.
+	err = tk.ExecToErr(twoColumnQuery)
+	c.Assert(err, NotNil)
 }
 
 func (s *testIntegrationSuite) TestControlBuiltin(c *C) {
@@ -3897,6 +3941,42 @@ func (s *testIntegrationSuite) TestValuesFloat32(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.01`))
 	tk.MustExec(`insert into t values (1, 0.02) on duplicate key update j = values (j);`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 0.02`))
+}
+
+func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("USE test;")
+	tk.MustExec("DROP TABLE IF EXISTS t;")
+	tk.MustExec("CREATE TABLE t(a CHAR(20), b VARCHAR(20), c BIGINT);")
+	tk.MustExec("INSERT INTO t (b, c) values('hello', 1);")
+
+	r := tk.MustQuery("SELECT name_const('test_int', 1), name_const('test_float', 3.1415);")
+	r.Check(testkit.Rows("1 3.1415"))
+	r = tk.MustQuery("SELECT name_const('test_string', 'hello'), name_const('test_nil', null);")
+	r.Check(testkit.Rows("hello <nil>"))
+	r = tk.MustQuery("SELECT name_const('test_string', 1) + c FROM t;")
+	r.Check(testkit.Rows("2"))
+	r = tk.MustQuery("SELECT concat('hello', name_const('test_string', 'world')) FROM t;")
+	r.Check(testkit.Rows("helloworld"))
+	err := tk.ExecToErr(`select name_const(a,b) from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const(a,"hello") from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const("hello", b) from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const("hello", 1+1) from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const(concat('a', 'b'), 555) from t;`)
+	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	err = tk.ExecToErr(`select name_const(555) from t;`)
+	c.Assert(err.Error(), Equals, "[expression:1582]Incorrect parameter count in the call to native function 'name_const'")
+
+	var rs sqlexec.RecordSet
+	rs, err = tk.Exec(`select name_const("hello", 1);`)
+	c.Assert(err, IsNil)
+	c.Assert(len(rs.Fields()), Equals, 1)
+	c.Assert(rs.Fields()[0].Column.Name.L, Equals, "hello")
 }
 
 func (s *testIntegrationSuite) TestValuesEnum(c *C) {

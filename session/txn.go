@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -146,7 +147,15 @@ type dirtyTableOperation struct {
 	row    []types.Datum
 }
 
-var hasMockAutoIDRetry = false
+var hasMockAutoIDRetry = int64(0)
+
+func enableMockAutoIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIDRetry, 1)
+}
+
+func mockAutoIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIDRetry) == 1
+}
 
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
@@ -175,8 +184,8 @@ func (st *TxnState) Commit(ctx context.Context) error {
 
 	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
 	// gofail: var mockCommitRetryForAutoID bool
-	// if mockCommitRetryForAutoID && !hasMockAutoIDRetry {
-	//  hasMockAutoIDRetry = true
+	// if mockCommitRetryForAutoID && !mockAutoIDRetry() {
+	//	enableMockAutoIDRetry()
 	//	return kv.ErrRetryable
 	// }
 
@@ -211,6 +220,36 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 		return nil, kv.ErrNotExist
 	}
 	return val, nil
+}
+
+// BatchGet overrides the Transaction interface.
+func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := st.buf.Get(key)
+		if kv.IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := st.Transaction.BatchGet(shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }
 
 // Set overrides the Transaction interface.
@@ -285,13 +324,14 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 }
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
+	dt := dirtyDB.GetDirtyTable(op.tid)
 	switch op.kind {
 	case table.DirtyTableAddRow:
-		dirtyDB.AddRow(op.tid, op.handle, op.row)
+		dt.AddRow(op.handle, op.row)
 	case table.DirtyTableDeleteRow:
-		dirtyDB.DeleteRow(op.tid, op.handle)
+		dt.DeleteRow(op.handle)
 	case table.DirtyTableTruncate:
-		dirtyDB.TruncateTable(op.tid)
+		dt.TruncateTable()
 	}
 }
 
