@@ -90,10 +90,9 @@ github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3 h1:04yuCf5NMvLU8rB2
 github.com/pingcap/gofail v0.0.0-20181217135706-6a951c1e42c3/go.mod h1:DazNTg0PTldtpsQiT9I5tVJwV1onHMKBBgXzmJUlMns=
 github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030 h1:XJLuW0lsP7vAtQ2iPjZwvXZ14m5urp9No+Qr06ZZcTo=
 github.com/pingcap/goleveldb v0.0.0-20171020084629-8d44bfdf1030/go.mod h1:O17XtbryoCJhkKGbT62+L2OlrniwqiGLSqrmdHCMzZw=
-github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929 h1:NAq95+VGsS2G7SjzZ5LP9iUlCMNAs13QUzbNY3G90v8=
-github.com/pingcap/kvproto v0.0.0-20181109035735-8e3f33ac4929/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
-github.com/pingcap/kvproto v0.0.0-20190226030433-dc5d95522ec2 h1:EZIqvkUzF2bFucY16rrUDocJ8j42jpd1krx8Syb/oBg=
-github.com/pingcap/kvproto v0.0.0-20190226030433-dc5d95522ec2/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
+github.com/pingcap/kvproto v0.0.0-20190225084405-84f2c621d8e8 h1:ZoP49RWRjlmvXUWAySYZD1tV8BIVVEJ7xrbCg1B7/fw=
+github.com/pingcap/kvproto v0.0.0-20190226063853-f6c0b7ffff11 h1:iGNfAHgK0VHJobW4bPTlFmdnt3YWsEHdSTIcjut6ffk=
+github.com/pingcap/kvproto v0.0.0-20190226063853-f6c0b7ffff11/go.mod h1:0gwbe1F2iBIjuQ9AH0DbQhL+Dpr5GofU8fgYyXk+ykk=
 github.com/pingcap/parser v0.0.0-20190218023123-90a796aef0c5 h1:0sHmsTSdOkatWgUbz1bWDz57z4c1drsR2aAXpEgK6Co=
 github.com/pingcap/parser v0.0.0-20190218023123-90a796aef0c5/go.mod h1:1FNvfp9+J0wvc4kl8eGNh7Rqrxveg15jJoWo/a0uHwA=
 github.com/pingcap/parser v0.0.0-20190221074811-3d110205ce12 h1:U3XyCWNUmChKZEqgNmVKKmBDKgpwYMD1VlR1E8YYmlU=
