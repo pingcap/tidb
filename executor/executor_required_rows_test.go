@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"time"
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
