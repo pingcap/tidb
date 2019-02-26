@@ -15,6 +15,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -55,20 +56,24 @@ func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 	return plan
 }
 
+// wrapCastForAggFunc wraps the args of an aggregate function with a cast function.
+// If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
+// since the types of the args are already the expected.
+func wrapCastForAggFuncs(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) {
+	for i := range aggFuncs {
+		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
+			aggFuncs[i].WrapCastForAggArgs(sctx)
+		}
+	}
+}
+
 // injectProjBelowAgg injects a ProjOperator below AggOperator. If all the args
 // of `aggFuncs`, and all the item of `groupByItems` are columns or constants,
 // we do not need to build the `proj`.
 func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
 
-	// If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
-	// since the types of the args are already the expected.
-	if len(aggFuncs) > 0 && aggFuncs[0].Mode != aggregation.FinalMode && aggFuncs[0].Mode != aggregation.Partial2Mode {
-		for _, agg := range aggFuncs {
-			agg.WrapCastForAggArgs(aggPlan.context())
-		}
-	}
-
+	wrapCastForAggFuncs(aggPlan.context(), aggFuncs)
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		for _, arg := range aggFuncs[i].Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
