@@ -577,16 +577,16 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (%s)", escape(pkCol.Name, sqlMode)))
 	}
 
-	if len(tb.Indices()) > 0 {
-		buf.WriteString(",\n")
-	}
-
 	publicIndices := make([]table.Index, 0, len(tb.Indices()))
 	for _, idx := range tb.Indices() {
 		if idx.Meta().State == model.StatePublic {
 			publicIndices = append(publicIndices, idx)
 		}
 	}
+	if len(publicIndices) > 0 {
+		buf.WriteString(",\n")
+	}
+
 	for i, idx := range publicIndices {
 		idxInfo := idx.Meta()
 		if idxInfo.Primary {

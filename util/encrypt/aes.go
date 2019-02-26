@@ -124,18 +124,8 @@ func AESEncryptWithECB(str, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	blockSize := cb.BlockSize()
-	// The str arguments can be any length, and padding is automatically added to
-	// str so it is a multiple of a block as required by block-based algorithms such as AES.
-	// This padding is automatically removed by the AES_DECRYPT() function.
-	data, err := PKCS7Pad(str, blockSize)
-	if err != nil {
-		return nil, err
-	}
-	crypted := make([]byte, len(data))
-	ecb := newECBEncrypter(cb)
-	ecb.CryptBlocks(crypted, data)
-	return crypted, nil
+	mode := newECBEncrypter(cb)
+	return aesEncrypt(str, mode)
 }
 
 // AESDecryptWithECB decrypts data using AES with ECB mode.
@@ -144,18 +134,8 @@ func AESDecryptWithECB(cryptStr, key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	blockSize := cb.BlockSize()
-	if len(cryptStr)%blockSize != 0 {
-		return nil, errors.New("Corrupted data")
-	}
 	mode := newECBDecrypter(cb)
-	data := make([]byte, len(cryptStr))
-	mode.CryptBlocks(data, cryptStr)
-	plain, err := PKCS7Unpad(data, blockSize)
-	if err != nil {
-		return nil, err
-	}
-	return plain, nil
+	return aesDecrypt(cryptStr, mode)
 }
 
 // DeriveKeyMySQL derives the encryption key from a password in MySQL algorithm.
@@ -171,4 +151,54 @@ func DeriveKeyMySQL(key []byte, blockSize int) []byte {
 		rIdx++
 	}
 	return rKey
+}
+
+// AESEncryptWithCBC encrypts data using AES with CBC mode.
+func AESEncryptWithCBC(str, key []byte, iv []byte) ([]byte, error) {
+	cb, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	mode := cipher.NewCBCEncrypter(cb, iv)
+	return aesEncrypt(str, mode)
+}
+
+// AESDecryptWithCBC decrypts data using AES with CBC mode.
+func AESDecryptWithCBC(cryptStr, key []byte, iv []byte) ([]byte, error) {
+	cb, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	mode := cipher.NewCBCDecrypter(cb, iv)
+	return aesDecrypt(cryptStr, mode)
+}
+
+// aesDecrypt decrypts data using AES.
+func aesDecrypt(cryptStr []byte, mode cipher.BlockMode) ([]byte, error) {
+	blockSize := mode.BlockSize()
+	if len(cryptStr)%blockSize != 0 {
+		return nil, errors.New("Corrupted data")
+	}
+	data := make([]byte, len(cryptStr))
+	mode.CryptBlocks(data, cryptStr)
+	plain, err := PKCS7Unpad(data, blockSize)
+	if err != nil {
+		return nil, err
+	}
+	return plain, nil
+}
+
+// aesEncrypt encrypts data using AES.
+func aesEncrypt(str []byte, mode cipher.BlockMode) ([]byte, error) {
+	blockSize := mode.BlockSize()
+	// The str arguments can be any length, and padding is automatically added to
+	// str so it is a multiple of a block as required by block-based algorithms such as AES.
+	// This padding is automatically removed by the AES_DECRYPT() function.
+	data, err := PKCS7Pad(str, blockSize)
+	if err != nil {
+		return nil, err
+	}
+	crypted := make([]byte, len(data))
+	mode.CryptBlocks(crypted, data)
+	return crypted, nil
 }
