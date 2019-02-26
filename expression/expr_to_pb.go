@@ -14,12 +14,11 @@
 package expression
 
 import (
-	"time"
+	"fmt"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -106,6 +105,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 		log.Errorf("Fail to eval constant, err: %s", err.Error())
 		return nil
 	}
+	fmt.Printf("const to pb, expr = %s, d = %#v %s type = %v\n", expr, d, pc.sc.TimeZone, ft)
 	tp, val, ok := pc.encodeDatum(d)
 	if !ok {
 		return nil
@@ -157,12 +157,7 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			loc := pc.sc.TimeZone
 			t := d.GetMysqlTime()
-			if t.Type == mysql.TypeTimestamp && loc != time.UTC {
-				err := t.ConvertTimeZone(loc, time.UTC)
-				terror.Log(err)
-			}
 			v, err := t.ToPackedUint()
 			if err != nil {
 				log.Errorf("Fail to encode value, err: %s", err.Error())
@@ -239,21 +234,24 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 
 	// check whether all of its parameters can be pushed.
 	children := make([]*tipb.Expr, 0, len(expr.GetArgs()))
-	for _, arg := range expr.GetArgs() {
+	for i, arg := range expr.GetArgs() {
 		pbArg := pc.ExprToPB(arg)
 		if pbArg == nil {
 			return nil
 		}
+		fmt.Printf("scalar func argi = %d %#v AAADDD converted == %#v\n", i, arg, pbArg)
 		children = append(children, pbArg)
 	}
 
 	// construct expression ProtoBuf.
-	return &tipb.Expr{
+	ret := &tipb.Expr{
 		Tp:        tipb.ExprType_ScalarFunc,
 		Sig:       pbCode,
 		Children:  children,
 		FieldType: ToPBFieldType(expr.RetType),
 	}
+	fmt.Println("scalar func to pb expr", ret)
+	return ret
 }
 
 // GroupByItemToPB converts group by items to pb.

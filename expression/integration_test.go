@@ -3989,3 +3989,19 @@ func (s *testIntegrationSuite) TestValuesEnum(c *C) {
 	tk.MustExec(`insert into t values (1, "b") on duplicate key update b = values(b);`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 b`))
 }
+
+func (s *testIntegrationSuite) TestIssue9325(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue))")
+	tk.MustExec("insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01')")
+	result := tk.MustQuery("select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00'")
+	result.Check(testkit.Rows("2019-02-16 14:19:59", "2019-02-16 14:20:01"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a timestamp)")
+	tk.MustExec("insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01')")
+	result = tk.MustQuery("select * from t where a < timestamp'2019-02-16 14:21:00'")
+	result.Check(testkit.Rows("2019-02-16 14:19:59", "2019-02-16 14:20:01"))
+}
