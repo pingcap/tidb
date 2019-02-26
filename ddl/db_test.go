@@ -2190,11 +2190,11 @@ func (s *testDBSuite) TestCheckTooBigFieldLength(c *C) {
 
 	s.tk.MustExec("drop table if exists tr_04;")
 	s.tk.MustExec("create table tr_04 (a varchar(20000) ) default charset utf8;")
-	s.testErrorCode(c, "alter table tr_04 add column b varchar(20000) charset utf8mb4;", tmysql.ErrTooBigFieldlength)
-	s.testErrorCode(c, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
-	s.testErrorCode(c, "create table tr (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
-	s.testErrorCode(c, "create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8;", tmysql.ErrTooBigFieldlength)
-	s.testErrorCode(c, "create table tr (id int, name varchar(65536), purchased date ) default charset=latin1;", tmysql.ErrTooBigFieldlength)
+	assertErrorCode(c, s.tk, "alter table tr_04 add column b varchar(20000) charset utf8mb4;", tmysql.ErrTooBigFieldlength)
+	assertErrorCode(c, s.tk, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
+	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
+	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8;", tmysql.ErrTooBigFieldlength)
+	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(65536), purchased date ) default charset=latin1;", tmysql.ErrTooBigFieldlength)
 
 	s.tk.MustExec("drop table if exists tr_05;")
 	s.tk.MustExec("create table tr_05 (a varchar(16000) charset utf8);")
