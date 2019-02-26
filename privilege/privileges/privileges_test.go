@@ -299,6 +299,20 @@ func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
 }
 
+func (s *testPrivilegeSuite) TestRoleAdminSecurity(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'r1'@'localhost';`)
+	mustExec(c, se, `CREATE USER 'r2'@'localhost';`)
+	mustExec(c, se, `GRANT ALL ON *.* to r1@localhost`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `create role r_test1@localhost`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `create role r_test2@localhost`)
+	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
