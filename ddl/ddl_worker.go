@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/tidb/util/schemautil"
 	"time"
 
 	"github.com/juju/errors"
@@ -571,7 +572,7 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+		indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
 		_, err = convertAddIdxJob2RollbackJob(m, job, tblInfo, indexInfo, nil)
 		if err == nil {
 			_, err = m.DeQueueDDLJob()

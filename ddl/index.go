@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/schemautil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -206,7 +207,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, ErrDupKeyName.Gen("index already exist %s", indexName)
@@ -319,7 +320,7 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+	indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
 		return ver, ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
@@ -959,15 +960,6 @@ func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo
 	}
 
 	return d.backfillKVRangesIndex(t, workers, kvRanges, job, reorgInfo)
-}
-
-func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
-	for _, idx := range indices {
-		if idx.Name.L == idxName {
-			return idx
-		}
-	}
-	return nil
 }
 
 func allocateIndexID(tblInfo *model.TableInfo) int64 {
