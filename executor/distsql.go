@@ -348,7 +348,7 @@ type IndexLookUpExecutor struct {
 	// parentReqRows indicates how many rows the parent want now.
 	parentReqRows int64
 	kvRanges      []kv.KeyRange
-	started       bool
+	workerStarted bool
 
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
@@ -430,7 +430,6 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context) (err error) {
 		return errors.Trace(err)
 	}
 	e.startTableWorker(ctx, workCh)
-	e.started = true
 	return nil
 }
 
@@ -534,7 +533,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
-	if e.finished == nil {
+	if !e.workerStarted {
 		return nil
 	}
 
@@ -546,6 +545,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.idxWorkerWg.Wait()
 	e.tblWorkerWg.Wait()
 	e.finished = nil
+	e.workerStarted = false
 	e.memTracker.Detach()
 	e.memTracker = nil
 	if e.runtimeStats != nil {
@@ -562,10 +562,11 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) 
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	atomic.StoreInt64(&e.parentReqRows, int64(req.RequiredRows()))
-	if !e.started {
+	if !e.workerStarted { // lazy start
 		if err := e.startWorkers(ctx); err != nil {
 			return errors.Trace(err)
 		}
+		e.workerStarted = true
 	}
 	req.Reset()
 	for {
