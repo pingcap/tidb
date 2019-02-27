@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -47,6 +48,10 @@ type TxnState struct {
 	buf          kv.MemBuffer
 	mutations    map[int64]*binlog.TableMutation
 	dirtyTableOP []dirtyTableOperation
+
+	// If doNotCommit is not nil, Commit() will not commit the transaction.
+	// doNotCommit flag may be set when StmtCommit fail.
+	doNotCommit error
 }
 
 func (st *TxnState) init() {
@@ -142,8 +147,19 @@ type dirtyTableOperation struct {
 	row    []types.Datum
 }
 
+var hasMockAutoIDRetry = int64(0)
+
+func enableMockAutoIDRetry() {
+	atomic.StoreInt64(&hasMockAutoIDRetry, 1)
+}
+
+func mockAutoIDRetry() bool {
+	return atomic.LoadInt64(&hasMockAutoIDRetry) == 1
+}
+
 // Commit overrides the Transaction interface.
 func (st *TxnState) Commit(ctx context.Context) error {
+	defer st.reset()
 	if len(st.mutations) != 0 || len(st.dirtyTableOP) != 0 || st.buf.Len() != 0 {
 		log.Errorf("The code should never run here, TxnState=%#v, mutations=%#v, dirtyTableOP=%#v, buf=%#v something must be wrong: %s",
 			st,
@@ -151,10 +167,41 @@ func (st *TxnState) Commit(ctx context.Context) error {
 			st.dirtyTableOP,
 			st.buf,
 			debug.Stack())
-		st.cleanup()
 		return errors.New("invalid transaction")
 	}
+	if st.doNotCommit != nil {
+		if err1 := st.Transaction.Rollback(); err1 != nil {
+			log.Error(err1)
+		}
+		return errors.Trace(st.doNotCommit)
+	}
+
+	// mockCommitError8942 is used for PR #8942.
+	// gofail: var mockCommitError8942 bool
+	// if mockCommitError8942 {
+	//	return kv.ErrRetryable
+	// }
+
+	// mockCommitRetryForAutoID is used to mock an commit retry for adjustAutoIncrementDatum.
+	// gofail: var mockCommitRetryForAutoID bool
+	// if mockCommitRetryForAutoID && !mockAutoIDRetry() {
+	//	enableMockAutoIDRetry()
+	//	return kv.ErrRetryable
+	// }
+
 	return errors.Trace(st.Transaction.Commit(ctx))
+}
+
+// Rollback overrides the Transaction interface.
+func (st *TxnState) Rollback() error {
+	defer st.reset()
+	return errors.Trace(st.Transaction.Rollback())
+}
+
+func (st *TxnState) reset() {
+	st.doNotCommit = nil
+	st.cleanup()
+	st.changeToInvalid()
 }
 
 // Get overrides the Transaction interface.
@@ -173,6 +220,36 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 		return nil, kv.ErrNotExist
 	}
 	return val, nil
+}
+
+// BatchGet overrides the Transaction interface.
+func (st *TxnState) BatchGet(keys []kv.Key) (map[string][]byte, error) {
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]kv.Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := st.buf.Get(key)
+		if kv.IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := st.Transaction.BatchGet(shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }
 
 // Set overrides the Transaction interface.
@@ -247,13 +324,14 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 }
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
+	dt := dirtyDB.GetDirtyTable(op.tid)
 	switch op.kind {
 	case table.DirtyTableAddRow:
-		dirtyDB.AddRow(op.tid, op.handle, op.row)
+		dt.AddRow(op.handle, op.row)
 	case table.DirtyTableDeleteRow:
-		dirtyDB.DeleteRow(op.tid, op.handle)
+		dt.DeleteRow(op.handle)
 	case table.DirtyTableTruncate:
-		dirtyDB.TruncateTable(op.tid)
+		dt.TruncateTable()
 	}
 }
 
@@ -311,17 +389,24 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 func (s *session) StmtCommit() error {
 	defer s.txn.cleanup()
 	st := &s.txn
+	var count int
 	err := kv.WalkMemBuffer(st.buf, func(k kv.Key, v []byte) error {
+
 		// gofail: var mockStmtCommitError bool
 		// if mockStmtCommitError {
-		// 	return errors.New("mock stmt commit error")
+		// 	count++
 		// }
+		if count > 3 {
+			return errors.New("mock stmt commit error")
+		}
+
 		if len(v) == 0 {
 			return errors.Trace(st.Transaction.Delete(k))
 		}
 		return errors.Trace(st.Transaction.Set(k, v))
 	})
 	if err != nil {
+		st.doNotCommit = err
 		return errors.Trace(err)
 	}
 

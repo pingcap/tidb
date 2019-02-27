@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testColumnSuite{})
@@ -44,7 +44,6 @@ type testColumnSuite struct {
 }
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_column")
 	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 
@@ -58,7 +57,6 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c, TestLeakCheckCnt)()
 }
 
 func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
@@ -124,7 +122,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i), false)
+		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i))
 		c.Assert(err, IsNil)
 	}
 
@@ -132,7 +130,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 
 	i := int64(0)
-	t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
 		c.Assert(data, HasLen, 3)
 		c.Assert(data[0].GetInt64(), Equals, i)
 		c.Assert(data[1].GetInt64(), Equals, 10*i)
@@ -140,6 +138,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 		i++
 		return true, nil
 	})
+	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(num))
 
 	c.Assert(table.FindCol(t.Cols(), "c4"), IsNil)
@@ -164,7 +163,7 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(i, Equals, int64(num))
 
-	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14), false)
+	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14))
 	c.Assert(err, IsNil)
 	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
@@ -359,7 +358,7 @@ func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, 
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow, false)
+	newHandle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -463,7 +462,7 @@ func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, t
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow, false)
+	newHandle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -563,7 +562,7 @@ func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *d
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow, false)
+	newHandle, err := t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -660,7 +659,7 @@ func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblI
 	}
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33), int64(44))
-	handle, err = t.AddRecord(ctx, newRow, false)
+	handle, err = t.AddRecord(ctx, newRow)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -765,7 +764,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
 
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
-	handle, err := t.AddRecord(ctx, oldRow, false)
+	handle, err := t.AddRecord(ctx, oldRow)
 	c.Assert(err, IsNil)
 
 	txn, err := ctx.Txn(true)
@@ -835,7 +834,7 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
-	txn.Commit(context.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	d.Stop()
@@ -856,7 +855,7 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
-	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)), false)
+	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
 	c.Assert(err, IsNil)
 
 	txn, err := ctx.Txn(true)
@@ -953,7 +952,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil)
+	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, mysql.DefaultCharset, mysql.DefaultCharset)
 	c.Assert(err, IsNil)
 	return &col.FieldType
 }
@@ -972,5 +971,6 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 		}
 		colObjects = append(colObjects, colDefs[i])
 	}
-	c.Assert(checkDuplicateColumn(colObjects), NotNil)
+	err := checkDuplicateColumn(colObjects)
+	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
 }

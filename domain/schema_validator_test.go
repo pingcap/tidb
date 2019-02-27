@@ -64,24 +64,31 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	validator.Restart()
 
 	// Sleep for a long time, check schema is invalid.
-	ts := <-oracleCh // Make sure that ts has timed out a lease.
+	<-oracleCh // Make sure that ts has timed out a lease.
 	time.Sleep(lease)
-	ts = <-oracleCh
+	ts := <-oracleCh
 	valid = validator.Check(ts, item.schemaVer, []int64{10})
 	c.Assert(valid, Equals, ResultUnknown, Commentf("validator latest schema ver %v, time %v, item schema ver %v, ts %v",
 		validator.latestSchemaVer, validator.latestSchemaExpire, item.schemaVer, oracle.GetTimeFromTS(ts)))
 
 	currVer := reload(validator, leaseGrantCh, 0)
 	valid = validator.Check(ts, item.schemaVer, nil)
-	c.Assert(valid, Equals, ResultFail)
+	c.Assert(valid, Equals, ResultFail, Commentf("currVer %d, newItem %v", currVer, item))
 	valid = validator.Check(ts, item.schemaVer, []int64{0})
-	c.Assert(valid, Equals, ResultFail)
+	c.Assert(valid, Equals, ResultFail, Commentf("currVer %d, newItem %v", currVer, item))
 	// Check the latest schema version must changed.
 	c.Assert(item.schemaVer, Less, validator.latestSchemaVer)
 
 	// Make sure newItem's version is bigger than currVer.
-	time.Sleep(lease * 2)
-	newItem := <-leaseGrantCh
+	var newItem leaseGrantItem
+	for i := 0; i < 10; i++ {
+		time.Sleep(lease / 2)
+		newItem = <-leaseGrantCh
+		if newItem.schemaVer > currVer {
+			break
+		}
+	}
+	c.Assert(newItem.schemaVer, Greater, currVer, Commentf("currVer %d, newItem %v", currVer, newItem))
 
 	// Update current schema version to newItem's version and the delta table IDs is 1, 2, 3.
 	validator.Update(ts, currVer, newItem.schemaVer, []int64{1, 2, 3})
@@ -90,10 +97,10 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	isTablesChanged = validator.isRelatedTablesChanged(currVer, nil)
 	c.Assert(isTablesChanged, IsFalse)
 	isTablesChanged = validator.isRelatedTablesChanged(currVer, []int64{2})
-	c.Assert(isTablesChanged, IsTrue)
+	c.Assert(isTablesChanged, IsTrue, Commentf("currVer %d, newItem %v", currVer, newItem))
 	// The current schema version is older than the oldest schema version.
 	isTablesChanged = validator.isRelatedTablesChanged(-1, nil)
-	c.Assert(isTablesChanged, IsTrue)
+	c.Assert(isTablesChanged, IsTrue, Commentf("currVer %d, newItem %v", currVer, newItem))
 
 	// All schema versions is expired.
 	ts = uint64(time.Now().Add(lease).UnixNano())

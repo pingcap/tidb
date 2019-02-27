@@ -68,7 +68,7 @@ type LogicalPlan interface {
 	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns.
-	PruneColumns([]*expression.Column)
+	PruneColumns([]*expression.Column) error
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -140,7 +140,7 @@ type PhysicalPlan interface {
 	SetChildren(...PhysicalPlan)
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	ResolveIndices()
+	ResolveIndices() error
 }
 
 type baseLogicalPlan struct {
@@ -229,11 +229,11 @@ func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) error {
 	if len(p.children) == 0 {
-		return
+		return nil
 	}
-	p.children[0].PruneColumns(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols)
 }
 
 // basePlan implements base Plan interface.

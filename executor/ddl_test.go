@@ -25,13 +25,16 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite3) TestTruncateTable(c *C) {
@@ -86,12 +89,12 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
-	chk := rs.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := rs.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
@@ -100,16 +103,16 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
-	chk = rs.NewChunk()
-	it = chunk.NewIterator4Chunk(chk)
+	req = rs.NewRecordBatch()
+	it = chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err1 := rs.Next(ctx, chk)
+		err1 := rs.Next(ctx, req)
 		c.Assert(err1, IsNil)
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			c.Assert(chk.GetRow(0).GetString(1), Equals, "double")
+			c.Assert(req.GetRow(0).GetString(1), Equals, "double")
 		}
 	}
 
@@ -142,6 +145,7 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));")
 	//test create a exist view
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
+	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
 	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
 	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
 	//create view on nonexistent table
@@ -151,36 +155,37 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("create table t1 (a int ,b int)")
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
 	//view with colList and SelectFieldExpr
-	_, err = tk.Exec("create view v1 (c) as select b+1 from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v1 (c) as select b+1 from t1")
 	//view with SelectFieldExpr
-	_, err = tk.Exec("create view v2 as select b+1 from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v2 as select b+1 from t1")
 	//view with SelectFieldExpr and AsName
-	_, err = tk.Exec("create view v3 as select b+1 as c from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v3 as select b+1 as c from t1")
 	//view with colList , SelectField and AsName
-	_, err = tk.Exec("create view v4 (c) as select b+1 as d from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v4 (c) as select b+1 as d from t1")
 	//view with select wild card
-	_, err = tk.Exec("create view v5 as select * from t1")
-	c.Assert(err, IsNil)
-	_, err = tk.Exec("create view v6 (c,d) as select * from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v5 as select * from t1")
+	tk.MustExec("create view v6 (c,d) as select * from t1")
 	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
-	tk.MustExec("drop table v1,v2,v3,v4,v5,v6")
+	//drop multiple views in a statement
+	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
 	//view with variable
-	_, err = tk.Exec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
-	c.Assert(err, IsNil)
+	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
 	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
-	tk.MustExec("drop table v1")
+	tk.MustExec("drop view v1")
 	//view with different col counts
 	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
 	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
 	c.Assert(err.Error(), Equals, ddl.ErrViewWrongList.Error())
+	//view with or_replace flag
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("create view v1 (c,d) as select a,b from t1")
+	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
+	tk.MustExec("create table if not exists t1 (a int ,b int)")
+	_, err = tk.Exec("create or replace view t1 as select * from t1")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error())
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {
@@ -211,6 +216,24 @@ func (s *testSuite3) TestCreateDropTable(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSuite3) TestCreateDropView(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create or replace view drop_test as select 1,2")
+	_, err := tk.Exec("drop view if exists drop_test")
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec("drop view mysql.gc_delete_range")
+	c.Assert(err.Error(), Equals, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
+
+	_, err = tk.Exec("drop view drop_test")
+	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+
+	tk.MustExec("create table t_v(a int)")
+	_, err = tk.Exec("drop view t_v")
+	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
+}
+
 func (s *testSuite3) TestCreateDropIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -230,15 +253,19 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Millisecond)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	chk := r.NewChunk()
-	err = r.Next(context.Background(), chk)
+	req := r.NewRecordBatch()
+	err = r.Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	row := chk.GetRow(0)
+	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
 	r.Close()
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
+	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
+	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
+	tk.MustExec("drop view alter_view")
 }
 
 func (s *testSuite3) TestAddNotNullColumnNoDefault(c *C) {
@@ -283,6 +310,10 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	createSQL := result.Rows()[0][1]
 	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
+	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
+	_, err = tk.Exec("alter table alter_view modify column c2 text")
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
+	tk.MustExec("drop view alter_view")
 }
 
 func (s *testSuite3) TestDefaultDBAfterDropCurDB(c *C) {
@@ -456,6 +487,24 @@ func (s *testSuite3) TestShardRowIDBits(c *C) {
 	_, err = tk.Exec("alter table auto shard_row_id_bits = 4")
 	c.Assert(err, NotNil)
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
+
+	// Test overflow
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int) shard_row_id_bits = 15")
+	defer tk.MustExec("drop table if exists t1")
+
+	tbl, err = domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	maxID := 1<<(64-15-1) - 1
+	err = tbl.RebaseAutoID(tk.Se, int64(maxID)-1, false)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t1 values(1)")
+
+	// continue inserting will fail.
+	_, err = tk.Exec("insert into t1 values(2)")
+	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
+	_, err = tk.Exec("insert into t1 values(3)")
+	c.Assert(autoid.ErrAutoincReadFailed.Equal(err), IsTrue, Commentf("err:%v", err))
 }
 
 func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
@@ -478,24 +527,32 @@ func (s *testSuite3) TestMaxHandleAddIndex(c *C) {
 func (s *testSuite3) TestSetDDLReorgWorkerCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 1")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	_, err := tk.Exec("set tidb_ddl_reorg_worker_cnt = invalid_val")
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	_, err = tk.Exec("set tidb_ddl_reorg_worker_cnt = -1")
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
-	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	res := tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
 
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgWorkerCount)))
+	res.Check(testkit.Rows("100"))
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
@@ -504,28 +561,77 @@ func (s *testSuite3) TestSetDDLReorgWorkerCnt(c *C) {
 func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	err := ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.DefTiDBDDLReorgBatchSize))
 
-	tk.MustExec("set tidb_ddl_reorg_batch_size = 1")
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MinDDLReorgBatchSize))
-	tk.MustExec(fmt.Sprintf("set tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", variable.MaxDDLReorgBatchSize+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", variable.MaxDDLReorgBatchSize+1)))
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(variable.MaxDDLReorgBatchSize))
-	_, err := tk.Exec("set tidb_ddl_reorg_batch_size = invalid_val")
+	_, err = tk.Exec("set @@global.tidb_ddl_reorg_batch_size = invalid_val")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
-	tk.MustExec("set tidb_ddl_reorg_batch_size = 100")
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	c.Assert(variable.GetDDLReorgBatchSize(), Equals, int32(100))
-	tk.MustExec("set tidb_ddl_reorg_batch_size = -1")
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
 
-	tk.MustExec("set tidb_ddl_reorg_batch_size = 100")
-	res := tk.MustQuery("select @@tidb_ddl_reorg_batch_size")
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
+	res := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("100"))
 
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgBatchSize)))
+	res.Check(testkit.Rows(fmt.Sprintf("%v", 100)))
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
+}
+
+// Test issue #9205, fix the precision problem for time type default values
+// See https://github.com/pingcap/tidb/issues/9205 for details
+func (s *testSuite3) TestIssue9205(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(c time DEFAULT '12:12:12.8');`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec(`alter table t add column c1 time default '12:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t alter column c1 set default '2019-02-01 12:12:10.4';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '12:12:10'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	tk.MustExec(`alter table t modify c1 time DEFAULT '770:12:12.000000';`)
+	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `c` time DEFAULT '12:12:13',\n"+
+			"  `c1` time DEFAULT '770:12:12'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
 }

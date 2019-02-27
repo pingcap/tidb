@@ -11,6 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Note: All the tests in this file will be executed sequentially.
+
 package executor_test
 
 import (
@@ -49,16 +51,13 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level: logLevel,
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 
@@ -76,7 +75,6 @@ type seqTestSuite struct {
 var mockTikv = flag.Bool("mockTikv", true, "use mock tikv store in executor test")
 
 func (s *seqTestSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
@@ -102,7 +100,6 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 func (s *seqTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 func (s *seqTestSuite) TestEarlyClose(c *C) {
@@ -132,8 +129,8 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err1, IsNil)
 		rs := rss[0]
-		chk := rs.NewChunk()
-		err = rs.Next(ctx, chk)
+		req := rs.NewRecordBatch()
+		err = rs.Next(ctx, req)
 		c.Assert(err, IsNil)
 		rs.Close()
 	}
@@ -144,8 +141,8 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	rss, err := tk.Se.Execute(ctx, "select * from earlyclose")
 	c.Assert(err, IsNil)
 	rs := rss[0]
-	chk := rs.NewChunk()
-	err = rs.Next(ctx, chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
 	c.Assert(err, NotNil)
 	rs.Close()
 }
@@ -331,7 +328,11 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(testSQL)
 	testSQL = "show create database show_test_DB;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_test_DB|CREATE DATABASE `show_test_DB` /* !40100 DEFAULT CHARACTER SET utf8mb4 */",
+		"show_test_DB|CREATE DATABASE `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
+	))
+	testSQL = "show create database if not exists show_test_DB;"
+	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+		"show_test_DB|CREATE DATABASE /*!32312 IF NOT EXISTS*/ `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
 	tk.MustExec("use show_test_DB")
@@ -636,8 +637,8 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
-	err = rs.Next(context.Background(), chk)
+	req := rs.NewRecordBatch()
+	err = rs.Next(context.Background(), req)
 	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
@@ -645,6 +646,49 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	time.Sleep(time.Millisecond * 10)
 	c.Check(checkGoroutineExists(keyword), IsFalse)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
+}
+
+func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	// desc select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b
+	// HashAgg_8              | 2.40  | root | group by:t.b, funcs:sum(t.a)
+	// └─Projection_9         | 3.00  | root | cast(test.t.a), test.t.b
+	//   └─TableReader_11     | 3.00  | root | data:TableScan_10
+	//     └─TableScan_10     | 3.00  | cop  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/executor/parallelHashAggError")
+	ctx := context.Background()
+	rss, err := tk.Se.Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
+	c.Assert(err.Error(), Equals, "HashAggExec.parallelExec error")
+}
+
+func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+
+	// Goroutine should not leak when error happen.
+	gofail.Enable("github.com/pingcap/tidb/executor/unparallelHashAggError", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError")
+	ctx := context.Background()
+	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	c.Assert(err, IsNil)
+	rs := rss[0]
+	req := rs.NewRecordBatch()
+	err = rs.Next(ctx, req)
+	c.Assert(err.Error(), Equals, "HashAggExec.unparallelExec error")
 }
 
 func checkGoroutineExists(keyword string) bool {

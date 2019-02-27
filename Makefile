@@ -12,10 +12,9 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := GO111MODULE=on go
-GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOBUILD   := CGO_ENABLED=1 $(GO) build $(BUILD_FLAG)
 GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
-OVERALLS  := CGO_ENABLED=1 overalls
-GOVERALLS := goveralls
+OVERALLS  := CGO_ENABLED=1 GO111MODULE=on overalls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
@@ -25,8 +24,8 @@ PACKAGES  := $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
 
-GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs gofail enable)
-GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs gofail disable)
+GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/gofail enable)
+GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/gofail disable)
 
 LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
@@ -92,8 +91,7 @@ check-slow:tools/bin/gometalinter tools/bin/gosec
 
 errcheck:tools/bin/errcheck
 	@echo "errcheck"
-	@$(GO) mod vendor
-	@tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@GO111MODULE=on tools/bin/errcheck -exclude ./tools/check/errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
 lint:tools/bin/revive
 	@echo "linting"
@@ -117,18 +115,19 @@ test: checklist checkdep gotest explaintest
 explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
-gotest:
-	@rm -rf $GOPATH/bin/gofail
-	$(GO) get github.com/pingcap/gofail
-	@which gofail
-	@$(GOFAIL_ENABLE)
+upload-coverage: SHELL:=/bin/bash
+upload-coverage:
+ifeq ("$(TRAVIS_COVERAGE)", "1")
+	mv overalls.coverprofile coverage.txt
+	bash <(curl -s https://codecov.io/bash)
+endif
+
+gotest: gofail-enable
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	@export log_level=error; \
-	go get github.com/go-playground/overalls
-	go get github.com/mattn/goveralls
-	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor,cmd,docs,LICENSES' || { $(GOFAIL_DISABLE); exit 1; }
-	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile || { $(GOFAIL_DISABLE); exit 1; }
+	$(GO) get github.com/go-playground/overalls
+	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor,cmd,docs,LICENSES' -concurrency=1 || { $(GOFAIL_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
 	@export log_level=error; \
@@ -136,23 +135,17 @@ else
 endif
 	@$(GOFAIL_DISABLE)
 
-race:
-	$(GO) get github.com/pingcap/gofail
-	@$(GOFAIL_ENABLE)
+race: gofail-enable
 	@export log_level=debug; \
 	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
-leak:
-	$(GO) get github.com/pingcap/gofail
-	@$(GOFAIL_ENABLE)
+leak: gofail-enable
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
-tikv_integration_test:
-	$(GO) get github.com/pingcap/gofail
-	@$(GOFAIL_ENABLE)
+tikv_integration_test: gofail-enable
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
@@ -196,37 +189,40 @@ importer:
 checklist:
 	cat checklist.md
 
-gofail-enable:
+gofail-enable: tools/bin/gofail
 # Converting gofail failpoints...
 	@$(GOFAIL_ENABLE)
 
-gofail-disable:
+gofail-disable: tools/bin/gofail
 # Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)
 
 checkdep:
 	$(GO) list -f '{{ join .Imports "\n" }}' github.com/pingcap/tidb/store/tikv | grep ^github.com/pingcap/parser$$ || exit 0; exit 1
 
-tools/bin/megacheck:
+tools/bin/megacheck: tools/check/go.mod
 	cd tools/check; \
-	$go build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
+	$(GO) build -o ../bin/megacheck honnef.co/go/tools/cmd/megacheck
 
-tools/bin/revive:
+tools/bin/revive: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/revive github.com/mgechev/revive
 
-tools/bin/goword:
+tools/bin/goword: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
 
-tools/bin/gometalinter:
+tools/bin/gometalinter: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v2
 
-tools/bin/gosec:
+tools/bin/gosec: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
 
-tools/bin/errcheck:
+tools/bin/errcheck: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/errcheck github.com/kisielk/errcheck
+
+tools/bin/gofail: go.mod
+	$(GO) build -o $@ github.com/pingcap/gofail

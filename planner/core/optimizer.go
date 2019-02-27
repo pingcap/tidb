@@ -83,13 +83,16 @@ func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoS
 }
 
 // CheckPrivilege checks the privilege for a user.
-func CheckPrivilege(pm privilege.Manager, vs []visitInfo) bool {
+func CheckPrivilege(pm privilege.Manager, vs []visitInfo) error {
 	for _, v := range vs {
 		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
-			return false
+			if v.err == nil {
+				return ErrPrivilegeCheckFail
+			}
+			return v.err
 		}
 	}
-	return true
+	return nil
 }
 
 // DoOptimize optimizes a logical plan to a physical plan.
@@ -105,8 +108,14 @@ func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	finalPlan := eliminatePhysicalProjection(physical)
+	finalPlan := postOptimize(physical)
 	return finalPlan, nil
+}
+
+func postOptimize(plan PhysicalPlan) PhysicalPlan {
+	plan = eliminatePhysicalProjection(plan)
+	plan = injectExtraProjection(plan)
+	return plan
 }
 
 func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
@@ -146,8 +155,8 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
-	t.plan().ResolveIndices()
-	return t.plan(), nil
+	err = t.plan().ResolveIndices()
+	return t.plan(), err
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {

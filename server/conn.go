@@ -49,7 +49,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -295,11 +295,9 @@ func parseOldHandshakeResponseBody(packet *handshakeResponse41, data []byte, off
 		}
 		if len(data[offset:]) > 0 {
 			packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-			offset += len(packet.Auth) + 1
 		}
 	} else {
 		packet.Auth = data[offset : offset+bytes.IndexByte(data[offset:], 0)]
-		offset += len(packet.Auth) + 1
 	}
 
 	return nil
@@ -499,16 +497,20 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		return errors.Trace(err)
 	}
 	host := variable.DefHostname
+	hasPassword := "YES"
+	if len(authData) == 0 {
+		hasPassword = "NO"
+	}
 	if !cc.server.isUnixSocket() {
 		addr := cc.bufReadConn.RemoteAddr().String()
 		// Do Auth.
 		host, _, err = net.SplitHostPort(addr)
 		if err != nil {
-			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
+			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, hasPassword))
 		}
 	}
 	if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
-		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
+		return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, hasPassword))
 	}
 	if cc.dbname != "" {
 		err = cc.useDB(context.Background(), cc.dbname)
@@ -525,7 +527,6 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 // This function returns and the connection is closed if there is an IO error or there is a panic.
 func (cc *clientConn) Run() {
 	const size = 4096
-	closedOutside := false
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -535,7 +536,7 @@ func (cc *clientConn) Run() {
 			log.Errorf("lastCmd %s, %v, %s", cc.lastCmd, r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
-		if !closedOutside {
+		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
 			err := cc.Close()
 			terror.Log(errors.Trace(err))
 		}
@@ -547,10 +548,7 @@ func (cc *clientConn) Run() {
 	// The client connection would detect the events when it fails to change status
 	// by CAS operation, it would then take some actions accordingly.
 	for {
-		if atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) == false {
-			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
-				closedOutside = true
-			}
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusDispatching, connStatusReading) {
 			return
 		}
 
@@ -563,7 +561,7 @@ func (cc *clientConn) Run() {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					idleTime := time.Now().Sub(start)
+					idleTime := time.Since(start)
 					log.Infof("con:%d read packet timeout, close this connection, idle: %v, wait_timeout: %v", cc.connectionID, idleTime, waitTimeout)
 				} else {
 					errStack := errors.ErrorStack(err)
@@ -576,10 +574,7 @@ func (cc *clientConn) Run() {
 			return
 		}
 
-		if atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) == false {
-			if atomic.LoadInt32(&cc.status) == connStatusShutdown {
-				closedOutside = true
-			}
+		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
 			return
 		}
 
@@ -686,7 +681,12 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	} else {
 		metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 	}
-	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral).Observe(time.Since(startTime).Seconds())
+	stmtType := cc.ctx.GetSessionVars().StmtCtx.StmtType
+	sqlType := metrics.LblGeneral
+	if stmtType != "" {
+		sqlType = stmtType
+	}
+	metrics.QueryDurationHistogram.WithLabelValues(sqlType).Observe(time.Since(startTime).Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -704,7 +704,7 @@ func (cc *clientConn) dispatch(data []byte) error {
 	t := time.Now()
 	cmd := data[0]
 	data = data[1:]
-	cc.lastCmd = hack.String(data)
+	cc.lastCmd = string(hack.String(data))
 	token := cc.server.getToken()
 	defer func() {
 		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
@@ -716,12 +716,13 @@ func (cc *clientConn) dispatch(data []byte) error {
 		cc.ctx.SetCommandValue(cmd)
 	}
 
+	dataStr := string(hack.String(data))
 	switch cmd {
 	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
 		mysql.ComSetOption, mysql.ComChangeUser:
 		cc.ctx.SetProcessInfo("", t, cmd)
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
+		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd)
 	}
 
 	switch cmd {
@@ -739,19 +740,20 @@ func (cc *clientConn) dispatch(data []byte) error {
 		// See http://dev.mysql.com/doc/internals/en/com-query.html
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
+			dataStr = string(hack.String(data))
 		}
-		return cc.handleQuery(ctx1, hack.String(data))
+		return cc.handleQuery(ctx1, dataStr)
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(ctx1, hack.String(data)); err != nil {
+		if err := cc.useDB(ctx1, dataStr); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
 	case mysql.ComFieldList:
-		return cc.handleFieldList(hack.String(data))
+		return cc.handleFieldList(dataStr)
 	case mysql.ComStmtPrepare:
-		return cc.handleStmtPrepare(hack.String(data))
+		return cc.handleStmtPrepare(dataStr)
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx1, data)
 	case mysql.ComStmtFetch:
@@ -1126,11 +1128,11 @@ func (cc *clientConn) writeColumnInfo(columns []*ColumnInfo, serverStatus uint16
 // serverStatus, a flag bit represents server information
 func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool, serverStatus uint16) error {
 	data := make([]byte, 4, 1024)
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	gotColumnInfo := false
 	for {
 		// Here server.tidbResultSet implements Next method.
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1144,16 +1146,16 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 			}
 			gotColumnInfo = true
 		}
-		rowCount := chk.NumRows()
+		rowCount := req.NumRows()
 		if rowCount == 0 {
 			break
 		}
 		for i := 0; i < rowCount; i++ {
 			data = data[0:4]
 			if binary {
-				data, err = dumpBinaryRow(data, rs.Columns(), chk.GetRow(i))
+				data, err = dumpBinaryRow(data, rs.Columns(), req.GetRow(i))
 			} else {
-				data, err = dumpTextRow(data, rs.Columns(), chk.GetRow(i))
+				data, err = dumpTextRow(data, rs.Columns(), req.GetRow(i))
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1174,22 +1176,22 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	fetchedRows := rs.GetFetchedRows()
 
 	// if fetchedRows is not enough, getting data from recordSet.
-	chk := rs.NewChunk()
+	req := rs.NewRecordBatch()
 	for len(fetchedRows) < fetchSize {
 		// Here server.tidbResultSet implements Next method.
-		err := rs.Next(ctx, chk)
+		err := rs.Next(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowCount := chk.NumRows()
+		rowCount := req.NumRows()
 		if rowCount == 0 {
 			break
 		}
 		// filling fetchedRows with chunk
 		for i := 0; i < rowCount; i++ {
-			fetchedRows = append(fetchedRows, chk.GetRow(i))
+			fetchedRows = append(fetchedRows, req.GetRow(i))
 		}
-		chk = chunk.Renew(chk, cc.ctx.GetSessionVars().MaxChunkSize)
+		req.Chunk = chunk.Renew(req.Chunk, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
@@ -1258,7 +1260,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 
 func (cc *clientConn) handleChangeUser(data []byte) error {
 	user, data := parseNullTermString(data)
-	cc.user = hack.String(user)
+	cc.user = string(hack.String(user))
 	if len(data) < 1 {
 		return mysql.ErrMalformPacket
 	}
@@ -1269,8 +1271,8 @@ func (cc *clientConn) handleChangeUser(data []byte) error {
 	}
 	pass := data[:passLen]
 	data = data[passLen:]
-	dbName, data := parseNullTermString(data)
-	cc.dbname = hack.String(dbName)
+	dbName, _ := parseNullTermString(data)
+	cc.dbname = string(hack.String(dbName))
 	err := cc.ctx.Close()
 	if err != nil {
 		log.Debug(err)

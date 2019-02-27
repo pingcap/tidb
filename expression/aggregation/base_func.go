@@ -59,6 +59,7 @@ func (a *baseFuncDesc) clone() *baseFuncDesc {
 	clone := *a
 	newTp := *a.RetTp
 	clone.RetTp = &newTp
+	clone.Args = make([]expression.Expression, len(a.Args))
 	for i := range a.Args {
 		clone.Args[i] = a.Args[i].Clone()
 	}
@@ -94,6 +95,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
+	case ast.WindowFuncRowNumber:
+		a.typeInfer4RowNumber()
 	default:
 		panic("unsupported agg function: " + a.Name)
 	}
@@ -183,6 +186,12 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
+func (a *baseFuncDesc) typeInfer4RowNumber() {
+	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	a.RetTp.Flen = 21
+	types.SetBinChsClnFlag(a.RetTp)
+}
+
 // GetDefaultValue gets the default value when the function's input is null.
 // According to MySQL, default values of the function are listed as follows:
 // e.g.
@@ -210,4 +219,58 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 		v = types.NewUintDatum(uint64(math.MaxUint64))
 	}
 	return
+}
+
+// We do not need to wrap cast upon these functions,
+// since the EvalXXX method called by the arg is determined by the corresponding arg type.
+var noNeedCastAggFuncs = map[string]struct{}{
+	ast.AggFuncCount:        {},
+	ast.AggFuncMax:          {},
+	ast.AggFuncMin:          {},
+	ast.AggFuncFirstRow:     {},
+	ast.WindowFuncRowNumber: {},
+}
+
+// WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
+func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
+	if _, ok := noNeedCastAggFuncs[a.Name]; ok {
+		return
+	}
+	var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression
+	switch retTp := a.RetTp; retTp.EvalType() {
+	case types.ETInt:
+		castFunc = expression.WrapWithCastAsInt
+	case types.ETReal:
+		castFunc = expression.WrapWithCastAsReal
+	case types.ETString:
+		castFunc = expression.WrapWithCastAsString
+	case types.ETDecimal:
+		castFunc = expression.WrapWithCastAsDecimal
+	default:
+		panic("should never happen in baseFuncDesc.WrapCastForAggArgs")
+	}
+	for i := range a.Args {
+		a.Args[i] = castFunc(ctx, a.Args[i])
+		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
+			continue
+		}
+		// After wrapping cast on the argument, flen etc. may not the same
+		// as the type of the aggregation function. The following part set
+		// the type of the argument exactly as the type of the aggregation
+		// function.
+		// Note: If the `Tp` of argument is the same as the `Tp` of the
+		// aggregation function, it will not wrap cast function on it
+		// internally. The reason of the special handling for `Column` is
+		// that the `RetType` of `Column` refers to the `infoschema`, so we
+		// need to set a new variable for it to avoid modifying the
+		// definition in `infoschema`.
+		if col, ok := a.Args[i].(*expression.Column); ok {
+			col.RetType = types.NewFieldType(col.RetType.Tp)
+		}
+		// originTp is used when the the `Tp` of column is TypeFloat32 while
+		// the type of the aggregation function is TypeFloat64.
+		originTp := a.Args[i].GetType().Tp
+		*(a.Args[i].GetType()) = *(a.RetTp)
+		a.Args[i].GetType().Tp = originTp
+	}
 }

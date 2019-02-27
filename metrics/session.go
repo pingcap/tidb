@@ -106,6 +106,7 @@ const (
 	LblError       = "error"
 	LblRollback    = "rollback"
 	LblType        = "type"
+	LblDb          = "db"
 	LblResult      = "result"
 	LblSQLType     = "sql_type"
 	LblGeneral     = "general"

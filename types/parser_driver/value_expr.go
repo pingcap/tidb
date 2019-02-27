@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
@@ -69,7 +70,7 @@ type ValueExpr struct {
 }
 
 // Restore implements Node interface.
-func (n *ValueExpr) Restore(ctx *ast.RestoreCtx) error {
+func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	switch n.Kind() {
 	case types.KindNull:
 		ctx.WriteKeyWord("NULL")
@@ -89,7 +90,13 @@ func (n *ValueExpr) Restore(ctx *ast.RestoreCtx) error {
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 32))
 	case types.KindFloat64:
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
-	case types.KindString, types.KindBytes:
+	case types.KindString:
+		if n.Type.Charset != "" && n.Type.Charset != mysql.DefaultCharset {
+			ctx.WritePlain("_")
+			ctx.WriteKeyWord(n.Type.Charset)
+		}
+		ctx.WriteString(n.GetString())
+	case types.KindBytes:
 		ctx.WriteString(n.GetString())
 	case types.KindMysqlDecimal:
 		ctx.WritePlain(n.GetMysqlDecimal().String())
@@ -195,7 +202,7 @@ type ParamMarkerExpr struct {
 }
 
 // Restore implements Node interface.
-func (n *ParamMarkerExpr) Restore(ctx *ast.RestoreCtx) error {
+func (n *ParamMarkerExpr) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain("?")
 	return nil
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -43,11 +44,10 @@ import (
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level:  logLevel,
-		Format: "highlight",
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, "highlight", "", logutil.EmptyFileLogConfig, false))
+	testleak.BeforeTest()
 	TestingT(t)
+	testleak.AfterTestT(t)()
 }
 
 var _ = Suite(&testFailDBSuite{})
@@ -63,7 +63,6 @@ type testFailDBSuite struct {
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	ddl.WaitTimeWhenErrorOccured = 1 * time.Microsecond
 	var err error
@@ -84,11 +83,11 @@ func (s *testFailDBSuite) SetUpSuite(c *C) {
 }
 
 func (s *testFailDBSuite) TearDownSuite(c *C) {
-	s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
+	c.Assert(err, IsNil)
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
-	testleak.AfterTest(c)()
 }
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
@@ -110,11 +109,11 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err := s.se.Execute(context.Background(), "select count(*) from t")
 	c.Assert(err, IsNil)
-	chk := rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), chk)
+	req := rs[0].NewRecordBatch()
+	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	row := chk.GetRow(0)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row := req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
@@ -143,11 +142,11 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Make sure that the table's data has not been deleted.
 	rs, err = s.se.Execute(context.Background(), "select count(*) from tx")
 	c.Assert(err, IsNil)
-	chk = rs[0].NewChunk()
-	err = rs[0].Next(context.Background(), chk)
+	req = rs[0].NewRecordBatch()
+	err = rs[0].Next(context.Background(), req)
 	c.Assert(err, IsNil)
-	c.Assert(chk.NumRows() == 0, IsFalse)
-	row = chk.GetRow(0)
+	c.Assert(req.NumRows() == 0, IsFalse)
+	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetInt64(0), DeepEquals, int64(1))
 	c.Assert(rs[0].Close(), IsNil)
@@ -247,7 +246,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
 	for i := 0; i < 50; i++ {
-		if s.dom.SchemaValidator.IsStarted() == false {
+		if !s.dom.SchemaValidator.IsStarted() {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -260,7 +259,7 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 	s.dom.MockReloadFailed.SetValue(false)
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {
-		if s.dom.SchemaValidator.IsStarted() == true {
+		if s.dom.SchemaValidator.IsStarted() {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -342,11 +341,13 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	// Split table to multi region.
 	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, splitCount)
 
+	err = ddlutil.LoadDDLReorgVars(tk.Se)
+	c.Assert(err, IsNil)
 	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
 	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
 	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
-	defer variable.SetDDLReorgWorkerCounter(originDDLAddIndexWorkerCnt)
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
 	gofail.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum")
@@ -364,7 +365,7 @@ LOOP:
 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ddl.TestCheckWorkerNumCh:
 			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
-			tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
 			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
 			checkNum++
 		}
