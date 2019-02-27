@@ -168,6 +168,7 @@ const (
 		cm_sketch blob,
 		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		flag bigint(64) NOT NULL DEFAULT 0,
+		correlation double NOT NULL DEFAULT 0,
 		unique index tbl(table_id, is_index, hist_id)
 	);`
 
@@ -286,6 +287,7 @@ const (
 	version24 = 24
 	version25 = 25
 	version26 = 26
+	version27 = 27
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -446,6 +448,10 @@ func upgrade(s Session) {
 
 	if ver < version26 {
 		upgradeToVer26(s)
+	}
+
+	if ver < version27 {
+		upgradeToVer27(s)
 	}
 
 	updateBootstrapVer(s)
@@ -719,6 +725,10 @@ func upgradeToVer26(s Session) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_role_priv='Y',Drop_role_priv='Y'")
 }
 
+func upgradeToVer27(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` double NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -782,7 +792,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -304,4 +305,98 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 func (p *rowFrameWindowProcessor) resetPartialResult() {
 	p.windowFunc.ResetPartialResult(p.partialResult)
 	p.curRowIdx = 0
+}
+
+type rangeFrameWindowProcessor struct {
+	windowFunc      aggfuncs.AggFunc
+	partialResult   aggfuncs.PartialResult
+	start           *core.FrameBound
+	end             *core.FrameBound
+	curRowIdx       uint64
+	lastStartOffset uint64
+	lastEndOffset   uint64
+	col             *expression.Column
+	// expectedCmpResult is used to decide if one value is included in the frame.
+	expectedCmpResult int64
+}
+
+func (p *rangeFrameWindowProcessor) getStartOffset(ctx sessionctx.Context, rows []chunk.Row) (uint64, error) {
+	if p.start.UnBounded {
+		return 0, nil
+	}
+	numRows := uint64(len(rows))
+	for ; p.lastStartOffset < numRows; p.lastStartOffset++ {
+		res, _, err := p.start.CmpFunc(ctx, p.col, p.start.CalcFunc, rows[p.lastStartOffset], rows[p.curRowIdx])
+		if err != nil {
+			return 0, err
+		}
+		// For asc, break when the current value is greater or equal to the calculated result;
+		// For desc, break when the current value is less or equal to the calculated result.
+		if res != p.expectedCmpResult {
+			break
+		}
+	}
+	return p.lastStartOffset, nil
+}
+
+func (p *rangeFrameWindowProcessor) getEndOffset(ctx sessionctx.Context, rows []chunk.Row) (uint64, error) {
+	numRows := uint64(len(rows))
+	if p.end.UnBounded {
+		return numRows, nil
+	}
+	for ; p.lastEndOffset < numRows; p.lastEndOffset++ {
+		res, _, err := p.end.CmpFunc(ctx, p.end.CalcFunc, p.col, rows[p.curRowIdx], rows[p.lastEndOffset])
+		if err != nil {
+			return 0, err
+		}
+		// For asc, break when the calculated result is greater than the current value.
+		// For desc, break when the calculated result is less than the current value.
+		if res == p.expectedCmpResult {
+			break
+		}
+	}
+	return p.lastEndOffset, nil
+}
+
+func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, rows []chunk.Row, chk *chunk.Chunk, remained int) ([]chunk.Row, error) {
+	for remained > 0 {
+		start, err := p.getStartOffset(ctx, rows)
+		if err != nil {
+			return nil, err
+		}
+		end, err := p.getEndOffset(ctx, rows)
+		if err != nil {
+			return nil, err
+		}
+		p.curRowIdx++
+		remained--
+		if start >= end {
+			err := p.windowFunc.AppendFinalResult2Chunk(ctx, p.partialResult, chk)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		err = p.windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResult)
+		if err != nil {
+			return nil, err
+		}
+		err = p.windowFunc.AppendFinalResult2Chunk(ctx, p.partialResult, chk)
+		if err != nil {
+			return nil, err
+		}
+		p.windowFunc.ResetPartialResult(p.partialResult)
+	}
+	return rows, nil
+}
+
+func (p *rangeFrameWindowProcessor) consumeGroupRows(ctx sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
+	return rows, nil
+}
+
+func (p *rangeFrameWindowProcessor) resetPartialResult() {
+	p.windowFunc.ResetPartialResult(p.partialResult)
+	p.curRowIdx = 0
+	p.lastStartOffset = 0
+	p.lastEndOffset = 0
 }
