@@ -1023,7 +1023,7 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 	}
 
 	for _, n := range nodes {
-		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format("2006-01-02 15:04:05")})
+		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
 	}
 
 	return nil
