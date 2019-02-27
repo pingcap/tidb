@@ -237,10 +237,7 @@ type IndexReaderExecutor struct {
 	colLens        []int
 	plans          []plannercore.PhysicalPlan
 
-	// selectWithRuntimeStats should be distsql.SelectWithRuntimeStats,
-	// but it can be rewritten while testing.
-	selectWithRuntimeStats func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
+	selectResult // for testing
 }
 
 // Close clears all resources hold by current object.
@@ -281,9 +278,6 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	if e.selectWithRuntimeStats == nil {
-		e.selectWithRuntimeStats = distsql.SelectWithRuntimeStats
-	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -318,7 +312,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = e.selectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	e.result, err = e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -374,10 +368,7 @@ type IndexLookUpExecutor struct {
 	idxCols         []*expression.Column
 	colLens         []int
 
-	// selectWithRuntimeStats should be distsql.SelectWithRuntimeStats,
-	// but it can be rewritten while testing.
-	selectWithRuntimeStats func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
+	selectResult // for testing
 }
 
 // Open implements the Executor Open interface.
@@ -462,7 +453,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := e.selectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.idxPlans))
+	result, err := e.SelectResult(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.idxPlans))
 	if err != nil {
 		return errors.Trace(err)
 	}

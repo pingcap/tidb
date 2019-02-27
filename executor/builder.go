@@ -1557,7 +1557,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 			filter:   outerFilter,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{innerPlan, b, distsql.SelectWithRuntimeStats},
+			readerBuilder: &dataReaderBuilder{Plan: innerPlan, executorBuilder: b},
 			rowTypes:      innerTypes,
 		},
 		workerWg:      new(sync.WaitGroup),
@@ -1801,10 +1801,7 @@ type dataReaderBuilder struct {
 	plannercore.Plan
 	*executorBuilder
 
-	// selectWithRuntimeStats should be distsql.SelectWithRuntimeStats,
-	// but it can be rewritten while testing.
-	selectWithRuntimeStats func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
+	selectResult // for testing
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, datums [][]types.Datum,
@@ -1824,7 +1821,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
 	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
-	childBuilder := &dataReaderBuilder{v.Children()[0], builder.executorBuilder, distsql.SelectWithRuntimeStats}
+	childBuilder := &dataReaderBuilder{Plan: v.Children()[0], executorBuilder: builder.executorBuilder}
 	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
 		return nil, err
@@ -1869,10 +1866,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	e.resultHandler = &tableResultHandler{}
-	if builder.selectWithRuntimeStats == nil {
-		builder.selectWithRuntimeStats = distsql.SelectWithRuntimeStats
-	}
-	result, err := builder.selectWithRuntimeStats(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	result, err := builder.SelectResult(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

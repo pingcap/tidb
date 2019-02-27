@@ -117,9 +117,9 @@ func mockSelectResultWithoutCheck(ctx context.Context, sctx sessionctx.Context, 
 
 func buildTableReader(sctx sessionctx.Context) Executor {
 	e := &TableReaderExecutor{
-		baseExecutor:           buildMockBaseExec(sctx),
-		dagPB:                  buildMockDAGRequest(sctx),
-		selectWithRuntimeStats: mockSelectResult,
+		baseExecutor: buildMockBaseExec(sctx),
+		dagPB:        buildMockDAGRequest(sctx),
+		selectResult: selectResult{mockSelectResult},
 	}
 	return e
 }
@@ -188,10 +188,10 @@ func (s *testExecSuite) TestTableReaderRequiredRows(c *C) {
 
 func buildIndexReader(sctx sessionctx.Context) Executor {
 	e := &IndexReaderExecutor{
-		baseExecutor:           buildMockBaseExec(sctx),
-		dagPB:                  buildMockDAGRequest(sctx),
-		index:                  &model.IndexInfo{},
-		selectWithRuntimeStats: mockSelectResult,
+		baseExecutor: buildMockBaseExec(sctx),
+		dagPB:        buildMockDAGRequest(sctx),
+		index:        &model.IndexInfo{},
+		selectResult: selectResult{mockSelectResult},
 	}
 	return e
 }
@@ -253,8 +253,8 @@ func buildIndexLookupReader(sctx sessionctx.Context) Executor {
 			// so if we can control the output of indexWorker, we control the output of tableWorker.
 			// Then for simplicity, we don't control and check the output of tableWorker, we use
 			// mockSelectResultWithoutCheck to create mockSelectResult for them.
-			selectWithRuntimeStats: mockSelectResultWithoutCheck},
-		selectWithRuntimeStats: mockSelectResult,
+			selectResult: selectResult{mockSelectResultWithoutCheck}},
+		selectResult: selectResult{mockSelectResult},
 	}
 	return e
 }

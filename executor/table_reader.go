@@ -35,6 +35,20 @@ import (
 // make sure `TableReaderExecutor` implements `Executor`.
 var _ Executor = &TableReaderExecutor{}
 
+// selectResult is used to hack distsql.SelectWithRuntimeStats safely for testing.
+type selectResult struct {
+	selectResultFunc func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
+}
+
+func (sr selectResult) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error) {
+	if sr.selectResultFunc == nil {
+		return distsql.SelectWithRuntimeStats(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs)
+	}
+	return sr.selectResultFunc(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs)
+}
+
 // TableReaderExecutor sends DAG request and reads table data from kv layer.
 type TableReaderExecutor struct {
 	baseExecutor
@@ -59,10 +73,7 @@ type TableReaderExecutor struct {
 	corColInAccess bool
 	plans          []plannercore.PhysicalPlan
 
-	// selectWithRuntimeStats should be distsql.SelectWithRuntimeStats,
-	// but it can be rewritten while testing.
-	selectWithRuntimeStats func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
+	selectResult // for testing
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -88,9 +99,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 
-	if e.selectWithRuntimeStats == nil {
-		e.selectWithRuntimeStats = distsql.SelectWithRuntimeStats
-	}
 	e.resultHandler = &tableResultHandler{}
 	if e.feedback != nil && e.feedback.Hist() != nil {
 		// EncodeInt don't need *statement.Context.
@@ -159,7 +167,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result, err := e.selectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
+	result, err := e.SelectResult(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
