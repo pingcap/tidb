@@ -206,8 +206,8 @@ func (s *testStatsSuite) TestDiscreteDistribution(c *C) {
 	}
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a = 'tw' and b < 0").Check(testkit.Rows(
-		"IndexReader_9 0.00 root index:IndexScan_8",
-		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
+		"IndexReader_6 0.00 root index:IndexScan_5",
+		"└─IndexScan_5 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
 }
 
 func (s *testStatsSuite) TestSelectCombinedLowBound(c *C) {
@@ -219,8 +219,8 @@ func (s *testStatsSuite) TestSelectCombinedLowBound(c *C) {
 	testKit.MustExec("insert into t (kid, pid) values (1,2), (1,3), (1,4),(1, 11), (1, 12), (1, 13), (1, 14), (2, 2), (2, 3), (2, 4)")
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where kid = 1").Check(testkit.Rows(
-		"IndexReader_9 7.00 root index:IndexScan_8",
-		"└─IndexScan_8 7.00 cop table:t, index:kid, pid, range:[1,1], keep order:false"))
+		"IndexReader_6 7.00 root index:IndexScan_5",
+		"└─IndexScan_5 7.00 cop table:t, index:kid, pid, range:[1,1], keep order:false"))
 }
 
 func getRange(start, end int64) []*ranger.Range {

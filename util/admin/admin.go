@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -92,14 +92,18 @@ func IsJobRollbackable(job *model.Job) bool {
 			job.SchemaState == model.StateDeleteReorganization {
 			return false
 		}
-	case model.ActionDropColumn:
-		if job.SchemaState != model.StateNone {
-			return false
-		}
 	case model.ActionDropSchema, model.ActionDropTable:
 		// To simplify the rollback logic, cannot be canceled in the following states.
 		if job.SchemaState == model.StateWriteOnly ||
 			job.SchemaState == model.StateDeleteOnly {
+			return false
+		}
+	case model.ActionDropColumn, model.ActionModifyColumn,
+		model.ActionDropTablePartition, model.ActionAddTablePartition,
+		model.ActionRebaseAutoID, model.ActionShardRowID,
+		model.ActionTruncateTable, model.ActionAddForeignKey,
+		model.ActionDropForeignKey:
+		if job.SchemaState != model.StateNone {
 			return false
 		}
 	}
@@ -588,13 +592,13 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 	for _, v := range decodeCol {
 		col := cols[v.Offset]
 		tpExpr := decoder.Column{
-			Info: col.ToInfo(),
+			Col: col,
 		}
 		if col.IsGenerated() && !col.GeneratedStored {
 			for _, c := range cols {
 				if _, ok := col.Dependences[c.Name.L]; ok {
 					decodeColsMap[c.ID] = decoder.Column{
-						Info: c.ToInfo(),
+						Col: c,
 					}
 				}
 			}
@@ -602,7 +606,7 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	return decoder.NewRowDecoder(cols, decodeColsMap)
+	return decoder.NewRowDecoder(t, decodeColsMap)
 }
 
 // genExprs use to calculate generated column value.
@@ -630,7 +634,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 	}
 
-	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
+	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, h, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -691,7 +695,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -22,7 +22,6 @@ Writing a design document can promote us to think deliberately and gather knowle
 
 - [Proposal: A new command to restore dropped table](./2018-08-10-restore-dropped-table.md)
 - [Proposal: Support SQL Plan Management](./2018-12-11-sql-plan-management.md)
-- [Proposal: Support Skyline Pruning](./2019-01-25-skyline-pruning.md)
 
 ### In Progress
 
@@ -39,3 +38,4 @@ Writing a design document can promote us to think deliberately and gather knowle
 
 - [Proposal: A new aggregate function execution framework](./2018-07-01-refactor-aggregate-framework.md)
 - [Proposal: Infer the System Timezone of a TiDB cluster via TZ environment variable](./2018-09-10-adding-tz-env.md)
+- [Proposal: Support Skyline Pruning](./2019-01-25-skyline-pruning.md)

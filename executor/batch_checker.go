@@ -56,7 +56,7 @@ func (b *batchChecker) batchGetOldValues(ctx sessionctx.Context, batchKeys []kv.
 	if err != nil {
 		return errors.Trace(err)
 	}
-	values, err := kv.BatchGetValues(txn, batchKeys)
+	values, err := txn.BatchGet(batchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -213,7 +213,7 @@ func (b *batchChecker) batchGetInsertKeys(ctx sessionctx.Context, t table.Table,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	b.dupKVs, err = kv.BatchGetValues(txn, batchKeys)
+	b.dupKVs, err = txn.BatchGet(batchKeys)
 	return errors.Trace(err)
 }
 

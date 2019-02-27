@@ -380,7 +380,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			if job.IsDone() || job.IsRollbackDone() {
-				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
 				if !job.IsRollbackDone() {
 					job.State = model.JobStateSynced
 				}
@@ -401,7 +400,13 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				return errors.Trace(err)
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
-			return errors.Trace(w.handleUpdateJobError(t, job, err))
+			if err = w.handleUpdateJobError(t, job, err); err != nil {
+				return errors.Trace(err)
+			}
+			if job.IsDone() || job.IsRollbackDone() {
+				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
+			}
+			return nil
 		})
 
 		if runJobErr != nil {

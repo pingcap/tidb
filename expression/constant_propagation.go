@@ -245,7 +245,7 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		var ok bool
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
-				value, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+				value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 				if err != nil {
 					terror.Log(err)
 					return nil
@@ -338,7 +338,7 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		var ok bool
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
-				value, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+				value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 				if err != nil {
 					terror.Log(err)
 					return nil
