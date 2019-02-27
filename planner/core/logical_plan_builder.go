@@ -2785,11 +2785,14 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
-	if bound.UnBounded || boundClause.Type == ast.CurrentRow {
+	if bound.UnBounded {
 		return bound, nil
 	}
 
 	if frameType == ast.Rows {
+		if bound.Type == ast.CurrentRow {
+			return bound, nil
+		}
 		// Rows type does not support interval range.
 		if boundClause.Unit != nil {
 			return nil, ErrWindowRowsIntervalUse.GenWithStackByArgs(spec.Name)
@@ -2805,50 +2808,74 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 	if len(orderByItems) != 1 {
 		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
 	}
+
+	if bound.Type == ast.CurrentRow {
+		bound.CalcFunc = orderByItems[0].Col
+		bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, orderByItems[0].Col)
+		return bound, nil
+	}
 	col := orderByItems[0].Col
 	isNumeric, isTemporal := types.IsTypeNumeric(col.RetType.Tp), types.IsTypeTemporal(col.RetType.Tp)
 	if !isNumeric && !isTemporal {
 		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
 	}
-	if boundClause.Unit != nil {
-		// Interval bounds only support order by temporal types.
-		if isNumeric {
-			return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
-		}
+	// Interval bounds only support order by temporal types.
+	if boundClause.Unit != nil && isNumeric {
+		return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
+	}
+	// Non-interval bound only support order by numeric types.
+	if boundClause.Unit == nil && !isNumeric {
+		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+	}
 
-		// TODO: We also need to raise error for non-deterministic expressions, like rand().
-		val, err := evalAstExpr(b.ctx, boundClause.Expr)
-		if err != nil {
-			return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
-		}
-		expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
-		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
-		if uVal < 0 || isNull || err != nil {
-			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
-		}
+	// TODO: We also need to raise error for non-deterministic expressions, like rand().
+	val, err := evalAstExpr(b.ctx, boundClause.Expr)
+	if err != nil {
+		return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
+	}
+	expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
+
+	// Do not raise warnings for truncate.
+	oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
+	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = oriIgnoreTruncate
+	if uVal < 0 || isNull || err != nil {
+		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	}
+
+	desc := orderByItems[0].Desc
+	if boundClause.Unit != nil {
 		// It can be guaranteed by the parser.
 		unitVal := boundClause.Unit.(*driver.ValueExpr)
 		unit := expression.Constant{Value: unitVal.Datum, RetType: unitVal.GetType()}
 
+		// When the order is asc:
+		//   `+` for following, and `-` for the preceding
+		// When the order is desc, `+` becomes `-` and vice-versa.
 		funcName := ast.DateAdd
-		if bound.Type == ast.Preceding {
+		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
 			funcName = ast.DateSub
 		}
-		bound.DateCalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
+		bound.CalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
 		if err != nil {
 			return nil, err
 		}
+		bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFunc)
 		return bound, nil
 	}
-	// Non-interval bound only support order by numeric types.
-	if isTemporal {
-		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+	// When the order is asc:
+	//   `+` for following, and `-` for the preceding
+	// When the order is desc, `+` becomes `-` and vice-versa.
+	funcName := ast.Plus
+	if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
+		funcName = ast.Minus
 	}
-	num, isNull, isExpectedType := getUintFromNode(b.ctx, boundClause.Expr)
-	if isNull || !isExpectedType {
-		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	bound.CalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
+	if err != nil {
+		return nil, err
 	}
-	bound.Num = num
+	bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFunc)
 	return bound, nil
 }
 
