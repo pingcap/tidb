@@ -306,10 +306,16 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *FrameBoun
 	}
 	if bound.UnBounded {
 		buffer.WriteString("unbounded")
-	} else if bound.DateCalcFunc != nil {
-		sf := bound.DateCalcFunc.(*expression.ScalarFunction)
-		// for `interval '2:30' minute_second`.
-		fmt.Fprintf(buffer, "interval %s %s", sf.GetArgs()[1].ExplainInfo(), sf.GetArgs()[2].ExplainInfo())
+	} else if bound.CalcFunc != nil {
+		sf := bound.CalcFunc.(*expression.ScalarFunction)
+		switch sf.FuncName.L {
+		case ast.DateAdd, ast.DateSub:
+			// For `interval '2:30' minute_second`.
+			fmt.Fprintf(buffer, "interval %s %s", sf.GetArgs()[1].ExplainInfo(), sf.GetArgs()[2].ExplainInfo())
+		case ast.Plus, ast.Minus:
+			// For `1 preceding` of range frame.
+			fmt.Fprintf(buffer, "%s", sf.GetArgs()[1].ExplainInfo())
+		}
 	} else {
 		fmt.Fprintf(buffer, "%d", bound.Num)
 	}
