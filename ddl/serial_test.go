@@ -458,3 +458,14 @@ func (s *testSerialSuite) TestRestoreTableByTableNameFail(c *C) {
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
 }
+
+func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	gofail.Enable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	_, err := tk.Exec("create table t (a int)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+}
