@@ -97,6 +97,10 @@ func isJobRollbackable(job *model.Job, id int64) error {
 		if job.SchemaState != model.StateNone {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
+	case model.ActionTruncateTable:
+		if job.SchemaState != model.StateNone {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
 	}
 	return nil
 }
