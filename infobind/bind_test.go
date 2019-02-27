@@ -121,15 +121,15 @@ func (s *testSuite) TestBindParse(c *C) {
 
 	bindHandle := infobind.NewHandler()
 
-	hu := infobind.NewHandleUpdater(tk.Se, bindHandle, s.Parser)
+	hu := infobind.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser)
 
 	err := hu.Update(true)
 	c.Check(err, IsNil)
 
-	c.Check(len(bindHandle.Get().Cache), Equals, 1)
+	c.Check(len(bindHandle.Get()), Equals, 1)
 
 	hash := parser.DigestHash("select * from t")
-	bindData := bindHandle.Get().Cache[hash]
+	bindData := bindHandle.Get()[hash]
 
 	c.Check(bindData, NotNil)
 	c.Check(len(bindData), Equals, 1)

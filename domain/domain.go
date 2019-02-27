@@ -806,7 +806,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.bindHandler = infobind.NewHandler()
 
-	hu := infobind.NewHandleUpdater(ctx, do.BindHandler(), parser)
+	hu := infobind.NewBindCacheUpdater(ctx, do.BindHandler(), parser)
 
 	fullLoad := true
 	err := hu.Update(fullLoad)
