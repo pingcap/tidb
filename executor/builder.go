@@ -1915,12 +1915,25 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 			windowFunc:    agg,
 			partialResult: agg.AllocPartialResult(),
 		}
-	} else {
+	} else if v.Frame.Type == ast.Rows {
 		processor = &rowFrameWindowProcessor{
 			windowFunc:    agg,
 			partialResult: agg.AllocPartialResult(),
 			start:         v.Frame.Start,
 			end:           v.Frame.End,
+		}
+	} else {
+		cmpResult := int64(-1)
+		if v.OrderBy[0].Desc {
+			cmpResult = 1
+		}
+		processor = &rangeFrameWindowProcessor{
+			windowFunc:        agg,
+			partialResult:     agg.AllocPartialResult(),
+			start:             v.Frame.Start,
+			end:               v.Frame.End,
+			col:               v.OrderBy[0].Col,
+			expectedCmpResult: cmpResult,
 		}
 	}
 	return &WindowExec{baseExecutor: base,
