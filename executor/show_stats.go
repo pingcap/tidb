@@ -103,6 +103,7 @@ func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string
 		hist.NDV,
 		hist.NullCount,
 		avgColSize,
+		hist.Correlation,
 	})
 }
 

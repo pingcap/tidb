@@ -103,14 +103,16 @@ func (s *testSuite1) TestShowPartitionStats(c *C) {
 	c.Assert(result.Rows()[0][2], Equals, "p0")
 
 	result = tk.MustQuery("show stats_histograms").Sort()
-	c.Assert(len(result.Rows()), Equals, 2)
+	c.Assert(len(result.Rows()), Equals, 3)
 	c.Assert(result.Rows()[0][2], Equals, "p0")
 	c.Assert(result.Rows()[0][3], Equals, "a")
 	c.Assert(result.Rows()[1][2], Equals, "p0")
-	c.Assert(result.Rows()[1][3], Equals, "idx")
+	c.Assert(result.Rows()[1][3], Equals, "b")
+	c.Assert(result.Rows()[2][2], Equals, "p0")
+	c.Assert(result.Rows()[2][3], Equals, "idx")
 
 	result = tk.MustQuery("show stats_buckets").Sort()
-	result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1", "test t p0 idx 1 0 1 1 1 1"))
+	result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1", "test t p0 b 0 0 1 1 1 1", "test t p0 idx 1 0 1 1 1 1"))
 
 	result = tk.MustQuery("show stats_healthy")
 	result.Check(testkit.Rows("test t p0 100"))

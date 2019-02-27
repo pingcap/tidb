@@ -54,7 +54,7 @@ PARTITION BY RANGE ( a ) (
 	for _, def := range pi.Definitions {
 		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
 		c.Assert(statsTbl.Pseudo, IsFalse)
-		c.Assert(len(statsTbl.Columns), Equals, 2)
+		c.Assert(len(statsTbl.Columns), Equals, 3)
 		c.Assert(len(statsTbl.Indices), Equals, 1)
 		for _, col := range statsTbl.Columns {
 			c.Assert(col.Len(), Greater, 0)
@@ -80,7 +80,7 @@ PARTITION BY RANGE ( a ) (
 		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
 		if i == 0 {
 			c.Assert(statsTbl.Pseudo, IsFalse)
-			c.Assert(len(statsTbl.Columns), Equals, 2)
+			c.Assert(len(statsTbl.Columns), Equals, 3)
 			c.Assert(len(statsTbl.Indices), Equals, 1)
 		} else {
 			c.Assert(statsTbl.Pseudo, IsTrue)
