@@ -826,7 +826,7 @@ const (
 )
 
 // SlowLogFormat uses for formatting slow log.
-func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, index_IDs string, sql string) string {
+func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexNames string, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
 	buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogTxnStartTSStr, txnTS))
@@ -843,8 +843,8 @@ func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDe
 	if len(s.CurrentDB) > 0 {
 		buf.WriteString(fmt.Sprintf("# %s: %s\n", SlowLogDBStr, s.CurrentDB))
 	}
-	if len(index_IDs) > 0 {
-		buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogIndexNamesStr, index_IDs))
+	if len(indexNames) > 0 {
+		buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogIndexNamesStr, indexNames))
 	}
 	buf.WriteString(fmt.Sprintf("# %v: %v\n", SlowLogIsInternalStr, s.InRestrictedSQL))
 	if len(sql) > 0 {
