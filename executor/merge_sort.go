@@ -124,11 +124,6 @@ func (e *MergeSortExec) newsortWorker(workerID, chk, row, len int) *sortWorker {
 	return sw
 }
 
-func (e *MergeSortExec) wait4WorkerSort(wg *sync.WaitGroup, finishedCh chan struct{}) {
-	wg.Wait()
-	close(finishedCh)
-}
-
 //sortWorkerIndex calc the chunk index and row index with every worker start to sort, first column of swIdx is chunk idx, second columm of swIdx is row idx
 func (e *MergeSortExec) sortWorkerIndex(workerRowsCount int) [][]int {
 	chkIdx := 0
@@ -181,14 +176,12 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 				return err
 			}
 		}
-		finishedCh := make(chan struct{})
 
 		workerRowsCount := e.rowChunks.Len() / e.concurrency
 		workerIdx := e.sortWorkerIndex(workerRowsCount)
 
 		wg := &sync.WaitGroup{}
 		wg.Add(int(e.concurrency))
-		go e.wait4WorkerSort(wg, finishedCh)
 
 		for i := 0; i < e.concurrency; i++ {
 			// Last worker must complete the rest of rows.
@@ -202,11 +195,11 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 			}, nil)
 		}
 
-		<-finishedCh
+		wg.Wait()
 		e.fetched = true
 	}
 
-	for req.NumRows() < e.maxChunkSize {
+	for !req.IsFull() {
 		j := 0
 		for j < e.concurrency && e.workerRowIdx[j] >= e.workerRowLen[j] {
 			j++
