@@ -1367,9 +1367,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) *AnalyzeColumnsExec {
 	cols := task.ColsInfo
-	keepOrder := false
 	if task.PKInfo != nil {
-		keepOrder = true
 		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
 	}
 
@@ -1380,7 +1378,6 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		colsInfo:        task.ColsInfo,
 		pkInfo:          task.PKInfo,
 		concurrency:     b.ctx.GetSessionVars().DistSQLScanConcurrency,
-		keepOrder:       keepOrder,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			StartTs:        math.MaxUint64,
@@ -1918,12 +1915,25 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 			windowFunc:    agg,
 			partialResult: agg.AllocPartialResult(),
 		}
-	} else {
+	} else if v.Frame.Type == ast.Rows {
 		processor = &rowFrameWindowProcessor{
 			windowFunc:    agg,
 			partialResult: agg.AllocPartialResult(),
 			start:         v.Frame.Start,
 			end:           v.Frame.End,
+		}
+	} else {
+		cmpResult := int64(-1)
+		if v.OrderBy[0].Desc {
+			cmpResult = 1
+		}
+		processor = &rangeFrameWindowProcessor{
+			windowFunc:        agg,
+			partialResult:     agg.AllocPartialResult(),
+			start:             v.Frame.Start,
+			end:               v.Frame.End,
+			col:               v.OrderBy[0].Col,
+			expectedCmpResult: cmpResult,
 		}
 	}
 	return &WindowExec{baseExecutor: base,
