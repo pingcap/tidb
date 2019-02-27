@@ -2519,3 +2519,31 @@ func (s *testDBSuite) TestIssue9100(c *C) {
 	_, err = tk.Exec("alter table issue9100t2 add unique index  p_col1 (col1)")
 	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 }
+
+func (s *testDBSuite) TestModifyColumnCharset(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
+	defer s.mustExec(c, "drop table t_mcc;")
+
+	result := s.tk.MustQuery(`show create table t_mcc`)
+	result.Check(testkit.Rows(
+		"t_mcc CREATE TABLE `t_mcc` (\n" +
+			"  `a` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	s.tk.MustExec("alter table t_mcc modify column a varchar(8);")
+	t := s.testGetTable(c, "t_mcc")
+	t.Meta().Version = model.TableInfoVersion0
+	// When the table version is TableInfoVersion0, the following statement don't change "b" charset.
+	// So the behavior is not compatible with MySQL.
+	s.tk.MustExec("alter table t_mcc modify column b varchar(8);")
+	result = s.tk.MustQuery(`show create table t_mcc`)
+	result.Check(testkit.Rows(
+		"t_mcc CREATE TABLE `t_mcc` (\n" +
+			"  `a` varchar(8) DEFAULT NULL,\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+}
