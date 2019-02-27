@@ -147,6 +147,23 @@ func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 // for use of execution phase.
 const ExtraHandleID = -1
 
+const (
+	// TableInfoVersion0 means the table info version is 0.
+	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
+	// that does not specify a charset value for column. Then the following error may be reported:
+	// ERROR 1105 (HY000): unsupported modify charset from utf8mb4 to utf8.
+	// To eliminate this error, we will not modify the charset of this column
+	// when executing a change/modify column statement that does not specify a charset value for column.
+	// This behavior is not compatible with MySQL.
+	TableInfoVersion0 = uint16(0)
+	// ColumnInfoVersion1 means the table info version is 1.
+	// When we execute a change/modify column statement that does not specify a charset value for column,
+	// we set the charset of this column to the charset of table. This behavior is compatible with MySQL.
+	TableInfoVersion1 = uint16(1)
+	// CurrLatestTableInfoVersion means the latest table info in the current TiDB.
+	CurrLatestTableInfoVersion = TableInfoVersion1
+)
+
 // ExtraHandleName is the name of ExtraHandle Column.
 var ExtraHandleName = NewCIStr("_tidb_rowid")
 
@@ -185,6 +202,9 @@ type TableInfo struct {
 	Compression string `json:"compression"`
 
 	View *ViewInfo `json:"view"`
+
+	// Version means the version of the table info.
+	Version uint16 `json:"version"`
 }
 
 // GetPartitionInfo returns the partition information.
