@@ -448,19 +448,22 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
 func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
-	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
 	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
 	if len(path.idxCols) != 0 {
-		path.ranges, path.accessConds, path.tableFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
+		path.ranges = res.Ranges
+		path.accessConds = res.AccessConds
+		path.tableFilters = res.RemainedConds
+		path.eqCondCount = res.EqCondCount
 		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, err
 		}
 	} else {
 		path.tableFilters = ds.pushedDownConds
@@ -660,8 +663,12 @@ type FrameBound struct {
 	Type      ast.BoundType
 	UnBounded bool
 	Num       uint64
-	// For `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`, we will build the date_add or date_sub functions.
-	DateCalcFunc expression.Expression
+	// CalcFunc is used for range framed windows.
+	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
+	// and plus or minus for frames like `1 preceding`.
+	CalcFunc expression.Expression
+	// CmpFunc is used to decide whether one row is included in the current frame.
+	CmpFunc expression.CompareFunc
 }
 
 // LogicalWindow represents a logical window function plan.

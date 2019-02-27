@@ -77,6 +77,22 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 	return mysqlPriv.RequestVerification(user.Username, user.Hostname, db, table, column, priv)
 }
 
+// GetEncodedPassword implements the Manager interface.
+func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		log.Errorf("Get user privilege record fail: user %v, host %v", user, host)
+		return ""
+	}
+	pwd := record.Password
+	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
+		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
+		return ""
+	}
+	return pwd
+}
+
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte) (u string, h string, success bool) {
 

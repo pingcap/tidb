@@ -220,7 +220,12 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 						}
 					}
 				}
-				if leftCol != nil && binop.FuncName.L == ast.EQ {
+				// For quries like `select a in (select a from s where s.b = t.b) from t`,
+				// if subquery is empty caused by `s.b = t.b`, the result should always be
+				// false even if t.a is null or s.a is null. To make this join "empty aware",
+				// we should differentiate `t.a = s.a` from other column equal conditions, so
+				// we put it into OtherConditions instead of EqualConditions of join.
+				if leftCol != nil && binop.FuncName.L == ast.EQ && !leftCol.InOperand && !rightCol.InOperand {
 					cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
@@ -518,7 +523,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil {
-				ret, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
+				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue
 				}
@@ -558,18 +563,29 @@ func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
-func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectField) model.CIStr {
+func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectField) (model.CIStr, error) {
 	if agg, ok := field.Expr.(*ast.AggregateFuncExpr); ok && agg.F == ast.AggFuncFirstRow {
 		// When the query is select t.a from t group by a; The Column Name should be a but not t.a;
-		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name
+		return agg.Args[0].(*ast.ColumnNameExpr).Name.Name, nil
 	}
 
 	innerExpr := getInnerFromParenthesesAndUnaryPlus(field.Expr)
+	funcCall, isFuncCall := innerExpr.(*ast.FuncCallExpr)
+	// When used to produce a result set column, NAME_CONST() causes the column to have the given name.
+	// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_name-const for details
+	if isFuncCall && funcCall.FnName.L == ast.NameConst {
+		if v, err := evalAstExpr(b.ctx, funcCall.Args[0]); err == nil {
+			if s, err := v.ToString(); err == nil {
+				return model.NewCIStr(s), nil
+			}
+		}
+		return model.NewCIStr(""), ErrWrongArguments.GenWithStackByArgs("NAME_CONST")
+	}
 	valueExpr, isValueExpr := innerExpr.(*driver.ValueExpr)
 
 	// Non-literal: Output as inputed, except that comments need to be removed.
 	if !isValueExpr {
-		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment))
+		return model.NewCIStr(parser.SpecFieldPattern.ReplaceAllStringFunc(field.Text(), parser.TrimComment)), nil
 	}
 
 	// Literal: Need special processing
@@ -585,21 +601,21 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 		fieldName := strings.TrimLeftFunc(projName, func(r rune) bool {
 			return !unicode.IsOneOf(mysql.RangeGraph, r)
 		})
-		return model.NewCIStr(fieldName)
+		return model.NewCIStr(fieldName), nil
 	case types.KindNull:
 		// See #4053, #3685
-		return model.NewCIStr("NULL")
+		return model.NewCIStr("NULL"), nil
 	default:
 		// Keep as it is.
 		if innerExpr.Text() != "" {
-			return model.NewCIStr(innerExpr.Text())
+			return model.NewCIStr(innerExpr.Text()), nil
 		}
-		return model.NewCIStr(field.Text())
+		return model.NewCIStr(field.Text()), nil
 	}
 }
 
 // buildProjectionField builds the field object according to SelectField in projection.
-func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
+func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) (*expression.Column, error) {
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
 	if c, ok := expr.(*expression.Column); ok && !c.IsReferenced {
 		// Field is a column reference.
@@ -609,7 +625,10 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 		colName = field.AsName
 	} else {
 		// Other: field is an expression.
-		colName = b.buildProjectionFieldNameFromExpressions(field)
+		var err error
+		if colName, err = b.buildProjectionFieldNameFromExpressions(field); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return &expression.Column{
 		UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -619,7 +638,7 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 		OrigColName: origColName,
 		DBName:      dbName,
 		RetType:     expr.GetType(),
-	}
+	}, nil
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
@@ -648,7 +667,10 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 				expr = p.Schema().Columns[i]
 			}
 			proj.Exprs = append(proj.Exprs, expr)
-			col := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
+			col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, expr)
+			if err != nil {
+				return nil, 0, errors.Trace(err)
+			}
 			schema.Append(col)
 			continue
 		}
@@ -660,7 +682,10 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 		p = np
 		proj.Exprs = append(proj.Exprs, newExpr)
 
-		col := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
+		col, err := b.buildProjectionField(proj.id, schema.Len()+1, field, newExpr)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
 		schema.Append(col)
 	}
 	proj.SetSchema(schema)
@@ -2760,11 +2785,14 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
-	if bound.UnBounded || boundClause.Type == ast.CurrentRow {
+	if bound.UnBounded {
 		return bound, nil
 	}
 
 	if frameType == ast.Rows {
+		if bound.Type == ast.CurrentRow {
+			return bound, nil
+		}
 		// Rows type does not support interval range.
 		if boundClause.Unit != nil {
 			return nil, ErrWindowRowsIntervalUse.GenWithStackByArgs(spec.Name)
@@ -2780,50 +2808,74 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 	if len(orderByItems) != 1 {
 		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
 	}
+
+	if bound.Type == ast.CurrentRow {
+		bound.CalcFunc = orderByItems[0].Col
+		bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, orderByItems[0].Col)
+		return bound, nil
+	}
 	col := orderByItems[0].Col
 	isNumeric, isTemporal := types.IsTypeNumeric(col.RetType.Tp), types.IsTypeTemporal(col.RetType.Tp)
 	if !isNumeric && !isTemporal {
 		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
 	}
-	if boundClause.Unit != nil {
-		// Interval bounds only support order by temporal types.
-		if isNumeric {
-			return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
-		}
+	// Interval bounds only support order by temporal types.
+	if boundClause.Unit != nil && isNumeric {
+		return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
+	}
+	// Non-interval bound only support order by numeric types.
+	if boundClause.Unit == nil && !isNumeric {
+		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+	}
 
-		// TODO: We also need to raise error for non-deterministic expressions, like rand().
-		val, err := evalAstExpr(b.ctx, boundClause.Expr)
-		if err != nil {
-			return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
-		}
-		expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
-		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
-		if uVal < 0 || isNull || err != nil {
-			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
-		}
+	// TODO: We also need to raise error for non-deterministic expressions, like rand().
+	val, err := evalAstExpr(b.ctx, boundClause.Expr)
+	if err != nil {
+		return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
+	}
+	expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
+
+	// Do not raise warnings for truncate.
+	oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
+	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = oriIgnoreTruncate
+	if uVal < 0 || isNull || err != nil {
+		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	}
+
+	desc := orderByItems[0].Desc
+	if boundClause.Unit != nil {
 		// It can be guaranteed by the parser.
 		unitVal := boundClause.Unit.(*driver.ValueExpr)
 		unit := expression.Constant{Value: unitVal.Datum, RetType: unitVal.GetType()}
 
+		// When the order is asc:
+		//   `+` for following, and `-` for the preceding
+		// When the order is desc, `+` becomes `-` and vice-versa.
 		funcName := ast.DateAdd
-		if bound.Type == ast.Preceding {
+		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
 			funcName = ast.DateSub
 		}
-		bound.DateCalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
+		bound.CalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
 		if err != nil {
 			return nil, err
 		}
+		bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFunc)
 		return bound, nil
 	}
-	// Non-interval bound only support order by numeric types.
-	if isTemporal {
-		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+	// When the order is asc:
+	//   `+` for following, and `-` for the preceding
+	// When the order is desc, `+` becomes `-` and vice-versa.
+	funcName := ast.Plus
+	if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
+		funcName = ast.Minus
 	}
-	num, isNull, isExpectedType := getUintFromNode(b.ctx, boundClause.Expr)
-	if isNull || !isExpectedType {
-		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	bound.CalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
+	if err != nil {
+		return nil, err
 	}
-	bound.Num = num
+	bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFunc)
 	return bound, nil
 }
 
@@ -2960,7 +3012,6 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			if x.AsName.L != "" && asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
-				s.Name = x.AsName
 				input = append(input, &newTableName)
 			} else {
 				input = append(input, s)

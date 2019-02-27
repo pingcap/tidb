@@ -16,7 +16,6 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -66,20 +66,23 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 }
 
 func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Expression {
-	otherConds := make([]expression.Expression, len(p.OtherConditions))
+	// Construct used equal condition set based on the equal condition offsets.
+	usedEqConds := set.NewIntSet()
+	for _, eqCondIdx := range offsets {
+		usedEqConds.Insert(eqCondIdx)
+	}
+
+	// Construct otherConds, which is composed of the original other conditions
+	// and the remained unused equal conditions.
+	numOtherConds := len(p.OtherConditions) + len(p.EqualConditions) - len(offsets)
+	otherConds := make([]expression.Expression, len(p.OtherConditions), numOtherConds)
 	copy(otherConds, p.OtherConditions)
-	for i, eqCond := range p.EqualConditions {
-		match := false
-		for _, offset := range offsets {
-			if i == offset {
-				match = true
-				break
-			}
-		}
-		if !match {
-			otherConds = append(otherConds, eqCond)
+	for eqCondIdx := range p.EqualConditions {
+		if !usedEqConds.Exist(eqCondIdx) {
+			otherConds = append(otherConds, p.EqualConditions[eqCondIdx])
 		}
 	}
+
 	return otherConds
 }
 
@@ -137,6 +140,7 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 		mergeJoin.SetSchema(p.schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
+		mergeJoin.initCompareFuncs()
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			mergeJoin.childrenReqProps = reqProps
 			joins = append(joins, mergeJoin)
@@ -225,7 +229,15 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
+	enforcedPhysicalMergeJoin.initCompareFuncs()
 	return []PhysicalPlan{enforcedPhysicalMergeJoin}
+}
+
+func (p *PhysicalMergeJoin) initCompareFuncs() {
+	p.CompareFuncs = make([]expression.CompareFunc, 0, len(p.LeftKeys))
+	for i := range p.LeftKeys {
+		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.LeftKeys[i], p.RightKeys[i]))
+	}
 }
 
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -529,20 +541,20 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	// In `buildFakeEqCondsForIndexJoin`, we construct the equal conditions for join keys and remove filters that contain the join keys' column.
 	// When t1.a = t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as the access condition.
 	// So the equal conditions we built can be successfully used to build a range if they can be used. They won't be affected by the existing filters.
-	ranges, accesses, moreRemained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, access, idxCols, colLengths)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, access, idxCols, colLengths)
 	if err != nil {
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 		return nil, nil, nil
 	}
 
 	// We should guarantee that all the join's equal condition is used.
 	for _, eqCond := range eqConds {
-		if !expression.Contains(accesses, eqCond) {
+		if !expression.Contains(res.AccessConds, eqCond) {
 			return nil, nil, nil
 		}
 	}
 
-	return ranges, append(remained, moreRemained...), keyOff2IdxOff
+	return res.Ranges, append(remained, res.RemainedConds...), keyOff2IdxOff
 }
 
 func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
@@ -783,6 +795,7 @@ func (p *LogicalWindow) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		WindowFuncDesc: p.WindowFuncDesc,
 		PartitionBy:    p.PartitionBy,
 		OrderBy:        p.OrderBy,
+		Frame:          p.Frame,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProperty)
 	window.SetSchema(p.Schema())
 	return []PhysicalPlan{window}

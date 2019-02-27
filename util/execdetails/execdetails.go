@@ -15,10 +15,13 @@ package execdetails
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // CommitDetailCtxKey presents CommitDetail info key in context.
@@ -26,6 +29,7 @@ const CommitDetailCtxKey = "commitDetail"
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
+	CalleeAddress string
 	ProcessTime   time.Duration
 	WaitTime      time.Duration
 	BackoffTime   time.Duration
@@ -117,10 +121,58 @@ func (d ExecDetails) String() string {
 	return strings.Join(parts, " ")
 }
 
+// CopRuntimeStats collects cop tasks' execution info.
+type CopRuntimeStats struct {
+	sync.Mutex
+
+	// stats stores the runtime statistics of coprocessor tasks.
+	// The key of the map is the tikv-server address. Because a tikv-server can
+	// have many region leaders, several coprocessor tasks can be sent to the
+	// same tikv-server instance. We have to use a list to maintain all tasks
+	// executed on each instance.
+	stats map[string][]*RuntimeStats
+}
+
+// RecordOneCopTask records a specific cop tasks's execution detail.
+func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
+	crs.Lock()
+	defer crs.Unlock()
+	crs.stats[address] = append(crs.stats[address],
+		&RuntimeStats{int32(*summary.NumIterations), int64(*summary.TimeProcessedNs), int64(*summary.NumProducedRows)})
+}
+
+func (crs *CopRuntimeStats) String() string {
+	if len(crs.stats) == 0 {
+		return ""
+	}
+
+	var totalRows, totalTasks int64
+	var totalIters int32
+	procTimes := make([]time.Duration, 0, 32)
+	for _, instanceStats := range crs.stats {
+		for _, stat := range instanceStats {
+			procTimes = append(procTimes, time.Duration(stat.consume)*time.Nanosecond)
+			totalRows += stat.rows
+			totalIters += stat.loop
+			totalTasks++
+		}
+	}
+
+	if totalTasks == 1 {
+		return fmt.Sprintf("time:%v, loops:%d, rows:%d", procTimes[0], totalIters, totalRows)
+	}
+
+	n := len(procTimes)
+	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
+	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, rows:%v, iters:%v, tasks:%v",
+		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalRows, totalIters, totalTasks)
+}
+
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	mu    sync.Mutex
-	stats map[string]*RuntimeStats
+	mu        sync.Mutex
+	rootStats map[string]*RuntimeStats
+	copStats  map[string]*CopRuntimeStats
 }
 
 // RuntimeStats collects one executor's execution info.
@@ -135,26 +187,53 @@ type RuntimeStats struct {
 
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{stats: make(map[string]*RuntimeStats)}
+	return &RuntimeStatsColl{rootStats: make(map[string]*RuntimeStats),
+		copStats: make(map[string]*CopRuntimeStats)}
 }
 
-// Get gets execStat for a executor.
-func (e *RuntimeStatsColl) Get(planID string) *RuntimeStats {
+// GetRootStats gets execStat for a executor.
+func (e *RuntimeStatsColl) GetRootStats(planID string) *RuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	runtimeStats, exists := e.stats[planID]
+	runtimeStats, exists := e.rootStats[planID]
 	if !exists {
 		runtimeStats = &RuntimeStats{}
-		e.stats[planID] = runtimeStats
+		e.rootStats[planID] = runtimeStats
 	}
 	return runtimeStats
 }
 
-// Exists checks if the planID exists in the stats collection.
-func (e *RuntimeStatsColl) Exists(planID string) bool {
+// GetCopStats gets the CopRuntimeStats specified by planID.
+func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	_, exists := e.stats[planID]
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		copStats = &CopRuntimeStats{stats: make(map[string][]*RuntimeStats)}
+		e.copStats[planID] = copStats
+	}
+	return copStats
+}
+
+// RecordOneCopTask records a specific cop tasks's execution detail.
+func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tipb.ExecutorExecutionSummary) {
+	copStats := e.GetCopStats(planID)
+	copStats.RecordOneCopTask(address, summary)
+}
+
+// ExistsRootStats checks if the planID exists in the rootStats collection.
+func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, exists := e.rootStats[planID]
+	return exists
+}
+
+// ExistsCopStats checks if the planID exists in the copStats collection.
+func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, exists := e.copStats[planID]
 	return exists
 }
 
