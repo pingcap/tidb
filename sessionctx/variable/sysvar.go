@@ -669,6 +669,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
+	{ScopeSession, TiDBCheckMb4ValueInUtf8, boolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUtf8)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
