@@ -460,6 +460,51 @@ LOOP:
 	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
 }
 
+// TestCancelTruncateTable tests cancel ddl job which type is truncate table.
+func (s *testDBSuite) TestCancelTruncateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "create database if not exists test_truncate_table")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTable && job.State == model.JobStateNone {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn()
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	_, err := s.tk.Exec("truncate table t")
+	c.Assert(checkErr, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
+}
+
 // TestCancelRenameIndex tests cancel ddl job which type is rename index.
 func (s *testDBSuite) TestCancelRenameIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
