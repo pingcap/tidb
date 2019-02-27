@@ -55,6 +55,7 @@ func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return rows, nil
 }
 
+// TODO: Support parse multiple log-files.
 func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -69,6 +70,7 @@ func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
 	return parseSlowLog(bufio.NewScanner(file))
 }
 
+// TODO: optimize for parse huge log-file.
 func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 	rows := make([]map[string]types.Datum, 0)
 	rowMap := make(map[string]types.Datum, len(slowQueryCols))

@@ -829,24 +829,24 @@ const (
 func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexNames string, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
-	buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogTxnStartTSStr, txnTS))
+	buf.WriteString("# " + SlowLogTxnStartTSStr + ": " + strconv.FormatUint(txnTS, 10) + "\n")
 	if s.User != nil {
-		buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogUserStr, s.User))
+		buf.WriteString("# " + SlowLogUserStr + ": " + s.User.String() + "\n")
 	}
 	if s.ConnectionID != 0 {
-		buf.WriteString(fmt.Sprintf("# %v: %v\n", SlowLogConnIDStr, s.ConnectionID))
+		buf.WriteString("# " + SlowLogConnIDStr + ": " + strconv.FormatUint(s.ConnectionID, 10) + "\n")
 	}
-	buf.WriteString(fmt.Sprintf("# %s: %f\n", SlowLogQueryTimeStr, costTime.Seconds()))
+	buf.WriteString("# " + SlowLogQueryTimeStr + ": " + strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64) + "\n")
 	if len(execDetailStr) > 0 {
-		buf.WriteString(fmt.Sprintf("# %s\n", execDetailStr))
+		buf.WriteString("# " + execDetailStr + "\n")
 	}
 	if len(s.CurrentDB) > 0 {
-		buf.WriteString(fmt.Sprintf("# %s: %s\n", SlowLogDBStr, s.CurrentDB))
+		buf.WriteString("# " + SlowLogDBStr + ": " + s.CurrentDB + "\n")
 	}
 	if len(indexNames) > 0 {
-		buf.WriteString(fmt.Sprintf("# %s: %v\n", SlowLogIndexNamesStr, indexNames))
+		buf.WriteString("# " + SlowLogIndexNamesStr + ": " + indexNames + "\n")
 	}
-	buf.WriteString(fmt.Sprintf("# %v: %v\n", SlowLogIsInternalStr, s.InRestrictedSQL))
+	buf.WriteString("# " + SlowLogIsInternalStr + ": " + strconv.FormatBool(s.InRestrictedSQL) + "\n")
 	if len(sql) > 0 {
 		buf.WriteString(sql)
 		if sql[len(sql)-1] != ';' {
