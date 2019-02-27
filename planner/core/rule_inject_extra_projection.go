@@ -126,10 +126,11 @@ func injectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	}
 
 	child := aggPlan.Children()[0]
-	proj := PhysicalProjection{ // give a nil property since physical optimization has finished
+	prop := aggPlan.GetChildReqProps(0).Clone()
+	proj := PhysicalProjection{
 		Exprs:                projExprs,
 		AvoidColumnEvaluator: false,
-	}.Init(aggPlan.context(), child.statsInfo())
+	}.Init(aggPlan.context(), child.statsInfo().ScaleByExpectCnt(prop.ExpectedCnt), prop)
 	proj.SetSchema(expression.NewSchema(projSchemaCols...))
 	proj.SetChildren(child)
 
