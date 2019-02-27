@@ -216,7 +216,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
-		err = core.Preprocess(ctx, stmt, is, core.PreprocessOpt{InPrepare: tt.inPrepare})
+		var opts []core.PreprocessOpt
+		if tt.inPrepare {
+			opts = append(opts, core.InPrepare)
+		}
+		err = core.Preprocess(ctx, stmt, is, opts...)
 		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("sql: %s, err:%v", tt.sql, err))
 	}
 }

@@ -31,20 +31,24 @@ import (
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
-type PreprocessOpt struct {
-	// InPrepare indicates preprocess is executing under prepare statement.
-	InPrepare bool
-	// InTxRetry indicates preprocess is executing under transaction retry.
-	InTxRetry bool
+type PreprocessOpt func(*preprocessor)
+
+// InPrepare is a PreprocessOpt that indicates preprocess is executing under prepare statement.
+func InPrepare(p *preprocessor) {
+	p.inPrepare = true
+}
+
+// InTxRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
+func InTxRetry(p *preprocessor) {
+	p.inTxRetry = true
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
 func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
-	var opt PreprocessOpt
-	if len(preprocessOpt) > 0 {
-		opt = preprocessOpt[0]
+	v := preprocessor{is: is, ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
+	for _, optFn := range preprocessOpt {
+		optFn(&v)
 	}
-	v := preprocessor{is: is, ctx: ctx, inPrepare: opt.InPrepare, inTxnRetry: opt.InTxRetry, tableAliasInJoin: make([]map[string]interface{}, 0)}
 	node.Accept(&v)
 	return errors.Trace(v.err)
 }
@@ -64,7 +68,7 @@ type preprocessor struct {
 	tableAliasInJoin []map[string]interface{}
 
 	parentIsJoin bool
-	inTxnRetry   bool
+	inTxRetry    bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -161,7 +165,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 
 		// no need sleep when retry transaction and avoid unexpect sleep caused by retry.
-		if p.inPrepare && x.FnName.L == ast.Sleep {
+		if p.inTxRetry && x.FnName.L == ast.Sleep {
 			if len(x.Args) == 1 {
 				x.Args[0] = ast.NewValueExpr(0)
 			}

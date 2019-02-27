@@ -620,7 +620,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, core.PreprocessOpt{InPrepare: true})
+		err = core.Preprocess(ctx, stmt, is, core.InPrepare)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)

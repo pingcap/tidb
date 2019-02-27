@@ -144,7 +144,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 		return ErrPsManyParam
 	}
 
-	err = plannercore.Preprocess(e.ctx, stmt, e.is, plannercore.PreprocessOpt{InPrepare: true})
+	err = plannercore.Preprocess(e.ctx, stmt, e.is, plannercore.InPrepare)
 	if err != nil {
 		return errors.Trace(err)
 	}
