@@ -689,6 +689,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBCheckMb4ValueInUtf8:
+		config.GetGlobalConfig().CheckMb4ValueInUtf8 = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -701,6 +703,8 @@ func SetLocalSystemVar(name string, val string) {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgBatchSize:
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
+	case TiDBDDLErrorCountLimit:
+		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
 	}
 }
 

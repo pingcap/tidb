@@ -1334,6 +1334,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if len(cfg.Plugin.Load) > 0 {
+		plugin.InitWatchLoops(dom.GetEtcdClient())
+	}
 
 	if raw, ok := store.(domain.EtcdBackend); ok {
 		err = raw.StartGCWorker()
@@ -1422,7 +1425,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 26
+	currentBootstrapVersion = 28
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1496,6 +1499,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBConstraintCheckInPlace,
 	variable.TiDBDDLReorgWorkerCount,
 	variable.TiDBDDLReorgBatchSize,
+	variable.TiDBDDLErrorCountLimit,
 	variable.TiDBOptInSubqToJoinAndAgg,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,
@@ -1657,7 +1661,8 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d txn_start_ts:%d sql:%s%s",
-			vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query, vars.GetExecuteArgumentsInfo())
+		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d txn_start_ts:%d current_db:%s, sql:%s%s",
+			vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, vars.CurrentDB, query,
+			vars.GetExecuteArgumentsInfo())
 	}
 }

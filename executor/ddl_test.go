@@ -185,7 +185,7 @@ func (s *testSuite3) TestCreateView(c *C) {
 	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
 	tk.MustExec("create table if not exists t1 (a int ,b int)")
 	_, err = tk.Exec("create or replace view t1 as select * from t1")
-	c.Assert(err.Error(), Equals, ddl.ErrTableIsNotView.GenWithStackByArgs("test", "t1").Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error())
 }
 
 func (s *testSuite3) TestCreateDropDatabase(c *C) {
@@ -264,7 +264,7 @@ func (s *testSuite3) TestAlterTableAddColumn(c *C) {
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
 	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
-	c.Assert(err.Error(), Equals, ddl.ErrTableIsNotBaseTable.GenWithStackByArgs("test", "alter_view").Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
 }
 
@@ -308,11 +308,11 @@ func (s *testSuite3) TestAlterTableModifyColumn(c *C) {
 	tk.MustExec("alter table mc modify column c2 text")
 	result := tk.MustQuery("show create table mc")
 	createSQL := result.Rows()[0][1]
-	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text CHARSET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	expected := "CREATE TABLE `mc` (\n  `c1` bigint(20) DEFAULT NULL,\n  `c2` text DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	c.Assert(createSQL, Equals, expected)
 	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
-	c.Assert(err.Error(), Equals, ddl.ErrTableIsNotBaseTable.GenWithStackByArgs("test", "alter_view").Error())
+	c.Assert(err.Error(), Equals, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error())
 	tk.MustExec("drop view alter_view")
 }
 
@@ -593,6 +593,33 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	res.Check(testkit.Rows("1000"))
+}
+
+func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(variable.DefTiDBDDLErrorCountLimit))
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(0))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(math.MaxInt64))
+	_, err = tk.Exec("set @@global.tidb_ddl_error_count_limit = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(100))
+	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
+	res.Check(testkit.Rows("100"))
 }
 
 // Test issue #9205, fix the precision problem for time type default values

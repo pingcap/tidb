@@ -67,6 +67,9 @@ const (
 		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Event_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Drop_role_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Account_locked			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
 	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
@@ -165,6 +168,7 @@ const (
 		cm_sketch blob,
 		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		flag bigint(64) NOT NULL DEFAULT 0,
+		correlation double NOT NULL DEFAULT 0,
 		unique index tbl(table_id, is_index, hist_id)
 	);`
 
@@ -223,6 +227,25 @@ const (
  		UNIQUE KEY sql_db (original_sql, default_db),
 		INDEX time_index(update_time)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+
+	// CreateRoleEdgesTable stores the role and user relationship information.
+	CreateRoleEdgesTable = `CREATE TABLE IF NOT EXISTS mysql.role_edges (
+		FROM_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		FROM_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		TO_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		TO_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		WITH_ADMIN_OPTION enum('N','Y') CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL DEFAULT 'N',
+		PRIMARY KEY (FROM_HOST,FROM_USER,TO_HOST,TO_USER)
+	);`
+
+	// CreateDefaultRolesTable stores the active roles for a user.
+	CreateDefaultRolesTable = `CREATE TABLE IF NOT EXISTS mysql.default_roles (
+		HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		DEFAULT_ROLE_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '%',
+		DEFAULT_ROLE_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
+	)`
 )
 
 // bootstrap initiates system DB for a store.
@@ -278,6 +301,8 @@ const (
 	version24 = 24
 	version25 = 25
 	version26 = 26
+	version27 = 27
+	version28 = 28
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -438,6 +463,14 @@ func upgrade(s Session) {
 
 	if ver < version26 {
 		upgradeToVer26(s)
+	}
+
+	if ver < version27 {
+		upgradeToVer27(s)
+	}
+
+	if ver < version28 {
+		upgradeToVer27(s)
 	}
 
 	updateBootstrapVer(s)
@@ -702,6 +735,20 @@ func upgradeToVer25(s Session) {
 }
 
 func upgradeToVer26(s Session) {
+	mustExecute(s, CreateRoleEdgesTable)
+	mustExecute(s, CreateDefaultRolesTable)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_role_priv` ENUM('N','Y')", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Drop_role_priv` ENUM('N','Y')", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Account_locked` ENUM('N','Y')", infoschema.ErrColumnExists)
+	// A root user will have those privileges after upgrading.
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_role_priv='Y',Drop_role_priv='Y'")
+}
+
+func upgradeToVer27(s Session) {
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` double NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer28(s Session) {
 	doReentrantDDL(s, CreateBindInfoTable)
 }
 
@@ -755,6 +802,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 	// Create stats_feedback table.
 	mustExecute(s, CreateStatsFeedbackTable)
+	// Create role_edges table.
+	mustExecute(s, CreateRoleEdgesTable)
+	// Create default_roles table.
+	mustExecute(s, CreateDefaultRolesTable)
 	// Create bind_info table.
 	mustExecute(s, CreateBindInfoTable)
 }
@@ -766,7 +817,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
