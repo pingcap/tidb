@@ -2202,6 +2202,17 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '2019-01-17 06:46:14'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	r = tk.MustQuery(`select a,b from t order by a`)
 	r.Check(testkit.Rows("1 2019-01-17 06:46:14", "2 2019-01-17 06:46:14"))
+	// Test the column's version is greater than ColumnInfoVersion1.
+	sctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(sctx).InfoSchema()
+	c.Assert(is, NotNil)
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
+	tk.MustExec("insert into t set a=3")
+	r = tk.MustQuery(`select a,b from t order by a`)
+	r.Check(testkit.Rows("1 2019-01-17 06:46:14", "2 2019-01-17 06:46:14", "3 2019-01-17 06:46:14"))
+	tk.MustExec("delete from t where a=3")
+	// Change time zone back.
 	tk.MustExec("set time_zone = '+08:00'")
 	r = tk.MustQuery(`select a,b from t order by a`)
 	r.Check(testkit.Rows("1 2019-01-17 14:46:14", "2 2019-01-17 14:46:14"))
