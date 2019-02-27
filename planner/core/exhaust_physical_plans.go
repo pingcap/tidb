@@ -430,7 +430,6 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		err := helper.analyzeLookUpFilters(indexInfo, ds, innerJoinKeys)
 		if err != nil {
 			log.Warnf("[planner]: error happened when build index join: %v", err)
-			continue
 		}
 	}
 	if helper.chosenIndexInfo != nil {
@@ -470,16 +469,23 @@ type indexJoinBuildHelper struct {
 
 func (ijHelper *indexJoinBuildHelper) buildRangeDecidedByInformation(idxCols []*expression.Column, outerJoinKeys []*expression.Column) string {
 	buffer := bytes.NewBufferString("[")
+	isFirst := true
 	for idxOff, keyOff := range ijHelper.idxOff2KeyOff {
 		if keyOff == -1 {
 			continue
 		}
-		buffer.WriteString(fmt.Sprintf(" eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
+		if !isFirst {
+			buffer.WriteString(" ")
+		} else {
+			isFirst = false
+		}
+		buffer.WriteString(fmt.Sprintf("eq(%v, %v)", idxCols[idxOff], outerJoinKeys[keyOff]))
 	}
 	for _, access := range ijHelper.chosenAccess {
+		// Since now there must be eq/in condition so here we can just append space directly.
 		buffer.WriteString(fmt.Sprintf(" %v", access))
 	}
-	buffer.WriteString(" ]")
+	buffer.WriteString("]")
 	return buffer.String()
 }
 
@@ -606,7 +612,7 @@ func (cwc *ColWithCompareOps) appendNewExpr(opName string, arg expression.Expres
 	}
 }
 
-// CompareRow sorts the row for deduplicate.
+// CompareRow compares the rows for deduplicate.
 func (cwc *ColWithCompareOps) CompareRow(lhs, rhs chunk.Row) int {
 	for i, col := range cwc.affectedColSchema.Columns {
 		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)

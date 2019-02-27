@@ -120,7 +120,7 @@ Projection_13	1.00	root	gad.id, test.dd.id, gad.aid, gad.cm, test.dd.dic, test.d
   └─HashAgg_19	1.00	root	group by:gad.aid, test.dd.dic, funcs:firstrow(gad.id), firstrow(gad.aid), firstrow(gad.cm), firstrow(gad.p1), firstrow(gad.p2), firstrow(gad.p3), firstrow(gad.p4), firstrow(gad.p5), firstrow(gad.p6_md5), firstrow(gad.p7_md5), firstrow(gad.ext), firstrow(gad.t), firstrow(test.dd.id), firstrow(test.dd.dic), firstrow(test.dd.ip), firstrow(test.dd.t)
     └─IndexJoin_24	0.00	root	inner join, inner:IndexLookUp_23, outer key:gad.aid, inner key:test.dd.aid, other cond:eq(test.dd.ip, gad.ip), gt(test.dd.t, gad.t)
       ├─IndexLookUp_23	0.00	root	
-      │ ├─IndexScan_20	10.00	cop	table:dd, index:aid, dic, range: decided by [ eq(test.dd.aid, gad.aid) ], keep order:false, stats:pseudo
+      │ ├─IndexScan_20	10.00	cop	table:dd, index:aid, dic, range: decided by [eq(test.dd.aid, gad.aid)], keep order:false, stats:pseudo
       │ └─Selection_22	0.00	cop	eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
       │   └─TableScan_21	10.00	cop	table:dd, keep order:false, stats:pseudo
       └─IndexLookUp_33	3.33	root	
@@ -137,7 +137,7 @@ Projection_10	0.00	root	gad.id, sdk.id, gad.aid, gad.cm, sdk.dic, sdk.ip, sdk.t,
     │ └─Selection_26	0.00	cop	eq(gad.bm, 0), eq(gad.dit, "mac"), eq(gad.pt, "ios"), not(isnull(gad.dic))
     │   └─TableScan_25	3333.33	cop	table:st, keep order:false, stats:pseudo
     └─IndexLookUp_17	0.00	root	
-      ├─IndexScan_14	10.00	cop	table:sdk, index:aid, dic, range: decided by [ eq(sdk.aid, gad.aid) ], keep order:false, stats:pseudo
+      ├─IndexScan_14	10.00	cop	table:sdk, index:aid, dic, range: decided by [eq(sdk.aid, gad.aid)], keep order:false, stats:pseudo
       └─Selection_16	0.00	cop	eq(sdk.bm, 0), eq(sdk.pt, "ios"), gt(sdk.t, 1477971479), not(isnull(sdk.mac)), not(isnull(sdk.t))
         └─TableScan_15	10.00	cop	table:dd, keep order:false, stats:pseudo
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
@@ -157,7 +157,7 @@ Projection_10	0.00	root	dt.id, dt.aid, dt.pt, dt.dic, dt.cm, rr.gid, rr.acd, rr.
     │ └─Selection_42	0.00	cop	eq(dt.bm, 0), eq(dt.pt, "ios"), gt(dt.t, 1478185592), not(isnull(dt.dic))
     │   └─TableScan_41	10000.00	cop	table:dt, range:[0,+inf], keep order:false, stats:pseudo
     └─IndexLookUp_18	3.33	root	
-      ├─IndexScan_15	10.00	cop	table:rr, index:aid, dic, range: decided by [ eq(rr.aid, dt.aid) eq(rr.dic, dt.dic) ], keep order:false, stats:pseudo
+      ├─IndexScan_15	10.00	cop	table:rr, index:aid, dic, range: decided by [eq(rr.aid, dt.aid) eq(rr.dic, dt.dic)], keep order:false, stats:pseudo
       └─Selection_17	3.33	cop	eq(rr.pt, "ios"), gt(rr.t, 1478185592)
         └─TableScan_16	10.00	cop	table:rr, keep order:false, stats:pseudo
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
