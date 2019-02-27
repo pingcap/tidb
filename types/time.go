@@ -2206,7 +2206,13 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 	}
 
 	format = skipWhiteSpace(format)
-	for token, formatRemain, succ := getFormatToken(format); len(token) != 0; format = formatRemain {
+	for {
+		var token string
+		var succ bool
+		token, format, succ = getFormatToken(format)
+		if len(token) == 0 {
+			break
+		}
 		if !succ {
 			isDuration, isDate = false, false
 			break
@@ -2219,7 +2225,6 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 		if isDuration && isDate {
 			break
 		}
-		token, formatRemain, succ = getFormatToken(format)
 	}
 	return
 }
