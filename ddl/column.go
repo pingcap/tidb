@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
@@ -379,15 +380,10 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	// }
 	// }
 
-	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-		if !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
-			return ver, nil
-		}
+		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
+		return ver, errors.Trace(err)
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
@@ -588,4 +584,13 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 		}
 	}
 	return odValue, nil
+}
+
+func findColumnInIndexCols(c *expression.Column, cols []*ast.IndexColName) bool {
+	for _, c1 := range cols {
+		if c.ColName.L == c1.Column.Name.L {
+			return true
+		}
+	}
+	return false
 }

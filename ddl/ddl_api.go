@@ -471,6 +471,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	err = checkColumnFieldLength(col)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	return col, constraints, nil
 }
 
@@ -719,16 +723,6 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if err := checkColumnAttributes(colDef.Name.OrigColName(), colDef.Tp); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// checkColumnsFieldLength check the maximum length limit for different character set varchar type columns.
-func checkColumnsFieldLength(cols []*table.Column) error {
-	for _, col := range cols {
-		if err := checkColumnFieldLength(col); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1033,10 +1027,6 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	// The column charset haven't been resolved here.
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, dbCharset)
 	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if err = checkColumnsFieldLength(cols); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1438,7 +1428,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 }
 
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
-// returns valied specs, and the occured error.
+// returns valied specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlterAlgorithmDefault
@@ -1461,14 +1451,17 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 
 	// Verify whether the algorithm is supported.
 	for _, spec := range validSpecs {
-		algorithm, err := ResolveAlterAlgorithm(spec, algorithm)
+		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
 		if err != nil {
-			// For the compatibility, we return warning instead of error.
+			if algorithm != ast.AlterAlgorithmCopy {
+				return nil, errors.Trace(err)
+			}
+			// For the compatibility, we return warning instead of error when the algorithm is COPY,
+			// because the COPY ALGORITHM is not supported in TiDB.
 			ctx.GetSessionVars().StmtCtx.AppendError(err)
-			err = nil
 		}
 
-		spec.Algorithm = algorithm
+		spec.Algorithm = resolvedAlgorithm
 	}
 
 	// Only handle valid specs.
