@@ -66,3 +66,45 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	c.Assert(stateCnt, Equals, 1)
 	testCheckJobDone(c, d, job, true)
 }
+
+func (s *testColumnChangeSuite) TestDropColumnFail(c *C) {
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	defer d.Stop()
+	// create table t_column_fail (c1 int, c2 int);
+	tblInfo := testTableInfo(c, d, "t_column_fail", 2)
+	ctx := testNewContext(d)
+	err := ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	// insert t_column_fail values (1, 2);
+	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	row := types.MakeDatums(1, 2)
+	_, err = originTable.AddRecord(ctx, row)
+	c.Assert(err, IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	tc := &TestDDLCallback{}
+	first := true
+	stateCnt := 0
+
+	tc.onJobRunBefore = func(job *model.Job) {
+		// This schema state can only appear once.
+		if job.SchemaState == model.StateWriteOnly {
+			stateCnt++
+		} else if job.SchemaState == model.StateDeleteReorganization {
+			if first {
+				gofail.Enable("github.com/pingcap/tidb/ddl/dropColumnErr", `return(true)`)
+				first = false
+			} else {
+				gofail.Disable("github.com/pingcap/tidb/ddl/dropColumnErr")
+			}
+		}
+	}
+	d.SetHook(tc)
+	job := testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c2", false)
+	c.Assert(stateCnt, Equals, 1)
+	testCheckJobDone(c, d, job, false)
+}
