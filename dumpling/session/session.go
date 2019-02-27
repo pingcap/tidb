@@ -1484,6 +1484,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBConstraintCheckInPlace,
 	variable.TiDBDDLReorgWorkerCount,
 	variable.TiDBDDLReorgBatchSize,
+	variable.TiDBDDLErrorCountLimit,
 	variable.TiDBOptInSubqToJoinAndAgg,
 	variable.TiDBDistSQLScanConcurrency,
 	variable.TiDBInitChunkSize,
