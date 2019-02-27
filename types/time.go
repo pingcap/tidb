@@ -2206,9 +2206,9 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 	}
 
 	format = skipWhiteSpace(format)
+	var token string
+	var succ bool
 	for {
-		var token string
-		var succ bool
 		token, format, succ = getFormatToken(format)
 		if len(token) == 0 {
 			break
