@@ -228,7 +228,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 
 	// Handle normal job.
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -403,7 +403,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -425,7 +425,7 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 func checkRenameIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, model.CIStr, model.CIStr, error) {
 	var from, to model.CIStr
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, from, to, errors.Trace(err)
 	}
@@ -517,7 +517,7 @@ func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResu
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	rowDecoder := decoder.NewRowDecoder(t.Cols(), decodeColMap)
+	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
@@ -547,7 +547,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
 	sysZone := timeutil.SystemLocation()
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, rawRecord, time.UTC, sysZone, w.rowMap)
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
 	}
@@ -710,7 +710,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
 	}
 
-	batchVals, err := kv.BatchGetValues(txn, w.batchCheckKeys)
+	batchVals, err := txn.BatchGet(w.batchCheckKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -899,13 +899,13 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 	for _, v := range indexInfo.Columns {
 		col := cols[v.Offset]
 		tpExpr := decoder.Column{
-			Info: col.ToInfo(),
+			Col: col,
 		}
 		if col.IsGenerated() && !col.GeneratedStored {
 			for _, c := range cols {
 				if _, ok := col.Dependences[c.Name.L]; ok {
 					decodeColMap[c.ID] = decoder.Column{
-						Info: c.ToInfo(),
+						Col: c,
 					}
 				}
 			}

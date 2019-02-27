@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
@@ -127,7 +128,7 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 
 func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo, *ast.ColumnPosition, int, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, nil, 0, errors.Trace(err)
 	}
@@ -242,6 +243,12 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
 		// And we need consider the column without not-null flag.
 		if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
+			// If the column is timestamp default current_timestamp, and DDL owner is new version TiDB that set column.Version to 1,
+			// then old TiDB update record in the column write only stage will uses the wrong default value of the dropping column.
+			// Because new version of the column default value is UTC time, but old version TiDB will think the default value is the time in system timezone.
+			// But currently will be ok, because we can't cancel the drop column job when the job is running,
+			// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
+			// More info about this problem, see PR#9115.
 			colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -282,7 +289,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -338,7 +345,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -373,15 +380,10 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	// }
 	// }
 
-	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) && !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-		if !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
-			return ver, nil
-		}
+		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
+		return ver, errors.Trace(err)
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
@@ -476,7 +478,7 @@ func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 }
 
 func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -570,9 +572,25 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 		}
 	}
 
-	if odValue == strings.ToUpper(ast.CurrentTimestamp) &&
-		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
-		odValue = time.Now().Format(types.TimeFormat)
+	if odValue == strings.ToUpper(ast.CurrentTimestamp) {
+		if col.Tp == mysql.TypeTimestamp {
+			odValue = time.Now().UTC().Format(types.TimeFormat)
+			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
+			//              This will fix bug in version 0.
+			// TODO: remove this version field after there is no old version 0.
+			col.Version = model.ColumnInfoVersion1
+		} else if col.Tp == mysql.TypeDatetime {
+			odValue = time.Now().Format(types.TimeFormat)
+		}
 	}
 	return odValue, nil
+}
+
+func findColumnInIndexCols(c *expression.Column, cols []*ast.IndexColName) bool {
+	for _, c1 := range cols {
+		if c.ColName.L == c1.Column.Name.L {
+			return true
+		}
+	}
+	return false
 }
