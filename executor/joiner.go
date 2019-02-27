@@ -85,7 +85,7 @@ type joiner interface {
 	// Note that, for LeftOuterSemiJoin, AntiSemiJoin and AntiLeftOuterSemiJoin,
 	// we need to know the reason of outer row being treated as unmatched:
 	// whether the join condition returns false, or returns null, because
-	// it decides if this outer row should be outputed, hence we have a `hasNull`
+	// it decides if this outer row should be outputted, hence we have a `hasNull`
 	// parameter passed to `onMissMatch`.
 	onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk)
 }
