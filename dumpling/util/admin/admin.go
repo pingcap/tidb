@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -91,25 +91,17 @@ func isJobRollbackable(job *model.Job, id int64) error {
 			job.SchemaState == model.StateDeleteReorganization {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
-	case model.ActionDropColumn:
-		if job.SchemaState != model.StateNone {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
-		}
-	case model.ActionDropTablePartition, model.ActionAddTablePartition:
-		if job.SchemaState != model.StateNone {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
-		}
 	case model.ActionDropSchema, model.ActionDropTable:
 		// To simplify the rollback logic, cannot be canceled in the following states.
 		if job.SchemaState == model.StateWriteOnly ||
 			job.SchemaState == model.StateDeleteOnly {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
-	case model.ActionTruncateTable:
-		if job.SchemaState != model.StateNone {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
-		}
-	case model.ActionRebaseAutoID, model.ActionShardRowID:
+	case model.ActionDropColumn, model.ActionModifyColumn,
+		model.ActionDropTablePartition, model.ActionAddTablePartition,
+		model.ActionRebaseAutoID, model.ActionShardRowID,
+		model.ActionTruncateTable, model.ActionAddForeignKey,
+		model.ActionDropForeignKey:
 		if job.SchemaState != model.StateNone {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
