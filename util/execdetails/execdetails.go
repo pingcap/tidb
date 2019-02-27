@@ -54,11 +54,17 @@ type CommitDetails struct {
 }
 
 const (
+	// ProcessTimeStr means the time of all coprocessor process.
 	ProcessTimeStr   = "Process_time"
+	// WaitTimeStr means the time of all coprocessor wait.
 	WaitTimeStr      = "Wait_time"
+	// BackoffTimeStr means the time of all back-off.
 	BackoffTimeStr   = "Backoff_time"
+	// RequestCountStr means the request count.
 	RequestCountStr  = "Request_count"
+	// TotalKeysStr means the total scan keys.
 	TotalKeysStr     = "Total_keys"
+	// ProcessedKeysStr means the total processed keys.
 	ProcessedKeysStr = "Processed_keys"
 )
 
