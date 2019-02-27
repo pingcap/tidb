@@ -808,13 +808,11 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 
 	hu := infobind.NewBindCacheUpdater(ctx, do.BindHandler(), parser)
 
-	fullLoad := true
-	err := hu.Update(fullLoad)
+	err := hu.Update(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	fullLoad = false
 	duration := 3 * time.Second
 	go func() {
 		defer recoverInDomain("loadBindInfoLoop", false)
@@ -824,7 +822,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 				return
 			case <-time.After(duration):
 			}
-			err = hu.Update(fullLoad)
+			err = hu.Update(false)
 			if err != nil {
 				log.Error("[domain] load bindinfo fail:", errors.ErrorStack(err))
 			}

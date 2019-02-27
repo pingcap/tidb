@@ -29,8 +29,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const defaultBindCacheSize = 5
-
 // bindRecord store the basic bind info and bindSql astNode.
 type bindRecord struct {
 	bindMeta
@@ -38,8 +36,8 @@ type bindRecord struct {
 }
 
 // bindCache holds a bindDataMap
-//   key: origin sql
-//   value: bindRecord slice.
+//   key: original sql
+//   value: a slice of bindRecords.
 type bindCache map[string][]*bindRecord
 
 // Handler hold an atomic bindCache.
@@ -47,7 +45,6 @@ type Handler struct {
 	bind atomic.Value
 }
 
-// BindCacheUpdater use to update the bindCache.
 // BindCacheUpdater is used to update the global bindCache.
 // BindCacheUpdater will update the bind cache pre 3 second in domain gorountine loop. When the tidb server first startup, the updater will load all bind info in memory; then load diff bind info pre 3 second.
 type BindCacheUpdater struct {
@@ -95,7 +92,7 @@ func (h *Handler) Get() bindCache {
 		return bc.(map[string][]*bindRecord)
 	}
 
-	return make(map[string][]*bindRecord, defaultBindCacheSize)
+	return make(map[string][]*bindRecord)
 }
 
 // LoadDiff use to load new bind info to bindCache bc.
@@ -136,17 +133,14 @@ func (h *BindCacheUpdater) loadDiff(sql string, bc bindCache) error {
 // Update update the BindCacheUpdater's bindCache if tidb first startup,the fullLoad is true,otherwise fullLoad is false.
 func (h *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	var sql string
-
 	bc := h.globalHandler.Get()
-
 	newBc := make(map[string][]*bindRecord, len(bc))
-
 	for hash, bindDataArr := range bc {
 		newBc[hash] = append(newBc[hash], bindDataArr...)
 	}
 
 	if fullLoad {
-		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info")
+		sql = "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
 	} else {
 		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info where update_time > \"%s\"", h.lastUpdateTime.String())
 	}

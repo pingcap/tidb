@@ -218,8 +218,8 @@ const (
 		status int(10) NOT NULL DEFAULT 1,
 		create_time timestamp NOT NULL,
 		update_time timestamp NOT NULL,
-		charset varchar(100) NOT NULL,
-		collation varchar(100) NOT NULL,
+		charset text NOT NULL,
+		collation text NOT NULL,
  		UNIQUE KEY sql_db (original_sql, default_db),
 		INDEX time_index(update_time)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
