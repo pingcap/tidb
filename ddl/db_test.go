@@ -460,6 +460,51 @@ LOOP:
 	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
 }
 
+// TestCancelTruncateTable tests cancel ddl job which type is truncate table.
+func (s *testDBSuite) TestCancelTruncateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "create database if not exists test_truncate_table")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTable && job.State == model.JobStateNone {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn()
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	_, err := s.tk.Exec("truncate table t")
+	c.Assert(checkErr, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(&ddl.TestDDLCallback{})
+}
+
 // TestCancelRenameIndex tests cancel ddl job which type is rename index.
 func (s *testDBSuite) TestCancelRenameIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
@@ -4176,10 +4221,15 @@ func (s *testDBSuite) TestCheckTooBigFieldLength(c *C) {
 
 	s.tk.MustExec("drop table if exists tr_04;")
 	s.tk.MustExec("create table tr_04 (a varchar(20000) ) default charset utf8;")
+	s.testErrorCode(c, "alter table tr_04 add column b varchar(20000) charset utf8mb4;", tmysql.ErrTooBigFieldlength)
 	s.testErrorCode(c, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
 	s.testErrorCode(c, "create table tr_05 (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
 	s.testErrorCode(c, "create table tr_05 (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8;", tmysql.ErrTooBigFieldlength)
 	s.testErrorCode(c, "create table tr_05 (id int, name varchar(65536), purchased date ) default charset=latin1;", tmysql.ErrTooBigFieldlength)
+
+	s.tk.MustExec("drop table if exists tr_05;")
+	s.tk.MustExec("create table tr_05 (a varchar(10000) ) default charset utf8mb4;")
+	s.testErrorCode(c, "alter table tr_05 add column b varchar(20000);", tmysql.ErrTooBigFieldlength)
 }
 
 func (s *testDBSuite) TestAddColumn2(c *C) {
