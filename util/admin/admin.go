@@ -101,6 +101,12 @@ func isJobRollbackable(job *model.Job, id int64) error {
 		if job.SchemaState != model.StateNone {
 			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
 		}
+	case model.ActionDropIndex:
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
+		if job.SchemaState == model.StateDeleteOnly ||
+			job.SchemaState == model.StateDeleteReorganization {
+			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+		}
 	}
 	return nil
 }
