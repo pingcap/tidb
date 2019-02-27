@@ -39,10 +39,10 @@ import (
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
 	dom       *domain.Domain
+	cluster   *mocktikv.Cluster
+	mvccStore mocktikv.MVCCStore
 }
 
 func (s *testSerialSuite) SetUpSuite(c *C) {
