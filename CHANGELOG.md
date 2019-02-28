@@ -1,6 +1,36 @@
 # TiDB Changelog
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV Changelog](https://github.com/tikv/tikv/blob/master/CHANGELOG.md) and [PD Changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.1.5] 2019-02-28
+
+### SQL Optimizer/Executor
+* Make `SHOW CREATE TABLE` do not print the column charset information when the charset information of a column is the same with that of a table, to improve the compatibility of `SHOW CREATE TABLE` with MySQL [#9306](https://github.com/pingcap/tidb/pull/9306)
+* Fix the panic or the wrong result of the `Sort` operator in some cases by extracting `ScalarFunc` from `Sort` to a `Projection` operator for computing to simplify the computing logic of `Sort` [#9319](https://github.com/pingcap/tidb/pull/9319)
+* Remove the sorting field with constant values in the `Sort` operator [#9335](https://github.com/pingcap/tidb/pull/9335), [#9440](https://github.com/pingcap/tidb/pull/9440)
+* Fix the data overflow issue when inserting data into an unsigned integer column [#9339](https://github.com/pingcap/tidb/pull/9339)
+* Set `cast_as_binary` to `NULL` when the length of the target binary exceeds `max_allowed_packet` [#9349](https://github.com/pingcap/tidb/pull/9349)
+* Optimize the constant folding process of `IF` and `IFNULL` [#9351](https://github.com/pingcap/tidb/pull/9351)
+* Optimize the index selection of TiDB using skyline pruning to improve the stability of simple queries [#9356](https://github.com/pingcap/tidb/pull/9356)
+* Support computing the selectivity of the `DNF` expression [#9405](https://github.com/pingcap/tidb/pull/9405)
+* Fix the wrong SQL query result of `!=ANY()` and `=ALL()` in some cases [#9403](https://github.com/pingcap/tidb/pull/9403)
+* Fix the panic or the wrong result when the Join Key types of two tables on which  the `Merge Join` operation is performed are different [#9438](https://github.com/pingcap/tidb/pull/9438)
+* Fix the issue that the result of the `RAND()` function is not compatible with MySQL [#9446](https://github.com/pingcap/tidb/pull/9446)
+* Refactor the logic of `Semi Join` processing `NULL` and the empty result set to get the correct result and improve the compatibility with MySQL [#9449](https://github.com/pingcap/tidb/pull/9449)
+
+### Server
+* Add the `tidb_constraint_check_in_place` system variable to check the data uniqueness constraint when executing the `INSERT` statement [#9401](https://github.com/pingcap/tidb/pull/9401)
+* Fix the issue that the value of the `tidb_force_priority` system variable is different from that set in the configuration file [#9347](https://github.com/pingcap/tidb/pull/9347)
+* Add the `current_db` field in general logs to print the name of the currently used database [#9346](https://github.com/pingcap/tidb/pull/9346)
+* Add an HTTP API of obtaining the table information with the table ID [#9408](https://github.com/pingcap/tidb/pull/9408)
+* Fix the issue that `LOAD DATA` loads incorrect data in some cases [#9414](https://github.com/pingcap/tidb/pull/9414)
+* Fix the issue that it takes a long time to build a connection between the MySQL client and TiDB in some cases [#9451](https://github.com/pingcap/tidb/pull/9451)
+
+### DDL
+* Fix some issues when canceling the `DROP COLUMN` operation [#9352](https://github.com/pingcap/tidb/pull/9352)
+* Fix some issues when canceling the `DROP` or `ADD` partitioned table operation [#9376](https://github.com/pingcap/tidb/pull/9376)
+* Fix the issue that `ADMIN CHECK TABLE` mistakenly reports the data index inconsistency in some cases [#9399](https://github.com/pingcap/tidb/pull/9399)
+* Fix the time zone issue of the `TIMESTAMP` default value [#9108](https://github.com/pingcap/tidb/pull/9108)
+
 ## [2.1.4] 2019-02-15
 
 ### SQL Optimizer/Executor
@@ -34,13 +64,13 @@ All notable changes to this project will be documented in this file. See also [R
 * Allow using `Sort Merge Join` in the Cartesian product [#9037](https://github.com/pingcap/tidb/pull/9037)
 * Fix the issue that the statistics worker cannot resume after the panic in some cases [#9085](https://github.com/pingcap/tidb/pull/9085)
 * Fix the issue that `Sort Merge Join` returns the wrong result in some cases [#9046](https://github.com/pingcap/tidb/pull/9046)
-* Support returning the JSON type in the `CASE` clause [#8355](https://github.com/pingcap/tidb/pull/8355) 
+* Support returning the JSON type in the `CASE` clause [#8355](https://github.com/pingcap/tidb/pull/8355)
 ### Server
 * Return a warning instead of an error when the non-TiDB hint exists in the comment [#8766](https://github.com/pingcap/tidb/pull/8766)
 * Verify the validity of the configured TIMEZONE value [#8879](https://github.com/pingcap/tidb/pull/8879)
-* Optimize the `QueryDurationHistogram` metrics item to display more statement types [#8875](https://github.com/pingcap/tidb/pull/8875) 
+* Optimize the `QueryDurationHistogram` metrics item to display more statement types [#8875](https://github.com/pingcap/tidb/pull/8875)
 * Fix the lower bound overflow issue of bigint in some cases [#8544](https://github.com/pingcap/tidb/pull/8544)
-* Support the `ALLOW_INVALID_DATES` SQL mode [#9110](https://github.com/pingcap/tidb/pull/9110) 
+* Support the `ALLOW_INVALID_DATES` SQL mode [#9110](https://github.com/pingcap/tidb/pull/9110)
 ### DDL
 * Fix a `RENAME TABLE` compatibility issue to keep the behavior consistent with that of MySQL [#8808](https://github.com/pingcap/tidb/pull/8808)
 * Support making concurrent changes of `ADD INDEX` take effect immediately [#8786](https://github.com/pingcap/tidb/pull/8786)
@@ -51,7 +81,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Support outputting the column character sets in `SHOW CREATE TABLE` [#9053](https://github.com/pingcap/tidb/pull/9053)
 * Fix the issue of the maximum length limit of the varchar type column in `utf8mb4` [#8818](https://github.com/pingcap/tidb/pull/8818)
 * Support `ALTER TABLE TRUNCATE TABLE PARTITION` [#9093](https://github.com/pingcap/tidb/pull/9093)
-* Resolve the charset when the charset is not provided [#9147](https://github.com/pingcap/tidb/pull/9147) 
+* Resolve the charset when the charset is not provided [#9147](https://github.com/pingcap/tidb/pull/9147)
 
 
 ## [2.1.2] 2018-12-21
@@ -104,7 +134,7 @@ All notable changes to this project will be documented in this file. See also [R
 * Optimize Join Hint `TIDB_SMJ` so that Merge Join can be used even without proper index available
 * Optimize Join Hint `TIDB_INLJ` to specify the Inner table to Join
 * Optimize correlated subquery, push down Filter, and extend the index selection range, to improve the efficiency of some queries by orders of magnitude
-* Support using Index Hint and Join Hint in the `UPDATE` and `DELETE` statement 
+* Support using Index Hint and Join Hint in the `UPDATE` and `DELETE` statement
 * Support pushing down more functions:`ABS` / `CEIL` / `FLOOR` / `IS TRUE` / `IS FALSE`
 * Optimize the constant folding algorithm for the `IF` and `IFNULL` built-in functions
 * Optimize the output of the `EXPLAIN` statement and use hierarchy structure to show the relationship between operators
@@ -114,9 +144,9 @@ All notable changes to this project will be documented in this file. See also [R
 * Implement the parallel `Hash Aggregate` operators and improve the computing performance by 350% in some scenarios
 * Implement the parallel `Project` operators and improve the performance by 74% in some scenarios
 * Read the data of the Inner table and Outer table of `Hash Join` concurrently to improve the execution performance
-* Optimize the execution speed of the `REPLACE INTO` statement and increase the performance nearly by 10 times 
-* Optimize the memory usage of the time data type and decrease the memory usage of the time data type by fifty percent 
-* Optimize the point select performance and improve the point select efficiency result of Sysbench by 60% 
+* Optimize the execution speed of the `REPLACE INTO` statement and increase the performance nearly by 10 times
+* Optimize the memory usage of the time data type and decrease the memory usage of the time data type by fifty percent
+* Optimize the point select performance and improve the point select efficiency result of Sysbench by 60%
 * Improve the performance of TiDB on inserting or updating wide tables by 20 times
 * Support configuring the memory upper limit of a single statement in the configuration file
 * Optimize the execution of Hash Join, if the Join type is Inner Join or Semi Join and the inner table is empty, return the result without reading data from the outer table
@@ -130,9 +160,9 @@ All notable changes to this project will be documented in this file. See also [R
 
 ### Expressions
 * Support following built-in function:
-    - `json_contains`  
-    - `json_contains_path` 
-    - `encode/decode` 
+    - `json_contains`
+    - `json_contains_path`
+    - `encode/decode`
 
 ### Server
 * Support queuing the locally conflicted transactions within tidb-server instance to optimize the performance of conflicted transactions
@@ -146,7 +176,7 @@ All notable changes to this project will be documented in this file. See also [R
 * [Add the `tidb_retry_limit` system variable to control the automatic retry times of transactions](https://pingcap.com/docs/sql/tidb-specific/#tidb-retry-limit)
 * [Add the `tidb_disable_txn_auto_retry` system variable to control whether the transaction retries automatically](https://pingcap.com/docs/sql/tidb-specific/#tidb-disable-txn-auto-retry)
 * [Support using `admin show slow` statement to obtain the slow queries ](https://pingcap.com/docs/sql/slow-query/#admin-show-slow-command)
-* [Add the `tidb_slow_log_threshold` environment variable to set the threshold of slow log automatically](https://pingcap.com/docs/sql/tidb-specific/#tidb_slow_log_threshold) 
+* [Add the `tidb_slow_log_threshold` environment variable to set the threshold of slow log automatically](https://pingcap.com/docs/sql/tidb-specific/#tidb_slow_log_threshold)
 * [Add the `tidb_query_log_max_len` environment variable to set the length of the SQL statement to be truncated in the log dynamically](https://pingcap.com/docs/sql/tidb-specific/#tidb_query_log_max_len)
 
 ### DDL
@@ -162,8 +192,8 @@ All notable changes to this project will be documented in this file. See also [R
 * Support more MySQL syntaxes
 * Make the `BIT` aggregate function support the `ALL` parameter
 * Support the `SHOW PRIVILEGES` statement
-* Support the `CHARACTER SET` syntax in the `LOAD DATA` statement 
-* Support the `IDENTIFIED WITH` syntax in the `CREATE USER` statement 
+* Support the `CHARACTER SET` syntax in the `LOAD DATA` statement
+* Support the `IDENTIFIED WITH` syntax in the `CREATE USER` statement
 * Support the `LOAD DATA IGNORE LINES` statement
 * The `Show ProcessList` statement returns more accurate information
 
@@ -192,12 +222,12 @@ All notable changes to this project will be documented in this file. See also [R
 * Add the threshold value for the `tidb_slow_log_threshold` environment variable, which dynamically sets the slow log [#8094](https://github.com/pingcap/tidb/pull/8094)
 * Add the original length of a SQL statement truncated while the `tidb_query_log_max_len` environment variable dynamically sets logs [8200](https://github.com/pingcap/tidb/pull/8200)
 * Add the `tidb_opt_write_row_id` environment variable to control whether to allow writing `_tidb_rowid` [#8218](https://github.com/pingcap/tidb/pull/8218)
-* Add an upper bound to the `Scan` command of ticlient, to avoid overbound scan [#8081](https://github.com/pingcap/tidb/pull/8081), [#8247](https://github.com/pingcap/tidb/pull/8247)    
+* Add an upper bound to the `Scan` command of ticlient, to avoid overbound scan [#8081](https://github.com/pingcap/tidb/pull/8081), [#8247](https://github.com/pingcap/tidb/pull/8247)
 ### DDL
 * Fix the issue that executing DDL statements in transactions encounters an error in some cases [#8056](https://github.com/pingcap/tidb/pull/8056)
 * Fix the issue that executing `truncate table` in partition tables does not take effect [#8103](https://github.com/pingcap/tidb/pull/8103)
-* Fix the issue that the DDL operation does not roll back correctly after being cancelled in some cases [#8057](https://github.com/pingcap/tidb/pull/8057) 
-* Add the `admin show next_row_id` command to return the next available row ID [#8268](https://github.com/pingcap/tidb/pull/8268)  
+* Fix the issue that the DDL operation does not roll back correctly after being cancelled in some cases [#8057](https://github.com/pingcap/tidb/pull/8057)
+* Add the `admin show next_row_id` command to return the next available row ID [#8268](https://github.com/pingcap/tidb/pull/8268)
 
 
 ## [2.1.0-rc.4] - 2018-10-23
