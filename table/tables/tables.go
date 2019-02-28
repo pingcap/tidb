@@ -1189,7 +1189,7 @@ func (ctx *ctxForPartitionExpr) StmtGetMutation(int64) *binlog.TableMutation {
 }
 
 // StmtAddDirtyTableOP adds the dirty table operation for current statement.
-func (ctx *ctxForPartitionExpr) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+func (ctx *ctxForPartitionExpr) StmtAddDirtyTableOP(op int, physicalID int64, handle int64, row []types.Datum) {
 	panic("not support")
 }
 
