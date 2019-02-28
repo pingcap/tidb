@@ -201,7 +201,7 @@ func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
 			return
 		}
 		var outerResource *outerChkResource
-		ok := true
+		var ok bool
 		select {
 		case <-e.closeCh:
 			return
