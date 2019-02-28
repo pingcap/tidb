@@ -43,8 +43,6 @@ type MergeSortExec struct {
 	keyColumns []int
 	// keyCmpFuncs is used to compare each ByItem.
 	keyCmpFuncs []chunk.CompareFunc
-	// keyChunks is used to store ByItems values when not all ByItems are column.
-	keyChunks *chunk.List
 	// rowChunks is the chunks to store row values.
 	rowChunks *chunk.List
 	// rowPointer store the chunk index and row index for each row.
@@ -283,4 +281,3 @@ func (sw *sortWorker) keyColumnsLess(i, j int) bool {
 	rowJ := sw.rowChunks.GetRow(sw.rowPtrs[j])
 	return sw.lessRow(rowI, rowJ)
 }
-
