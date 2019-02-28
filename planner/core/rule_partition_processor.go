@@ -47,8 +47,28 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 	switch lp.(type) {
 	case *DataSource:
 		return s.prune(lp.(*DataSource))
-	case *UnionScan:
-
+	case *LogicalUnionScan:
+		us := lp.(*LogicalUnionScan)
+		ds := us.Children()[0]
+		ds, err := s.prune(ds.(*DataSource))
+		if err != nil {
+			return nil, err
+		}
+		if ua, ok := ds.(*LogicalUnionAll); ok {
+			// Adjust the UnionScan->Union->DataSource1, DataSource2 ... to
+			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
+			children := make([]LogicalPlan, 0, len(ua.Children()))
+			for _, child := range ua.Children() {
+				us := LogicalUnionScan{}.Init(ua.ctx)
+				us.SetChildren(child)
+				children = append(children, us)
+			}
+			ua.SetChildren(children...)
+			return ua, nil
+		}
+		// Only one partition, no union all.
+		us.SetChildren(ds)
+		return us, nil
 	default:
 		children := lp.Children()
 		for i, child := range children {

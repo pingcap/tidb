@@ -753,10 +753,10 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		// transaction, empty DirtyTable would be inserted into DirtyDB, it does not matter when multiple
 		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Thus we don't use lock
 		// to synchronize here.
-		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows()
+		err = us.buildAndSortAddedRows(x.table)
 	case *IndexReaderExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -767,10 +767,10 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 				}
 			}
 		}
-		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows()
+		err = us.buildAndSortAddedRows(x.table)
 	case *IndexLookUpExecutor:
 		us.desc = x.desc
 		for _, ic := range x.index.Columns {
@@ -781,20 +781,10 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 				}
 			}
 		}
-		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
+		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.physicalTableID)
 		us.conditions = v.Conditions
 		us.columns = x.columns
-		err = us.buildAndSortAddedRows()
-	case *UnionExec:
-		// For partitioned table, table reader may be transformed to UnionAll.
-		if x.fromPartition != nil {
-			us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.fromPartition.Meta().ID)
-			us.conditions = v.Conditions
-			us.columns = x.fromPartition.Meta().Cols()
-			err = us.buildAndSortAddedRows()
-		} else {
-			return reader, nil
-		}
+		err = us.buildAndSortAddedRows(x.table)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
 		return reader, nil
@@ -1584,12 +1574,12 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, errors.Trace(err)
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	table, _ := b.is.TableByID(ts.Table.ID)
+	tbl, _ := b.is.TableByID(ts.Table.ID)
 	e := &TableReaderExecutor{
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:           dagReq,
 		physicalTableID: ts.Table.ID,
-		table:           table,
+		table:           tbl,
 		keepOrder:       ts.KeepOrder,
 		desc:            ts.Desc,
 		columns:         ts.Columns,
@@ -1600,6 +1590,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
 		e.physicalTableID = physicalTableID
+		pt := tbl.(table.PartitionedTable)
+		e.table = pt.GetPartition(physicalTableID)
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -1641,12 +1633,19 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		return nil, errors.Trace(err)
 	}
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	table, _ := b.is.TableByID(is.Table.ID)
+	tbl, _ := b.is.TableByID(is.Table.ID)
+	isPartition, physicalTableID := is.IsPartition()
+	if isPartition {
+		pt := tbl.(table.PartitionedTable)
+		tbl = pt.GetPartition(physicalTableID)
+	} else {
+		physicalTableID = is.Table.ID
+	}
 	e := &IndexReaderExecutor{
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:           dagReq,
-		physicalTableID: is.Table.ID,
-		table:           table,
+		physicalTableID: physicalTableID,
+		table:           tbl,
 		index:           is.Index,
 		keepOrder:       is.KeepOrder,
 		desc:            is.Desc,
@@ -1657,9 +1656,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		idxCols:         is.IdxCols,
 		colLens:         is.IdxColLens,
 		plans:           v.IndexPlans,
-	}
-	if isPartition, physicalTableID := is.IsPartition(); isPartition {
-		e.physicalTableID = physicalTableID
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -1704,19 +1700,26 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	}
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
-	table, _ := b.is.TableByID(is.Table.ID)
+	tbl, _ := b.is.TableByID(is.Table.ID)
 
 	for i := 0; i < v.Schema().Len(); i++ {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	isPartition, physicalTableID := ts.IsPartition()
+	if isPartition {
+		pt := tbl.(table.PartitionedTable)
+		tbl = pt.GetPartition(physicalTableID)
+	} else {
+		physicalTableID = is.Table.ID
+	}
 
 	e := &IndexLookUpExecutor{
 		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:             indexReq,
-		physicalTableID:   is.Table.ID,
-		table:             table,
+		physicalTableID:   physicalTableID,
+		table:             tbl,
 		index:             is.Index,
 		keepOrder:         is.KeepOrder,
 		desc:              is.Desc,
@@ -1732,9 +1735,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		colLens:           is.IdxColLens,
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
-	}
-	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
-		e.physicalTableID = physicalTableID
 	}
 
 	if containsLimit(indexReq.Executors) {
