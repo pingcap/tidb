@@ -281,7 +281,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 		s.insertCol(col)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
-		log.Warn("[const_propagation]Too many columns in a single CNF", zap.Int("Count we got", len(s.columns)), zap.Int("Expected max count", MaxPropagateColsCnt))
+		log.Warn("[const_propagation]Too many columns in a single CNF", zap.Int("numCols", len(s.columns)), zap.Int("maxNumCols", MaxPropagateColsCnt))
 		return conditions
 	}
 	s.propagateConstantEQ()
@@ -529,7 +529,7 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 		s.insertCol(col)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
-		log.Warn("[const_propagation_over_outerjoin]Too many columns", zap.Int("Columns we got", len(s.columns)), zap.Int("expected max count", MaxPropagateColsCnt))
+		log.Warn("[const_propagation_over_outerjoin]Too many columns", zap.Int("numCols", len(s.columns)), zap.Int("maxNumCols", MaxPropagateColsCnt))
 		return joinConds, filterConds
 	}
 	s.propagateConstantEQ()

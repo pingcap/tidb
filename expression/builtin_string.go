@@ -265,7 +265,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			log.Warn("There's unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index in CONCAT", i))
+			log.Warn("Unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -1771,7 +1771,7 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			log.Error("There's error when eval the `Flen` of LAPD/RPAD", zap.String("error", err.Error()))
+			log.Error("Eval `Flen` for LAPD/RPAD", zap.String("error", err.Error()))
 		}
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
 			return mysql.MaxBlobWidth
@@ -2151,9 +2151,9 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	oldStr := result
 	result, _, err = transform.String(encoding.NewDecoder(), result)
 	if err != nil {
-		log.Warn("Cannot convert string to target charset",
-			zap.String("original string", oldStr),
-			zap.String("target charset", charsetName),
+		log.Warn("Change charset of string",
+			zap.String("string", oldStr),
+			zap.String("charset", charsetName),
 			zap.String("error", err.Error()))
 		return "", true, err
 	}

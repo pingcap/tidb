@@ -45,7 +45,7 @@ func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
 			// Failed to fold this expr to a constant, print the DEBUG log and
 			// return the original expression to let the error to be evaluated
 			// again, in that time, the error is returned to the client.
-			log.Debug("There's error in constant folding", zap.String("expression", expr.ExplainInfo()), zap.String("error", err.Error()))
+			log.Debug("Fold expression to constant", zap.String("expression", expr.ExplainInfo()), zap.String("error", err.Error()))
 			return expr, false
 		}
 		if !isNull0 && arg0 != 0 {
