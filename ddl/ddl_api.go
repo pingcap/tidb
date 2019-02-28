@@ -704,7 +704,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	if exists {
 		for colName, generated := range colName2Generation {
 			if _, found := generated.dependences[autoIncrementColumn]; found {
-				return errors.Trace(ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName))
+				return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
 			}
 		}
 	}
