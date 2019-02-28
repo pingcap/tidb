@@ -135,7 +135,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitter(txn1, 0)
 	c.Assert(err, IsNil)
-	_, err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
 
 	txn2 := s.begin(c)
@@ -143,7 +143,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a0"))
 
-	_, err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 	if err != nil {
 		// Retry.
 		txn1 = s.begin(c)
@@ -153,7 +153,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		committer, err = newTwoPhaseCommitter(txn1, 0)
 		c.Assert(err, IsNil)
-		_, err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
+		err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 		c.Assert(err, IsNil)
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
@@ -179,7 +179,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
 	backoffer, cancel := bo.Fork()
 	cancel() // cancel the context
-	_, err = committer.prewriteKeys(backoffer, committer.keys)
+	err = committer.prewriteKeys(backoffer, committer.keys)
 	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
 
@@ -205,7 +205,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	committer, err := newTwoPhaseCommitter(txn1, 0)
 	c.Assert(err, IsNil)
-	_, err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
+	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
 	// txn3 writes "c"
 	err = txn3.Set([]byte("c"), []byte("c3"))
@@ -334,7 +334,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	ctx := context.Background()
 	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
 	c.Assert(err, IsNil)
-	_, err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
+	err = commiter.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), commiter.keys)
 	c.Assert(err, NotNil)
 	errMsgMustContain(c, err, "write conflict")
 }
