@@ -954,20 +954,28 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	}
 	loadDataInfo.SetMessage()
 
-	if err = loadDataInfo.Ctx.StmtCommit(); err != nil {
-		return errors.Trace(err)
-	}
-	txn, err := loadDataInfo.Ctx.Txn(true)
 	if err != nil {
-		if txn != nil && txn.Valid() {
-			if err1 := txn.Rollback(); err1 != nil {
-				log.Errorf("load data rollback failed: %v", err1)
-			}
-		}
-		return errors.Trace(err)
+		loadDataInfo.Ctx.StmtRollback()
+	} else {
+		err = loadDataInfo.Ctx.StmtCommit()
 	}
 
-	return errors.Trace(cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
+	var txn kv.Transaction
+	var err1 error
+	txn, err1 = loadDataInfo.Ctx.Txn(true)
+	if err1 == nil {
+		if txn != nil && txn.Valid() {
+			if err != nil {
+				if err1 := txn.Rollback(); err1 != nil {
+					log.Errorf("load data rollback failed: %v", err1)
+				}
+				return errors.Trace(err)
+			}
+			return errors.Trace(cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
+		}
+	}
+	// Should never reach here.
+	panic(err1)
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
