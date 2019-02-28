@@ -53,9 +53,8 @@ type MergeSortExec struct {
 	workerRowLen []int
 	workerRowIdx []int
 
-	memTracker    *memory.Tracker
-	concurrency   int
-	allColumnExpr bool
+	memTracker  *memory.Tracker
+	concurrency int
 }
 
 // sortWorker represents worker routine to process sort.
@@ -79,11 +78,8 @@ func (sw *sortWorker) run() {
 			sw.rowPtrs = append(sw.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
-	if sw.allColumnExpr {
-		sort.Slice(sw.rowPtrs, sw.keyColumnsLess)
-	} else {
-		sort.Slice(sw.rowPtrs, sw.keyChunksLess)
-	}
+	sort.Slice(sw.rowPtrs, sw.keyColumnsLess)
+
 	return
 }
 
@@ -168,14 +164,7 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		}
 
 		e.initCompareFuncs()
-		e.allColumnExpr = e.buildKeyColumns()
-		if !e.allColumnExpr {
-			e.buildKeyExprsAndTypes()
-			err := e.buildKeyChunks()
-			if err != nil {
-				return err
-			}
-		}
+		e.buildKeyColumns()
 
 		workerRowsCount := e.rowChunks.Len() / e.concurrency
 		workerIdx := e.sortWorkerIndex(workerRowsCount)
@@ -211,15 +200,9 @@ func (e *MergeSortExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		for i := j + 1; i < e.concurrency; i++ {
 			if e.workerRowIdx[i] < e.workerRowLen[i] {
 				flag := false
-				if e.allColumnExpr {
-					keyRowI := e.rowChunks.GetRow(minRowPtr)
-					keyRowJ := e.rowChunks.GetRow((*e.workerRowPtrs[i])[e.workerRowIdx[i]])
-					flag = e.lessRow(keyRowI, keyRowJ)
-				} else {
-					keyRowI := e.keyChunks.GetRow(minRowPtr)
-					keyRowJ := e.keyChunks.GetRow((*e.workerRowPtrs[i])[e.workerRowIdx[i]])
-					flag = e.lessRow(keyRowI, keyRowJ)
-				}
+				keyRowI := e.rowChunks.GetRow(minRowPtr)
+				keyRowJ := e.rowChunks.GetRow((*e.workerRowPtrs[i])[e.workerRowIdx[i]])
+				flag = e.lessRow(keyRowI, keyRowJ)
 				if !flag {
 					minRowPtr = (*e.workerRowPtrs[i])[e.workerRowIdx[i]]
 					j = i
@@ -260,20 +243,12 @@ func (e *MergeSortExec) initCompareFuncs() {
 	}
 }
 
-func (e *MergeSortExec) buildKeyColumns() (allColumnExpr bool) {
+func (e *MergeSortExec) buildKeyColumns() {
 	e.keyColumns = make([]int, 0, len(e.ByItems))
 	for _, by := range e.ByItems {
-		if col, ok := by.Expr.(*expression.Column); ok {
-			e.keyColumns = append(e.keyColumns, col.Index)
-		} else {
-			e.keyColumns = e.keyColumns[:0]
-			for i := range e.ByItems {
-				e.keyColumns = append(e.keyColumns, i)
-			}
-			return false
-		}
+		col := by.Expr.(*expression.Column)
+		e.keyColumns = append(e.keyColumns, col.Index)
 	}
-	return true
 }
 
 func (e *MergeSortExec) buildKeyExprsAndTypes() {
@@ -284,23 +259,6 @@ func (e *MergeSortExec) buildKeyExprsAndTypes() {
 		e.keyExprs[keyColIdx] = e.ByItems[keyColIdx].Expr
 		e.keyTypes[keyColIdx] = e.ByItems[keyColIdx].Expr.GetType()
 	}
-}
-
-func (e *MergeSortExec) buildKeyChunks() error {
-	e.keyChunks = chunk.NewList(e.keyTypes, e.initCap, e.maxChunkSize)
-	e.keyChunks.GetMemTracker().SetLabel("keyChunks")
-	e.keyChunks.GetMemTracker().AttachTo(e.memTracker)
-
-	for chkIdx := 0; chkIdx < e.rowChunks.NumChunks(); chkIdx++ {
-		keyChk := chunk.NewChunkWithCapacity(e.keyTypes, e.rowChunks.GetChunk(chkIdx).NumRows())
-		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
-		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.keyChunks.Add(keyChk)
-	}
-	return nil
 }
 
 func (e *MergeSortExec) lessRow(rowI, rowJ chunk.Row) bool {
@@ -326,9 +284,3 @@ func (sw *sortWorker) keyColumnsLess(i, j int) bool {
 	return sw.lessRow(rowI, rowJ)
 }
 
-// keyChunksLess is the less function for key chunk.
-func (sw *sortWorker) keyChunksLess(i, j int) bool {
-	keyRowI := sw.keyChunks.GetRow(sw.rowPtrs[i])
-	keyRowJ := sw.keyChunks.GetRow(sw.rowPtrs[j])
-	return sw.lessRow(keyRowI, keyRowJ)
-}
