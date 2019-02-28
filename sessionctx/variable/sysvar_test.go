@@ -39,4 +39,9 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 	f = GetSysVar("explicit_defaults_for_timestamp")
 	c.Assert(f, NotNil)
 	c.Assert(f.Value, Equals, "ON")
+
+	f = GetSysVar("port")
+	c.Assert(f, NotNil)
+	c.Assert(f.Value, Equals, "4000")
+
 }

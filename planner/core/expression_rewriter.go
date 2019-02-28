@@ -29,8 +29,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -128,6 +129,7 @@ func (b *PlanBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expression
 	rewriter.aggrMap = nil
 	rewriter.preprocess = nil
 	rewriter.insertPlan = nil
+	rewriter.disableFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	return
 }
@@ -169,6 +171,12 @@ type expressionRewriter struct {
 	// insertPlan is only used to rewrite the expressions inside the assignment
 	// of the "INSERT" statement.
 	insertPlan *Insert
+
+	// disableFoldCounter controls fold-disabled scope. If > 0, rewriter will NOT do constant folding.
+	// Typically, during visiting AST, while entering the scope(disable), the counter will +1; while
+	// leaving the scope(enable again), the counter will -1.
+	// NOTE: This value can be changed during expression rewritten.
+	disableFoldCounter int
 }
 
 // constructBinaryOpFunction converts binary operator functions
@@ -181,7 +189,7 @@ type expressionRewriter struct {
 func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression, r expression.Expression, op string) (expression.Expression, error) {
 	lLen, rLen := expression.GetRowLen(l), expression.GetRowLen(r)
 	if lLen == 1 && rLen == 1 {
-		return expression.NewFunction(er.ctx, op, types.NewFieldType(mysql.TypeTiny), l, r)
+		return er.newFunction(op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
 		return nil, expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 	}
@@ -218,11 +226,11 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		expr5, err = expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), expr3, expression.Null, expr4)
+		expr5, err = er.newFunction(ast.If, types.NewFieldType(mysql.TypeTiny), expr3, expression.Null, expr4)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return expression.NewFunction(er.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr5)
+		return er.newFunction(ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr5)
 	}
 }
 
@@ -308,6 +316,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return inNode, true
 	case *ast.WindowFuncExpr:
 		return er.handleWindowFunction(v)
+	case *ast.FuncCallExpr:
+		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
+			er.disableFoldCounter++
+		}
 	default:
 		er.asScalar = true
 	}
@@ -323,6 +335,23 @@ func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.N
 	er.ctxStack = append(er.ctxStack, windowPlan.GetWindowResultColumn())
 	er.p = windowPlan
 	return v, true
+}
+
+func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {
+	var condition expression.Expression
+	if rCol, ok := r.(*expression.Column); ok && (er.asScalar || not) {
+		rCol.InOperand = true
+		// If both input columns of `!= all / = any` expression are not null, we can treat the expression
+		// as normal column equal condition.
+		if lCol, ok := l.(*expression.Column); ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			rCol.InOperand = false
+		}
+	}
+	condition, er.err = er.constructBinaryOpFunction(l, r, ast.EQ)
+	if er.err != nil {
+		return
+	}
+	er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, not)
 }
 
 func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) (ast.Node, bool) {
@@ -352,7 +381,6 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 		return v, true
 	}
-	var condition expression.Expression
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
@@ -361,7 +389,7 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		for _, col := range np.Schema().Columns {
 			args = append(args, col)
 		}
-		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, args[0].GetType(), args...)
+		rexpr, er.err = er.newFunction(ast.RowFunc, args[0].GetType(), args...)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
@@ -370,20 +398,23 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	switch v.Op {
 	// Only EQ, NE and NullEQ can be composed with and.
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
-		condition, er.err = er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
-		if er.err != nil {
-			er.err = errors.Trace(er.err)
-			return v, true
-		}
 		if v.Op == opcode.EQ {
 			if v.All {
 				er.handleEQAll(lexpr, rexpr, np)
 			} else {
-				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, false)
+				// `a = any(subq)` will be rewriten as `a in (subq)`.
+				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, false)
+				if er.err != nil {
+					return v, true
+				}
 			}
 		} else if v.Op == opcode.NE {
 			if v.All {
-				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, true)
+				// `a != all(subq)` will be rewriten as `a not in (subq)`.
+				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, true)
+				if er.err != nil {
+					return v, true
+				}
 			} else {
 				er.handleNEAny(lexpr, rexpr, np)
 			}
@@ -645,19 +676,29 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
+		rCol := rexpr.(*expression.Column)
+		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
+		// normal column equal condition, so we specially mark the inner operand here.
+		if v.Not || asScalar {
+			rCol.InOperand = true
+			// If both input columns of `in` expression are not null, we can treat the expression
+			// as normal column equal condition instead.
+			lCol, ok := lexpr.(*expression.Column)
+			if ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+				rCol.InOperand = false
+			}
+		}
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for _, col := range np.Schema().Columns {
 			args = append(args, col)
 		}
-		rexpr, er.err = expression.NewFunction(er.ctx, ast.RowFunc, args[0].GetType(), args...)
+		rexpr, er.err = er.newFunction(ast.RowFunc, args[0].GetType(), args...)
 		if er.err != nil {
 			er.err = errors.Trace(er.err)
 			return v, true
 		}
 	}
-	// a in (subq) will be rewrote as a = any(subq).
-	// a not in (subq) will be rewrote as a != all(subq).
 	checkCondition, err := er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
 	if err != nil {
 		er.err = errors.Trace(err)
@@ -674,17 +715,11 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		for _, col := range agg.schema.Columns {
 			col.IsReferenced = true
 		}
-		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg, false, false)
 		// Build inner join above the aggregation.
-		join := LogicalJoin{
-			JoinType:        InnerJoin,
-			EqualConditions: eq,
-			LeftConditions:  left,
-			RightConditions: right,
-			OtherConditions: other,
-		}.Init(er.ctx)
+		join := LogicalJoin{JoinType: InnerJoin}.Init(er.ctx)
 		join.SetChildren(er.p, agg)
 		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
+		join.attachOnConds(expression.SplitCNFItems(checkCondition))
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
 			er.err = join.setPreferredJoinType(er.b.TableHints())
@@ -723,7 +758,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 			for _, col := range np.Schema().Columns {
 				newCols = append(newCols, col)
 			}
-			expr, err1 := expression.NewFunction(er.ctx, ast.RowFunc, newCols[0].GetType(), newCols...)
+			expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(), newCols...)
 			if err1 != nil {
 				er.err = errors.Trace(err1)
 				return v, true
@@ -751,7 +786,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 				Value:   data,
 				RetType: np.Schema().Columns[i].GetType()})
 		}
-		expr, err1 := expression.NewFunction(er.ctx, ast.RowFunc, newCols[0].GetType(), newCols...)
+		expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(), newCols...)
 		if err1 != nil {
 			er.err = errors.Trace(err1)
 			return v, true
@@ -792,6 +827,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.rewriteVariable(v)
 	case *ast.FuncCallExpr:
 		er.funcCallToExpression(v)
+		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
+			er.disableFoldCounter--
+		}
 	case *ast.ColumnName:
 		er.toColumn(v)
 	case *ast.UnaryOperationExpr:
@@ -817,7 +855,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		er.ctxStack[len(er.ctxStack)-1] = expression.BuildCastFunction(er.ctx, arg, v.Tp)
 	case *ast.PatternLikeExpr:
-		er.likeToScalarFunc(v)
+		er.patternLikeToExpression(v)
 	case *ast.PatternRegexpExpr:
 		er.regexpToScalarFunc(v)
 	case *ast.RowExpr:
@@ -845,6 +883,14 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	return originInNode, true
 }
 
+// newFunction chooses which expression.NewFunctionImpl() will be used.
+func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (expression.Expression, error) {
+	if er.disableFoldCounter > 0 {
+		return expression.NewFunctionBase(er.ctx, funcName, retType, args...)
+	}
+	return expression.NewFunction(er.ctx, funcName, retType, args...)
+}
+
 func (er *expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
 	if ft.EvalType() == types.ETDuration && ft.Decimal > types.MaxFsp {
 		return errTooBigPrecision.GenWithStackByArgs(ft.Decimal, "CAST", types.MaxFsp)
@@ -862,15 +908,13 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	sessionVars := er.b.ctx.GetSessionVars()
 	if !v.IsSystem {
 		if v.Value != nil {
-			er.ctxStack[stkLen-1], er.err = expression.NewFunction(er.ctx,
-				ast.SetVar,
+			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar,
 				er.ctxStack[stkLen-1].GetType(),
 				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			return
 		}
-		f, err := expression.NewFunction(er.ctx,
-			ast.GetVar,
+		f, err := er.newFunction(ast.GetVar,
 			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
 			types.NewFieldType(mysql.TypeString),
 			expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
@@ -932,7 +976,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
-	er.ctxStack[stkLen-1], er.err = expression.NewFunction(er.ctx, op, &v.Type, er.ctxStack[stkLen-1])
+	er.ctxStack[stkLen-1], er.err = er.newFunction(op, &v.Type, er.ctxStack[stkLen-1])
 }
 
 func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
@@ -949,7 +993,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 			er.err = expression.ErrOperandColumns.GenWithStackByArgs(1)
 			return
 		}
-		function, er.err = expression.NewFunction(er.ctx, v.Op.String(), types.NewFieldType(mysql.TypeUnspecified), er.ctxStack[stkLen-2:]...)
+		function, er.err = er.newFunction(v.Op.String(), types.NewFieldType(mysql.TypeUnspecified), er.ctxStack[stkLen-2:]...)
 	}
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
@@ -961,7 +1005,7 @@ func (er *expressionRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 
 func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.FieldType,
 	args ...expression.Expression) expression.Expression {
-	opFunc, err := expression.NewFunction(er.ctx, op, tp, args...)
+	opFunc, err := er.newFunction(op, tp, args...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return nil
@@ -970,7 +1014,7 @@ func (er *expressionRewriter) notToExpression(hasNot bool, op string, tp *types.
 		return opFunc
 	}
 
-	opFunc, err = expression.NewFunction(er.ctx, ast.UnaryNot, tp, opFunc)
+	opFunc, err = er.newFunction(ast.UnaryNot, tp, opFunc)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return nil
@@ -1078,7 +1122,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		function = expression.ComposeDNFCondition(er.ctx, eqFunctions...)
 		if not {
 			var err error
-			function, err = expression.NewFunction(er.ctx, ast.UnaryNot, tp, function)
+			function, err = er.newFunction(ast.UnaryNot, tp, function)
 			if err != nil {
 				er.err = err
 				return
@@ -1112,7 +1156,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		value := er.ctxStack[stkLen-argsLen-1]
 		args = make([]expression.Expression, 0, argsLen)
 		for i := stkLen - argsLen; i < stkLen-1; i += 2 {
-			arg, err := expression.NewFunction(er.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), value, er.ctxStack[i])
+			arg, err := er.newFunction(ast.EQ, types.NewFieldType(mysql.TypeTiny), value, er.ctxStack[i])
 			if err != nil {
 				er.err = errors.Trace(err)
 				return
@@ -1131,7 +1175,7 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 		//        else clause
 		args = er.ctxStack[stkLen-argsLen:]
 	}
-	function, err := expression.NewFunction(er.ctx, ast.Case, &v.Type, args...)
+	function, err := er.newFunction(ast.Case, &v.Type, args...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -1140,16 +1184,44 @@ func (er *expressionRewriter) caseToExpression(v *ast.CaseExpr) {
 	er.ctxStack = append(er.ctxStack, function)
 }
 
-func (er *expressionRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
+func (er *expressionRewriter) patternLikeToExpression(v *ast.PatternLikeExpr) {
 	l := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[l-2:]...)
 	if er.err != nil {
 		return
 	}
-	escapeTp := &types.FieldType{}
-	types.DefaultTypeForValue(int(v.Escape), escapeTp)
-	function := er.notToExpression(v.Not, ast.Like, &v.Type,
-		er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: escapeTp})
+
+	var function expression.Expression
+	fieldType := &types.FieldType{}
+	isPatternExactMatch := false
+	// Treat predicate 'like' the same way as predicate '=' when it is an exact match.
+	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok {
+		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
+		if err != nil {
+			er.err = errors.Trace(err)
+			return
+		}
+		if !isNull {
+			patValue, patTypes := stringutil.CompilePattern(patString, v.Escape)
+			if stringutil.IsExactMatch(patTypes) {
+				op := ast.EQ
+				if v.Not {
+					op = ast.NE
+				}
+				types.DefaultTypeForValue(string(patValue), fieldType)
+				function, er.err = er.constructBinaryOpFunction(er.ctxStack[l-2],
+					&expression.Constant{Value: types.NewStringDatum(string(patValue)), RetType: fieldType},
+					op)
+				isPatternExactMatch = true
+			}
+		}
+	}
+	if !isPatternExactMatch {
+		types.DefaultTypeForValue(int(v.Escape), fieldType)
+		function = er.notToExpression(v.Not, ast.Like, &v.Type,
+			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
+	}
+
 	er.ctxStack = er.ctxStack[:l-2]
 	er.ctxStack = append(er.ctxStack, function)
 }
@@ -1173,7 +1245,7 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 		rows = append(rows, er.ctxStack[i])
 	}
 	er.ctxStack = er.ctxStack[:stkLen-length]
-	function, err := expression.NewFunction(er.ctx, ast.RowFunc, rows[0].GetType(), rows...)
+	function, err := er.newFunction(ast.RowFunc, rows[0].GetType(), rows...)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
@@ -1189,22 +1261,22 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	}
 	var op string
 	var l, r expression.Expression
-	l, er.err = expression.NewFunction(er.ctx, ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
+	l, er.err = er.newFunction(ast.GE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-2])
 	if er.err == nil {
-		r, er.err = expression.NewFunction(er.ctx, ast.LE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
+		r, er.err = er.newFunction(ast.LE, &v.Type, er.ctxStack[stkLen-3], er.ctxStack[stkLen-1])
 	}
 	op = ast.LogicAnd
 	if er.err != nil {
 		er.err = errors.Trace(er.err)
 		return
 	}
-	function, err := expression.NewFunction(er.ctx, op, &v.Type, l, r)
+	function, err := er.newFunction(op, &v.Type, l, r)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return
 	}
 	if v.Not {
-		function, err = expression.NewFunction(er.ctx, ast.UnaryNot, &v.Type, function)
+		function, err = er.newFunction(ast.UnaryNot, &v.Type, function)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return
@@ -1261,7 +1333,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			RetType: nullTp,
 		}
 		// if(param1 = param2, NULL, param1)
-		funcIf, err := expression.NewFunction(er.ctx, ast.If, &v.Type, funcCompare, paramNull, param1)
+		funcIf, err := er.newFunction(ast.If, &v.Type, funcCompare, paramNull, param1)
 		if err != nil {
 			er.err = err
 			return true
@@ -1293,7 +1365,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
 		er.ctxStack = append(er.ctxStack, c)
 	} else {
-		function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)
+		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
 		er.ctxStack = append(er.ctxStack, function)
 	}
 }

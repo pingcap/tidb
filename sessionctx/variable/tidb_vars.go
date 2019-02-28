@@ -126,6 +126,9 @@ const (
 	// on: always enable table partition.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
+
+	// TiDBCheckMb4ValueInUtf8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUtf8 = "tidb_check_mb4_value_in_utf8"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -210,6 +213,9 @@ const (
 	// tidb_ddl_reorg_batch_size defines the transaction batch size of ddl reorg workers.
 	TiDBDDLReorgBatchSize = "tidb_ddl_reorg_batch_size"
 
+	// tidb_ddl_error_count_limit defines the count of ddl error limit.
+	TiDBDDLErrorCountLimit = "tidb_ddl_error_count_limit"
+
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
@@ -273,6 +279,7 @@ const (
 	DefTiDBOptimizerSelectivityLevel = 0
 	DefTiDBDDLReorgWorkerCount       = 16
 	DefTiDBDDLReorgBatchSize         = 1024
+	DefTiDBDDLErrorCountLimit        = 512
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
 	DefTiDBForcePriority             = mysql.NoPriority
@@ -286,6 +293,7 @@ var (
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
 	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
+	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
 	// Export for testing.
 	MaxDDLReorgBatchSize int32  = 10240
 	MinDDLReorgBatchSize int32  = 32

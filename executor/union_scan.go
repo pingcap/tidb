@@ -18,10 +18,12 @@ import (
 	"sort"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -33,37 +35,13 @@ type DirtyDB struct {
 	tables map[int64]*DirtyTable
 }
 
-// AddRow adds a row to the DirtyDB.
-func (udb *DirtyDB) AddRow(tid, handle int64, row []types.Datum) {
-	dt := udb.GetDirtyTable(tid)
-	for i := range row {
-		if row[i].Kind() == types.KindString {
-			row[i].SetBytes(row[i].GetBytes())
-		}
-	}
-	dt.addedRows[handle] = row
-}
-
-// DeleteRow deletes a row from the DirtyDB.
-func (udb *DirtyDB) DeleteRow(tid int64, handle int64) {
-	dt := udb.GetDirtyTable(tid)
-	delete(dt.addedRows, handle)
-	dt.deletedRows[handle] = struct{}{}
-}
-
-// TruncateTable truncates a table.
-func (udb *DirtyDB) TruncateTable(tid int64) {
-	dt := udb.GetDirtyTable(tid)
-	dt.addedRows = make(map[int64][]types.Datum)
-	dt.truncated = true
-}
-
 // GetDirtyTable gets the DirtyTable by id from the DirtyDB.
 func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 	dt, ok := udb.tables[tid]
 	if !ok {
 		dt = &DirtyTable{
-			addedRows:   make(map[int64][]types.Datum),
+			tid:         tid,
+			addedRows:   make(map[int64]struct{}),
 			deletedRows: make(map[int64]struct{}),
 		}
 		udb.tables[tid] = dt
@@ -73,11 +51,29 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 
 // DirtyTable stores uncommitted write operation for a transaction.
 type DirtyTable struct {
+	tid int64
 	// addedRows ...
 	// the key is handle.
-	addedRows   map[int64][]types.Datum
+	addedRows   map[int64]struct{}
 	deletedRows map[int64]struct{}
 	truncated   bool
+}
+
+// AddRow adds a row to the DirtyDB.
+func (dt *DirtyTable) AddRow(handle int64, row []types.Datum) {
+	dt.addedRows[handle] = struct{}{}
+}
+
+// DeleteRow deletes a row from the DirtyDB.
+func (dt *DirtyTable) DeleteRow(handle int64) {
+	delete(dt.addedRows, handle)
+	dt.deletedRows[handle] = struct{}{}
+}
+
+// TruncateTable truncates a table.
+func (dt *DirtyTable) TruncateTable() {
+	dt.addedRows = make(map[int64]struct{})
+	dt.truncated = true
 }
 
 // GetDirtyDB returns the DirtyDB bind to the context.
@@ -126,6 +122,11 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("unionScan.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	if us.runtimeStats != nil {
 		start := time.Now()
 		defer func() { us.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -273,11 +274,16 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	return cmp, nil
 }
 
-func (us *UnionScanExec) buildAndSortAddedRows() error {
+func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	for h, data := range us.dirty.addedRows {
+	cols := t.WritableCols()
+	for h := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())
+		data, err := t.RowWithCols(us.ctx, h, cols)
+		if err != nil {
+			return err
+		}
 		for _, col := range us.columns {
 			if col.ID == model.ExtraHandleID {
 				newData = append(newData, types.NewIntDatum(h))
@@ -286,7 +292,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 			}
 		}
 		mutableRow.SetDatums(newData...)
-		matched, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}

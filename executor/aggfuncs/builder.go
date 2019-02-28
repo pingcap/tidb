@@ -56,6 +56,20 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 	return nil
 }
 
+// BuildWindowFunctions builds specific window function according to function description and order by columns.
+func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.AggFuncDesc, ordinal int, orderByCols []*expression.Column) AggFunc {
+	switch windowFuncDesc.Name {
+	case ast.WindowFuncRank:
+		return buildRank(ordinal, orderByCols, false)
+	case ast.WindowFuncDenseRank:
+		return buildRank(ordinal, orderByCols, true)
+	case ast.WindowFuncRowNumber:
+		return buildRowNumber(windowFuncDesc, ordinal)
+	default:
+		return Build(ctx, windowFuncDesc, ordinal)
+	}
+}
+
 // buildCount builds the AggFunc implementation for function "COUNT".
 func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// If mode is DedupMode, we return nil for not implemented.
@@ -312,4 +326,25 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	return &bitAndUint64{baseBitAggFunc{base}}
+}
+
+// buildRowNumber builds the AggFunc implementation for function "ROW_NUMBER".
+func buildRowNumber(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	return &rowNumber{base}
+}
+
+func buildRank(ordinal int, orderByCols []*expression.Column, isDense bool) AggFunc {
+	base := baseAggFunc{
+		ordinal: ordinal,
+	}
+	r := &rank{baseAggFunc: base, isDense: isDense}
+	for _, col := range orderByCols {
+		r.cmpFuncs = append(r.cmpFuncs, chunk.GetCompareFunc(col.RetType))
+		r.colIdx = append(r.colIdx, col.Index)
+	}
+	return r
 }

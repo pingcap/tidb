@@ -291,15 +291,14 @@ func (e *Execute) rebuildRange(p Plan) error {
 
 func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
 	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
-	ranges := ranger.FullRange()
-	if len(idxCols) > 0 {
-		var err error
-		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	if len(idxCols) == 0 {
+		return ranger.FullRange(), nil
 	}
-	return ranges, nil
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
+	if err != nil {
+		return nil, err
+	}
+	return res.Ranges, nil
 }
 
 // Deallocate represents deallocate plan.
@@ -530,10 +529,12 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		if runtimeStatsColl.Exists(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.Get(p.ExplainID()).String())
-		} else {
-			row = append(row, "") //TODO: wait collect more executor info from tikv
+		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
+		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+		if runtimeStatsColl.ExistsCopStats(p.ExplainID()) {
+			row = append(row, runtimeStatsColl.GetCopStats(p.ExplainID()).String())
+		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
+			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
 		}
 	}
 	e.Rows = append(e.Rows, row)
