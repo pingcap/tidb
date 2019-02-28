@@ -1230,8 +1230,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 		}
 	}
 	e := &UnionExec{
-		baseExecutor:  newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExecs...),
-		fromPartition: v.FromPartition,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExecs...),
 	}
 	return e
 }

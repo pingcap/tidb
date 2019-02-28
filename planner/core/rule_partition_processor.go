@@ -147,7 +147,6 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		return children[0], nil
 	}
 	unionAll := LogicalUnionAll{}.Init(ds.context())
-	unionAll.fromPartition = ds.table
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema)
 	return unionAll, nil

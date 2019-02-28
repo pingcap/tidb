@@ -605,8 +605,6 @@ func (ds *DataSource) TableInfo() *model.TableInfo {
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
 	logicalSchemaProducer
-	// Not nil when this UnionAll is transformed from a partitioned table
-	fromPartition table.Table
 }
 
 // LogicalSort stands for the order by plan.

@@ -1159,7 +1159,6 @@ type UnionExec struct {
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
 	initialized   bool
-	fromPartition table.Table
 
 	childrenResults []*chunk.Chunk
 }

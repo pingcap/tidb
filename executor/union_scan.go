@@ -277,12 +277,6 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	// t, found := GetInfoSchema(us.ctx).TableByID(us.dirty.tid)
-	// if !found {
-	// t is got from a snapshot InfoSchema, so it should be found, this branch should not happen.
-	// 	return errors.Errorf("table not found (tid: %d, schema version: %d)",
-	// 		us.dirty.tid, GetInfoSchema(us.ctx).SchemaMetaVersion())
-	// }
 	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())

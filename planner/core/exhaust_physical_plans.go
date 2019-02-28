@@ -921,7 +921,6 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	}
 	ua := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	ua.SetSchema(p.Schema())
-	ua.FromPartition = p.fromPartition
 	return []PhysicalPlan{ua}
 }
 
