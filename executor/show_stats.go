@@ -82,6 +82,10 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		return
 	}
 	for _, col := range statsTbl.Columns {
+		// Pass a nil StatementContext to avoid column stats being marked as needed.
+		if col.IsInvalid(nil, false) {
+			continue
+		}
 		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count))
 	}
 	for _, idx := range statsTbl.Indices {
