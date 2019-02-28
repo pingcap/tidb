@@ -1339,7 +1339,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		// Index Join + Union Scan + Union All is not supported now.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
-			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->TableReader(Table(t))}->UnionScan([])->UnionAll{TableReader(Table(t))->TableReader(Table(t))}->UnionScan([])}(t1.a,t2.a)",
+			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}->UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}}(t1.a,t2.a)",
 			is:   pis,
 		},
 	}
