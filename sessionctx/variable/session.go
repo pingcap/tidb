@@ -812,29 +812,29 @@ type BatchSize struct {
 
 const (
 	// SlowLogPrefixStr is slow log prefix.
-	SlowLogPrefixStr     = "# "
+	SlowLogPrefixStr = "# "
 	// SlowLogSpaceMarkStr is slow log space mark.
-	SlowLogSpaceMarkStr  = ": "
+	SlowLogSpaceMarkStr = ": "
 	// SlowLogSQLSuffixStr is slow log suffix.
-	SlowLogSQLSuffixStr  = ";"
+	SlowLogSQLSuffixStr = ";"
 	// SlowLogTimeStr is slow log field name.
-	SlowLogTimeStr       = "Time"
+	SlowLogTimeStr = "Time"
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
 	// SlowLogUserStr is slow log field name.
-	SlowLogUserStr       = "User"
+	SlowLogUserStr = "User"
 	// SlowLogConnIDStr is slow log field name.
-	SlowLogConnIDStr     = "Conn_ID"
+	SlowLogConnIDStr = "Conn_ID"
 	// SlowLogQueryTimeStr is slow log field name.
-	SlowLogQueryTimeStr  = "Query_time"
+	SlowLogQueryTimeStr = "Query_time"
 	// SlowLogDBStr is slow log field name.
-	SlowLogDBStr         = "DB"
+	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
 	SlowLogIsInternalStr = "Is_internal"
 	// SlowLogIndexNamesStr is slow log field name.
 	SlowLogIndexNamesStr = "Index_names"
 	// SlowLogQuerySQLStr is slow log field name.
-	SlowLogQuerySQLStr   = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
+	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
 )
 
 // SlowLogFormat uses for formatting slow log.

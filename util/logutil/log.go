@@ -206,6 +206,7 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 }
 
 const (
+	// SlowLogTimeFormat is the time format for slow log.
 	SlowLogTimeFormat = "2006-01-02-15:04:05.999999999 +0800"
 )
 
