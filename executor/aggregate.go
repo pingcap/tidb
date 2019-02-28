@@ -470,14 +470,12 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		return
 	}
 	for groupKey := range w.groupSet {
-		//fmt.Println("----------1>  ", result.NumRows(), len(w.aggFuncs))
 		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, []byte(groupKey), w.partialResultMap)
 		for i, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i], result); err != nil {
 				log.Error(errors.ErrorStack(err))
 			}
 		}
-		//fmt.Println("----------2> ", result.NumRows())
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
 		}
@@ -665,11 +663,11 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
 		}
 		for i, af := range e.PartialAggFuncs {
-			if err := (af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk)); err != nil {
+			if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
 				return err
 			}
 		}
-		if chk.NumRows() == e.maxChunkSize {
+		if chk.IsFull() {
 			e.cursor4GroupKey++
 			return nil
 		}

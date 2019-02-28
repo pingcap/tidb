@@ -583,6 +583,25 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 	}
 }
 
+func divGenerator(factor int) func(valType *types.FieldType) interface{} {
+	closureCountInt := 0
+	closureCountDouble := 0
+	return func(valType *types.FieldType) interface{} {
+		switch valType.Tp {
+		case mysql.TypeLong, mysql.TypeLonglong:
+			ret := int64(closureCountInt / factor)
+			closureCountInt++
+			return ret
+		case mysql.TypeDouble:
+			ret := float64(closureCountInt / factor)
+			closureCountDouble++
+			return ret
+		default:
+			panic("not implement")
+		}
+	}
+}
+
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
 	return &ProjectionExec{
 		baseExecutor:  newBaseExecutor(ctx, src.Schema(), "", src),
@@ -592,25 +611,6 @@ func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, 
 }
 
 func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
-	genByDiv := func(factor int) func(valType *types.FieldType) interface{} {
-		closureCountInt := 0
-		closureCountDouble := 0
-		return func(valType *types.FieldType) interface{} {
-			switch valType.Tp {
-			case mysql.TypeLong, mysql.TypeLonglong:
-				ret := int64(closureCountInt / factor)
-				closureCountInt++
-				return ret
-			case mysql.TypeDouble:
-				ret := float64(closureCountInt / factor)
-				closureCountDouble++
-				return ret
-			default:
-				panic("not implement")
-			}
-		}
-	}
-
 	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
 		totalRows      int
@@ -626,7 +626,7 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 			requiredRows:   []int{1, 2, 3, 4, 5, 6, 7},
 			expectedRows:   []int{1, 2, 3, 4, 5, 6, 7},
 			expectedRowsDS: []int{maxChunkSize},
-			gen:            genByDiv(1),
+			gen:            divGenerator(1),
 		},
 		{
 			totalRows:      maxChunkSize * 3,
@@ -634,7 +634,7 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 			requiredRows:   []int{1, 3},
 			expectedRows:   []int{1, 2},
 			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
-			gen:            genByDiv(maxChunkSize),
+			gen:            divGenerator(maxChunkSize),
 		},
 		{
 			totalRows:      maxChunkSize*2 - 1,
@@ -642,7 +642,7 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 			requiredRows:   []int{maxChunkSize/2 + 1},
 			expectedRows:   []int{maxChunkSize/2 + 1},
 			expectedRowsDS: []int{maxChunkSize, maxChunkSize - 1},
-			gen:            genByDiv(2),
+			gen:            divGenerator(2),
 		},
 	}
 
@@ -669,25 +669,6 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 }
 
 func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
-	genByDiv := func(factor int) func(valType *types.FieldType) interface{} {
-		closureCountInt := 0
-		closureCountDouble := 0
-		return func(valType *types.FieldType) interface{} {
-			switch valType.Tp {
-			case mysql.TypeLong, mysql.TypeLonglong:
-				ret := int64(closureCountInt / factor)
-				closureCountInt++
-				return ret
-			case mysql.TypeDouble:
-				ret := float64(closureCountInt / factor)
-				closureCountDouble++
-				return ret
-			default:
-				panic("not implement")
-			}
-		}
-	}
-
 	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
 		totalRows      int
@@ -703,11 +684,27 @@ func (s *testExecSuite) TestHashAggParallelRequiredRows(c *C) {
 			requiredRows:   []int{1, 2, 3, 4, 5, 6, 7},
 			expectedRows:   []int{1, 2, 3, 4, 5, 6, 7},
 			expectedRowsDS: []int{maxChunkSize, 0},
-			gen:            genByDiv(1),
+			gen:            divGenerator(1),
+		},
+		{
+			totalRows:      maxChunkSize * 3,
+			aggFunc:        ast.AggFuncAvg,
+			requiredRows:   []int{1, 3},
+			expectedRows:   []int{1, 2},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
+			gen:            divGenerator(maxChunkSize),
+		},
+		{
+			totalRows:      maxChunkSize * 3,
+			aggFunc:        ast.AggFuncAvg,
+			requiredRows:   []int{maxChunkSize, maxChunkSize},
+			expectedRows:   []int{maxChunkSize, maxChunkSize / 2},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 0},
+			gen:            divGenerator(2),
 		},
 	}
 
-	for _, hasDistinct := range []bool{false} {
+	for _, hasDistinct := range []bool{false, true} {
 		for _, testCase := range testCases {
 			sctx := defaultCtx()
 			ctx := context.Background()
