@@ -83,19 +83,20 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
-func isJobRollbackable(job *model.Job, id int64) error {
+// IsJobRollbackable checks whether the job can be rollback.
+func IsJobRollbackable(job *model.Job) bool {
 	switch job.Type {
 	case model.ActionDropIndex:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
 		if job.SchemaState == model.StateDeleteOnly ||
 			job.SchemaState == model.StateDeleteReorganization {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+			return false
 		}
 	case model.ActionDropSchema, model.ActionDropTable:
 		// To simplify the rollback logic, cannot be canceled in the following states.
 		if job.SchemaState == model.StateWriteOnly ||
 			job.SchemaState == model.StateDeleteOnly {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+			return false
 		}
 	case model.ActionDropColumn, model.ActionModifyColumn,
 		model.ActionDropTablePartition, model.ActionAddTablePartition,
@@ -103,10 +104,10 @@ func isJobRollbackable(job *model.Job, id int64) error {
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey:
 		if job.SchemaState != model.StateNone {
-			return ErrCannotCancelDDLJob.GenWithStackByArgs(id)
+			return false
 		}
 	}
-	return nil
+	return true
 }
 
 // CancelJobs cancels the DDL jobs.
@@ -139,8 +140,8 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
 				continue
 			}
-			errs[i] = isJobRollbackable(job, id)
-			if errs[i] != nil {
+			if !IsJobRollbackable(job) {
+				errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
 				continue
 			}
 
