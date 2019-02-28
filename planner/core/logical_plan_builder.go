@@ -220,7 +220,12 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 						}
 					}
 				}
-				if leftCol != nil && binop.FuncName.L == ast.EQ {
+				// For quries like `select a in (select a from s where s.b = t.b) from t`,
+				// if subquery is empty caused by `s.b = t.b`, the result should always be
+				// false even if t.a is null or s.a is null. To make this join "empty aware",
+				// we should differentiate `t.a = s.a` from other column equal conditions, so
+				// we put it into OtherConditions instead of EqualConditions of join.
+				if leftCol != nil && binop.FuncName.L == ast.EQ && !leftCol.InOperand && !rightCol.InOperand {
 					cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
@@ -518,7 +523,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil {
-				ret, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
+				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue
 				}
@@ -2780,11 +2785,14 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
-	if bound.UnBounded || boundClause.Type == ast.CurrentRow {
+	if bound.UnBounded {
 		return bound, nil
 	}
 
 	if frameType == ast.Rows {
+		if bound.Type == ast.CurrentRow {
+			return bound, nil
+		}
 		// Rows type does not support interval range.
 		if boundClause.Unit != nil {
 			return nil, ErrWindowRowsIntervalUse.GenWithStackByArgs(spec.Name)
@@ -2800,50 +2808,74 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 	if len(orderByItems) != 1 {
 		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
 	}
+
+	if bound.Type == ast.CurrentRow {
+		bound.CalcFunc = orderByItems[0].Col
+		bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, orderByItems[0].Col)
+		return bound, nil
+	}
 	col := orderByItems[0].Col
 	isNumeric, isTemporal := types.IsTypeNumeric(col.RetType.Tp), types.IsTypeTemporal(col.RetType.Tp)
 	if !isNumeric && !isTemporal {
 		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
 	}
-	if boundClause.Unit != nil {
-		// Interval bounds only support order by temporal types.
-		if isNumeric {
-			return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
-		}
+	// Interval bounds only support order by temporal types.
+	if boundClause.Unit != nil && isNumeric {
+		return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
+	}
+	// Non-interval bound only support order by numeric types.
+	if boundClause.Unit == nil && !isNumeric {
+		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+	}
 
-		// TODO: We also need to raise error for non-deterministic expressions, like rand().
-		val, err := evalAstExpr(b.ctx, boundClause.Expr)
-		if err != nil {
-			return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
-		}
-		expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
-		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
-		if uVal < 0 || isNull || err != nil {
-			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
-		}
+	// TODO: We also need to raise error for non-deterministic expressions, like rand().
+	val, err := evalAstExpr(b.ctx, boundClause.Expr)
+	if err != nil {
+		return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
+	}
+	expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
+
+	// Do not raise warnings for truncate.
+	oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
+	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = oriIgnoreTruncate
+	if uVal < 0 || isNull || err != nil {
+		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	}
+
+	desc := orderByItems[0].Desc
+	if boundClause.Unit != nil {
 		// It can be guaranteed by the parser.
 		unitVal := boundClause.Unit.(*driver.ValueExpr)
 		unit := expression.Constant{Value: unitVal.Datum, RetType: unitVal.GetType()}
 
+		// When the order is asc:
+		//   `+` for following, and `-` for the preceding
+		// When the order is desc, `+` becomes `-` and vice-versa.
 		funcName := ast.DateAdd
-		if bound.Type == ast.Preceding {
+		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
 			funcName = ast.DateSub
 		}
-		bound.DateCalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
+		bound.CalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
 		if err != nil {
 			return nil, err
 		}
+		bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFunc)
 		return bound, nil
 	}
-	// Non-interval bound only support order by numeric types.
-	if isTemporal {
-		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+	// When the order is asc:
+	//   `+` for following, and `-` for the preceding
+	// When the order is desc, `+` becomes `-` and vice-versa.
+	funcName := ast.Plus
+	if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
+		funcName = ast.Minus
 	}
-	num, isNull, isExpectedType := getUintFromNode(b.ctx, boundClause.Expr)
-	if isNull || !isExpectedType {
-		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	bound.CalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
+	if err != nil {
+		return nil, err
 	}
-	bound.Num = num
+	bound.CmpFunc = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFunc)
 	return bound, nil
 }
 
@@ -2980,7 +3012,6 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			if x.AsName.L != "" && asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
-				s.Name = x.AsName
 				input = append(input, &newTableName)
 			} else {
 				input = append(input, s)

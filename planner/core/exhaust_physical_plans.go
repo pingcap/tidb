@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/set"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
@@ -65,20 +66,23 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 }
 
 func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Expression {
-	otherConds := make([]expression.Expression, len(p.OtherConditions))
+	// Construct used equal condition set based on the equal condition offsets.
+	usedEqConds := set.NewIntSet()
+	for _, eqCondIdx := range offsets {
+		usedEqConds.Insert(eqCondIdx)
+	}
+
+	// Construct otherConds, which is composed of the original other conditions
+	// and the remained unused equal conditions.
+	numOtherConds := len(p.OtherConditions) + len(p.EqualConditions) - len(offsets)
+	otherConds := make([]expression.Expression, len(p.OtherConditions), numOtherConds)
 	copy(otherConds, p.OtherConditions)
-	for i, eqCond := range p.EqualConditions {
-		match := false
-		for _, offset := range offsets {
-			if i == offset {
-				match = true
-				break
-			}
-		}
-		if !match {
-			otherConds = append(otherConds, eqCond)
+	for eqCondIdx := range p.EqualConditions {
+		if !usedEqConds.Exist(eqCondIdx) {
+			otherConds = append(otherConds, p.EqualConditions[eqCondIdx])
 		}
 	}
+
 	return otherConds
 }
 
@@ -136,6 +140,7 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 		mergeJoin.SetSchema(p.schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
+		mergeJoin.initCompareFuncs()
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			mergeJoin.childrenReqProps = reqProps
 			joins = append(joins, mergeJoin)
@@ -224,7 +229,15 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
+	enforcedPhysicalMergeJoin.initCompareFuncs()
 	return []PhysicalPlan{enforcedPhysicalMergeJoin}
+}
+
+func (p *PhysicalMergeJoin) initCompareFuncs() {
+	p.CompareFuncs = make([]expression.CompareFunc, 0, len(p.LeftKeys))
+	for i := range p.LeftKeys {
+		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.LeftKeys[i], p.RightKeys[i]))
+	}
 }
 
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) []PhysicalPlan {

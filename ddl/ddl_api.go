@@ -471,6 +471,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	err = checkColumnFieldLength(col)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	return col, constraints, nil
 }
 
@@ -725,16 +729,6 @@ func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-// checkColumnsFieldLength check the maximum length limit for different character set varchar type columns.
-func checkColumnsFieldLength(cols []*table.Column) error {
-	for _, col := range cols {
-		if err := checkColumnFieldLength(col); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
 func checkColumnFieldLength(col *table.Column) error {
 	if col.Tp == mysql.TypeVarchar {
 		if err := IsTooBigFieldLength(col.Flen, col.Name.O, col.Charset); err != nil {
@@ -845,7 +839,8 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
-		Name: tableName,
+		Name:    tableName,
+		Version: model.CurrLatestTableInfoVersion,
 	}
 	// When this function is called by MockTableInfo, we should set a particular table id.
 	// So the `ddl` structure may be nil.
@@ -1033,10 +1028,6 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	// The column charset haven't been resolved here.
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, dbCharset)
 	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if err = checkColumnsFieldLength(cols); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1438,7 +1429,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 }
 
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
-// returns valied specs, and the occured error.
+// returns valied specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlterAlgorithmDefault
@@ -1461,14 +1452,17 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 
 	// Verify whether the algorithm is supported.
 	for _, spec := range validSpecs {
-		algorithm, err := ResolveAlterAlgorithm(spec, algorithm)
+		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
 		if err != nil {
-			// For the compatibility, we return warning instead of error.
+			if algorithm != ast.AlterAlgorithmCopy {
+				return nil, errors.Trace(err)
+			}
+			// For the compatibility, we return warning instead of error when the algorithm is COPY,
+			// because the COPY ALGORITHM is not supported in TiDB.
 			ctx.GetSessionVars().StmtCtx.AppendError(err)
-			err = nil
 		}
 
-		spec.Algorithm = algorithm
+		spec.Algorithm = resolvedAlgorithm
 	}
 
 	// Only handle valid specs.
@@ -2144,6 +2138,13 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Name:               newColName,
 	})
 
+	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
+	// If newCol's charset is empty and the table's version less than TableInfoVersion1,
+	// we will not modify the charset of the column. This behavior is not compatible with MySQL.
+	if len(newCol.FieldType.Charset) == 0 && t.Meta().Version < model.TableInfoVersion1 {
+		newCol.FieldType.Charset = col.FieldType.Charset
+		newCol.FieldType.Collate = col.FieldType.Collate
+	}
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return nil, errors.Trace(err)

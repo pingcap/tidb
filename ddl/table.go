@@ -33,6 +33,11 @@ import (
 )
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	// gofail: var mockExceedErrorLimit bool
+	// if mockExceedErrorLimit {
+	//    return ver, errors.New("mock do job error")
+	// }
+
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
 	if err := job.DecodeArgs(tbInfo); err != nil {
@@ -217,6 +222,9 @@ func (w *worker) onRestoreTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, false)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	case model.StateWriteOnly:
 		// write only -> public
 		// do restore table.

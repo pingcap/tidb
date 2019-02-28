@@ -16,16 +16,21 @@ package executor
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
+	"time"
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -37,6 +42,15 @@ type requiredRowsDataSource struct {
 
 	expectedRowsRet []int
 	numNextCalled   int
+
+	generator func(valType *types.FieldType) interface{}
+}
+
+func newRequiredRowsDataSourceWithGenerator(ctx sessionctx.Context, totalRows int, expectedRowsRet []int,
+	gen func(valType *types.FieldType) interface{}) *requiredRowsDataSource {
+	ds := newRequiredRowsDataSource(ctx, totalRows, expectedRowsRet)
+	ds.generator = gen
+	return ds
 }
 
 func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRowsRet []int) *requiredRowsDataSource {
@@ -48,7 +62,7 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 	}
 	schema := expression.NewSchema(cols...)
 	baseExec := newBaseExecutor(ctx, schema, "")
-	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0}
+	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0, defaultGenerator}
 }
 
 func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatch) error {
@@ -76,12 +90,12 @@ func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.RecordBatc
 func (r *requiredRowsDataSource) genOneRow() chunk.Row {
 	row := chunk.MutRowFromTypes(r.retTypes())
 	for i := range r.retTypes() {
-		row.SetValue(i, r.genValue(r.retTypes()[i]))
+		row.SetValue(i, r.generator(r.retTypes()[i]))
 	}
 	return row.ToRow()
 }
 
-func (r *requiredRowsDataSource) genValue(valType *types.FieldType) interface{} {
+func defaultGenerator(valType *types.FieldType) interface{} {
 	switch valType.Tp {
 	case mysql.TypeLong, mysql.TypeLonglong:
 		return int64(rand.Int())
@@ -164,6 +178,7 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
 			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
 		}
+		c.Assert(exec.Close(), IsNil)
 		c.Assert(ds.checkNumNextCalled(), IsNil)
 	}
 }
@@ -184,5 +199,393 @@ func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MemQuotaSort = variable.DefTiDBMemQuotaSort
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker("", ctx.GetSessionVars().MemQuotaQuery)
 	return ctx
+}
+
+func (s *testExecSuite) TestSortRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		groupBy        []int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+	}{
+		{
+			totalRows:      10,
+			groupBy:        []int{0},
+			requiredRows:   []int{1, 5, 3, 10},
+			expectedRows:   []int{1, 5, 3, 1},
+			expectedRowsDS: []int{10, 0},
+		},
+		{
+			totalRows:      10,
+			groupBy:        []int{0, 1},
+			requiredRows:   []int{1, 5, 3, 10},
+			expectedRows:   []int{1, 5, 3, 1},
+			expectedRowsDS: []int{10, 0},
+		},
+		{
+			totalRows:      maxChunkSize + 1,
+			groupBy:        []int{0},
+			requiredRows:   []int{1, 5, 3, 10, maxChunkSize},
+			expectedRows:   []int{1, 5, 3, 10, (maxChunkSize + 1) - 1 - 5 - 3 - 10},
+			expectedRowsDS: []int{maxChunkSize, 1, 0},
+		},
+		{
+			totalRows:      3*maxChunkSize + 1,
+			groupBy:        []int{0},
+			requiredRows:   []int{1, 5, 3, 10, maxChunkSize},
+			expectedRows:   []int{1, 5, 3, 10, maxChunkSize},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, 1, 0},
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
+		byItems := make([]*plannercore.ByItems, 0, len(testCase.groupBy))
+		for _, groupBy := range testCase.groupBy {
+			col := ds.Schema().Columns[groupBy]
+			byItems = append(byItems, &plannercore.ByItems{Expr: col})
+		}
+		exec := buildSortExec(sctx, byItems, ds)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildSortExec(sctx sessionctx.Context, byItems []*plannercore.ByItems, src Executor) Executor {
+	sortExec := SortExec{
+		baseExecutor: newBaseExecutor(sctx, src.Schema(), "", src),
+		ByItems:      byItems,
+		schema:       src.Schema(),
+	}
+	return &sortExec
+}
+
+func (s *testExecSuite) TestTopNRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		topNOffset     int
+		topNCount      int
+		groupBy        []int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+	}{
+		{
+			totalRows:      10,
+			topNOffset:     0,
+			topNCount:      10,
+			groupBy:        []int{0},
+			requiredRows:   []int{1, 1, 1, 1, 10},
+			expectedRows:   []int{1, 1, 1, 1, 6},
+			expectedRowsDS: []int{10, 0},
+		},
+		{
+			totalRows:      100,
+			topNOffset:     15,
+			topNCount:      11,
+			groupBy:        []int{0},
+			requiredRows:   []int{1, 1, 1, 1, 10},
+			expectedRows:   []int{1, 1, 1, 1, 7},
+			expectedRowsDS: []int{26, 100 - 26, 0},
+		},
+		{
+			totalRows:      100,
+			topNOffset:     95,
+			topNCount:      10,
+			groupBy:        []int{0},
+			requiredRows:   []int{1, 2, 3, 10},
+			expectedRows:   []int{1, 2, 2, 0},
+			expectedRowsDS: []int{100, 0, 0},
+		},
+		{
+			totalRows:      maxChunkSize + 20,
+			topNOffset:     1,
+			topNCount:      5,
+			groupBy:        []int{0, 1},
+			requiredRows:   []int{1, 3, 7, 10},
+			expectedRows:   []int{1, 3, 1, 0},
+			expectedRowsDS: []int{6, maxChunkSize, 14, 0},
+		},
+		{
+			totalRows:      maxChunkSize + maxChunkSize + 20,
+			topNOffset:     maxChunkSize + 10,
+			topNCount:      8,
+			groupBy:        []int{0, 1},
+			requiredRows:   []int{1, 2, 3, 5, 7},
+			expectedRows:   []int{1, 2, 3, 2, 0},
+			expectedRowsDS: []int{maxChunkSize, 18, maxChunkSize, 2, 0},
+		},
+		{
+			totalRows:      maxChunkSize*5 + 10,
+			topNOffset:     maxChunkSize*5 + 20,
+			topNCount:      10,
+			groupBy:        []int{0, 1},
+			requiredRows:   []int{1, 2, 3},
+			expectedRows:   []int{0, 0, 0},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, maxChunkSize, maxChunkSize, maxChunkSize, 10, 0, 0},
+		},
+		{
+			totalRows:      maxChunkSize + maxChunkSize + 10,
+			topNOffset:     10,
+			topNCount:      math.MaxInt64,
+			groupBy:        []int{0, 1},
+			requiredRows:   []int{1, 2, 3, maxChunkSize, maxChunkSize},
+			expectedRows:   []int{1, 2, 3, maxChunkSize, maxChunkSize - 1 - 2 - 3},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, 10, 0, 0},
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
+		byItems := make([]*plannercore.ByItems, 0, len(testCase.groupBy))
+		for _, groupBy := range testCase.groupBy {
+			col := ds.Schema().Columns[groupBy]
+			byItems = append(byItems, &plannercore.ByItems{Expr: col})
+		}
+		exec := buildTopNExec(sctx, testCase.topNOffset, testCase.topNCount, byItems, ds)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*plannercore.ByItems, src Executor) Executor {
+	sortExec := SortExec{
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), "", src),
+		ByItems:      byItems,
+		schema:       src.Schema(),
+	}
+	return &TopNExec{
+		SortExec: sortExec,
+		limit:    &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+	}
+}
+
+func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
+	gen01 := func() func(valType *types.FieldType) interface{} {
+		closureCount := 0
+		return func(valType *types.FieldType) interface{} {
+			switch valType.Tp {
+			case mysql.TypeLong, mysql.TypeLonglong:
+				ret := int64(closureCount % 2)
+				closureCount++
+				return ret
+			case mysql.TypeDouble:
+				return rand.Float64()
+			default:
+				panic("not implement")
+			}
+		}
+	}
+
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		filtersOfCol1  int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+		gen            func(valType *types.FieldType) interface{}
+	}{
+		{
+			totalRows:      20,
+			requiredRows:   []int{1, 2, 3, 4, 5, 20},
+			expectedRows:   []int{1, 2, 3, 4, 5, 5},
+			expectedRowsDS: []int{20, 0},
+		},
+		{
+			totalRows:      20,
+			filtersOfCol1:  0,
+			requiredRows:   []int{1, 3, 5, 7, 9},
+			expectedRows:   []int{1, 3, 5, 1, 0},
+			expectedRowsDS: []int{20, 0, 0},
+			gen:            gen01(),
+		},
+		{
+			totalRows:      maxChunkSize + 20,
+			filtersOfCol1:  1,
+			requiredRows:   []int{1, 3, 5, maxChunkSize},
+			expectedRows:   []int{1, 3, 5, maxChunkSize/2 - 1 - 3 - 5 + 10},
+			expectedRowsDS: []int{maxChunkSize, 20, 0},
+			gen:            gen01(),
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		var filters []expression.Expression
+		var ds *requiredRowsDataSource
+		if testCase.gen == nil {
+			// ignore filters
+			ds = newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
+		} else {
+			ds = newRequiredRowsDataSourceWithGenerator(sctx, testCase.totalRows, testCase.expectedRowsDS, testCase.gen)
+			f, err := expression.NewFunction(
+				sctx, ast.EQ, types.NewFieldType(byte(types.ETInt)), ds.Schema().Columns[1], &expression.Constant{
+					Value:   types.NewDatum(testCase.filtersOfCol1),
+					RetType: types.NewFieldType(mysql.TypeTiny),
+				})
+			c.Assert(err, IsNil)
+			filters = append(filters, f)
+		}
+		exec := buildSelectionExec(sctx, filters, ds)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src Executor) Executor {
+	return &SelectionExec{
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), "", src),
+		filters:      filters,
+	}
+}
+
+func (s *testExecSuite) TestProjectionUnparallelRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+	}{
+		{
+			totalRows:      20,
+			requiredRows:   []int{1, 3, 5, 7, 9},
+			expectedRows:   []int{1, 3, 5, 7, 4},
+			expectedRowsDS: []int{1, 3, 5, 7, 4},
+		},
+		{
+			totalRows:      maxChunkSize + 10,
+			requiredRows:   []int{1, 3, 5, 7, 9, maxChunkSize},
+			expectedRows:   []int{1, 3, 5, 7, 9, maxChunkSize - 1 - 3 - 5 - 7 - 9 + 10},
+			expectedRowsDS: []int{1, 3, 5, 7, 9, maxChunkSize - 1 - 3 - 5 - 7 - 9 + 10},
+		},
+		{
+			totalRows:      maxChunkSize*2 + 10,
+			requiredRows:   []int{1, 7, 9, maxChunkSize, maxChunkSize + 10},
+			expectedRows:   []int{1, 7, 9, maxChunkSize, maxChunkSize + 10 - 1 - 7 - 9},
+			expectedRowsDS: []int{1, 7, 9, maxChunkSize, maxChunkSize + 10 - 1 - 7 - 9},
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
+		exprs := make([]expression.Expression, 0, len(ds.Schema().Columns))
+		if len(exprs) == 0 {
+			for _, col := range ds.Schema().Columns {
+				exprs = append(exprs, col)
+			}
+		}
+		exec := buildProjectionExec(sctx, exprs, ds, 0)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+		}
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
+	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	testCases := []struct {
+		totalRows      int
+		numWorkers     int
+		requiredRows   []int
+		expectedRows   []int
+		expectedRowsDS []int
+	}{
+		{
+			totalRows:      20,
+			numWorkers:     1,
+			requiredRows:   []int{1, 2, 3, 4, 5, 6, 1, 1},
+			expectedRows:   []int{1, 1, 2, 3, 4, 5, 4, 0},
+			expectedRowsDS: []int{1, 1, 2, 3, 4, 5, 4, 0},
+		},
+		{
+			totalRows:      maxChunkSize * 2,
+			numWorkers:     1,
+			requiredRows:   []int{7, maxChunkSize, maxChunkSize, maxChunkSize},
+			expectedRows:   []int{7, 7, maxChunkSize, maxChunkSize - 14},
+			expectedRowsDS: []int{7, 7, maxChunkSize, maxChunkSize - 14, 0},
+		},
+		{
+			totalRows:      20,
+			numWorkers:     2,
+			requiredRows:   []int{1, 2, 3, 4, 5, 6, 1, 1, 1},
+			expectedRows:   []int{1, 1, 1, 2, 3, 4, 5, 3, 0},
+			expectedRowsDS: []int{1, 1, 1, 2, 3, 4, 5, 3, 0},
+		},
+	}
+
+	for _, testCase := range testCases {
+		sctx := defaultCtx()
+		ctx := context.Background()
+		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
+		exprs := make([]expression.Expression, 0, len(ds.Schema().Columns))
+		if len(exprs) == 0 {
+			for _, col := range ds.Schema().Columns {
+				exprs = append(exprs, col)
+			}
+		}
+		exec := buildProjectionExec(sctx, exprs, ds, testCase.numWorkers)
+		c.Assert(exec.Open(ctx), IsNil)
+		chk := exec.newFirstChunk()
+		for i := range testCase.requiredRows {
+			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
+			c.Assert(exec.Next(ctx, chunk.NewRecordBatch(chk)), IsNil)
+			c.Assert(chk.NumRows(), Equals, testCase.expectedRows[i])
+
+			// wait projectionInputFetcher blocked on fetching data
+			// from child in the background.
+			time.Sleep(time.Millisecond * 5)
+		}
+		c.Assert(exec.Close(), IsNil)
+		c.Assert(ds.checkNumNextCalled(), IsNil)
+	}
+}
+
+func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
+	return &ProjectionExec{
+		baseExecutor:  newBaseExecutor(ctx, src.Schema(), "", src),
+		numWorkers:    int64(numWorkers),
+		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+	}
 }

@@ -822,9 +822,16 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 	e := &MergeJoinExec{
 		stmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		joiner: newJoiner(b.ctx, v.JoinType, v.JoinType == plannercore.RightOuterJoin,
-			defaultValues, v.OtherConditions,
-			leftExec.retTypes(), rightExec.retTypes()),
+		compareFuncs: v.CompareFuncs,
+		joiner: newJoiner(
+			b.ctx,
+			v.JoinType,
+			v.JoinType == plannercore.RightOuterJoin,
+			defaultValues,
+			v.OtherConditions,
+			leftExec.retTypes(),
+			rightExec.retTypes(),
+		),
 	}
 
 	leftKeys := v.LeftKeys
@@ -1360,9 +1367,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, maxNumBuckets uint64) *AnalyzeColumnsExec {
 	cols := task.ColsInfo
-	keepOrder := false
 	if task.PKInfo != nil {
-		keepOrder = true
 		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
 	}
 
@@ -1373,7 +1378,6 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		colsInfo:        task.ColsInfo,
 		pkInfo:          task.PKInfo,
 		concurrency:     b.ctx.GetSessionVars().DistSQLScanConcurrency,
-		keepOrder:       keepOrder,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			StartTs:        math.MaxUint64,
@@ -1905,14 +1909,35 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	aggDesc := aggregation.NewAggFuncDesc(b.ctx, v.WindowFuncDesc.Name, v.WindowFuncDesc.Args, false)
 	resultColIdx := len(v.Schema().Columns) - 1
 	agg := aggfuncs.Build(b.ctx, aggDesc, resultColIdx)
-	if agg == nil {
-		b.err = errors.Trace(errors.New("window evaluator only support aggregation functions without frame now"))
-		return nil
+	var processor windowProcessor
+	if v.Frame == nil {
+		processor = &aggWindowProcessor{
+			windowFunc:    agg,
+			partialResult: agg.AllocPartialResult(),
+		}
+	} else if v.Frame.Type == ast.Rows {
+		processor = &rowFrameWindowProcessor{
+			windowFunc:    agg,
+			partialResult: agg.AllocPartialResult(),
+			start:         v.Frame.Start,
+			end:           v.Frame.End,
+		}
+	} else {
+		cmpResult := int64(-1)
+		if v.OrderBy[0].Desc {
+			cmpResult = 1
+		}
+		processor = &rangeFrameWindowProcessor{
+			windowFunc:        agg,
+			partialResult:     agg.AllocPartialResult(),
+			start:             v.Frame.Start,
+			end:               v.Frame.End,
+			col:               v.OrderBy[0].Col,
+			expectedCmpResult: cmpResult,
+		}
 	}
-	e := &WindowExec{baseExecutor: base,
-		windowFunc:    agg,
-		partialResult: agg.AllocPartialResult(),
-		groupChecker:  newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
+	return &WindowExec{baseExecutor: base,
+		processor:    processor,
+		groupChecker: newGroupChecker(b.ctx.GetSessionVars().StmtCtx, groupByItems),
 	}
-	return e
 }

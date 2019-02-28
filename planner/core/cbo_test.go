@@ -483,7 +483,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}{
 		{
 			sql:  "analyze table t3",
-			best: "Analyze{Index(a),Table(b)}",
+			best: "Analyze{Index(a),Table(a, b)}",
 		},
 		// Test analyze full table.
 		{
@@ -689,7 +689,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
 			"Projection_11 10.00 root 9_aux_0",
-			"└─Apply_13 10.00 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]",
+			"└─Apply_13 10.00 root left outer semi join, inner:StreamAgg_20, other cond:eq(test.t.c, 7_col_0)",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_20 1.00 root funcs:count(1)",
@@ -708,10 +708,10 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"  ├─TableReader_12 10.00 root data:TableScan_11",
 			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─MaxOneRow_13 1.00 root ",
-			"    └─Projection_14 0.00 root concat(cast(t1.a), \",\", cast(t1.b))",
-			"      └─IndexLookUp_21 0.00 root ",
+			"    └─Projection_14 0.10 root concat(cast(t1.a), \",\", cast(t1.b))",
+			"      └─IndexLookUp_21 0.10 root ",
 			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(t1.c, test.t.c)], keep order:false",
-			"        └─Selection_20 0.00 cop eq(t1.a, test.t.a)",
+			"        └─Selection_20 0.10 cop eq(t1.a, test.t.a)",
 			"          └─TableScan_19 1.00 cop table:t, keep order:false",
 		))
 }

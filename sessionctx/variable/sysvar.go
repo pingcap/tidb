@@ -364,7 +364,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_buffer_pool_load_now", "OFF"},
 	{ScopeNone, "performance_schema_max_rwlock_classes", "40"},
 	{ScopeNone, "binlog_gtid_simple_recovery", "OFF"},
-	{ScopeNone, Port, strconv.FormatUint(uint64(config.GetGlobalConfig().Port), 10)},
+	{ScopeNone, Port, "4000"},
 	{ScopeNone, "performance_schema_digests_size", "10000"},
 	{ScopeGlobal | ScopeSession, "profiling", "OFF"},
 	{ScopeNone, "lower_case_table_names", "2"},
@@ -679,6 +679,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeGlobal, TiDBDDLReorgBatchSize, strconv.Itoa(DefTiDBDDLReorgBatchSize)},
+	{ScopeGlobal, TiDBDDLErrorCountLimit, strconv.Itoa(DefTiDBDDLErrorCountLimit)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
@@ -803,6 +804,10 @@ const (
 	PluginLoad = "plugin_load"
 	// Port is the name for 'port' system variable.
 	Port = "port"
+	// DataDir is the name for 'datadir' system variable.
+	DataDir = "datadir"
+	// Socket is the name for 'socket' system variable.
+	Socket = "socket"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
