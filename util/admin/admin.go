@@ -72,6 +72,10 @@ func isJobRollbackable(job *model.Job, id int64) error {
 		if job.SchemaState != model.StateNone {
 			return ErrCannotCancelDDLJob.GenByArgs(id)
 		}
+	case model.ActionRebaseAutoID, model.ActionShardRowID:
+		if job.SchemaState != model.StateNone {
+			return ErrCannotCancelDDLJob.GenByArgs(id)
+		}
 	}
 	return nil
 }

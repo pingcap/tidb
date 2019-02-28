@@ -259,10 +259,10 @@ func (s *testDDLSuite) TestTableError(c *C) {
 		job.SchemaID = -1
 		job.TableID = -1
 		t := meta.NewMeta(txn)
-		_, err1 := getTableInfo(t, job, job.SchemaID)
+		_, err1 := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 		c.Assert(err1, NotNil)
 		job.SchemaID = dbInfo.ID
-		_, err1 = getTableInfo(t, job, job.SchemaID)
+		_, err1 = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 		c.Assert(err1, NotNil)
 		return nil
 	})
@@ -441,8 +441,9 @@ func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []inte
 func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
 	var checkErr error
 	if test.cancelState == job.SchemaState {
-		if job.SchemaState == model.StateNone && job.State != model.JobStateDone {
-			// If the schema state is none, we only test the job is finished.
+		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema && job.Type != model.ActionRebaseAutoID {
+			// If the schema state is none and is not equal to model.JobStateDone, we only test the job is finished.
+			// Unless the job is model.ActionCreateTable, model.ActionCreateSchema, model.ActionRebaseAutoID, we do the cancel anyway.
 		} else {
 			errs, err := admin.CancelJobs(txn, test.jobIDs)
 			if err != nil {
@@ -493,6 +494,8 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 13}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenByArgs(firstID + 13)}, cancelState: model.StateWriteOnly, ddlRetErr: err},
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 14}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenByArgs(firstID + 14)}, cancelState: model.StateDeleteOnly, ddlRetErr: err},
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 15}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenByArgs(firstID + 15)}, cancelState: model.StateDeleteReorganization, ddlRetErr: err},
+		{act: model.ActionRebaseAutoID, jobIDs: []int64{firstID + 16}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
+		{act: model.ActionShardRowID, jobIDs: []int64{firstID + 17}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
 	}
 
 	return tests
@@ -547,6 +550,10 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
+	tableAutoID := int64(100)
+	shardRowIDBits := uint64(5)
+	tblInfo.AutoIncID = tableAutoID
+	tblInfo.ShardRowIDBits = shardRowIDBits
 	job := testCreateTable(c, ctx, d, dbInfo, tblInfo)
 	// insert t values (1, 2, 3, 4);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
@@ -564,7 +571,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	tests := buildCancelJobTests(firstJobID)
 	var checkErr error
 	var test *testCancelJob
-	tc.onJobUpdated = func(job *model.Job) {
+	hookCancelFunc := func(job *model.Job) {
 		if job.State == model.JobStateSynced || job.State == model.JobStateCancelled || job.State == model.JobStateCancelling {
 			return
 		}
@@ -595,6 +602,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			return
 		}
 	}
+	tc.onJobUpdated = hookCancelFunc
+	tc.onJobRunBefore = hookCancelFunc
 	d.SetHook(tc)
 
 	// for adding index
@@ -693,6 +702,22 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testCancelDropColumn(c, ctx, d, dbInfo, tblInfo, dropColumnArgs)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
+
+	// cancel rebase auto id
+	test = &tests[15]
+	rebaseIDArgs := []interface{}{int64(200)}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, rebaseIDArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	changedTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().AutoIncID, Equals, tableAutoID)
+
+	// cancel shard bits
+	test = &tests[16]
+	shardRowIDArgs := []interface{}{uint64(7)}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, shardRowIDArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().ShardRowIDBits, Equals, shardRowIDBits)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

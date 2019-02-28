@@ -561,7 +561,7 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 
 		// When the job not in "none" and "public" state, we need to rollback it.
 		schemaID := job.SchemaID
-		tblInfo, err := getTableInfo(m, job, schemaID)
+		tblInfo, err := getTableInfoAndCancelFaultJob(m, job, schemaID)
 		if err != nil {
 			return errors.Trace(err)
 		}

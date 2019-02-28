@@ -48,7 +48,7 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -81,7 +81,7 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		return ver, errors.Trace(err)
 	}
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -121,7 +121,7 @@ func rollingbackAddindex(d *ddl, t *meta.Meta, job *model.Job) (ver int64, err e
 }
 
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -152,6 +152,25 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	return ver, errors.Trace(errCancelledDDLJob)
 }
 
+func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
+	// We can only cancel the not handled job.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+
+	job.State = model.JobStateRunning
+
+	return ver, nil
+}
+func rollingbackRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	return cancelOnlyNotHandledJob(job)
+}
+
+func rollingbackShardRowID(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	return cancelOnlyNotHandledJob(job)
+}
+
 func convertJob2RollbackJob(d *ddl, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -160,6 +179,10 @@ func convertJob2RollbackJob(d *ddl, t *meta.Meta, job *model.Job) (ver int64, er
 		ver, err = rollingbackAddindex(d, t, job)
 	case model.ActionDropColumn:
 		ver, err = rollingbackDropColumn(t, job)
+	case model.ActionRebaseAutoID:
+		ver, err = rollingbackRebaseAutoID(t, job)
+	case model.ActionShardRowID:
+		ver, err = rollingbackShardRowID(t, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob
