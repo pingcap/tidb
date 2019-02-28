@@ -64,4 +64,21 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("<nil> <nil> <nil>", "1 2019-02-01 6", "2 2019-02-02 6", "3 2019-02-03 10", "5 2019-02-05 5"))
 	result = tk.MustQuery("select a, b, sum(a) over(order by b desc range between interval 1 day preceding and interval 2 day following) from t")
 	result.Check(testkit.Rows("5 2019-02-05 8", "3 2019-02-03 6", "2 2019-02-02 6", "1 2019-02-01 3", "<nil> <nil> <nil>"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1,1),(1,2),(2,1),(2,2)")
+	result = tk.MustQuery("select a, b, rank() over() from t")
+	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 1 1", "2 2 1"))
+	result = tk.MustQuery("select a, b, rank() over(order by a) from t")
+	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 1 3", "2 2 3"))
+	result = tk.MustQuery("select a, b, rank() over(order by a, b) from t")
+	result.Check(testkit.Rows("1 1 1", "1 2 2", "2 1 3", "2 2 4"))
+
+	result = tk.MustQuery("select a, b, dense_rank() over() from t")
+	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 1 1", "2 2 1"))
+	result = tk.MustQuery("select a, b, dense_rank() over(order by a) from t")
+	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 1 2", "2 2 2"))
+	result = tk.MustQuery("select a, b, dense_rank() over(order by a, b) from t")
+	result.Check(testkit.Rows("1 1 1", "1 2 2", "2 1 3", "2 2 4"))
 }
