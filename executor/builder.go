@@ -1908,7 +1908,11 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	}
 	aggDesc := aggregation.NewAggFuncDesc(b.ctx, v.WindowFuncDesc.Name, v.WindowFuncDesc.Args, false)
 	resultColIdx := len(v.Schema().Columns) - 1
-	agg := aggfuncs.Build(b.ctx, aggDesc, resultColIdx)
+	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
+	for _, item := range v.OrderBy {
+		orderByCols = append(orderByCols, item.Col)
+	}
+	agg := aggfuncs.BuildWindowFunctions(b.ctx, aggDesc, resultColIdx, orderByCols)
 	var processor windowProcessor
 	if v.Frame == nil {
 		processor = &aggWindowProcessor{
