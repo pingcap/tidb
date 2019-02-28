@@ -63,14 +63,16 @@ func (ca twoPhaseCommitAction) MetricsTag() string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store     *tikvStore
-	txn       *tikvTxn
-	startTS   uint64
-	keys      [][]byte
-	mutations map[string]*pb.Mutation
-	lockTTL   uint64
-	commitTS  uint64
-	mu        struct {
+	store        *tikvStore
+	txn          *tikvTxn
+	startTS      uint64
+	keys         [][]byte
+	mutations    map[string]*pb.Mutation
+	lockTTL      uint64
+	maxReadTs    uint64
+	hasMaxReadTs bool
+	commitTS     uint64
+	mu           struct {
 		sync.RWMutex
 		committed       bool
 		undeterminedErr error // undeterminedErr saves the rpc error we encounter when commit primary key.
@@ -165,6 +167,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		keys:          keys,
 		mutations:     mutations,
 		lockTTL:       txnLockTTL(txn.startTime, size),
+		hasMaxReadTs:  true,
 		priority:      getTxnPriority(txn),
 		syncLog:       getTxnSyncLog(txn),
 		connID:        connID,
@@ -340,6 +343,17 @@ func (c *twoPhaseCommitter) keySize(key []byte) int {
 	return len(key)
 }
 
+func (c *twoPhaseCommitter) getMaxReadTs(ts uint64) {
+	if ts == math.MaxUint64 || !c.hasMaxReadTs {
+		return
+	}
+	if ts == 0 {
+		c.hasMaxReadTs = false
+	} else if ts > c.maxReadTs {
+		c.maxReadTs = ts
+	}
+}
+
 func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) error {
 	mutations := make([]*pb.Mutation, len(batch.keys))
 	for i, k := range batch.keys {
@@ -382,6 +396,7 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
+			c.getMaxReadTs(prewriteResp.GetMaxReadTs())
 			return nil
 		}
 		var locks []*Lock
@@ -632,22 +647,29 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	start = time.Now()
-	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
-	if err != nil {
-		log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
-		return errors.Trace(err)
-	}
-	c.detail.GetCommitTsTime = time.Since(start)
+	if c.hasMaxReadTs {
+		c.commitTS = c.maxReadTs + 1
+		if c.startTS > c.maxReadTs {
+			c.commitTS = c.startTS + 1
+		}
+	} else {
+		start = time.Now()
+		commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
+		if err != nil {
+			log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
+			return errors.Trace(err)
+		}
+		c.detail.GetCommitTsTime = time.Since(start)
 
-	// check commitTS
-	if commitTS <= c.startTS {
-		err = errors.Errorf("con:%d Invalid transaction tso with start_ts=%v while commit_ts=%v",
-			c.connID, c.startTS, commitTS)
-		log.Error(err)
-		return errors.Trace(err)
+		// check commitTS
+		if commitTS <= c.startTS {
+			err = errors.Errorf("con:%d Invalid transaction tso with start_ts=%v while commit_ts=%v",
+				c.connID, c.startTS, commitTS)
+			log.Error(err)
+			return errors.Trace(err)
+		}
+		c.commitTS = commitTS
 	}
-	c.commitTS = commitTS
 	if err = c.checkSchemaValid(); err != nil {
 		return errors.Trace(err)
 	}
