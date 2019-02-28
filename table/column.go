@@ -371,7 +371,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 			t := value.GetMysqlTime()
 			// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.
 			defaultTimeZone := timeutil.SystemLocation()
-			if col.Version == model.ColumnInfoVersion1 {
+			if col.Version >= model.ColumnInfoVersion1 {
 				defaultTimeZone = time.UTC
 			}
 			err = t.ConvertTimeZone(defaultTimeZone, ctx.GetSessionVars().Location())
