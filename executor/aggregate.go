@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -805,7 +805,7 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 	req.Reset()
-	for !e.executed && req.NumRows() < e.maxChunkSize {
+	for !e.executed && !req.IsFull() {
 		err := e.consumeOneGroup(ctx, req.Chunk)
 		if err != nil {
 			e.executed = true
