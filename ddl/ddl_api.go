@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
@@ -269,6 +270,30 @@ func checkColumnCantHaveDefaultValue(ctx sessionctx.Context, col *table.Column, 
 	return nil
 }
 
+func convertTimestampDefaultValToUTC(ctx sessionctx.Context, defaultVal interface{}, col *table.Column) (interface{}, error) {
+	if defaultVal == nil || col.Tp != mysql.TypeTimestamp {
+		return defaultVal, nil
+	}
+	if vv, ok := defaultVal.(string); ok {
+		if vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+			t, err := types.ParseTime(ctx.GetSessionVars().StmtCtx, vv, col.Tp, col.Decimal)
+			if err != nil {
+				return defaultVal, errors.Trace(err)
+			}
+			err = t.ConvertTimeZone(ctx.GetSessionVars().TimeZone, time.UTC)
+			if err != nil {
+				return defaultVal, errors.Trace(err)
+			}
+			defaultVal = t.String()
+			// Version = 1: For OriginDefaultValue and DefaultValue of timestamp column will stores the default time in UTC time zone.
+			//              This will fix bug in version 0.
+			// TODO: remove this version field after there is no old version 0.
+			col.Version = model.ColumnInfoVersion1
+		}
+	}
+	return defaultVal, nil
+}
+
 // isExplicitTimeStamp is used to check if explicit_defaults_for_timestamp is on or off.
 // Check out this link for more details.
 // https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_explicit_defaults_for_timestamp
@@ -294,7 +319,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 			col.Flag |= mysql.NotNullFlag
 		}
 	}
-
+	var err error
 	setOnUpdateNow := false
 	hasDefaultValue := false
 	if colDef.Options != nil {
@@ -325,15 +350,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 				constraints = append(constraints, constraint)
 				col.Flag |= mysql.UniqueKeyFlag
 			case ast.ColumnOptionDefaultValue:
-				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
+				hasDefaultValue, err = setDefaultValue(ctx, col, v)
 				if err != nil {
-					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
-				}
-				if err = checkColumnCantHaveDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
-				col.DefaultValue = value
-				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
@@ -378,14 +398,15 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		col.Flag &= ^mysql.BinaryFlag
 		col.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
 	}
-	err := checkDefaultValue(ctx, col, hasDefaultValue)
+	err = checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp int) (interface{}, error) {
+func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
+	tp, fsp := t.Tp, t.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
@@ -1277,13 +1298,23 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	return errUnsupportedModifyColumn.GenByArgs(msg)
 }
 
-func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
-	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
+func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
+	hasDefaultValue := false
+	value, err := getDefaultValue(ctx, option, &col.FieldType)
 	if err != nil {
-		return ErrColumnBadNull.Gen("invalid default value - %s", err)
+		return hasDefaultValue, ErrColumnBadNull.Gen("invalid default value - %s", err)
+	}
+
+	if err = checkColumnCantHaveDefaultValue(ctx, col, value); err != nil {
+		return hasDefaultValue, errors.Trace(err)
+	}
+	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
+	if err != nil {
+		return hasDefaultValue, errors.Trace(err)
 	}
 	col.DefaultValue = value
-	return errors.Trace(checkDefaultValue(ctx, col, true))
+	hasDefaultValue = true
+	return hasDefaultValue, nil
 }
 
 func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
@@ -1301,18 +1332,14 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		return nil
 	}
 	var hasDefaultValue, setOnUpdateNow bool
+	var err error
 	for _, opt := range options {
 		switch opt.Tp {
 		case ast.ColumnOptionDefaultValue:
-			value, err := getDefaultValue(ctx, opt, col.Tp, col.Decimal)
+			hasDefaultValue, err = setDefaultValue(ctx, col, opt)
 			if err != nil {
-				return ErrColumnBadNull.Gen("invalid default value - %s", err)
-			}
-			if err = checkColumnCantHaveDefaultValue(ctx, col, value); err != nil {
 				return errors.Trace(err)
 			}
-			col.DefaultValue = value
-			hasDefaultValue = true
 		case ast.ColumnOptionComment:
 			err := setColumnComment(ctx, col, opt)
 			if err != nil {
@@ -1529,8 +1556,11 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		col.DefaultValue = nil
 		setNoDefaultValueFlag(col, false)
 	} else {
-		err = setDefaultValue(ctx, col, specNewColumn.Options[0])
+		hasDefaultValue, err := setDefaultValue(ctx, col, specNewColumn.Options[0])
 		if err != nil {
+			return errors.Trace(err)
+		}
+		if err = checkDefaultValue(ctx, col, hasDefaultValue); err != nil {
 			return errors.Trace(err)
 		}
 	}

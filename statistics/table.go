@@ -267,7 +267,7 @@ func (t *Table) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool 
 		return true
 	}
 	col, ok := t.Columns[colID]
-	if ok && col.NDV > 0 && col.Len() == 0 {
+	if ok && col.NDV > 0 && col.Len() == 0 && sc != nil {
 		sc.SetHistogramsNotLoad()
 		histogramNeededColumns.insert(tableColumnID{tableID: t.TableID, columnID: colID})
 	}
