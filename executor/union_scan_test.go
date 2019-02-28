@@ -90,6 +90,7 @@ func (s *testSuite2) TestDirtyTransaction(c *C) {
 	tk.MustExec("insert into t values (1, 1)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t where c1 < 5").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select c2 from t").Check(testkit.Rows("1"))
 	tk.MustExec("commit")
 }
 
