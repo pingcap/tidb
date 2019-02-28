@@ -470,12 +470,14 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		return
 	}
 	for groupKey := range w.groupSet {
+		//fmt.Println("----------1>  ", result.NumRows(), len(w.aggFuncs))
 		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, []byte(groupKey), w.partialResultMap)
 		for i, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i], result); err != nil {
 				log.Error(errors.ErrorStack(err))
 			}
 		}
+		//fmt.Println("----------2> ", result.NumRows())
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
 		}
@@ -485,7 +487,6 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 			if finished {
 				return
 			}
-			result.Reset()
 		}
 	}
 	w.outputCh <- &AfFinalResult{chk: result}
