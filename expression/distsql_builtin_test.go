@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testEvalSuite{})
@@ -167,7 +167,7 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		var err error
 		expr.Val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		if err != nil {
-			log.Warnf("err happened when EncodeDecimal in datumExpr:%s", err.Error())
+			panic(fmt.Sprintf("err happened when EncodeDecimal in datumExpr:%s", err.Error()))
 		}
 	case types.KindMysqlJSON:
 		expr.Tp = tipb.ExprType_MysqlJson
@@ -175,7 +175,7 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		expr.Val = make([]byte, 0, 1024)
 		expr.Val, err = codec.EncodeValue(nil, expr.Val, d)
 		if err != nil {
-			log.Warnf("err happened when EncodeValue of JSON in datumExpr:%s", err.Error())
+			panic(fmt.Sprintf("err happened when EncodeValue of JSON in datumExpr:%s", err.Error()))
 		}
 	default:
 		expr.Tp = tipb.ExprType_Null
@@ -187,7 +187,7 @@ func jsonDatumExpr(s string) *tipb.Expr {
 	var d types.Datum
 	j, err := json.ParseBinaryFromString(s)
 	if err != nil {
-		log.Warnf("err happened when json.ParseBinaryFromString in jsonDatumExpr:%s", err.Error())
+		panic(fmt.Sprintf("err happened when json.ParseBinaryFromString in jsonDatumExpr:%s", err.Error()))
 	}
 	d.SetMysqlJSON(j)
 	return datumExpr(d)

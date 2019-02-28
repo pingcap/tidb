@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -21,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disjointset"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
@@ -280,7 +281,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 		s.insertCol(col)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
-		log.Warnf("[const_propagation]Too many columns in a single CNF: the column count is %d, the max count is %d.", len(s.columns), MaxPropagateColsCnt)
+		log.Warn("[const_propagation]Too many columns in a single CNF", zap.Int("Count we got", len(s.columns)), zap.Int("Expected max count", MaxPropagateColsCnt))
 		return conditions
 	}
 	s.propagateConstantEQ()
@@ -528,7 +529,7 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 		s.insertCol(col)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
-		log.Warnf("[const_propagation_over_outerjoin] Too many columns: column count is %d, max count is %d.", len(s.columns), MaxPropagateColsCnt)
+		log.Warn("[const_propagation_over_outerjoin]Too many columns", zap.Int("Columns we got", len(s.columns)), zap.Int("expected max count", MaxPropagateColsCnt))
 		return joinConds, filterConds
 	}
 	s.propagateConstantEQ()

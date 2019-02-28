@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -23,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // ExpressionsToPB converts expression to tipb.Expr.
@@ -100,7 +101,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType()
 	d, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		log.Errorf("Fail to eval constant, err: %s", err.Error())
+		log.Error("[expr_to_pb]Fail to eval constant", zap.String("error", err.Error()))
 		return nil
 	}
 	tp, val, ok := pc.encodeDatum(d)
@@ -148,7 +149,7 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 		var err error
 		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		if err != nil {
-			log.Errorf("Fail to encode value, err: %s", err.Error())
+			log.Error("[expr_to_pb]Fail to encode value", zap.String("error", err.Error()))
 			return tp, nil, false
 		}
 	case types.KindMysqlTime:
@@ -157,7 +158,7 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 			t := d.GetMysqlTime()
 			v, err := t.ToPackedUint()
 			if err != nil {
-				log.Errorf("Fail to encode value, err: %s", err.Error())
+				log.Error("[expr_to_pb]Fail to encode value", zap.String("error", err.Error()))
 				return tp, nil, false
 			}
 			val = codec.EncodeUint(nil, v)

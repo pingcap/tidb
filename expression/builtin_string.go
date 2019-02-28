@@ -28,6 +28,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -36,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 	"golang.org/x/text/transform"
 )
 
@@ -264,7 +265,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT is -1.", i)
+			log.Warn("There's not expected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index in CONCAT", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -322,7 +323,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				log.Warningf("Not Expected: `Flen` of arg[%v] in CONCAT_WS is -1.", i)
+				log.Warn("There's not expected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index in CONCAT_WS", i))
 			}
 			bf.tp.Flen += argType.Flen
 		}
@@ -1770,7 +1771,7 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			log.Errorf("getFlen4LpadAndRpad with error: %v", err.Error())
+			log.Error("There's error when eval the `Flen` of LAPD/RPAD", zap.String("error", err.Error()))
 		}
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
 			return mysql.MaxBlobWidth
@@ -2150,7 +2151,10 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 	oldStr := result
 	result, _, err = transform.String(encoding.NewDecoder(), result)
 	if err != nil {
-		log.Errorf("Convert %s to %s with error: %v", oldStr, charsetName, err.Error())
+		log.Warn("Cannot convert string to target charset",
+			zap.String("original string", oldStr),
+			zap.String("target charset", charsetName),
+			zap.String("error", err.Error()))
 		return "", true, err
 	}
 	return result, false, nil
