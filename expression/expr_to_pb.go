@@ -14,14 +14,10 @@
 package expression
 
 import (
-	"time"
-
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	tipb "github.com/pingcap/tipb/go-tipb"
@@ -127,12 +123,7 @@ func (pc PbConverter) constantToPBExpr(con *Constant) *tipb.Expr {
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			loc := pc.sc.TimeZone
 			t := d.GetMysqlTime()
-			if t.Type == mysql.TypeTimestamp && loc != time.UTC {
-				err := t.ConvertTimeZone(loc, time.UTC)
-				terror.Log(errors.Trace(err))
-			}
 			v, err := t.ToPackedUint()
 			if err != nil {
 				log.Errorf("Fail to encode value, err: %s", err.Error())

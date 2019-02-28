@@ -588,8 +588,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBDisableTxnAutoRetry:
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBDDLReorgWorkerCount:
-		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
-		SetDDLReorgWorkerCounter(int32(workerCnt))
+		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	}
 	s.systems[name] = val
 	return nil

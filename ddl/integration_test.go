@@ -15,6 +15,7 @@ package ddl_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/types"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
@@ -118,6 +119,19 @@ func (s *testIntegrationSuite) TestEndIncluded(c *C) {
 	tk.MustExec("admin check table t")
 }
 
+func (s *testIntegrationSuite) TestCaseInsensitiveCharsetAndCollate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database if not exists test_charset_collate")
+	defer tk.MustExec("drop database test_charset_collate")
+	tk.MustExec("use test_charset_collate")
+	tk.MustExec("create table t(id int) ENGINE=InnoDB DEFAULT CHARSET=UTF8 COLLATE=UTF8_BIN;")
+	tk.MustExec("create table t1(id int) ENGINE=InnoDB DEFAULT CHARSET=UTF8 COLLATE=uTF8_BIN;")
+	tk.MustExec("create table t2(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8 COLLATE=utf8_BIN;")
+	tk.MustExec("create table t3(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8mb4 COLLATE=utf8MB4_BIN;")
+	tk.MustExec("create table t4(id int) ENGINE=InnoDB DEFAULT CHARSET=Utf8mb4 COLLATE=utf8MB4_general_ci;")
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
@@ -127,4 +141,32 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	session.SetStatsLease(0)
 	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
+}
+
+func (s *testIntegrationSuite) TestNoZeroDateMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	defer tk.MustExec("set session sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+
+	tk.MustExec("use test;")
+	tk.MustExec("set session sql_mode='STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION';")
+
+	_, err := tk.Exec("create table test_zero_date(agent_start_time date NOT NULL DEFAULT '0000-00-00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table test_zero_date(agent_start_time datetime NOT NULL DEFAULT '0000-00-00 00:00:00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table test_zero_date(agent_start_time timestamp NOT NULL DEFAULT '0000-00-00 00:00:00')")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("create table test_zero_date(a timestamp default '0000-00-00 00')")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table test_zero_date(a timestamp default 0)")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }

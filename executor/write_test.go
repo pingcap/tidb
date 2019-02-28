@@ -260,6 +260,17 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
 }
 
+func (s *testSuite) TestMultiBatch(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t0 (i int)")
+	tk.MustExec("insert into t0 values (1), (1)")
+	tk.MustExec("create table t (i int unique key)")
+	tk.MustExec("set @@tidb_dml_batch_size = 1")
+	tk.MustExec("insert ignore into t select * from t0")
+	tk.MustExec("admin check table t")
+}
+
 func (s *testSuite) TestInsertAutoInc(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

@@ -347,8 +347,6 @@ func (s *testSessionSuite) TestTxnLazyInitialize(c *C) {
 	// Those statement should not start a new transaction automacally.
 	tk.MustQuery("select 1")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@tidb_general_log = 0")
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
 	tk.MustQuery("explain select * from t")
@@ -2015,6 +2013,10 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
+
+	_, err := tk.Exec("set global time_zone = 'timezone'")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
 }
 
 func (s *testSessionSuite) TestRollbackOnCompileError(c *C) {
