@@ -265,7 +265,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			log.Warn("There's not expected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index in CONCAT", i))
+			log.Warn("There's unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index in CONCAT", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -323,7 +323,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				log.Warn("There's not expected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index in CONCAT_WS", i))
+				log.Warn("There's unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index in CONCAT_WS", i))
 			}
 			bf.tp.Flen += argType.Flen
 		}
