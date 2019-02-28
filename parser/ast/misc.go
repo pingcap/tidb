@@ -780,13 +780,18 @@ func (n *UserSpec) EncodedPassword() (string, bool) {
 type CreateUserStmt struct {
 	stmtNode
 
-	IfNotExists bool
-	Specs       []*UserSpec
+	IsCreateRole bool
+	IfNotExists  bool
+	Specs        []*UserSpec
 }
 
 // Restore implements Node interface.
 func (n *CreateUserStmt) Restore(ctx *RestoreCtx) error {
-	ctx.WriteKeyWord("CREATE USER ")
+	if n.IsCreateRole {
+		ctx.WriteKeyWord("CREATE ROLE ")
+	} else {
+		ctx.WriteKeyWord("CREATE USER ")
+	}
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
@@ -1268,6 +1273,8 @@ func (n *PrivElem) Restore(ctx *RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE")
 	case mysql.CreateUserPriv:
 		ctx.WriteKeyWord("CREATE USER")
+	case mysql.CreateRolePriv:
+		ctx.WriteKeyWord("CREATE ROLE")
 	case mysql.TriggerPriv:
 		ctx.WriteKeyWord("TRIGGER")
 	case mysql.DeletePriv:
