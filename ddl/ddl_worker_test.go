@@ -303,8 +303,9 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
-		if job.SchemaState == model.StateNone && job.State != model.JobStateDone {
-			// If the schema state is none, we only test the job is finished.
+		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema && job.Type != model.ActionRebaseAutoID {
+			// If the schema state is none and is not equal to model.JobStateDone, we only test the job is finished.
+			// Unless the job is model.ActionCreateTable, model.ActionCreateSchema, model.ActionRebaseAutoID, we do the cancel anyway.
 		} else {
 			errs, err := admin.CancelJobs(txn, test.jobIDs)
 			if err != nil {
@@ -351,6 +352,9 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 9}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 9)}, cancelState: model.StateDeleteOnly, ddlRetErr: err},
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 10}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 10)}, cancelState: model.StateWriteOnly, ddlRetErr: err},
 		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 11}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 11)}, cancelState: model.StateWriteReorganization, ddlRetErr: err},
+
+		{act: model.ActionRebaseAutoID, jobIDs: []int64{firstID + 12}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
+		{act: model.ActionShardRowID, jobIDs: []int64{firstID + 13}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
 	}
 
 	return tests
@@ -405,6 +409,11 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	ctx := testNewContext(d)
 	err := ctx.NewTxn()
 	c.Assert(err, IsNil)
+	tableAutoID := int64(100)
+	shardRowIDBits := uint64(5)
+	tblInfo.AutoIncID = tableAutoID
+	tblInfo.ShardRowIDBits = shardRowIDBits
+
 	job := testCreateTable(c, ctx, d, dbInfo, tblInfo)
 	// insert t values (1, 2, 3, 4, 5);
 	originTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
@@ -422,7 +431,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	tests := buildCancelJobTests(firstJobID)
 	var checkErr error
 	var test *testCancelJob
-	tc.onJobUpdated = func(job *model.Job) {
+	hookCancelFunc := func(job *model.Job) {
 		if job.State == model.JobStateSynced || job.State == model.JobStateCancelled || job.State == model.JobStateCancelling {
 			return
 		}
@@ -453,6 +462,8 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			return
 		}
 	}
+	tc.onJobUpdated = hookCancelFunc
+	tc.onJobRunBefore = hookCancelFunc
 	d.SetHook(tc)
 
 	// for adding index
@@ -537,6 +548,22 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testDropColumn(c, ctx, d, dbInfo, tblInfo, dropColName, false)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
+
+	// cancel rebase auto id
+	test = &tests[11]
+	rebaseIDArgs := []interface{}{int64(200)}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, rebaseIDArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	changedTable := testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().AutoIncID, Equals, tableAutoID)
+
+	// cancel shard bits
+	test = &tests[12]
+	shardRowIDArgs := []interface{}{uint64(7)}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionRebaseAutoID, shardRowIDArgs, &cancelState)
+	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().ShardRowIDBits, Equals, shardRowIDBits)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
