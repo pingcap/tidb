@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"github.com/pingcap/tidb/util/schemautil"
 	"time"
 
 	"github.com/juju/errors"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/schemautil"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
