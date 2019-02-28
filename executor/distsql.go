@@ -213,7 +213,8 @@ func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexSca
 type IndexReaderExecutor struct {
 	baseExecutor
 
-	// Table is a PhysicalTable for partitioned table.
+	// For a partitioned table, the IndexReaderExecutor works on a partition, so
+	// the type of this table field is actually `table.PhysicalTable`.
 	table           table.Table
 	index           *model.IndexInfo
 	physicalTableID int64
