@@ -648,11 +648,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}
 
 	if c.hasMaxReadTs {
+		metrics.TiKVTxnCommitTsSourceCounter.WithLabelValues("calculated").Inc()
 		c.commitTS = c.maxReadTs + 1
 		if c.startTS > c.maxReadTs {
 			c.commitTS = c.startTS + 1
 		}
 	} else {
+		metrics.TiKVTxnCommitTsSourceCounter.WithLabelValues("pd").Inc()
 		start = time.Now()
 		commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
 		if err != nil {

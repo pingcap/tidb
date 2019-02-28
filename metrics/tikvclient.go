@@ -41,6 +41,14 @@ var (
 			Help:      "Counter of txn commands.",
 		}, []string{LblType})
 
+	TiKVTxnCommitTsSourceCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "txn_commit_ts_source",
+			Help:      "Counter of different source of commit_ts",
+		}, []string{LblType})
+
 	TiKVTxnCmdHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",

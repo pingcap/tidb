@@ -116,6 +116,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVSnapshotCounter)
 	prometheus.MustRegister(TiKVTxnCmdHistogram)
 	prometheus.MustRegister(TiKVTxnCounter)
+	prometheus.MustRegister(TiKVTxnCommitTsSourceCounter)
 	prometheus.MustRegister(TiKVTxnRegionsNumHistogram)
 	prometheus.MustRegister(TiKVTxnWriteKVCountHistogram)
 	prometheus.MustRegister(TiKVTxnWriteSizeHistogram)
