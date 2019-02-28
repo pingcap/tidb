@@ -494,3 +494,67 @@ func (s *testSerialSuite) TestAddIndexSplitTableRangesPanic(c *C) {
 	tk.MustExec("admin check index t_split_table idx_b")
 	tk.MustExec("admin check table t_split_table")
 }
+
+func (s *testSerialSuite) TestDropSchemaFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_schema")
+	tk.MustExec("use test_schema")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values (1),(2),(3)")
+
+	hook := &ddl.TestDDLCallback{}
+	first := true
+	stateCnt := 0
+
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			stateCnt++
+		} else if job.SchemaState == model.StateDeleteOnly {
+			if first {
+				gofail.Enable("github.com/pingcap/tidb/ddl/dropSchemaErr", `return(true)`)
+				first = false
+			} else {
+				gofail.Disable("github.com/pingcap/tidb/ddl/dropSchemaErr")
+			}
+		}
+	}
+	origHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	tk.MustExec("drop database test_schema;")
+	c.Assert(stateCnt, Equals, 1)
+	tk.MustExec("create database test_schema")
+}
+
+func (s *testSerialSuite) TestDropTableOrViewFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists test_drop_table")
+	tk.MustExec("use test_drop_table")
+	tk.MustExec("drop table if exists t_table")
+	tk.MustExec("create table t_table (a int);")
+	tk.MustExec("insert into t_table values (1);")
+
+	hook := &ddl.TestDDLCallback{}
+	first := true
+	stateCnt := 0
+
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			stateCnt++
+		} else if job.SchemaState == model.StateDeleteOnly {
+			if first {
+				gofail.Enable("github.com/pingcap/tidb/ddl/dropTableOrViewErr", `return(true)`)
+				first = false
+			} else {
+				gofail.Disable("github.com/pingcap/tidb/ddl/dropTableOrViewErr")
+			}
+		}
+	}
+	origHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	tk.MustExec("drop table t_table;")
+	c.Assert(stateCnt, Equals, 1)
+	tk.MustExec("create table t_table (a int);")
+}
