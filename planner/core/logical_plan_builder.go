@@ -2368,7 +2368,6 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.Tab
 			if x.AsName.L != "" {
 				newTableName := *s
 				newTableName.Name = x.AsName
-				s.Name = x.AsName
 				input = append(input, &newTableName)
 			} else {
 				input = append(input, s)
