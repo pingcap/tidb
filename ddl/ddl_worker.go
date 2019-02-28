@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/schemautil"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -571,7 +572,7 @@ func (d *ddl) cleanAddIndexQueueJobs(txn kv.Transaction) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
+		indexInfo := schemautil.FindIndexByName(indexName.L, tblInfo.Indices)
 		_, err = convertAddIdxJob2RollbackJob(m, job, tblInfo, indexInfo, nil)
 		if err == nil {
 			_, err = m.DeQueueDDLJob()
