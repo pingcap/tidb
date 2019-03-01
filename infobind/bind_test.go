@@ -115,7 +115,6 @@ func (s *testSuite) TestBindParse(c *C) {
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation)
 
-	fmt.Println("sql:", sql)
 	tk.MustExec(sql)
 
 	bindHandle := infobind.NewHandler()

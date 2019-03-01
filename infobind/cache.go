@@ -102,16 +102,13 @@ func (h *Handler) Get() bindCache {
 
 // LoadDiff use to load new bind info to bindCache bc.
 func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc bindCache) error {
-	fmt.Println("sql=", sql)
 	recordSets, err := bindCacheUpdater.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	fmt.Println("rs size", len(recordSets))
 	rs := recordSets[0]
 	defer terror.Call(rs.Close)
-
 	chkBatch := rs.NewRecordBatch()
 	for {
 		err = rs.Next(context.TODO(), chkBatch)
@@ -131,7 +128,6 @@ func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc bindCache) err
 			}
 
 			if record.UpdateTime.Compare(bindCacheUpdater.lastUpdateTime) == 1 {
-				fmt.Println("last update time:", bindCacheUpdater.lastUpdateTime)
 				bindCacheUpdater.lastUpdateTime = record.UpdateTime
 			}
 		}
@@ -157,10 +153,7 @@ func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 		return errors.Trace(err)
 	}
 
-	fmt.Println("len of new bc", len(newBc))
-
 	bindCacheUpdater.globalHandler.Store(newBc)
-
 	return nil
 }
 
