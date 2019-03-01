@@ -67,9 +67,9 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	<-oracleCh // Make sure that ts has timed out a lease.
 	time.Sleep(lease)
 	ts := <-oracleCh
-	valid = validator.Check(ts, item.schemaVer, []int64{10})
+	valid = validator.Check(ts, 0, []int64{10})
 	c.Assert(valid, Equals, ResultUnknown, Commentf("validator latest schema ver %v, time %v, item schema ver %v, ts %v",
-		validator.latestSchemaVer, validator.latestSchemaExpire, item.schemaVer, oracle.GetTimeFromTS(ts)))
+		validator.latestSchemaVer, validator.latestSchemaExpire, 0, oracle.GetTimeFromTS(ts)))
 
 	currVer := reload(validator, leaseGrantCh, 0)
 	valid = validator.Check(ts, item.schemaVer, nil)
