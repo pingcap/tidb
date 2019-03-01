@@ -278,6 +278,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackRebaseAutoID(t, job)
 	case model.ActionShardRowID:
 		ver, err = rollingbackShardRowID(t, job)
+	case model.ActionDropTable, model.ActionDropSchema:
+		job.State = model.JobStateRollingback
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob

@@ -83,7 +83,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
-
 	// Check this table's database.
 	tblInfo, err := t.GetTable(schemaID, tableID)
 	if err != nil {
@@ -103,6 +102,16 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		))
+	}
+
+	if job.IsRollingback() {
+		// To simplify the rollback logic, cannot be canceled after job start to run.
+		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+		if tblInfo.State == model.StatePublic {
+			job.State = model.JobStateCancelled
+			return ver, errCancelledDDLJob
+		}
+		job.State = model.JobStateRunning
 	}
 
 	originalState := job.SchemaState
