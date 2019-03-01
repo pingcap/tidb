@@ -136,7 +136,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		}
 		value, err := x.Eval(chunk.Row{})
 		if err != nil {
-			log.Debug("There's error in constant folding", zap.String("expression", x.ExplainInfo()), zap.String("error", err.Error()))
+			log.Debug("Fold expression to constant", zap.String("expression", x.ExplainInfo()), zap.String("error", err.Error()))
 			return expr, isDeferredConst
 		}
 		if isDeferredConst {
@@ -147,7 +147,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		if x.DeferredExpr != nil {
 			value, err := x.DeferredExpr.Eval(chunk.Row{})
 			if err != nil {
-				log.Debug("There's error in constant folding", zap.String("expression", x.ExplainInfo()), zap.String("error", err.Error()))
+				log.Debug("Fold expression to constant", zap.String("expression", x.ExplainInfo()), zap.String("error", err.Error()))
 				return expr, true
 			}
 			return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x.DeferredExpr}, true

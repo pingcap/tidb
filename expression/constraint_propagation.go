@@ -151,7 +151,7 @@ func ruleConstantFalse(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	if cons, ok := cond.(*Constant); ok {
 		v, isNull, err := cons.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			log.Warn("[constraint_propagation]Error occurred", zap.String("error", err.Error()))
+			log.Warn("[constraint_propagation]ruleConstantFalse", zap.String("error", err.Error()))
 			return
 		}
 		if !isNull && v == 0 {
@@ -248,7 +248,7 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 		var err error
 		fc1, err = NewFunction(ctx, scalarFunc.FuncName.L, scalarFunc.RetType, con1)
 		if err != nil {
-			log.Warn("[constraint_propagation]Error occurred", zap.String("error", err.Error()))
+			log.Warn("[constraint_propagation]ruleColumnOPConst", zap.String("error", err.Error()))
 			return
 		}
 	}
@@ -271,7 +271,7 @@ func ruleColumnOPConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	}
 	v, isNull, err := compareConstant(ctx, negOP(OP2), fc1, con2)
 	if err != nil {
-		log.Warn("[constraint_propagation]Error occurred", zap.String("error", err.Error()))
+		log.Warn("[constraint_propagation]ruleColumnOPConst", zap.String("error", err.Error()))
 		return
 	}
 	if !isNull && v > 0 {
