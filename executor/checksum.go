@@ -18,6 +18,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
@@ -26,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var _ Executor = &ChecksumTableExec{}
@@ -70,7 +71,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 		result := <-resultCh
 		if result.Error != nil {
 			err = result.Error
-			log.Error(errors.ErrorStack(err))
+			log.Error("Checksum failed", zap.String("error stack", errors.ErrorStack(err)))
 			continue
 		}
 		e.handleResult(result)

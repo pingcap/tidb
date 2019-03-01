@@ -19,6 +19,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
@@ -31,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var _ Executor = &AnalyzeExec{}
@@ -72,15 +73,16 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
 			err = result.Err
 			if errors.Trace(err) == errAnalyzeWorkerPanic {
 				panicCnt++
+			} else {
+				log.Error("Analyze failed", zap.String("error stack", errors.ErrorStack(err)))
 			}
-			log.Error(errors.ErrorStack(err))
 			continue
 		}
 		for i, hg := range result.Hist {
 			err1 := statsHandle.SaveStatsToStorage(result.PhysicalTableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
 			if err1 != nil {
 				err = err1
-				log.Error(errors.ErrorStack(err))
+				log.Error("Save stats to storage failed", zap.String("error stack", errors.ErrorStack(err)))
 				continue
 			}
 		}
@@ -122,7 +124,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
+			log.Error("Analyze worker panicked", zap.String("panic stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- statistics.AnalyzeResult{
 				Err: errAnalyzeWorkerPanic,

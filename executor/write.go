@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -24,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -171,7 +172,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, err error) error {
 	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
-	log.Error(err)
+	log.Error("Data too long for column", zap.String("col name", colName), zap.Int("row index", rowIdx))
 	return errors.Trace(newErr)
 }
 

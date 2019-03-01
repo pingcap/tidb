@@ -18,6 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -34,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -308,8 +309,9 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		totalScanCnt += result.scanRowCount
 		if totalScanCnt-lastLogCnt >= 50000 {
 			lastLogCnt = totalScanCnt
-			log.Infof("[recover-index] recover table:%v, index:%v, totalAddedCnt:%v, totalScanCnt:%v, nextHandle: %v",
-				e.table.Meta().Name.O, e.index.Meta().Name.O, totalAddedCnt, totalScanCnt, result.nextHandle)
+			log.Info("Recover index", zap.String("table", e.table.Meta().Name.O),
+				zap.String("index", e.index.Meta().Name.O), zap.Int64("total added cnt", totalAddedCnt),
+				zap.Int64("total scan cnt", totalScanCnt), zap.Int64("next handle", result.nextHandle))
 		}
 
 		// no more rows
@@ -393,8 +395,9 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 				}
 
 				if handle != rows[i].handle {
-					log.Warnf("[recover-index] The constraint of unique index:%v is broken, handle:%v is not equal handle:%v with idxKey:%v.",
-						e.index.Meta().Name.O, handle, rows[i].handle, key)
+					log.Warn("The constraint of unique index is broken when recovering index",
+						zap.String("index name", e.index.Meta().Name.O), zap.ByteString("key value", key),
+						zap.Int64("handle", rows[i].handle), zap.Int64("another handle", handle))
 				}
 			}
 			rows[i].skip = true
@@ -520,8 +523,8 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				}
 				e.removeCnt++
 				if e.removeCnt%e.batchSize == 0 {
-					log.Infof("[cleaning up dangling index] table: %v, index: %v, count: %v.",
-						e.table.Meta().Name.String(), e.index.Meta().Name.String(), e.removeCnt)
+					log.Info("Cleaning up dangling index", zap.String("table", e.table.Meta().Name.String()),
+						zap.String("index", e.index.Meta().Name.String()), zap.Uint64("count", e.removeCnt))
 				}
 			}
 		}

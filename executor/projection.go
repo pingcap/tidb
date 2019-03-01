@@ -15,16 +15,18 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // This file contains the implementation of the physical Projection Operator:
@@ -378,7 +380,7 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 		output.done <- errors.Errorf("%v", r)
 	}
 	buf := util.GetStack()
-	log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
+	log.Error("Projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.String("stack trace", string(buf)))
 }
 
 func readProjectionInput(inputCh <-chan *projectionInput, finishCh <-chan struct{}) *projectionInput {

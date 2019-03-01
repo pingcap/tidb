@@ -25,6 +25,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -45,7 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var (
@@ -466,7 +467,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.RecordBatch) error
 			err = e.doCheckTable(tb)
 		}
 		if err != nil {
-			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
+			log.Warn("Check table failed", zap.String("table name", t.Name.O), zap.String("error stack", errors.ErrorStack(err)))
 			if admin.ErrDataInConsistent.Equal(err) {
 				return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Name, err)
 			}
@@ -1215,7 +1216,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("resultPuller panic stack is:\n%s", buf)
+			log.Error("resultPuller panicked", zap.String("panic stack", string(buf)))
 			result.err = errors.Errorf("%v", r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)

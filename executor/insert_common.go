@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -26,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 // InsertValues is the data to insert.
@@ -221,7 +222,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	if types.ErrTruncated.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			log.Warn(err1)
+			log.Warn("Truncate error", zap.Error(err1))
 		}
 		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}

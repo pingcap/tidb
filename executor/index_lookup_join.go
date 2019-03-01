@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
@@ -34,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 var _ Executor = &IndexLookUpJoin{}
@@ -305,7 +306,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("outerWorker panic stack is:\n%s", buf)
+			log.Error("outerWorker panicked", zap.String("panic stack", string(buf)))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			task.doneCh <- errors.Errorf("%v", r)
 			ow.pushToChan(ctx, task, ow.resultCh)
@@ -407,7 +408,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			log.Errorf("innerWorker panic stack is:\n%s", buf)
+			log.Error("innerWorker panicked", zap.String("panic stack", string(buf)))
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- errors.Errorf("%v", r)
 		}
