@@ -998,7 +998,15 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
-	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
+	case *ast.CreateUserStmt:
+		if raw.IsCreateRole {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateRolePriv, "", "", "", err)
+		} else {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
+		}
+	case *ast.DropUserStmt, *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:

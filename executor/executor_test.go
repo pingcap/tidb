@@ -3630,3 +3630,20 @@ func (s *testSuite) TestStrToDateBuiltin(c *C) {
 	tk.MustQuery(`select str_to_date('18=10=22','%y=%m=%d') from dual`).Check(testkit.Rows("2018-10-22"))
 	tk.MustQuery(`select str_to_date('18_10_22','%y_%m_%d') from dual`).Check(testkit.Rows("2018-10-22"))
 }
+
+func (s *testSuite) TestReadPartitionedTable(c *C) {
+	// Test three reader on partitioned table.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec("create table pt (a int, b int, index i_b(b)) partition by range (a) (partition p1 values less than (2), partition p2 values less than (4), partition p3 values less than (6))")
+	for i := 0; i < 6; i++ {
+		tk.MustExec(fmt.Sprintf("insert into pt values(%d, %d)", i, i))
+	}
+	// Table reader
+	tk.MustQuery("select * from pt order by a").Check(testkit.Rows("0 0", "1 1", "2 2", "3 3", "4 4", "5 5"))
+	// Index reader
+	tk.MustQuery("select b from pt where b = 3").Check(testkit.Rows("3"))
+	// Index lookup
+	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
+}
