@@ -110,8 +110,8 @@ type StatementContext struct {
 	NotFillCache     bool
 	MemTracker       *memory.Tracker
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	TableNames       []string
-	IndexNames       []string
+	TableIDs         []int64
+	IndexIDs         []int64
 	NowTs            time.Time
 	SysTs            time.Time
 	StmtType         string
@@ -354,8 +354,8 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.message = ""
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
-	sc.TableNames = sc.TableNames[:0]
-	sc.IndexNames = sc.IndexNames[:0]
+	sc.TableIDs = sc.TableIDs[:0]
+	sc.IndexIDs = sc.IndexIDs[:0]
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print

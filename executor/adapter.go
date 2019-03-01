@@ -379,18 +379,18 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 
-	var tableNames, indexNames string
-	if len(sessVars.StmtCtx.TableNames) > 0 {
-		tableNames = strings.Join(sessVars.StmtCtx.TableNames, ",")
+	var tableIDs, indexIDs string
+	if len(sessVars.StmtCtx.TableIDs) > 0 {
+		tableIDs = strings.Replace(fmt.Sprintf("table_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
 	}
-	if len(sessVars.StmtCtx.IndexNames) > 0 {
-		indexNames = strings.Join(sessVars.StmtCtx.IndexNames, ",")
+	if len(sessVars.StmtCtx.IndexIDs) > 0 {
+		indexIDs = strings.Replace(fmt.Sprintf("index_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
-		logutil.SlowQueryLogger.Debugf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexNames, sql))
+		logutil.SlowQueryLogger.Debugf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
 	} else {
-		logutil.SlowQueryLogger.Warnf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexNames, sql))
+		logutil.SlowQueryLogger.Warnf(sessVars.SlowLogFormat(txnTS, costTime, execDetail, indexIDs, sql))
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -408,8 +408,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 			TxnTS:    txnTS,
 			User:     userString,
 			DB:       sessVars.CurrentDB,
-			TableIDs: tableNames,
-			IndexIDs: indexNames,
+			TableIDs: tableIDs,
+			IndexIDs: indexIDs,
 			Internal: sessVars.InRestrictedSQL,
 		})
 	}
