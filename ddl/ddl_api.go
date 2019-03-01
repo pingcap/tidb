@@ -669,9 +669,23 @@ func checkDuplicateColumn(cols []interface{}) error {
 	return nil
 }
 
+func checkIsAutoIncrementColumn(colDefs *ast.ColumnDef) bool {
+	for _, option := range colDefs.Options {
+		if option.Tp == ast.ColumnOptionAutoIncrement {
+			return true
+		}
+	}
+	return false
+}
+
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
+	var exists bool
+	var autoIncrementColumn string
 	for i, colDef := range colDefs {
+		if checkIsAutoIncrementColumn(colDef) {
+			exists, autoIncrementColumn = true, colDef.Name.Name.L
+		}
 		generated, depCols := findDependedColumnNames(colDef)
 		if !generated {
 			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
@@ -686,6 +700,16 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 			}
 		}
 	}
+
+	// Check whether the generated column refers to any auto-increment columns
+	if exists {
+		for colName, generated := range colName2Generation {
+			if _, found := generated.dependences[autoIncrementColumn]; found {
+				return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
+			}
+		}
+	}
+
 	for _, colDef := range colDefs {
 		colName := colDef.Name.Name.L
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
@@ -1477,7 +1501,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			if hasAutoIncrementColumn(tbInfo) && op.UintValue != 0 {
+			ok, _ := hasAutoIncrementColumn(tbInfo)
+			if ok && op.UintValue != 0 {
 				return errUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
@@ -1490,13 +1515,13 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	return nil
 }
 
-func hasAutoIncrementColumn(tbInfo *model.TableInfo) bool {
+func hasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	for _, col := range tbInfo.Columns {
 		if mysql.HasAutoIncrementFlag(col.Flag) {
-			return true
+			return true, col.Name.L
 		}
 	}
-	return false
+	return false, ""
 }
 
 // isIgnorableSpec checks if the spec type is ignorable.
@@ -1704,7 +1729,8 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if hasAutoIncrementColumn(t.Meta()) && uVal != 0 {
+	ok, _ := hasAutoIncrementColumn(t.Meta())
+	if ok && uVal != 0 {
 		return errUnsupportedShardRowIDBits
 	}
 	job := &model.Job{
@@ -1785,6 +1811,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 				referableColNames[col.Name.L] = struct{}{}
 			}
 			_, dependColNames := findDependedColumnNames(specNewColumn)
+			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+				return errors.Trace(err)
+			}
 			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
 				return errors.Trace(err)
 			}
@@ -2342,6 +2371,20 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	}
 	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
 		return ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
+	}
+
+	// If the modified column is generated, check whether it refers to any auto-increment columns.
+	for _, option := range specNewColumn.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			_, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			_, dependColNames := findDependedColumnNames(specNewColumn)
+			if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	originalColName := specNewColumn.Name.Name

@@ -56,7 +56,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		}
 	}
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedCreatePartition)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
 	}
 
 	pi := &model.PartitionInfo{
