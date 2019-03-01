@@ -56,6 +56,8 @@ func (s *joinReOrderSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	return s.optimizeRecursive(p.context(), p)
 }
 
+// optimizeRecursive first checks that whether the current plan tree is start with a join group.
+// If so it will call the reorder algorithm to reorder the join group.
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
 	var err error
 	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
@@ -98,6 +100,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	otherConds   []expression.Expression
 }
 
+// baseNodeCumCost calculate the cumulative cost of the node in the join group.
 func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) float64 {
 	cost := groupNode.statsInfo().RowCount
 	for _, child := range groupNode.Children() {
@@ -106,6 +109,7 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) 
 	return cost
 }
 
+// makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
 func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) LogicalPlan {
 	resultJoinGroup := make([]LogicalPlan, 0, (len(cartesianJoinGroup)+1)/2)
 	for len(cartesianJoinGroup) > 1 {
@@ -158,6 +162,7 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(eqEdges []*expression.
 	return newJoin, remainedOtherConds
 }
 
+// calcJoinCumCost calculates the cumulative cost of the join node.
 func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode, rNode *jrNode) float64 {
 	return join.statsInfo().RowCount + lNode.cumCost + rNode.cumCost
 }
