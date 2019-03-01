@@ -69,6 +69,7 @@ func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
 }
 
 // TODO: Support parse multiple log-files.
+// parseSlowLogFile uses to parse slow log file.
 func parseSlowLogFile(filePath string) ([]map[string]types.Datum, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -88,13 +89,12 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 	rows := make([]map[string]types.Datum, 0)
 	rowMap := make(map[string]types.Datum, len(slowQueryCols))
 	startFlag := false
-	startPrefix := variable.SlowLogPrefixStr + variable.SlowLogTimeStr + variable.SlowLogSpaceMarkStr
 
 	for scanner.Scan() {
 		line := scanner.Text()
 		// Check slow log entry start flag.
-		if !startFlag && strings.Contains(line, startPrefix) {
-			value, err := parseSlowLogField(variable.SlowLogTimeStr, line[len(startPrefix):])
+		if !startFlag && strings.Contains(line, variable.SlowLogStartPrefixStr) {
+			value, err := parseSlowLogField(variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
 			if err != nil {
 				log.Errorf("parse slow log error: %v", err)
 				continue

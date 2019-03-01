@@ -811,7 +811,7 @@ type BatchSize struct {
 }
 
 const (
-	// SlowLogPrefixStr is slow log prefix.
+	// SlowLogPrefixStr is slow log row prefix.
 	SlowLogPrefixStr = "# "
 	// SlowLogSpaceMarkStr is slow log space mark.
 	SlowLogSpaceMarkStr = ": "
@@ -819,6 +819,8 @@ const (
 	SlowLogSQLSuffixStr = ";"
 	// SlowLogTimeStr is slow log field name.
 	SlowLogTimeStr = "Time"
+	// SlowLogStartPrefixStr is slow log start row prefix.
+	SlowLogStartPrefixStr = SlowLogPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
 	// SlowLogUserStr is slow log field name.
