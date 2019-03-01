@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	tmysql "github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
@@ -117,7 +118,7 @@ func (s *testIntegrationSuite) TestCreateTableWithPartition(c *C) {
 	_, err = tk.Exec(`CREATE TABLE rc (
     		a INT NOT NULL,
     		b INT NOT NULL,
-			c INT NOT NULL
+		c INT NOT NULL
 	)
 	partition by range columns(a,b,c) (
     	partition p0 values less than (10,5,1),
@@ -217,14 +218,6 @@ func (s *testIntegrationSuite) TestCreateTableWithPartition(c *C) {
 		  partition p4 values less than (18446744073709551000 + 10)
 		);`)
 
-	// Only range type partition is now supported, range columns partition only implements the parser, so it will not be checked.
-	// So the following SQL statements can be executed successfully.
-	tk.MustExec(`create table t29 (
-		a decimal
-	)
-	partition by range columns (a)
-	(partition p0 values less than (0));`)
-
 	tk.MustExec("set @@tidb_enable_table_partition = 1")
 	_, err = tk.Exec(`create table t30 (
 		  a int,
@@ -232,7 +225,7 @@ func (s *testIntegrationSuite) TestCreateTableWithPartition(c *C) {
 		  c varchar(30))
 		  partition by range columns (a, b)
 		  (partition p0 values less than (10, 10.0))`)
-	c.Assert(ddl.ErrUnsupportedPartitionByRangeColumns.Equal(err), IsTrue)
+	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestCreateTableWithHashPartition(c *C) {
@@ -300,6 +293,70 @@ create table log_message_1 (
 		store_id int
 	)
 	partition by hash( year(hired) ) partitions 4;`)
+
+	tk.MustExec("drop table if exists t")
+
+	type testCase struct {
+		sql string
+		err *terror.Error
+	}
+
+	cases := []testCase{
+		{
+			"create table t (id int) partition by range columns (id);",
+			ddl.ErrPartitionsMustBeDefined,
+		},
+		{
+			"create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2));",
+			ddl.ErrPartitionColumnList,
+		},
+		{
+			"create table t (a int) partition by range columns (b) (partition p0 values less than (1, 2));",
+			ddl.ErrFieldNotFoundPart,
+		},
+		{
+			"create table t (id timestamp) partition by range columns (id) (partition p0 values less than ('2019-01-09 11:23:34'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			`create table t29 (
+				a decimal
+			)
+			partition by range columns (a)
+			(partition p0 values less than (0));`,
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id text) partition by range columns (id) (partition p0 values less than ('abc'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+				"partition p0 values less than (1, 'a')," +
+				"partition p1 values less than (1, 'a'))",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+				"partition p0 values less than (1, 'b')," +
+				"partition p1 values less than (1, 'a'))",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
+				"partition p0 values less than (1, maxvalue)," +
+				"partition p1 values less than (1, 'a'))",
+			ddl.ErrRangeNotIncreasing,
+		},
+	}
+	for i, t := range cases {
+		_, err := tk.Exec(t.sql)
+		c.Assert(t.err.Equal(err), IsTrue, Commentf("case %d fail, sql = %s", i, t.sql))
+	}
+
+	tk.MustExec("create table t1 (a int, b char(3)) partition by range columns (a, b) (" +
+		"partition p0 values less than (1, 'a')," +
+		"partition p1 values less than (2, maxvalue))")
 }
 
 func (s *testIntegrationSuite) TestCreateTableWithKeyPartition(c *C) {

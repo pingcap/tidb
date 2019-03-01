@@ -130,6 +130,7 @@ var (
 	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
 	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(codeUnsupportedPartitionByRangeColumns,
 		"unsupported partition by range columns")
+	ErrUnsupportedCreatePartition = terror.ClassDDL.New(codeUnsupportedCreatePartition, "unsupported partition type, treat as normal table")
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(codeDupKeyName, "duplicate key name")
@@ -208,7 +209,9 @@ var (
 	// ErrAlterOperationNotSupported returns when alter operations is not supported.
 	ErrAlterOperationNotSupported = terror.ClassDDL.New(codeNotSupportedAlterOperation, mysql.MySQLErrName[mysql.ErrAlterOperationNotSupportedReason])
 	// ErrWrongObject returns for wrong object.
-	ErrWrongObject = terror.ClassDDL.New(codeErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
+	ErrWrongObject         = terror.ClassDDL.New(codeErrWrongObject, mysql.MySQLErrName[mysql.ErrWrongObject])
+	ErrFieldNotFoundPart   = terror.ClassDDL.New(codeFieldNotFoundPart, mysql.MySQLErrName[mysql.ErrFieldNotFoundPart])
+	ErrPartitionColumnList = terror.ClassDDL.New(codePartitionColumnList, mysql.MySQLErrName[mysql.ErrPartitionColumnList])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -639,6 +642,7 @@ const (
 	codeUnsupportedCoalescePartition       = 209
 	codeUnsupportedModifyCharset           = 210
 	codeUnsupportedPartitionByRangeColumns = 211
+	codeUnsupportedCreatePartition         = 212
 
 	codeFileNotFound                           = 1017
 	codeErrorOnRename                          = 1025
@@ -691,6 +695,8 @@ const (
 	codeCoalesceOnlyOnHashPartition            = terror.ErrCode(mysql.ErrCoalesceOnlyOnHashPartition)
 	codeUnknownPartition                       = terror.ErrCode(mysql.ErrUnknownPartition)
 	codeNotSupportedAlterOperation             = terror.ErrCode(mysql.ErrAlterOperationNotSupportedReason)
+	codeFieldNotFoundPart                      = terror.ErrCode(mysql.ErrFieldNotFoundPart)
+	codePartitionColumnList                    = terror.ErrCode(mysql.ErrPartitionColumnList)
 )
 
 func init() {
@@ -744,6 +750,8 @@ func init() {
 		codeUnknownPartition:                       mysql.ErrUnknownPartition,
 		codeNotSupportedAlterOperation:             mysql.ErrAlterOperationNotSupportedReason,
 		codeErrWrongObject:                         mysql.ErrWrongObject,
+		codeFieldNotFoundPart:                      mysql.ErrFieldNotFoundPart,
+		codePartitionColumnList:                    mysql.ErrPartitionColumnList,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

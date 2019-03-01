@@ -55,6 +55,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 			enable = true
 		}
 	}
+	if !enable {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedCreatePartition)
+	}
+
 	pi := &model.PartitionInfo{
 		Type:   s.Partition.Tp,
 		Enable: enable,
@@ -66,8 +70,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		pi.Expr = buf.String()
 	} else if s.Partition.ColumnNames != nil {
 		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
-		if enable && len(s.Partition.ColumnNames) != 1 {
-			return nil, errors.Trace(ErrUnsupportedPartitionByRangeColumns)
+		if len(s.Partition.ColumnNames) != 1 {
+			pi.Enable = false
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedPartitionByRangeColumns)
 		}
 		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
 		for _, cn := range s.Partition.ColumnNames {
