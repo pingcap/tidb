@@ -154,9 +154,9 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		checkOK = true
 	}
-	d.SetHook(tc)
 	originalHook := d.GetHook()
 	defer d.SetHook(originalHook)
+	d.SetHook(tc)
 
 	d.Stop()
 	d.start(context.Background(), nil)
@@ -198,7 +198,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		}
 		checkOK = true
 	}
-	d.SetHook(tc)
+	d.SetHook(originalHook)
 	d.Stop()
 	d.start(context.Background(), nil)
 
