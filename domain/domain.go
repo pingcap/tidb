@@ -806,9 +806,9 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.bindHandler = infobind.NewHandler()
 
-	hu := infobind.NewBindCacheUpdater(ctx, do.BindHandler(), parser)
+	bindCacheUpdater := infobind.NewBindCacheUpdater(ctx, do.BindHandler(), parser)
 
-	err := hu.Update(true)
+	err := bindCacheUpdater.Update(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -822,7 +822,7 @@ func (do *Domain) LoadBindInfoLoop(ctx sessionctx.Context, parser *parser.Parser
 				return
 			case <-time.After(duration):
 			}
-			err = hu.Update(false)
+			err = bindCacheUpdater.Update(false)
 			if err != nil {
 				log.Error("[domain] load bindinfo fail:", errors.ErrorStack(err))
 			}

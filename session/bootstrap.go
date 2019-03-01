@@ -216,17 +216,16 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql varchar(2048) NOT NULL  ,
-      	bind_sql varchar(2048) NOT NULL ,
-      	default_db varchar(1024)  NOT NULL,
-		status int(10) NOT NULL DEFAULT 1,
+		original_sql text NOT NULL  ,
+      	bind_sql text NOT NULL ,
+      	default_db text  NOT NULL,
+		status text NOT NULL,
 		create_time timestamp NOT NULL,
 		update_time timestamp NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
- 		UNIQUE KEY sql_db (original_sql, default_db),
 		INDEX time_index(update_time)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`  //tidb need select bind info with tidb's lastUpdateTime, so add a time index
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
 	CreateRoleEdgesTable = `CREATE TABLE IF NOT EXISTS mysql.role_edges (

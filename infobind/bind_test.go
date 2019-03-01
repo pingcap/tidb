@@ -109,19 +109,20 @@ func (s *testSuite) TestBindParse(c *C) {
 	originSQL := "select * from t"
 	bindSQL := "select * from t use index(index_t)"
 	defaultDb := "test"
-	status := 1
+	status := "using"
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
-	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', %d, NOW(), NOW(),'%s', '%s')`,
+	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation)
 
+	fmt.Println("sql:", sql)
 	tk.MustExec(sql)
 
 	bindHandle := infobind.NewHandler()
 
-	hu := infobind.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser)
+	bindCacheUpdater := infobind.NewBindCacheUpdater(tk.Se, bindHandle, s.Parser)
 
-	err := hu.Update(true)
+	err := bindCacheUpdater.Update(true)
 	c.Check(err, IsNil)
 
 	c.Check(len(bindHandle.Get()), Equals, 1)
@@ -134,8 +135,7 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Check(bindData[0].OriginalSQL, Equals, "select * from t")
 	c.Check(bindData[0].BindSQL, Equals, "select * from t use index(index_t)")
 	c.Check(bindData[0].Db, Equals, "test")
-	var i int64 = 1
-	c.Check(bindData[0].Status, Equals, i)
+	c.Check(bindData[0].Status, Equals, "using")
 	c.Check(bindData[0].Charset, Equals, "utf8mb4")
 	c.Check(bindData[0].Collation, Equals, "utf8mb4_bin")
 	c.Check(bindData[0].CreateTime, NotNil)

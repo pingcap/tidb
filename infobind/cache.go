@@ -29,10 +29,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	using   = "using"
+	deleted = "deleted"
+)
+
 // bindRecord store the basic bind info and bindSql astNode.
 type bindRecord struct {
-	bindMeta
-	ast ast.StmtNode
+	*bindMeta
+	ast ast.StmtNode //the ast will be used to do query sql bind check
 }
 
 // bindCache holds a bindDataMap
@@ -42,7 +47,7 @@ type bindCache map[string][]*bindRecord
 
 // Handler hold an atomic bindCache.
 type Handler struct {
-	bind atomic.Value
+	atomic.Value
 }
 
 // BindCacheUpdater is used to update the global bindCache.
@@ -60,9 +65,9 @@ type bindMeta struct {
 	BindSQL     string
 	Db          string
 	// Status will only be 0 or 1:
-	//   0: bindMeta has been marked as deleted status.
-	//   1: bindMeta is in using status.
-	Status     int64
+	//   deleted: bindMeta has been marked as deleted status.
+	//   using: bindMeta is in using status.
+	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
 	Charset    string
@@ -86,7 +91,7 @@ func NewHandler() *Handler {
 
 // Get get bindCache from a Handler.
 func (h *Handler) Get() bindCache {
-	bc := h.bind.Load()
+	bc := h.Load()
 
 	if bc != nil {
 		return bc.(map[string][]*bindRecord)
@@ -96,12 +101,14 @@ func (h *Handler) Get() bindCache {
 }
 
 // LoadDiff use to load new bind info to bindCache bc.
-func (h *BindCacheUpdater) loadDiff(sql string, bc bindCache) error {
-	recordSets, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
+func (bindCacheUpdater *BindCacheUpdater) loadDiff(sql string, bc bindCache) error {
+	fmt.Println("sql=", sql)
+	recordSets, err := bindCacheUpdater.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	fmt.Println("rs size", len(recordSets))
 	rs := recordSets[0]
 	defer terror.Call(rs.Close)
 
@@ -117,23 +124,24 @@ func (h *BindCacheUpdater) loadDiff(sql string, bc bindCache) error {
 		}
 		it := chunk.NewIterator4Chunk(chkBatch.Chunk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			record := decodeBindTableRow(row)
-			err = bc.appendNode(record, h.parser)
+			record := newBindMeta(row)
+			err = bc.appendNode(record, bindCacheUpdater.parser)
 			if err != nil {
 				return err
 			}
 
-			if record.UpdateTime.Compare(h.lastUpdateTime) == 1 {
-				h.lastUpdateTime = record.UpdateTime
+			if record.UpdateTime.Compare(bindCacheUpdater.lastUpdateTime) == 1 {
+				fmt.Println("last update time:", bindCacheUpdater.lastUpdateTime)
+				bindCacheUpdater.lastUpdateTime = record.UpdateTime
 			}
 		}
 	}
 }
 
 // Update update the BindCacheUpdater's bindCache if tidb first startup,the fullLoad is true,otherwise fullLoad is false.
-func (h *BindCacheUpdater) Update(fullLoad bool) (err error) {
+func (bindCacheUpdater *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	var sql string
-	bc := h.globalHandler.Get()
+	bc := bindCacheUpdater.globalHandler.Get()
 	newBc := make(map[string][]*bindRecord, len(bc))
 	for hash, bindDataArr := range bc {
 		newBc[hash] = append(newBc[hash], bindDataArr...)
@@ -142,34 +150,34 @@ func (h *BindCacheUpdater) Update(fullLoad bool) (err error) {
 	if fullLoad {
 		sql = "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
 	} else {
-		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info where update_time > \"%s\"", h.lastUpdateTime.String())
+		sql = fmt.Sprintf("select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info where update_time > \"%s\"", bindCacheUpdater.lastUpdateTime.String())
 	}
-	err = h.loadDiff(sql, newBc)
+	err = bindCacheUpdater.loadDiff(sql, newBc)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	h.globalHandler.bind.Store(newBc)
+	fmt.Println("len of new bc", len(newBc))
+
+	bindCacheUpdater.globalHandler.Store(newBc)
 
 	return nil
 }
 
-func decodeBindTableRow(row chunk.Row) bindMeta {
-	var value bindMeta
-
-	value.OriginalSQL = row.GetString(0)
-	value.BindSQL = row.GetString(1)
-	value.Db = row.GetString(2)
-	value.Status = row.GetInt64(3)
-	value.CreateTime = row.GetTime(4)
-	value.UpdateTime = row.GetTime(5)
-	value.Charset = row.GetString(6)
-	value.Collation = row.GetString(7)
-
-	return value
+func newBindMeta(row chunk.Row) *bindMeta {
+	return &bindMeta{
+		OriginalSQL: row.GetString(0),
+		BindSQL:     row.GetString(1),
+		Db:          row.GetString(2),
+		Status:      row.GetString(3),
+		CreateTime:  row.GetTime(4),
+		UpdateTime:  row.GetTime(5),
+		Charset:     row.GetString(6),
+		Collation:   row.GetString(7),
+	}
 }
 
-func (b bindCache) appendNode(newBindRecord bindMeta, sparser *parser.Parser) error {
+func (b bindCache) appendNode(newBindRecord *bindMeta, sparser *parser.Parser) error {
 	hash := parser.DigestHash(newBindRecord.OriginalSQL)
 
 	if bindArr, ok := b[hash]; ok {
@@ -184,7 +192,7 @@ func (b bindCache) appendNode(newBindRecord bindMeta, sparser *parser.Parser) er
 		}
 	}
 
-	if newBindRecord.Status == 0 {
+	if newBindRecord.Status == deleted {
 		return nil
 	}
 
