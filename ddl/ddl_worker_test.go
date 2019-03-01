@@ -441,7 +441,7 @@ func doDDLJobErr(c *C, schemaID, tableID int64, tp model.ActionType, args []inte
 func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
 	var checkErr error
 	if test.cancelState == job.SchemaState {
-		if job.SchemaState == model.StateNone && job.State != model.JobStateDone {
+		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema {
 			// If the schema state is none, we only test the job is finished.
 		} else {
 			errs, err := admin.CancelJobs(txn, test.jobIDs)
@@ -478,17 +478,19 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 
 		// Test cancel drop index job , see TestCancelDropIndex.
 
-		// TODO: add create table back after we fix the cancel bug.
-		//{act: model.ActionCreateTable, jobIDs: []int64{firstID + 9}, cancelRetErrs: noErrs, cancelState: model.StatePublic, ddlRetErr: err},
-
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 5}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly, ddlRetErr: err},
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 6}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly, ddlRetErr: err},
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 7}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization, ddlRetErr: err},
 		{act: model.ActionAddColumn, jobIDs: []int64{firstID + 8}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenByArgs(firstID + 8)}, cancelState: model.StatePublic, ddlRetErr: err},
 
-		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 9}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenByArgs(firstID + 9)}, cancelState: model.StateWriteOnly, ddlRetErr: err},
-		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 10}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenByArgs(firstID + 10)}, cancelState: model.StateDeleteOnly, ddlRetErr: err},
-		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 11}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenByArgs(firstID + 11)}, cancelState: model.StateDeleteReorganization, ddlRetErr: err},
+		// Test create table, watch out, table id will alloc a globalID.
+		{act: model.ActionCreateTable, jobIDs: []int64{firstID + 10}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
+		// Test create database, watch out, database id will alloc a globalID.
+		{act: model.ActionCreateSchema, jobIDs: []int64{firstID + 12}, cancelRetErrs: noErrs, cancelState: model.StateNone, ddlRetErr: err},
+
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 13}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenByArgs(firstID + 13)}, cancelState: model.StateWriteOnly, ddlRetErr: err},
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 14}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenByArgs(firstID + 14)}, cancelState: model.StateDeleteOnly, ddlRetErr: err},
+		{act: model.ActionDropColumn, jobIDs: []int64{firstID + 15}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenByArgs(firstID + 15)}, cancelState: model.StateDeleteReorganization, ddlRetErr: err},
 	}
 
 	return tests
@@ -560,7 +562,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	tests := buildCancelJobTests(firstJobID)
 	var checkErr error
 	var test *testCancelJob
-	tc.onJobUpdated = func(job *model.Job) {
+	tc.onJobRunBefore = func(job *model.Job) {
 		if job.State == model.JobStateSynced || job.State == model.JobStateCancelled || job.State == model.JobStateCancelling {
 			return
 		}
@@ -649,8 +651,22 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkAddColumn(c, d, dbInfo.ID, tblInfo.ID, addingColName, true)
 
-	// for drop column.
+	// for create table
+	tblInfo1 := testTableInfo(c, d, "t1", 2)
 	test = &tests[8]
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo1.ID, model.ActionCreateTable, []interface{}{tblInfo1}, &cancelState)
+	c.Check(checkErr, IsNil)
+	testCheckTableState(c, d, dbInfo, tblInfo1, model.StateNone)
+
+	// for create database
+	dbInfo1 := testSchemaInfo(c, d, "test_cancel_job1")
+	test = &tests[9]
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo1.ID, 0, model.ActionCreateSchema, []interface{}{dbInfo1}, &cancelState)
+	c.Check(checkErr, IsNil)
+	testCheckSchemaState(c, d, dbInfo1, model.StateNone)
+
+	// for drop column.
+	test = &tests[10]
 	dropColName := "c1"
 	dropColumnArgs := []interface{}{model.NewCIStr(dropColName)}
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
@@ -658,7 +674,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
-	test = &tests[9]
+	test = &tests[11]
 	dropColName = "c3"
 	dropColumnArgs = []interface{}{model.NewCIStr(dropColName)}
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
@@ -666,7 +682,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, true)
 
-	test = &tests[10]
+	test = &tests[12]
 	dropColName = "c4"
 	dropColumnArgs = []interface{}{model.NewCIStr(dropColName)}
 	s.checkCancelDropColumn(c, d, dbInfo.ID, tblInfo.ID, dropColName, false)
