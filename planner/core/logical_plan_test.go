@@ -2189,7 +2189,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select sum(a) over(order by a range between 1.0 preceding and 1 following) from t",
-			result: "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+			result: "TableReader(Table(t))->Window(sum(cast(test.t.a)) over(order by test.t.a asc range between 1.0 preceding and 1 following))->Projection",
 		},
 	}
 
