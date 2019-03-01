@@ -15,9 +15,10 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -62,6 +63,13 @@ type ProjectionExec struct {
 	numWorkers  int64
 	workers     []*projectionWorker
 	childResult *chunk.Chunk
+
+	// parentReqRows indicates how many rows the parent executor is
+	// requiring. It is set when parallelExecute() is called and used by the
+	// concurrent projectionInputFetcher.
+	//
+	// NOTE: It should be protected by atomic operations.
+	parentReqRows int64
 }
 
 // Open implements the Executor Open interface.
@@ -71,6 +79,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
+	e.parentReqRows = int64(e.maxChunkSize)
 
 	// For now a Projection can not be executed vectorially only because it
 	// contains "SetVar" or "GetVar" functions, in this scenario this
@@ -166,6 +175,8 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 }
 
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
+	// transmit the requiredRows
+	e.childResult.SetRequiredRows(chk.RequiredRows(), e.maxChunkSize)
 	err := e.children[0].Next(ctx, chunk.NewRecordBatch(e.childResult))
 	if err != nil {
 		return errors.Trace(err)
@@ -175,6 +186,7 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 }
 
 func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) error {
+	atomic.StoreInt64(&e.parentReqRows, int64(chk.RequiredRows()))
 	if !e.prepared {
 		e.prepare(ctx)
 		e.prepared = true
@@ -201,6 +213,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 	// Initialize projectionInputFetcher.
 	e.fetcher = projectionInputFetcher{
+		proj:           e,
 		child:          e.children[0],
 		globalFinishCh: e.finishCh,
 		globalOutputCh: e.outputCh,
@@ -253,6 +266,7 @@ func (e *ProjectionExec) Close() error {
 }
 
 type projectionInputFetcher struct {
+	proj           *ProjectionExec
 	child          Executor
 	globalFinishCh <-chan struct{}
 	globalOutputCh chan<- *projectionOutput
@@ -294,6 +308,8 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		f.globalOutputCh <- output
 
+		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
+		input.chk.SetRequiredRows(int(requiredRows), f.proj.maxChunkSize)
 		err := f.child.Next(ctx, chunk.NewRecordBatch(input.chk))
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- errors.Trace(err)
