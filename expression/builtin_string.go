@@ -1771,7 +1771,7 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			log.Error("Eval `Flen` for LAPD/RPAD", zap.String("error", err.Error()))
+			log.Error("Eval `Flen` for LAPD/RPAD", zap.Error(err))
 		}
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
 			return mysql.MaxBlobWidth
@@ -2154,7 +2154,7 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 		log.Warn("Change charset of string",
 			zap.String("string", oldStr),
 			zap.String("charset", charsetName),
-			zap.String("error", err.Error()))
+			zap.Error(err))
 		return "", true, err
 	}
 	return result, false, nil

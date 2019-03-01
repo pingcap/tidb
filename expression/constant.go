@@ -61,7 +61,7 @@ func (c *Constant) String() string {
 	if c.DeferredExpr != nil {
 		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
-			log.Error("Eval constant to string", zap.String("error", err.Error()))
+			log.Error("Eval constant to string", zap.Error(err))
 			return ""
 		}
 		c.Value.SetValue(dt.GetValue())
