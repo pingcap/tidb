@@ -165,7 +165,6 @@ func parseSlowLogField(field, value string) (*types.Datum, error) {
 
 func parseTime(s string) (time.Time, error) {
 	t, err := time.Parse(logutil.SlowLogTimeFormat, s)
-
 	if err != nil {
 		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\", err: %v", s, logutil.SlowLogTimeFormat, err)
 	}
