@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"github.com/pingcap/tidb/sessionctx"
 	"sync/atomic"
 	"time"
@@ -223,7 +222,6 @@ func (ow outerMergeJoinFetchWorker) run(ctx context.Context) {//row with the sam
 		}
 
 		ow.outerFetchResultCh <- fetchResult
-		fmt.Println("outer rows len" , len(outerRows))
 		if err != nil || len(outerRows) == 0 {
 			return
 		}
@@ -256,17 +254,12 @@ func (mw *mergeJoinMergeWorker) run(ctx context.Context) {//只compare 双方的
 func (mw *mergeJoinMergeWorker) fetchNextInnerRows() (bool,error) {
 	innerResult, ok := <- mw.innerFetchResultCh
 
-	fmt.Println("收到innerFetchResult")
 	if !ok {
 		return false, nil
 	}
 
 	if innerResult.err != nil {
 		return false, errors.Trace(innerResult.err)
-	}
-
-	for _,row := range innerResult.fetchRow{
-		fmt.Println("innerResult:" , row.GetInt64(0))
 	}
 
 	mw.innerRows = innerResult.fetchRow
@@ -280,19 +273,11 @@ func (mw *mergeJoinMergeWorker) fetchNextOuterRows() (bool, error) {
 	outerResult, ok := <- mw.outerFetchResultCh
 
 	if !ok {
-		fmt.Println("dejofreijofe")
 		return false, nil
 	}
 	if outerResult.err != nil {
 		return false, errors.Trace(outerResult.err)
 	}
-
-	for _,row := range outerResult.fetchRow{
-		fmt.Println("outerResult:" , row.GetInt64(0))
-	}
-
-	fmt.Println("fetch len:",len(outerResult.fetchRow))
-	fmt.Println("fetch select len:",len(outerResult.selected))
 
 	mw.outerRows = outerResult.fetchRow
 	mw.outerIter4Row = chunk.NewIterator4Slice(mw.outerRows)
@@ -315,7 +300,6 @@ func (mw *mergeJoinMergeWorker) joinToChunk(ctx context.Context) {
 		if ok, err = mw.fetchNextOuterRows() ;!ok || err != nil {
 			joinResult.err = errors.Trace(err)
 			mw.joinResultCh <- joinResult
-			fmt.Println("yyyy")
 			return
 		}
 
