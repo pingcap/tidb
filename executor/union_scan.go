@@ -18,10 +18,12 @@ import (
 	"sort"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -120,6 +122,11 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("unionScan.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	if us.runtimeStats != nil {
 		start := time.Now()
 		defer func() { us.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -267,15 +274,9 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	return cmp, nil
 }
 
-func (us *UnionScanExec) buildAndSortAddedRows() error {
+func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	t, found := GetInfoSchema(us.ctx).TableByID(us.dirty.tid)
-	if !found {
-		// t is got from a snapshot InfoSchema, so it should be found, this branch should not happen.
-		return errors.Errorf("table not found (tid: %d, schema version: %d)",
-			us.dirty.tid, GetInfoSchema(us.ctx).SchemaMetaVersion())
-	}
 	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())

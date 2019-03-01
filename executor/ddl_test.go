@@ -595,6 +595,56 @@ func (s *testSuite3) TestSetDDLReorgBatchSize(c *C) {
 	res.Check(testkit.Rows("1000"))
 }
 
+func (s *testSuite3) TestGeneratedColumnRelatedDDL(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	_, err = tk.Exec("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error())
+
+	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
+
+	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
+
+	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error())
+
+	tk.MustExec("drop table t1;")
+}
+
+func (s *testSuite3) TestSetDDLErrorCountLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(variable.DefTiDBDDLErrorCountLimit))
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(0))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(math.MaxInt64))
+	_, err = tk.Exec("set @@global.tidb_ddl_error_count_limit = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
+	err = ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+	c.Assert(variable.GetDDLErrorCountLimit(), Equals, int64(100))
+	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
+	res.Check(testkit.Rows("100"))
+}
+
 // Test issue #9205, fix the precision problem for time type default values
 // See https://github.com/pingcap/tidb/issues/9205 for details
 func (s *testSuite3) TestIssue9205(c *C) {
