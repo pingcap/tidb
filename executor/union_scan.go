@@ -24,10 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/table/tables"
-=======
->>>>>>> master
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
