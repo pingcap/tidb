@@ -564,7 +564,11 @@ func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
-	var seps = make([]string, 0)
+	// Initialize `seps` with capacity of 6. The input `format` is typically
+	// a date time of the form "2006-01-02 15:04:05", which has 6 numeric parts
+	// (the fractional second part is usually removed by `splitDateTime`).
+	// Setting `seps`'s capacity to 6 avoids reallocation in this common case.
+	seps := make([]string, 0, 6)
 	for i := 0; i < len(format); i++ {
 		// Date format must start and end with number.
 		if i == 0 || i == len(format)-1 {
