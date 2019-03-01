@@ -35,12 +35,12 @@ type PreprocessOpt func(*preprocessor)
 
 // InPrepare is a PreprocessOpt that indicates preprocess is executing under prepare statement.
 func InPrepare(p *preprocessor) {
-	p.inPrepare = true
+	p.flag |= inPrepare
 }
 
-// InTxRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
-func InTxRetry(p *preprocessor) {
-	p.inTxRetry = true
+// InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
+func InTxnRetry(p *preprocessor) {
+	p.flag |= inTxnRetry
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
@@ -53,37 +53,45 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema,
 	return errors.Trace(v.err)
 }
 
+type preprocessorFlag uint8
+
+const (
+	// inPrepare is set when visiting in prepare statement.
+	inPrepare preprocessorFlag = 1 << iota
+	// inTxnRetry is set when visiting in transaction retry.
+	inTxnRetry
+	// inCreateOrDropTable is set when visiting create/drop table statement.
+	inCreateOrDropTable
+	// parentIsJoin is set when visiting node's parent is join.
+	parentIsJoin
+)
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
-	is        infoschema.InfoSchema
-	ctx       sessionctx.Context
-	err       error
-	inPrepare bool
-	// inCreateOrDropTable is true when visiting create/drop table statement.
-	inCreateOrDropTable bool
+	is   infoschema.InfoSchema
+	ctx  sessionctx.Context
+	err  error
+	flag preprocessorFlag
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-
-	parentIsJoin bool
-	inTxRetry    bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
-		p.inCreateOrDropTable = true
+		p.flag |= inCreateOrDropTable
 		p.checkCreateTableGrammar(node)
 	case *ast.CreateViewStmt:
-		p.inCreateOrDropTable = true
+		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
 	case *ast.DropTableStmt:
-		p.inCreateOrDropTable = true
+		p.flag |= inCreateOrDropTable
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
-		p.inCreateOrDropTable = true
+		p.flag |= inCreateOrDropTable
 		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
 		p.checkCreateIndexGrammar(node)
@@ -108,7 +116,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// table not exists error. But admin restore is use to restore the dropped table. So skip children here.
 		return in, node.Tp == ast.AdminRestoreTable
 	default:
-		p.parentIsJoin = false
+		p.flag &= ^parentIsJoin
 	}
 	return in, p.err != nil
 }
@@ -116,15 +124,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	switch x := in.(type) {
 	case *ast.CreateTableStmt:
-		p.inCreateOrDropTable = false
+		p.flag &= ^inCreateOrDropTable
 		p.checkAutoIncrement(x)
 		p.checkContainDotColumn(x)
 	case *ast.CreateViewStmt:
-		p.inCreateOrDropTable = false
+		p.flag &= ^inCreateOrDropTable
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
-		p.inCreateOrDropTable = false
+		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
-		if !p.inPrepare {
+		if p.flag&inPrepare == 0 {
 			p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
 			return
 		}
@@ -165,7 +173,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 
 		// no need sleep when retry transaction and avoid unexpect sleep caused by retry.
-		if p.inTxRetry && x.FnName.L == ast.Sleep {
+		if p.flag&inTxnRetry > 0 && x.FnName.L == ast.Sleep {
 			if len(x.Args) == 1 {
 				x.Args[0] = ast.NewValueExpr(0)
 			}
@@ -383,7 +391,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
-	if !p.parentIsJoin {
+	if p.flag&parentIsJoin == 0 {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
@@ -395,7 +403,7 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.err = err
 		return
 	}
-	p.parentIsJoin = true
+	p.flag |= parentIsJoin
 }
 
 func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
@@ -640,7 +648,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		}
 		tn.Schema = model.NewCIStr(currentDB)
 	}
-	if p.inCreateOrDropTable {
+	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
 		// Skip resolving the table to avoid error.
 		return
@@ -680,7 +688,7 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 	for _, spec := range node.Specs {
 		if spec.Tp == ast.AlterTableRenameTable {
-			p.inCreateOrDropTable = true
+			p.flag |= inCreateOrDropTable
 			break
 		}
 	}
