@@ -833,7 +833,16 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 	e.outerIdx = 0
 	innerFilter := v.RightConditions
 
-	e.innerTable = &mergeJoinInnerTable{
+	e.innerTable = &mergeJoinInnerTable{}
+	e.innerTable.reader = rightExec
+	e.innerTable.joinKeys = rightKeys
+
+	e.outerTable = &mergeJoinOuterTable{}
+	e.outerTable.reader = leftExec
+	e.outerTable.filter = v.LeftConditions
+	e.outerTable.joinKeys = v.LeftKeys
+
+/*	e.innerTable = &mergeJoinInnerTable{
 		reader:   rightExec,
 		joinKeys: rightKeys,
 	}
@@ -843,12 +852,12 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 		filter: v.LeftConditions,
 		keys:   leftKeys,
 	}
-
+*/
 	if v.JoinType == plannercore.RightOuterJoin {
 		e.outerIdx = 1
 		e.outerTable.reader = rightExec
 		e.outerTable.filter = v.RightConditions
-		e.outerTable.keys = rightKeys
+		e.outerTable.joinKeys = rightKeys
 
 		innerFilter = v.LeftConditions
 		e.innerTable.reader = leftExec
