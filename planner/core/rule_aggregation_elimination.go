@@ -32,12 +32,12 @@ type aggregationEliminator struct {
 type aggregationEliminateChecker struct {
 }
 
-// nestedAggPattern stores nested LogicalAggregations, so they can be accessed easily
+// nestedAggPattern stores nested LogicalAggregations, so they can be accessed easily.
 type nestedAggPattern struct {
-	outter *LogicalAggregation
-	proj   *LogicalProjection
-	inner  *LogicalAggregation
-	// isTrivial indicates if there's constraints(like LogicalSelection/LogicalLimit) "between" them
+	outer *LogicalAggregation
+	proj  *LogicalProjection
+	inner *LogicalAggregation
+	// isTrivial indicates if there's constraints(like LogicalSelection/LogicalLimit) "between" them.
 	isTrivial bool
 }
 
@@ -143,25 +143,25 @@ func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan) (Lo
 //  can be rewritten as
 //  `select a + b as p, count(d) as `max(dt)` from t group by a + b`
 //
-// 2. Nested aggregations in which outter group-by items are proper subset of the inner ones, for example:
+// 2. Nested aggregations in which outer group-by items are proper subset of the inner ones, for example:
 //  `select at, max(bt) from (select a as at, max(b) as bt from t group by a, c) tt group by at`
 //  can be rewritten as
 //  `select a as at, max(b) as `max(bt)` from t group by a`
 //
-// In order to apply the optimization, we tries to map definition of outter aggregation to schema of inner aggregation and check if rules are met.
+// In order to apply the optimization, we tries to map definition of outer aggregation to schema of inner aggregation and check if rules are met.
 func (a *aggregationEliminateChecker) tryToEliminateAggregationByMapping(la *LogicalAggregation) LogicalPlan {
-	ptn := &nestedAggPattern{outter: la, isTrivial: true}
+	ptn := &nestedAggPattern{outer: la, isTrivial: true}
 	collectNestedAggPattern(la, ptn)
 
 	if ptn.inner == nil || ptn.proj == nil {
 		return nil
 	}
-	exprMap, aggMap := genColMaps(la.ctx, ptn)
+	exprMap, aggMap := genColMaps(ptn)
 
-	// Map group-by items in outter aggregation to the schema of inner aggregation, so the group-by items can be compared.
-	_, items := exprSubstitute(la.ctx, exprMap, ptn.outter.GroupByItems)
+	// Map group-by items in outer aggregation to the schema of inner aggregation, so the group-by items can be compared.
+	_, items := exprSubstitute(la.ctx, exprMap, ptn.outer.GroupByItems)
 	_, items = aggSubstitute(la.ctx, aggMap, items, func(fun *aggregation.AggFuncDesc) bool {
-		// Outter group-by items cannot be aggregated result of inner aggregation, for example
+		// Outer group-by items cannot be aggregated result of inner aggregation.
 		return fun.Name == ast.AggFuncFirstRow
 	})
 	if items == nil {
@@ -183,25 +183,25 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregationByMapping(la *Log
 		equalities += 1
 	}
 	if equalities == len(ptn.inner.GroupByItems) {
-		// Inner/outter aggregations have same group-by items, we can simply convert agg to proj
+		// Inner/outer aggregations have same group-by items, we can simply convert agg to proj.
 		proj := a.convertAggToProj(la)
 		proj.SetChildren(la.children[0])
 		return proj
 	}
-	// Outter group-by items is a proper subset of inner ones, that is to say, we met a partial aggregation and then a
+	// Outer group-by items is a proper subset of inner ones, that is to say, we met a partial aggregation and then a
 	// final(total) one, which is very similar to `Partial` and `Final` AggFunctionMode. In such cases, we try to combine
-	// each pair of inner/outter aggregate function, and then eliminate the inner(partial) aggregation.
+	// each pair of inner/outer aggregate function, and then eliminate the inner(partial) aggregation.
 	if !ptn.isTrivial {
 		// There are constraints(like limit/having/where clause) between the aggregations, non-trivial to optimize such cases.
 		return nil
 	}
 
-	newFuns := make([]*aggregation.AggFuncDesc, len(ptn.outter.AggFuncs))
-	for idx, fun := range ptn.outter.AggFuncs {
+	newFuns := make([]*aggregation.AggFuncDesc, len(ptn.outer.AggFuncs))
+	for idx, fun := range ptn.outer.AggFuncs {
 		_, exprs := exprSubstitute(la.ctx, exprMap, fun.Args)
 		expr := exprs[0]
 
-		// notExtraProj indicates there is no extra projection between outter/inner aggregated functions.
+		// notExtraProj indicates there is no extra projection between outer/inner aggregated functions.
 		// For example, if we have a `sum(a) + 1 as sum_a` and `sum(sum_a)`, there is an extra `plus` projection.
 		_, noExtraProj := expr.(*expression.Column)
 		isGbItem := deepContains(la.ctx, ptn.inner.GroupByItems, expr)
@@ -211,7 +211,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregationByMapping(la *Log
 
 		cols := expression.ExtractColumns(expr)
 		if len(cols) != 1 {
-			// We have an outter aggregate function that refers to more than 1 inner aggregate function, for example,
+			// We have an outer aggregate function that refers to more than 1 inner aggregate function, for example,
 			// `... (sum(b) + count(c)) as col ... `, cannot optimize such cases.
 			return nil
 		}
@@ -228,7 +228,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregationByMapping(la *Log
 		newFuns[idx] = newFun
 	}
 
-	// All agg functions are combined, now combine two aggregation plans
+	// All agg functions are combined, now combine two aggregation plans.
 	la.AggFuncs = newFuns
 	la.GroupByItems = items
 	la.collectGroupByColumns()
@@ -296,44 +296,44 @@ func collectNestedAggPattern(lp LogicalPlan, ptn *nestedAggPattern) {
 		}
 		ptn.proj = v
 	case *LogicalSort:
-		// Ignore sort between aggregations
+		// Ignore sort between aggregations.
 	default:
 		ptn.isTrivial = false
 	}
 	collectNestedAggPattern(child, ptn)
 }
 
-// tryToCombineAggFunc checkes the types of inner/outter aggregate function and check if they can be combined as one based on their semantics.
-// for example, since max(max(PARTIAL)) can be combined as max(TOTAL), we can combine inner max() and outter max() as a final max()
+// tryToCombineAggFunc checks the types of inner/outer aggregate function and check if they can be combined as one based on their semantics.
+// for example, since max(max(PARTIAL)) can be combined as max(TOTAL), we can combine inner max() and outer max() as a final max()
 // `innerIsGroup` indicates if the inner aggregate function is aggregating group-by items(values are de-duplicated).
-func tryToCombineAggFunc(outter, inner *aggregation.AggFuncDesc, innerIsGroup bool, expr expression.Expression) *aggregation.AggFuncDesc {
-	combined := outter.Clone()
+func tryToCombineAggFunc(outer, inner *aggregation.AggFuncDesc, innerIsGroup bool, expr expression.Expression) *aggregation.AggFuncDesc {
+	combined := outer.Clone()
 	combined.Args[0] = expr
 
 	if innerIsGroup {
 		if (inner.Name == ast.AggFuncFirstRow || inner.Name == ast.AggFuncMax || inner.Name == ast.AggFuncMin) &&
-			(outter.Name == ast.AggFuncFirstRow || outter.Name == ast.AggFuncMax || outter.Name == ast.AggFuncMin) {
+			(outer.Name == ast.AggFuncFirstRow || outer.Name == ast.AggFuncMax || outer.Name == ast.AggFuncMin) {
 			return combined
 		}
 		// TODO: add type cast to support more cases
 	}
 
 	switch {
-	case inner.Name == ast.AggFuncFirstRow && outter.Name == ast.AggFuncFirstRow:
-	case inner.Name == ast.AggFuncMax && outter.Name == ast.AggFuncMax:
-	case inner.Name == ast.AggFuncMin && outter.Name == ast.AggFuncMin:
-	case inner.Name == ast.AggFuncBitAnd && outter.Name == ast.AggFuncBitAnd:
-	case inner.Name == ast.AggFuncBitOr && outter.Name == ast.AggFuncBitOr:
-	case inner.Name == ast.AggFuncBitXor && outter.Name == ast.AggFuncBitXor:
-	case inner.Name == ast.AggFuncGroupConcat && outter.Name == ast.AggFuncGroupConcat:
+	case inner.Name == ast.AggFuncFirstRow && outer.Name == ast.AggFuncFirstRow:
+	case inner.Name == ast.AggFuncMax && outer.Name == ast.AggFuncMax:
+	case inner.Name == ast.AggFuncMin && outer.Name == ast.AggFuncMin:
+	case inner.Name == ast.AggFuncBitAnd && outer.Name == ast.AggFuncBitAnd:
+	case inner.Name == ast.AggFuncBitOr && outer.Name == ast.AggFuncBitOr:
+	case inner.Name == ast.AggFuncBitXor && outer.Name == ast.AggFuncBitXor:
+	case inner.Name == ast.AggFuncGroupConcat && outer.Name == ast.AggFuncGroupConcat:
 		if inner.HasDistinct {
 			return nil
 		}
-	case inner.Name == ast.AggFuncSum && outter.Name == ast.AggFuncSum:
-		if inner.HasDistinct || outter.HasDistinct {
+	case inner.Name == ast.AggFuncSum && outer.Name == ast.AggFuncSum:
+		if inner.HasDistinct || outer.HasDistinct {
 			return nil
 		}
-	case inner.Name == ast.AggFuncCount && outter.Name == ast.AggFuncSum:
+	case inner.Name == ast.AggFuncCount && outer.Name == ast.AggFuncSum:
 		// TODO: add cast to support `sum(count(_)) -> count(_)`
 		return nil
 	default:
@@ -342,35 +342,27 @@ func tryToCombineAggFunc(outter, inner *aggregation.AggFuncDesc, innerIsGroup bo
 	return combined
 }
 
-// genColMaps generates exprMap(`col -> definition expr`) and aggMap(`col -> definition aggFunc`) from column definitions
-func genColMaps(ctx sessionctx.Context, ptn *nestedAggPattern) (map[string]expression.Expression, map[string]*aggregation.AggFuncDesc) {
+// genColMaps generates exprMap(`col -> definition expr`) and aggMap(`col -> definition aggFunc`) from column definitions.
+func genColMaps(ptn *nestedAggPattern) (map[string]expression.Expression, map[string]*aggregation.AggFuncDesc) {
 	exprMap := make(map[string]expression.Expression, len(ptn.proj.Schema().Columns))
-	for _, col := range ptn.proj.Schema().Columns {
-		idx := ptn.proj.Schema().ColumnIndex(col)
-		if idx == -1 {
-			panic("Cannot find column, should never happen")
-		}
+	for idx, col := range ptn.proj.Schema().Columns {
 		exprMap[string(col.HashCode(nil))] = ptn.proj.Exprs[idx]
 	}
 	aggMap := make(map[string]*aggregation.AggFuncDesc, len(ptn.inner.Schema().Columns))
-	for _, col := range ptn.inner.Schema().Columns {
-		idx := ptn.inner.Schema().ColumnIndex(col)
-		if idx == -1 {
-			panic("Cannot find column, should never happen")
-		}
+	for idx, col := range ptn.inner.Schema().Columns {
 		aggMap[string(col.HashCode(nil))] = ptn.inner.AggFuncs[idx]
 	}
 
 	return exprMap, aggMap
 }
 
-// exprSubstitute tries to substitutes expressions occured in given `exprs` with values in `exprMap`.
+// exprSubstitute tries to substitutes expressions occurred in given `exprs` with values in `exprMap`.
 // If the substitution happened, it returns true and the substituted expressions, otherwise it returns false and original exprs.
 func exprSubstitute(ctx sessionctx.Context, exprMap map[string]expression.Expression, exprs []expression.Expression) (bool, []expression.Expression) {
 	var newExprs []expression.Expression
 	replaced := false
 	for idx, expr := range exprs {
-		if e, ok := exprMap[string(expr.HashCode(nil))]; ok {
+		if e, ok := exprMap[string(expr.HashCode(ctx.GetSessionVars().StmtCtx))]; ok {
 			replaced = true
 			if newExprs == nil {
 				newExprs = make([]expression.Expression, len(exprs))
@@ -399,12 +391,12 @@ func exprSubstitute(ctx sessionctx.Context, exprMap map[string]expression.Expres
 	return false, exprs
 }
 
-// aggSubstitute tries to substitutes expressions occured in given `exprs` with the expression argument of aggregated functions defined in `aggMap`.
-// Parameter `predicate` can be used to check each of the aggregated function
+// aggSubstitute tries to substitutes expressions occurred in given `exprs` with the expression argument of aggregated functions defined in `aggMap`,
+// parameter `predicate` can be used to check each of the aggregated function.
 // This function returns:
-//  * true / substituted exprs if the substitution happens
-//  * false / original exprs if substitution doesn't happen
-//  * false / nil if predicate is not nil and it failed
+//  * true / substituted exprs if the substitution happens.
+//  * false / original exprs if substitution doesn't happen.
+//  * false / nil if predicate is not nil and it failed.
 func aggSubstitute(
 	ctx sessionctx.Context,
 	aggMap map[string]*aggregation.AggFuncDesc,
@@ -414,7 +406,7 @@ func aggSubstitute(
 	var newExprs []expression.Expression
 	replaced := false
 	for idx, expr := range exprs {
-		if fun, ok := aggMap[string(expr.HashCode(nil))]; ok {
+		if fun, ok := aggMap[string(expr.HashCode(ctx.GetSessionVars().StmtCtx))]; ok {
 			// expr is a column
 			if predicate != nil && !predicate(fun) {
 				return false, nil

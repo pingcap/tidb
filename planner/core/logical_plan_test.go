@@ -1737,6 +1737,11 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			best: "DataScan(t)->Aggr(max(test.t.c),firstrow(test.t.b))->Sel([gt(ct, 0)])->Aggr(max(ct),firstrow(test.t.bt))->Projection",
 		},
 		{
+			// non-subset group-by items, just to test constant hashcode in rule implementation
+			sql:  "select bt, max(ct) from (select b as bt, TIMESTAMP '2000-01-01 00:00:01' as ct from t group by b, c) tt group by bt, ct",
+			best: "DataScan(t)->Aggr(firstrow(test.t.b))->Projection->Aggr(max(tt.ct),firstrow(tt.bt))->Projection",
+		},
+		{
 			// max(min(_))
 			sql:  "select max(ct), sum(sum_d) from (select b, min(c+2) as ct, sum(d) as sum_d from t group by b, c+1) tmp group by b;",
 			best: "DataScan(t)->Aggr(min(plus(test.t.c, 2)),sum(test.t.d),firstrow(test.t.b))->Aggr(max(ct),sum(sum_d))->Projection",
