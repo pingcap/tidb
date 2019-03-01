@@ -16,6 +16,7 @@ package statistics
 import (
 	"context"
 	"fmt"
+	"go.uber.org/zap"
 	"math"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
@@ -31,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
 )
 
 type tableDeltaMap map[int64]variable.TableDelta
@@ -190,7 +191,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	}
 	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) {
 		metrics.SignificantFeedbackCounter.Inc()
-		if log.GetLevel() == log.DebugLevel {
+		if log.GetLevel() == zap.DebugLevel {
 			q.logDetailedInfo(h)
 		}
 	}
@@ -391,7 +392,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debugf("error occurred when encoding feedback, err: %s", errors.ErrorStack(err))
+		log.Debug("Error occurred when encoding feedback, err: %s", zap.Error(err), zap.Stack("error stack"))
 		return nil
 	}
 	var isIndex int64
@@ -559,7 +560,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	for _, row := range rows {
 		err1 := decodeFeedback(row.GetBytes(3), q, cms, mysql.HasUnsignedFlag(hist.Tp.Flag))
 		if err1 != nil {
-			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
+			log.Debug("decode feedback failed", zap.String("error stack", errors.ErrorStack(err)))
 		}
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
@@ -702,7 +703,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
-		log.Errorf("[stats] parse auto analyze period failed: %v", errors.ErrorStack(err))
+		log.Error("[stats] parse auto analyze period failed", zap.String("error stack", errors.ErrorStack(err)))
 		return
 	}
 	for _, db := range dbs {
@@ -739,7 +740,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()); needAnalyze {
-		log.Infof("[stats] %s, auto %s now", sql, reason)
+		log.Info("[stats]", zap.String("sql", sql), zap.String("reason", reason))
 		h.execAutoAnalyze(sql)
 		return true
 	}
@@ -749,7 +750,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		}
 		if _, ok := statsTbl.Indices[idx.ID]; !ok {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
-			log.Infof("[stats] index unanalyzed, auto %s now", sql)
+			log.Info("[stats] index unanalyzed", zap.String("sql", sql))
 			h.execAutoAnalyze(sql)
 			return true
 		}
@@ -763,7 +764,8 @@ func (h *Handle) execAutoAnalyze(sql string) {
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		log.Errorf("[stats] auto %v failed: %v, cost_time:%vs", sql, errors.ErrorStack(err), dur.Seconds())
+		log.Error("[stats] auto sql failed", zap.String("sql", sql), zap.Duration("cost_time", dur),
+			zap.String("error stack", errors.ErrorStack(err)))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()

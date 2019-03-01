@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -27,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type statsCache map[int64]*Table
@@ -147,7 +148,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		h.mu.Unlock()
 		if !ok {
-			log.Debugf("Unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
+			log.Debug("Unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
@@ -155,7 +156,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			log.Debugf("Error occurred when read table stats for table %s. The error message is %s.", tableInfo.Name.O, errors.ErrorStack(err))
+			log.Debug("Error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err), zap.Stack("error stack"))
 			continue
 		}
 		if tbl == nil {
@@ -297,13 +298,13 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
+			log.Debug("[stats] handle ddl event fail", zap.Error(err), zap.Stack("error stack"))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
+		log.Debug("[stats] dump stats delta fail", zap.Error(err), zap.Stack("error stack"))
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		log.Debug("[stats] dump stats feedback fail: ", errors.ErrorStack(err))
+		log.Debug("[stats] dump stats feedback fail", zap.Error(err), zap.Stack("error stack"))
 	}
 }
