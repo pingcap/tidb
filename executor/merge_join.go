@@ -59,7 +59,7 @@ type MergeJoinExec struct {
 
 	innerMergeJoinFetchWorker *innerMergeJoinFetchWorker
 	outerMergeJoinFetchWorker *outerMergeJoinFetchWorker
-	mergeJoinMergeWorker      *mergeJoinMergeWorker
+	mergeJoinMergeWorker      *mergeJoinCompareWorker
 
 	outerReader		Executor
 	outerKeys		[]*expression.Column
@@ -73,16 +73,16 @@ type MergeJoinExec struct {
 type mergeJoinOuterTable struct {
 	mergeJoinTable
 
-//	reader Executor
+	//	reader Executor
 	filter []expression.Expression
-//	keys   []*expression.Column
+	//	keys   []*expression.Column
 
-//	chk      *chunk.Chunk
-//	selected []bool
+	//	chk      *chunk.Chunk
+	//	selected []bool
 
-//	iter     *chunk.Iterator4Chunk
-//	row      chunk.Row
-//	hasMatch bool
+	//	iter     *chunk.Iterator4Chunk
+	//	row      chunk.Row
+	//	hasMatch bool
 
 }
 
@@ -112,25 +112,25 @@ type mergeJoinTable struct {
 type mergeJoinInnerTable struct {
 	mergeJoinTable
 
-/*	reader   Executor
-	joinKeys []*expression.Column
-	ctx      context.Context
+	/*	reader   Executor
+		joinKeys []*expression.Column
+		ctx      context.Context
 
-	// for chunk executions
-	sameKeyRows    []chunk.Row
-	compareFuncs   []chunk.CompareFunc
-	firstRow4Key   chunk.Row
-	curRow         chunk.Row
-	curResult      *chunk.Chunk
-	curIter        *chunk.Iterator4Chunk
-	curResultInUse bool
+		// for chunk executions
+		sameKeyRows    []chunk.Row
+		compareFuncs   []chunk.CompareFunc
+		firstRow4Key   chunk.Row
+		curRow         chunk.Row
+		curResult      *chunk.Chunk
+		curIter        *chunk.Iterator4Chunk
+		curResultInUse bool
 
-	usingResultQueue []*chunk.Chunk 	//被发送给mergeWorker的chunk
-	unusedResultQueue    []*chunk.Chunk	//未使用的chunk(还没有发送给mergeWorker的chunk)
-	resourceQueue  []*chunk.Chunk
+		usingResultQueue []*chunk.Chunk 	//被发送给mergeWorker的chunk
+		unusedResultQueue    []*chunk.Chunk	//未使用的chunk(还没有发送给mergeWorker的chunk)
+		resourceQueue  []*chunk.Chunk
 
-	memTracker *memory.Tracker
-*/}
+		memTracker *memory.Tracker
+	*/}
 
 type mergejoinWorkerResult struct {
 	chk *chunk.Chunk
@@ -138,7 +138,7 @@ type mergejoinWorkerResult struct {
 	src chan<- *chunk.Chunk
 }
 
-type mergeJoinMergeWorker struct {
+type mergeJoinCompareWorker struct {
 	innerFetchResultCh <-chan *innerFetchResult
 	outerFetchResultCh <-chan *outerFetchResult
 
@@ -174,8 +174,76 @@ type mergeJoinMergeWorker struct {
 	outerJoinKeys []*expression.Column
 
 	hasMatch bool
+
+	mergeWorkerTashCh chan<- mergeTask
+	taskCh chan<- mergeTask
 }
 
+type mergeJoinMergeWorker struct {
+	workerId int
+
+	innerRows     []chunk.Row
+	innerRow 	  chunk.Row
+	innerIter4Row chunk.Iterator
+	innerJoinKeys []*expression.Column
+
+	outerRows	  []chunk.Row
+	outerRow	  chunk.Row
+	outerSelected    []bool
+	outerRowIdx	  int
+	outerIter4Row chunk.Iterator
+	outerJoinKeys []*expression.Column
+
+	mergeTaskCh <-chan mergeTask
+}
+
+/*func (mw *mergeJoinMergeWorker) run() {
+	for {
+		mergeTask,ok := <- mw.mergeTaskCh
+		if !ok {
+			return
+		}
+
+		if len(mergeTask.innerRows) != 0 {
+			mw.innerRows = mergeTask.innerRows
+			mw.innerIter4Row = chunk.NewIterator4Slice(mw.innerRows)
+			mw.innerIter4Row.Begin()
+
+
+			mw.outerRows = mergeTask.innerRows
+			mw.outerIter4Row = chunk.NewIterator4Slice(mw.outerRows)
+			mw.outerRow = mw.outerIter4Row.Begin()
+			mw.outerSelected = mergeTask.outerSelected
+			mw.outerRowIdx = 0
+
+			for ; mw.outerRow != mw.outerIter4Row.End() ; {
+				mw.joiner.onMissMatch(mw.outerRow, joinResult.chk)
+
+				mw.outerRow = mw.outerIter4Row.Next()
+				mw.hasMatch = false
+
+				if joinResult.chk.NumRows() == mw.maxChunkSize {
+					mw.joinResultCh <- joinResult
+					ok, joinResult = mw.getNewJoinResult()
+					if !ok {
+						return
+					}
+				}
+				continue
+
+			}
+		} else {
+
+		}
+	}
+}*/
+
+type mergeTask struct {
+	innerRows     []chunk.Row
+
+	outerRows	  []chunk.Row
+	outerSelected    []bool
+}
 const closed int64 = 1
 const opened int64 = 0
 
@@ -243,7 +311,7 @@ func (iw innerMergeJoinFetchWorker) run(ctx context.Context) {//row with the sam
 	}
 }
 
-func (mw *mergeJoinMergeWorker) run(ctx context.Context) {//只compare 双方的first key，然后就开始merge
+func (mw *mergeJoinCompareWorker) run(ctx context.Context) { //只compare 双方的first key，然后就开始merge
 	defer func() {
 		close(mw.joinResultCh)
 	}()
@@ -251,7 +319,7 @@ func (mw *mergeJoinMergeWorker) run(ctx context.Context) {//只compare 双方的
 	mw.joinToChunk(ctx)
 }
 
-func (mw *mergeJoinMergeWorker) fetchNextInnerRows() (bool,error) {
+func (mw *mergeJoinCompareWorker) fetchNextInnerRows() (bool,error) {
 	innerResult, ok := <- mw.innerFetchResultCh
 
 	if !ok {
@@ -269,7 +337,7 @@ func (mw *mergeJoinMergeWorker) fetchNextInnerRows() (bool,error) {
 	return true, nil
 }
 
-func (mw *mergeJoinMergeWorker) fetchNextOuterRows() (bool, error) {
+func (mw *mergeJoinCompareWorker) fetchNextOuterRows() (bool, error) {
 	outerResult, ok := <- mw.outerFetchResultCh
 
 	if !ok {
@@ -288,7 +356,7 @@ func (mw *mergeJoinMergeWorker) fetchNextOuterRows() (bool, error) {
 	return ok, nil
 }
 
-func (mw *mergeJoinMergeWorker) joinToChunk(ctx context.Context) {
+func (mw *mergeJoinCompareWorker) joinToChunk(ctx context.Context) {
 	var err error
 
 	ok, joinResult := mw.getNewJoinResult()
@@ -331,16 +399,18 @@ func (mw *mergeJoinMergeWorker) joinToChunk(ctx context.Context) {
 		}
 
 		if cmpResult < 0 {
-			mw.joiner.onMissMatch(mw.outerRow, joinResult.chk)
+			for ; mw.outerRow != mw.outerIter4Row.End() ; {
+				mw.joiner.onMissMatch(mw.outerRow, joinResult.chk)
 
-			mw.outerRow = mw.outerIter4Row.Next()
-			mw.hasMatch = false
+				mw.outerRow = mw.outerIter4Row.Next()
+				mw.hasMatch = false
 
-			if joinResult.chk.NumRows() == mw.maxChunkSize {
-				mw.joinResultCh <- joinResult
-				ok, joinResult = mw.getNewJoinResult()
-				if !ok {
-					return
+				if joinResult.chk.NumRows() == mw.maxChunkSize {
+					mw.joinResultCh <- joinResult
+					ok, joinResult = mw.getNewJoinResult()
+					if !ok {
+						return
+					}
 				}
 			}
 			continue
@@ -376,7 +446,7 @@ func (mw *mergeJoinMergeWorker) joinToChunk(ctx context.Context) {
 	}
 }
 
-func (mw *mergeJoinMergeWorker) getNewJoinResult() (bool, *mergejoinWorkerResult) {
+func (mw *mergeJoinCompareWorker) getNewJoinResult() (bool, *mergejoinWorkerResult) {
 	joinResult := &mergejoinWorkerResult{
 		src: mw.joinChkResourceCh, //用来给next函数归还chunk的
 	}
@@ -576,7 +646,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 	joinChkResourceCh <- e.newFirstChunk()
 	joinResultCh := make(chan *mergejoinWorkerResult)
 	closeCh := make(chan struct{})
-	mergeJoinMergeWorker := &mergeJoinMergeWorker{
+	mergeJoinMergeWorker := &mergeJoinCompareWorker{
 		innerFetchResultCh: innerResultCh,
 		outerFetchResultCh: outerFetchResultCh,
 		joinKeys:           e.innerTable.joinKeys,
@@ -645,7 +715,7 @@ func (innerTable *mergeJoinInnerTable) fetchNextInnerRows() (err error) {
 }
 
 func (outerTable *mergeJoinOuterTable) fetchNextOuterRows(ctx context.Context) (err error) {
-	outerFetchResult,ok := <- outerTable.mergeJoinMergeWorker.outerFetchResultCh
+	outerFetchResult,ok := <- outerTable.mergeJoinCompareWorker.outerFetchResultCh
 
 	if !ok {
 		return errors.Errorf("outer channel closed")
@@ -655,7 +725,7 @@ func (outerTable *mergeJoinOuterTable) fetchNextOuterRows(ctx context.Context) (
 
 	outerTable.iter = chunk.NewIterator4Chunk(outerTable.chk)
 	outerTable.iter.Begin()
-	outerTable.selected, err = expression.VectorizedFilter(outerTable.mergeJoinMergeWorker.ctx, outerTable.filter, outerTable.iter, outerTable.selected)
+	outerTable.selected, err = expression.VectorizedFilter(outerTable.mergeJoinCompareWorker.ctx, outerTable.filter, outerTable.iter, outerTable.selected)
 	if err != nil {
 		return errors.Trace(err)
 	}
