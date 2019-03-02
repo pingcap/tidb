@@ -344,10 +344,11 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	err = ddlutil.LoadDDLReorgVars(tk.Se)
 	c.Assert(err, IsNil)
 	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
-	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
+	lastSetWorkerCnt := int32(16)
 	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", 16))
 
 	gofail.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum")
