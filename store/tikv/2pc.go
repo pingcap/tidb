@@ -652,6 +652,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	// gofail: var tmpMaxTxnTime uint64
+	// if tmpMaxTxnTime > 0 {
+	//  c.maxTxnTimeUse = tmpMaxTxnTime
+	// }
+
 	if c.store.oracle.IsExpired(c.startTS, c.maxTxnTimeUse) {
 		err = errors.Errorf("con:%d txn takes too much time, start: %d, commit: %d", c.connID, c.startTS, c.commitTS)
 		return errors.Annotate(err, txnRetryableMark)
