@@ -426,7 +426,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 	}
 	if bestIndexInfo != nil {
-		innerPlan := p.constructInnerIndexScan(ds, bestIndexInfo, remainedOfBest, outerJoinKeys, us)
+		innerPlan := p.constructInnerIndexScan(ds, bestIndexInfo, rangesOfBest, remainedOfBest, outerJoinKeys, us, keyOff2IdxOff)
 		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff)
 	}
 	return nil
@@ -479,7 +479,7 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 }
 
 // constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, remainedConds []expression.Expression, outerJoinKeys []*expression.Column, us *LogicalUnionScan) PhysicalPlan {
+func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, ranges []*ranger.Range, remainedConds []expression.Expression, outerJoinKeys []*expression.Column, us *LogicalUnionScan, keyOff2IdxOff []int) PhysicalPlan {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -489,7 +489,10 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		dataSourceSchema: ds.schema,
 		KeepOrder:        false,
 		Ranges:           ranger.FullRange(),
-		rangeDecidedBy:   outerJoinKeys,
+
+		keyOff2IdxOff:       keyOff2IdxOff,
+		rangesWithFakeConds: ranges,
+		rangeDecidedBy:      outerJoinKeys,
 	}.Init(ds.ctx)
 	is.filterCondition = remainedConds
 

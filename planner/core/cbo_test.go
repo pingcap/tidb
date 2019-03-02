@@ -118,6 +118,39 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	))
 }
 
+func (s *testAnalyzeSuite) TestIssue8058(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec(`use test`)
+	testKit.MustExec(`create table n (pid int(11) not null, nid int(11) not null, primary key(pid, nid), key i_nid(nid))`)
+	testKit.MustExec(`create table w (nid int(11) not null, day date not null, hour smallint(6) not null, cid bigint(20) not null, cnt int (11) not null, primary key(nid, day, hour, cid))`)
+	testKit.MustQuery(`explain select count(1) from w join n on w.nid = n.nid where n.pid = 863 and cid in(73151457924606867) and day = '2018-10-23'`).Check(testkit.Rows(
+		"StreamAgg_13 1.00 root funcs:count(1)",
+		"└─IndexJoin_17 0.01 root inner join, inner:IndexReader_16, outer key:test.w.nid, inner key:test.n.nid",
+		"  ├─TableReader_31 0.01 root data:Selection_30",
+		"  │ └─Selection_30 0.01 cop eq(test.w.day, 2018-10-23 00:00:00.000000), in(test.w.cid, 73151457924606867)",
+		"  │   └─TableScan_29 10000.00 cop table:w, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─IndexReader_16 10.00 root index:IndexScan_15",
+		"    └─IndexScan_15 10.00 cop table:n, index:pid, nid, range:[863 test.w.nid,863 test.w.nid], keep order:false, stats:pseudo",
+	))
+	testKit.MustQuery(`explain select count(1) from w join n on w.nid = n.nid where n.pid in (863, 534) and cid in(73151457924606867) and day = '2018-10-23'`).Check(testkit.Rows(
+		"StreamAgg_13 1.00 root funcs:count(1)",
+		"└─IndexJoin_17 0.01 root inner join, inner:IndexReader_16, outer key:test.w.nid, inner key:test.n.nid",
+		"  ├─TableReader_35 0.01 root data:Selection_34",
+		"  │ └─Selection_34 0.01 cop eq(test.w.day, 2018-10-23 00:00:00.000000), in(test.w.cid, 73151457924606867)",
+		"  │   └─TableScan_33 10000.00 cop table:w, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"  └─IndexReader_16 10.00 root index:IndexScan_15",
+		"    └─IndexScan_15 10.00 cop table:n, index:pid, nid, range:[534 test.w.nid,534 test.w.nid], [863 test.w.nid,863 test.w.nid], keep order:false, stats:pseudo",
+	))
+}
+
 func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()

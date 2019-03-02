@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -75,6 +76,55 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 		}
 	}
 	return !ran.LowExclude && !ran.HighExclude
+}
+
+func (ran *Range) StringWithJoinKeys(keys []*expression.Column, keyOff2IdxOff []int) string {
+	lowStrs := make([]string, 0, len(ran.LowVal))
+	for i, d := range ran.LowVal {
+		var key *expression.Column
+
+		for j, k := range keys {
+			if keyOff2IdxOff[j] == i {
+				key = k
+				break
+			}
+		}
+
+		if key == nil {
+			lowStrs = append(lowStrs, formatDatum(d, true))
+		} else {
+
+			lowStrs = append(lowStrs, key.String())
+		}
+	}
+
+	highStrs := make([]string, 0, len(ran.HighVal))
+	for i, d := range ran.HighVal {
+		var key *expression.Column
+
+		for j, k := range keys {
+			if keyOff2IdxOff[j] == i {
+				key = k
+				break
+			}
+		}
+
+		if key == nil {
+			highStrs = append(highStrs, formatDatum(d, false))
+		} else {
+
+			highStrs = append(highStrs, key.String())
+		}
+	}
+
+	l, r := "[", "]"
+	if ran.LowExclude {
+		l = "("
+	}
+	if ran.HighExclude {
+		r = ")"
+	}
+	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
 }
 
 // String implements the Stringer interface.

@@ -58,7 +58,13 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 		}
 	}
 	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+		fmt.Fprintf(buffer, ", range:")
+		for i, idxRange := range p.rangesWithFakeConds {
+			fmt.Fprintf(buffer, idxRange.StringWithJoinKeys(p.rangeDecidedBy, p.keyOff2IdxOff))
+			if i+1 < len(p.rangesWithFakeConds) {
+				fmt.Fprint(buffer, ", ")
+			}
+		}
 	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {

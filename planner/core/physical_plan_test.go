@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"context"
+	"log"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -785,6 +786,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 }
 
 func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
+	log.Println("TestDAGPlanBuilderAgg start")
+
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
