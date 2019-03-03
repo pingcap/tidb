@@ -359,6 +359,16 @@ func (ow outerMergeJoinFetchWorker) run(ctx context.Context) {//row with the sam
 		close(ow.outerFetchResultCh)
 	}()
 
+	outerStart := time.Now()
+	err := ow.outerTable.init(ctx, ow.outerTable.reader.newFirstChunk())
+	if err != nil {
+		log.Error("outer table init err:" , errors.Trace(err))
+	}
+/*	ow.outerTable.memTracker = memory.NewTracker("outerTable", -1)
+	ow.outerTable.memTracker.AttachTo(e.memTracker)
+*/	outerCost := time.Since(outerStart)
+	log.Info("outer init cost:", outerCost)
+
 	for atomic.LoadInt64(&ow.isClosed) != closed {
 		outerRows, err := ow.outerTable.rowsWithSameKey()
 		fetchResult := &outerFetchResult{fetchRow:outerRows , err : err}
@@ -378,6 +388,16 @@ func (iw innerMergeJoinFetchWorker) run(ctx context.Context) {//row with the sam
 	defer func() {
 		close(iw.innerResultCh)
 	}()
+
+	innerStart := time.Now()
+	err := iw.innerTable.init(ctx, iw.innerTable.reader.newFirstChunk())
+	if err != nil {
+		log.Error("inner worker err:" , errors.Trace( err))
+	}
+//	iw.innerTable.memTracker = memory.NewTracker("innerTable", -1)
+//	iw.innerTable.memTracker.AttachTo(e.memTracker)
+	innerCost := time.Since(innerStart)
+	log.Info("inner init cost:" , innerCost)
 
 	for atomic.LoadInt64(&iw.isClosed) != closed {
 		innerRows, err := iw.innerTable.rowsWithSameKey()
@@ -667,7 +687,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
 	}
 
-	innerStart := time.Now()
+/*	innerStart := time.Now()
 	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
 		return errors.Trace(err)
@@ -676,16 +696,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 	e.innerTable.memTracker.AttachTo(e.memTracker)
 	innerCost := time.Since(innerStart)
 	log.Info("inner init cost:" , innerCost)
-
-	outerStart := time.Now()
-	err = e.outerTable.init(ctx, e.childrenResults[e.outerIdx])
-	if err != nil {
-		return errors.Trace(err)
-	}
-	e.outerTable.memTracker = memory.NewTracker("outerTable", -1)
-	e.outerTable.memTracker.AttachTo(e.memTracker)
-	outerCost := time.Since(outerStart)
-	log.Info("outer init cost:", outerCost)
+*/
 
 	innerResultCh := make(chan *innerFetchResult)
 	innerMergeJoinFetchWorker := &innerMergeJoinFetchWorker{
