@@ -696,9 +696,10 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 	e.outerMergeJoinFetchWorker = outerMergeJoinFetchWorker
 	go outerMergeJoinFetchWorker.run(ctx)
 
+	joinWorkerCount := 4
 	closeCh := make(chan struct{})
-	mergeTaskCh := make(chan *mergeTask, 4)
-	for i := 0 ; i<4 ; i++ {
+	mergeTaskCh := make(chan *mergeTask, joinWorkerCount)
+	for i := 0 ; i<joinWorkerCount ; i++ {
 		joinChkResourceCh := make(chan *chunk.Chunk, 1)
 		joinChkResourceCh <- e.newFirstChunk()
 		mw := mergeJoinMergeWorker{
@@ -713,7 +714,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		go mw.run()
 	}
 
-	taskCh := make(chan *mergeTask, 4)
+	taskCh := make(chan *mergeTask, joinWorkerCount)
 	joinChkResourceCh := make(chan *chunk.Chunk, 1)
 	joinChkResourceCh <- e.newFirstChunk()
 	mergeJoinCompareWorker := &mergeJoinCompareWorker{
