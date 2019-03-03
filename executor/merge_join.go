@@ -519,17 +519,21 @@ func (mw *mergeJoinCompareWorker) joinToChunk(ctx context.Context) {
 			}
 
 			if len(mt.outerRows) == mw.outerRowsPreTask {
-//				if cmpResult == 0 {
-//					fmt.Println("before join-worker outerRow", mt.outerRows[0].GetInt64(0))
-//					fmt.Println("before join-worker innerRow", mt.innerRows[0].GetInt64(0))
-//				} else {
-//					fmt.Println("before join-worker outerRow", mt.outerRows[0].GetInt64(0))
-//				}
+				//if cmpResult == 0 {
+				//	fmt.Println("before join-worker outerRow len", len(mt.outerRows), mt.outerRows[0].GetInt64(0))
+				//	fmt.Println("before join-worker innerRows len", len(mt.innerRows), mt.innerRows[0].GetInt64(0))
+				//} else {
+				//	fmt.Println("before join-worker outerRow len", len(mt.outerRows), mt.outerRows[0].GetInt64(0))
+				//}
 
 				mw.mergeWorkerTaskCh <- mt
 				mw.taskCh <- mt
 
 				mt = &mergeTask{joinResultCh : make(chan *mergejoinWorkerResult)} //重新new一个
+				mt.cmp = cmpResult
+				if cmpResult == 0 {
+					mt.innerRows = mw.innerRows
+				}
 			}
 			mw.outerRow = mw.outerIter4Row.Next()
 			mw.outerRowIdx = mw.outerRowIdx + 1
