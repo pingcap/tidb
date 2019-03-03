@@ -653,6 +653,7 @@ func (e *MergeJoinExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *MergeJoinExec) Open(ctx context.Context) error {
+	start := time.Now()
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -738,6 +739,9 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 
 	go mergeJoinCompareWorker.run(ctx)
 
+	cost := time.Since(start)
+
+	log.Info("start merge join cost:" , cost)
 	return nil
 }
 
