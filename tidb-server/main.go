@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -24,7 +25,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	opentracing "github.com/opentracing/opentracing-go"
+	_ "net/http/pprof"
+
+opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -130,6 +133,10 @@ var (
 )
 
 func main() {
+
+	go func() {
+		http.ListenAndServe("0.0.0.0:8000", nil)
+	}()
 	flag.Parse()
 	if *version {
 		fmt.Println(printer.GetTiDBInfo())
