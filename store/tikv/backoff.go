@@ -158,6 +158,7 @@ const (
 	copBuildTaskMaxBackoff         = 5000
 	tsoMaxBackoff                  = 15000
 	scannerNextMaxBackoff          = 20000
+	scannerPrevMaxBackoff          = 20000
 	batchGetMaxBackoff             = 20000
 	copNextMaxBackoff              = 20000
 	getMaxBackoff                  = 20000
