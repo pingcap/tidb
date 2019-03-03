@@ -667,19 +667,25 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
 	}
 
+	innerStart := time.Now()
 	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
 		return errors.Trace(err)
 	}
 	e.innerTable.memTracker = memory.NewTracker("innerTable", -1)
 	e.innerTable.memTracker.AttachTo(e.memTracker)
+	innerCost := time.Since(innerStart)
+	log.Info("inner init cost:" , innerCost)
 
-	err = e.outerTable.init(ctx, e.childrenResults[e.outerIdx^1])
+	outerStart := time.Now()
+	err = e.outerTable.init(ctx, e.childrenResults[e.outerIdx])
 	if err != nil {
 		return errors.Trace(err)
 	}
 	e.outerTable.memTracker = memory.NewTracker("outerTable", -1)
 	e.outerTable.memTracker.AttachTo(e.memTracker)
+	outerCost := time.Since(outerStart)
+	log.Info("outer init cost:", outerCost)
 
 	innerResultCh := make(chan *innerFetchResult)
 	innerMergeJoinFetchWorker := &innerMergeJoinFetchWorker{
