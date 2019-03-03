@@ -200,8 +200,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
 
 		// issue 9464
-		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, errors.New("[planner:3106]'Defining a virtual generated column as primary key' is not supported for generated columns.")},
-		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, errors.New("[planner:3106]'Defining a virtual generated column as primary key' is not supported for generated columns.")},
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
+		{"CREATE TABLE t1 (id INT NOT NULL, c1 VARCHAR(20) AS ('foo') VIRTUAL KEY NOT NULL, PRIMARY KEY (id));", false, core.ErrUnsupportedOnGeneratedColumn},
 	}
 
 	store, dom, err := newStoreWithBootstrap()
