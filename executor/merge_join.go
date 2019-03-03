@@ -747,7 +747,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		ctx:           		e.ctx,
 		mergeWorkerTaskCh: mergeTaskCh,
 		taskCh:			taskCh,
-		outerRowsPreTask: 1,
+		outerRowsPreTask: 1024,
 
 	}
 	e.mergeTaskCh = taskCh
