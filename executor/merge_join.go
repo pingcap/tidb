@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	log "github.com/sirupsen/logrus"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -206,7 +207,9 @@ type mergeJoinMergeWorker struct {
 
 func (mw *mergeJoinMergeWorker) run() {
 	defer func() {
+		log.Info("mergeWorker:" , mw.workerId , "exit")
 	}()
+	log.Info("mergeWorker:" , mw.workerId , "start")
 	ok, joinResult := mw.getNewJoinResult()
 	if !ok {
 		return
