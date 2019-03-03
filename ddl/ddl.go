@@ -194,6 +194,8 @@ var (
 	ErrDropLastPartition = terror.ClassDDL.New(codeDropLastPartition, mysql.MySQLErrName[mysql.ErrDropLastPartition])
 	//ErrTooManyPartitions returns too many partitions were defined.
 	ErrTooManyPartitions = terror.ClassDDL.New(codeTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
+	//ErrNoParts returns no partition were defined.
+	ErrNoParts = terror.ClassDDL.New(codeNoParts, mysql.MySQLErrName[mysql.ErrNoParts])
 	//ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
 	ErrPartitionFunctionIsNotAllowed = terror.ClassDDL.New(codePartitionFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFunctionIsNotAllowed])
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
@@ -683,6 +685,7 @@ const (
 	codeErrTooManyValues                       = terror.ErrCode(mysql.ErrTooManyValues)
 	codeDropLastPartition                      = terror.ErrCode(mysql.ErrDropLastPartition)
 	codeTooManyPartitions                      = terror.ErrCode(mysql.ErrTooManyPartitions)
+	codeNoParts                                = terror.ErrCode(mysql.ErrNoParts)
 	codePartitionFunctionIsNotAllowed          = terror.ErrCode(mysql.ErrPartitionFunctionIsNotAllowed)
 	codeErrPartitionFuncNotAllowed             = terror.ErrCode(mysql.ErrPartitionFuncNotAllowed)
 	codeErrFieldTypeNotAllowedAsPartitionField = terror.ErrCode(mysql.ErrFieldTypeNotAllowedAsPartitionField)
@@ -736,6 +739,7 @@ func init() {
 		codeErrTooManyValues:                       mysql.ErrTooManyValues,
 		codeDropLastPartition:                      mysql.ErrDropLastPartition,
 		codeTooManyPartitions:                      mysql.ErrTooManyPartitions,
+		codeNoParts:                                mysql.ErrNoParts,
 		codePartitionFunctionIsNotAllowed:          mysql.ErrPartitionFunctionIsNotAllowed,
 		codeErrPartitionFuncNotAllowed:             mysql.ErrPartitionFuncNotAllowed,
 		codeErrFieldTypeNotAllowedAsPartitionField: mysql.ErrFieldTypeNotAllowedAsPartitionField,
