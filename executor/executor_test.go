@@ -1880,7 +1880,7 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plannercore.Preprocess(ctx, stmtNode, infoSchema, false)
+		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		p, err := planner.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)

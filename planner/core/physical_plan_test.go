@@ -659,7 +659,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		core.Preprocess(se, stmt, s.is, false)
+		core.Preprocess(se, stmt, s.is)
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
