@@ -377,7 +377,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -427,7 +427,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -483,7 +483,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}{
 		{
 			sql:  "analyze table t3",
-			best: "Analyze{Index(a),Table(b)}",
+			best: "Analyze{Index(a),Table(a, b)}",
 		},
 		// Test analyze full table.
 		{
@@ -543,7 +543,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -620,7 +620,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		stmt := stmts[0]
 
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, true)
+		err = core.Preprocess(ctx, stmt, is, core.InPrepare)
 		c.Assert(err, IsNil)
 		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -708,10 +708,10 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"  ├─TableReader_12 10.00 root data:TableScan_11",
 			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─MaxOneRow_13 1.00 root ",
-			"    └─Projection_14 0.00 root concat(cast(t1.a), \",\", cast(t1.b))",
-			"      └─IndexLookUp_21 0.00 root ",
+			"    └─Projection_14 0.10 root concat(cast(t1.a), \",\", cast(t1.b))",
+			"      └─IndexLookUp_21 0.10 root ",
 			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(t1.c, test.t.c)], keep order:false",
-			"        └─Selection_20 0.00 cop eq(t1.a, test.t.a)",
+			"        └─Selection_20 0.10 cop eq(t1.a, test.t.a)",
 			"          └─TableScan_19 1.00 cop table:t, keep order:false",
 		))
 }
@@ -874,7 +874,7 @@ func BenchmarkOptimize(b *testing.B) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is, false)
+		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
 
 		b.Run(tt.sql, func(b *testing.B) {
