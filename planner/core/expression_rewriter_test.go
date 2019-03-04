@@ -152,3 +152,18 @@ func (s *testExpressionRewriterSuite) TestCompareSubquery(c *C) {
 	))
 	tk.MustQuery("select * from t t1 where b = all (select a from t t2)").Check(testkit.Rows())
 }
+
+func (s *testExpressionRewriterSuite) TestCheckFullGroupBy(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustQuery("select t1.a, (select max(t2.b) from t t2) from t t1").Check(testkit.Rows())
+}
