@@ -981,133 +981,44 @@ func closeAddIndexWorkers(workers []*addIndexWorker) {
 	}
 }
 
-func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAddedCount *int64, startHandle int64) (int64, int64, error) {
-	var (
-		addedCount int64
-		nextHandle = startHandle
-		firstErr   error
-	)
-	for i := 0; i < taskCnt; i++ {
-		//worker := workers[i]
-		result := &addIndexResult{}
-		if firstErr == nil && result.err != nil {
-			firstErr = result.err
-			// We should wait all working workers exits, any way.
-			continue
-		}
-
-		if result.err != nil {
-			log.Warnf("[ddl-reorg] worker[%v] return err:%v", i, result.err)
-		}
-
-		if firstErr == nil {
-			*totalAddedCount += int64(result.addedCount)
-			addedCount += int64(result.addedCount)
-			nextHandle = result.nextHandle
-		}
-	}
-
-	return nextHandle, addedCount, errors.Trace(firstErr)
-}
-
-// handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
-// there are taskCnt running workers.
-func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
-	for i, task := range batchTasks {
-		workers[i].taskCh <- task
-	}
-
-	startHandle := batchTasks[0].startHandle
-	taskCnt := len(batchTasks)
+func (w *worker) waitTaskFinish(cancel context.CancelFunc, reorgInfo *reorgInfo, availableWorkerCh chan *addIndexWorker, doingTaskCh chan *reorgIndexTask, errCh chan error) error {
 	startTime := time.Now()
-	nextHandle, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
-	elapsedTime := time.Since(startTime).Seconds()
-	if err == nil {
-		err = w.isReorgRunnable(reorgInfo.d)
+	totalAddedCount := reorgInfo.Job.GetRowCount()
+	for task := range doingTaskCh {
+		select {
+		case err := <-errCh:
+			cancel()
+			return errors.Trace(err)
+		default:
+		}
+		task.wg.Wait()
+		// check result != nil
+		if task.result.err == nil {
+			task.result.err = w.isReorgRunnable(reorgInfo.d)
+		}
+		elapsedTime := time.Since(startTime).Seconds()
+		if task.result.err != nil {
+			cancel()
+			// update the reorg handle that has been processed.
+			err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
+				return errors.Trace(reorgInfo.UpdateReorgMeta(txn, task.result.nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
+			})
+			metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime)
+			log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
+				totalAddedCount, task.startHandle, task.result.nextHandle, task.result.addedCount, task.result.err, elapsedTime, err1)
+			return errors.Trace(task.result.err)
+		}
+		totalAddedCount += int64(task.result.addedCount)
+		w.reorgCtx.setNextHandle(task.result.nextHandle)
+		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime)
+		log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
+			totalAddedCount, task.startHandle, task.result.nextHandle, task.result.addedCount, elapsedTime)
 	}
-
-	if err != nil {
-		// update the reorg handle that has been processed.
-		err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
-			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
-		})
-		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime)
-		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
-			*totalAddedCount, startHandle, nextHandle, taskAddedCount, err, elapsedTime, err1)
-		return errors.Trace(err)
-	}
-
-	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
-	w.reorgCtx.setNextHandle(nextHandle)
-	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime)
-	log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
-		*totalAddedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
 	return nil
 }
 
 // sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker, reorgInfo *reorgInfo, totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
-	batchTasks := make([]*reorgIndexTask, 0, len(workers))
-	physicalTableID := reorgInfo.PhysicalTableID
-
-	// Build reorg indices tasks.
-	for _, keyRange := range kvRanges {
-		startHandle, endHandle, err := decodeHandleRange(keyRange)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		endKey := t.RecordKey(endHandle)
-		endIncluded := false
-		if endKey.Cmp(keyRange.EndKey) < 0 {
-			endIncluded = true
-		}
-		task := &reorgIndexTask{physicalTableID: physicalTableID, startHandle: startHandle, endHandle: endHandle, endIncluded: endIncluded}
-		batchTasks = append(batchTasks, task)
-
-		if len(batchTasks) >= len(workers) {
-			break
-		}
-	}
-
-	if len(batchTasks) == 0 {
-		return nil, nil
-	}
-
-	// Wait tasks finish.
-	err := w.handleReorgTasks(reorgInfo, totalAddedCount, workers, batchTasks)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if len(batchTasks) < len(kvRanges) {
-		// there are kvRanges not handled.
-		remains := kvRanges[len(batchTasks):]
-		return remains, nil
-	}
-
-	return nil, nil
-}
-
-var (
-	// TestCheckWorkerNumCh use for test adjust add index worker.
-	TestCheckWorkerNumCh = make(chan struct{})
-	// TestCheckWorkerNumber use for test adjust add index worker.
-	TestCheckWorkerNumber = int32(16)
-)
-
-func loadDDLReorgVars(w *worker) error {
-	// Get sessionctx from context resource pool.
-	var ctx sessionctx.Context
-	ctx, err := w.sessPool.get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer w.sessPool.put(ctx)
-	return ddlutil.LoadDDLReorgVars(ctx)
-}
-
-func sendRanges(ctx context.Context, t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, availableWorkerCh chan *addIndexWorker, doingTaskCh chan *reorgIndexTask) error {
+func sendRangeTaskToWorkers(ctx context.Context, t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange, availableWorkerCh chan *addIndexWorker, doingTaskCh chan *reorgIndexTask) error {
 	// Build reorg indices tasks.
 	for _, keyRange := range kvRanges {
 		select {
@@ -1139,6 +1050,24 @@ func sendRanges(ctx context.Context, t table.Table, reorgInfo *reorgInfo, kvRang
 		doingTaskCh <- task
 	}
 	return nil
+}
+
+var (
+	// TestCheckWorkerNumCh use for test adjust add index worker.
+	TestCheckWorkerNumCh = make(chan struct{})
+	// TestCheckWorkerNumber use for test adjust add index worker.
+	TestCheckWorkerNumber = int32(16)
+)
+
+func loadDDLReorgVars(w *worker) error {
+	// Get sessionctx from context resource pool.
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+	return ddlutil.LoadDDLReorgVars(ctx)
 }
 
 // addPhysicalTableIndex handles the add index reorganization state for a non-partitioned table or a partition.
@@ -1229,7 +1158,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 
 			sendKVRanges := kvRanges[:workerCnt]
 			remains := kvRanges[workerCnt:]
-			err = sendRanges(ctx, t, reorgInfo, sendKVRanges, availableWorkerCh, doingTaskCh)
+			err = sendRangeTaskToWorkers(ctx, t, reorgInfo, sendKVRanges, availableWorkerCh, doingTaskCh)
 			if err != nil {
 				errCh <- errors.Trace(err)
 				return
@@ -1245,45 +1174,8 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			}
 		}
 	}()
-
 	err = w.waitTaskFinish(cancel, reorgInfo, availableWorkerCh, doingTaskCh, errCh)
 	return errors.Trace(err)
-}
-
-func (w *worker) waitTaskFinish(cancel context.CancelFunc, reorgInfo *reorgInfo, availableWorkerCh chan *addIndexWorker, doingTaskCh chan *reorgIndexTask, errCh chan error) error {
-	startTime := time.Now()
-	totalAddedCount := reorgInfo.Job.GetRowCount()
-	for task := range doingTaskCh {
-		select {
-		case err := <-errCh:
-			cancel()
-			return errors.Trace(err)
-		default:
-		}
-		task.wg.Wait()
-		// check result != nil
-		if task.result.err == nil {
-			task.result.err = w.isReorgRunnable(reorgInfo.d)
-		}
-		elapsedTime := time.Since(startTime).Seconds()
-		if task.result.err != nil {
-			cancel()
-			// update the reorg handle that has been processed.
-			err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
-				return errors.Trace(reorgInfo.UpdateReorgMeta(txn, task.result.nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
-			})
-			metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime)
-			log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
-				totalAddedCount, task.startHandle, task.result.nextHandle, task.result.addedCount, task.result.err, elapsedTime, err1)
-			return errors.Trace(task.result.err)
-		}
-		totalAddedCount += int64(task.result.addedCount)
-		w.reorgCtx.setNextHandle(task.result.nextHandle)
-		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime)
-		log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
-			totalAddedCount, task.startHandle, task.result.nextHandle, task.result.addedCount, elapsedTime)
-	}
-	return nil
 }
 
 // addTableIndex handles the add index reorganization state for a table.
