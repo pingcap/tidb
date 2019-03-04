@@ -31,9 +31,9 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 	return &WindowFuncDesc{newBaseFuncDesc(ctx, name, args)}
 }
 
-// partitionWindowFuncs is the functions that operate on the entire partition,
+// noFrameWindowFuncs is the functions that operate on the entire partition,
 // they should not have frame specifications.
-var partitionWindowFuncs = map[string]struct{}{
+var noFrameWindowFuncs = map[string]struct{}{
 	ast.WindowFuncCumeDist:    {},
 	ast.WindowFuncDenseRank:   {},
 	ast.WindowFuncLag:         {},
@@ -46,6 +46,6 @@ var partitionWindowFuncs = map[string]struct{}{
 
 // NeedFrame checks if the function need frame specification.
 func NeedFrame(name string) bool {
-	_, ok := partitionWindowFuncs[strings.ToLower(name)]
+	_, ok := noFrameWindowFuncs[strings.ToLower(name)]
 	return !ok
 }
