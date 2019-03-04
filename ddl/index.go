@@ -482,7 +482,7 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-type reorgIndexTask struct {
+type reorgIndexTaskData struct {
 	physicalTableID int64
 	startHandle     int64
 	endHandle       int64
@@ -490,7 +490,10 @@ type reorgIndexTask struct {
 	// When the last handle is math.MaxInt64, set endIncluded to true to
 	// tell worker backfilling index of endHandle.
 	endIncluded bool
+}
 
+type reorgIndexTask struct {
+	reorgIndexTaskData
 	wg     sync.WaitGroup
 	result *addIndexResult
 }
@@ -606,7 +609,7 @@ func (w *addIndexWorker) cleanRowMap() {
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
-func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle int64) {
+func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTaskData, taskDone bool) (nextHandle int64) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		return w.idxRecords[len(w.idxRecords)-1].handle + 1
@@ -629,7 +632,7 @@ func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) 
 // 2. Next handle of entry that we need to process.
 // 3. Boolean indicates whether the task is done.
 // 4. error occurs in fetchRowColVals. nil if no error occurs.
-func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, int64, bool, error) {
+func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTaskData) ([]*indexRecord, int64, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
@@ -754,7 +757,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
-func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
+func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTaskData) (taskCtx addIndexTaskContext, errInTxn error) {
 	// gofail: var errorMockPanic bool
 	// if errorMockPanic {
 	// 		panic("panic test")
@@ -814,7 +817,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 }
 
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
-func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *addIndexResult {
+func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTaskData) *addIndexResult {
 	handleRange := *task
 	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
 	lastLogCount := 0
@@ -887,7 +890,7 @@ func (w *addIndexWorker) run(d *ddlCtx, availableWorkerCh chan *addIndexWorker) 
 			break
 		}
 
-		log.Debug("[ddl-reorg] got backfill index task:#v", task)
+		log.Debug("[ddl-reorg] got backfill index task:#v", task.reorgIndexTaskData)
 		// gofail: var mockAddIndexErr bool
 		//if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
 		//	gofailMockAddindexErrOnceGuard = true
@@ -900,7 +903,7 @@ func (w *addIndexWorker) run(d *ddlCtx, availableWorkerCh chan *addIndexWorker) 
 
 		// Dynamic change batch size.
 		w.batchCnt = int(variable.GetDDLReorgBatchSize())
-		result := w.handleBackfillTask(d, task)
+		result := w.handleBackfillTask(d, &task.reorgIndexTaskData)
 		task.result = result
 		task.wg.Done()
 		availableWorkerCh <- w
@@ -992,6 +995,11 @@ func (w *worker) waitTaskFinish(cancel context.CancelFunc, reorgInfo *reorgInfo,
 		default:
 		}
 		task.wg.Wait()
+		// task.result should never be nil here.
+		if task.result == nil {
+			cancel()
+			return errors.Errorf("[ddl-reorg] backfill index task result is nil")
+		}
 		// check result != nil
 		if task.result.err == nil {
 			task.result.err = w.isReorgRunnable(reorgInfo.d)
@@ -1042,7 +1050,7 @@ func sendRangeTaskToWorkers(ctx context.Context, t table.Table, reorgInfo *reorg
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
 		}
-		task := &reorgIndexTask{physicalTableID: reorgInfo.PhysicalTableID, startHandle: startHandle, endHandle: endHandle, endIncluded: endIncluded}
+		task := &reorgIndexTask{reorgIndexTaskData: reorgIndexTaskData{reorgInfo.PhysicalTableID, startHandle, endHandle, endIncluded}}
 		task.wg.Add(1)
 		var idxWorker *addIndexWorker
 		for {
