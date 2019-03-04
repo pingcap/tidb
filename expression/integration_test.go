@@ -3469,9 +3469,6 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	_, err = tk.Exec("set @@global.max_user_connections='';")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
-	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 }
 
 func (s *testIntegrationSuite) TestIssues(c *C) {
