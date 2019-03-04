@@ -192,6 +192,9 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 }
 
 func checkUInt64SystemVar(name, value string, min, max uint64, vars *SessionVars) (string, error) {
+	if len(value) == 0 {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
 	if value[0] == '-' {
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
