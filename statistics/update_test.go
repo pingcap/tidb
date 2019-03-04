@@ -15,10 +15,12 @@ package statistics_test
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
@@ -32,7 +34,8 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	log "github.com/sirupsen/logrus"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 var _ = Suite(&testStatsSuite{})
@@ -40,13 +43,13 @@ var _ = Suite(&testStatsSuite{})
 type testStatsSuite struct {
 	store kv.Storage
 	do    *domain.Domain
-	hook  logHook
+	hook  *logHook
 }
 
 func (s *testStatsSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// Add the hook here to avoid data race.
-	log.AddHook(&s.hook)
+	s.registerHook()
 	var err error
 	s.store, s.do, err = newStoreWithBootstrap(0)
 	c.Assert(err, IsNil)
@@ -56,6 +59,15 @@ func (s *testStatsSuite) TearDownSuite(c *C) {
 	s.do.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
+}
+
+func (s *testStatsSuite) registerHook() {
+	conf := &log.Config{Level: "info", File: log.FileLogConfig{}}
+	_, r, _ := log.InitLogger(conf)
+	s.hook = &logHook{r.Core, ""}
+	r.Core = s.hook
+	lg := zap.New(r.Core)
+	log.ReplaceGlobals(lg, r)
 }
 
 func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
@@ -1031,19 +1043,38 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 }
 
 type logHook struct {
+	zapcore.Core
 	results string
 }
 
-func (hook *logHook) Levels() []log.Level {
-	return []log.Level{log.DebugLevel}
-}
-
-func (hook *logHook) Fire(entry *log.Entry) error {
+func (h *logHook) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	message := entry.Message
 	if idx := strings.Index(message, "[stats"); idx != -1 {
-		hook.results = hook.results + message[idx:]
+		h.results = h.results + message
+		for _, f := range fields {
+			h.results = h.results + ", " + f.Key + ": " + h.field2String(f)
+		}
 	}
-	return nil
+	return h.Core.Write(entry, fields)
+}
+
+func (h *logHook) field2String(field zapcore.Field) string {
+	switch field.Type {
+	case zapcore.StringType:
+		return field.String
+	case zapcore.Int64Type, zapcore.Int32Type, zapcore.Uint32Type:
+		return fmt.Sprintf("%v", field.Integer)
+	case zapcore.Float64Type:
+		return fmt.Sprintf("%v", math.Float64frombits(uint64(field.Integer)))
+	}
+	return "not support"
+}
+
+func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if h.Enabled(e.Level) {
+		return ce.AddCore(e, h)
+	}
+	return ce
 }
 
 func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
@@ -1079,17 +1110,17 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	}{
 		{
 			sql: "select * from t where t.a <= 15",
-			result: "[stats-feedback] test.t, column: a, range: [-inf,7), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
-				"[stats-feedback] test.t, column: a, range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
+			result: "[stats-feedback] test.t, column: a, expected: range: [-inf,7), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
+				"[stats-feedback] test.t, column: a, expected: range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 15",
-			result: "[stats-feedback] test.t, index: idx, range: [-inf,7), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
-				"[stats-feedback] test.t, index: idx, range: [8,15), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
+			result: "[stats-feedback] test.t, index: idx, expected: range: [-inf,7), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
+				"[stats-feedback] test.t, index: idx, expected: range: [8,15), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1 and a <= 5",
-			result: "[stats-feedback] test.t, index: idx_ba, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}",
+			result: "[stats-feedback] test.t, index: idx_ba, actual: 1, equality: 1, expected equality: 1, range: range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}",
 		},
 		{
 			sql:    "select b from t use index(idx_bc) where b = 1 and c <= 5",
@@ -1097,10 +1128,10 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1",
-			result: "[stats-feedback] test.t, index: idx_ba, value: 1, actual: 1, expected: 1",
+			result: "[stats-feedback] test.t, index: idx_ba, expected: value: 1, actual: 1, expected: 1",
 		},
 	}
-	log.SetLevel(log.DebugLevel)
+	log.SetLevel(zapcore.DebugLevel)
 	for _, t := range tests {
 		s.hook.results = ""
 		testKit.MustQuery(t.sql)

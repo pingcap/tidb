@@ -888,7 +888,7 @@ func logForPK(prefix string, c *Column, ranges []*ranger.Range, actual []int64, 
 		if ran.LowVal[0].GetInt64()+1 >= ran.HighVal[0].GetInt64() {
 			continue
 		}
-		log.Debug(prefix, zap.String("col1", c.Info.Name.O), zap.String("col2", colRangeToStr(c, ran, actual[i], factor)))
+		log.Debug(prefix, zap.String("column", c.Info.Name.O), zap.String("expected", colRangeToStr(c, ran, actual[i], factor)))
 	}
 }
 
@@ -920,7 +920,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	if idx.CMSketch == nil || idx.statsVer != version1 {
 		for i, ran := range ranges {
-			log.Debug(prefix, zap.String("index1", idx.Info.Name.O), zap.String("index2", logForIndexRange(idx, ran, actual[i], factor)))
+			log.Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("expected", logForIndexRange(idx, ran, actual[i], factor)))
 		}
 		return
 	}
@@ -928,7 +928,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 		rangePosition := getOrdinalOfRangeCond(sc, ran)
 		// only contains range or equality query
 		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
-			log.Debug(prefix, zap.String("index1", idx.Info.Name.O), zap.String("index2", logForIndexRange(idx, ran, actual[i], factor)))
+			log.Debug(prefix, zap.String("index", idx.Info.Name.O), zap.String("expected", logForIndexRange(idx, ran, actual[i], factor)))
 			continue
 		}
 		equalityString, err := types.DatumsToString(ran.LowVal[:rangePosition], true)
@@ -961,7 +961,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 			if err == nil {
 				log.Debug(prefix, zap.String("index", idx.Info.Name.O), zap.Int64("actual", actual[i]),
 					zap.String("equality", equalityString), zap.Uint32("expected equality", equalityCount),
-					zap.String("range", rang.String()), zap.Float64("pseudo count", count))
+					zap.String("range", rang.String()), zap.Float64("pseudo count", math.Round(count)))
 			}
 		}
 	}
@@ -982,7 +982,7 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 	for _, fb := range q.feedback {
 		actual = append(actual, fb.count)
 	}
-	logPrefix := fmt.Sprintf("[stats-feedback] %s,", t.name)
+	logPrefix := fmt.Sprintf("[stats-feedback] %s", t.name)
 	if isIndex {
 		idx := t.Indices[q.hist.ID]
 		if idx == nil || idx.Histogram.Len() == 0 {
