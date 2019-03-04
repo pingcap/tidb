@@ -1170,12 +1170,12 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			//      }
 			//}
 
+			log.Infof("[ddl-reorg] start %d workers to reorg index of %v region ranges, handle range:[%v, %v).", len(idxWorkers), len(kvRanges), startHandle, endHandle)
 			err = sendRangeTaskToWorkers(ctx, t, reorgInfo, kvRanges[:workerCnt], availableWorkerCh, doingTaskCh)
 			if err != nil {
 				errCh <- errors.Trace(err)
 				return
 			}
-			log.Infof("[ddl-reorg] start %d workers to reorg index of %v region ranges, handle range:[%v, %v).", len(idxWorkers), len(kvRanges), startHandle, endHandle)
 			if len(kvRanges) == workerCnt {
 				break
 			}
