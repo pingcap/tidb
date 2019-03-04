@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -118,6 +119,7 @@ func mockSelectResultWithoutCheck(ctx context.Context, sctx sessionctx.Context, 
 func buildTableReader(sctx sessionctx.Context) Executor {
 	e := &TableReaderExecutor{
 		baseExecutor: buildMockBaseExec(sctx),
+		table:        &tables.Table{},
 		dagPB:        buildMockDAGRequest(sctx),
 		selectResult: selectResult{mockSelectResult},
 	}
@@ -244,6 +246,7 @@ func buildIndexLookupReader(sctx sessionctx.Context) Executor {
 		dagPB:        buildMockDAGRequest(sctx),
 		index:        &model.IndexInfo{},
 		tableRequest: buildMockDAGRequest(sctx),
+		table:        &tables.Table{},
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: newExecutorBuilder(sctx, nil),
 			// All tableWorkers run in the background asynchronously and numbers of rows returned
 			// by them are decided by kv.Request.KeyRanges which is complex and built from IdxHandles,
