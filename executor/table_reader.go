@@ -35,13 +35,13 @@ import (
 // make sure `TableReaderExecutor` implements `Executor`.
 var _ Executor = &TableReaderExecutor{}
 
-// selectResult is used to hack distsql.SelectWithRuntimeStats safely for testing.
-type selectResult struct {
+// selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
+type selectResultHook struct {
 	selectResultFunc func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
 		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error)
 }
 
-func (sr selectResult) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
+func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
 	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []string) (distsql.SelectResult, error) {
 	if sr.selectResultFunc == nil {
 		return distsql.SelectWithRuntimeStats(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs)
@@ -73,7 +73,7 @@ type TableReaderExecutor struct {
 	corColInAccess bool
 	plans          []plannercore.PhysicalPlan
 
-	selectResult // for testing
+	selectResultHook // for testing
 }
 
 // Open initialzes necessary variables for using this executor.

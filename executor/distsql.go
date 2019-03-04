@@ -237,7 +237,7 @@ type IndexReaderExecutor struct {
 	colLens        []int
 	plans          []plannercore.PhysicalPlan
 
-	selectResult // for testing
+	selectResultHook // for testing
 }
 
 // Close clears all resources hold by current object.
@@ -368,7 +368,7 @@ type IndexLookUpExecutor struct {
 	idxCols         []*expression.Column
 	colLens         []int
 
-	selectResult // for testing
+	selectResultHook // for testing
 }
 
 // Open implements the Executor Open interface.

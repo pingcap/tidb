@@ -1800,7 +1800,7 @@ type dataReaderBuilder struct {
 	plannercore.Plan
 	*executorBuilder
 
-	selectResult // for testing
+	selectResultHook // for testing
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, datums [][]types.Datum,
