@@ -14,12 +14,14 @@
 package tikv
 
 import (
+	"bytes"
+	"context"
+
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // Scanner support tikv scan
@@ -150,11 +152,17 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		reqEndKey := s.endKey
+		if len(reqEndKey) > 0 && len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, reqEndKey) < 0 {
+			reqEndKey = loc.EndKey
+		}
+
 		req := &tikvrpc.Request{
 			Type: tikvrpc.CmdScan,
 			Scan: &pb.ScanRequest{
 				StartKey: s.nextStartKey,
-				EndKey:   s.endKey,
+				EndKey:   reqEndKey,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
 				KeyOnly:  s.snapshot.keyOnly,

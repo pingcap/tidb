@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util"
 )
 
 type simpleRewriter struct {
@@ -37,9 +38,12 @@ type simpleRewriter struct {
 // The expression string must only reference the column in table Info.
 func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, err := parser.New().Parse(exprStr, "", "")
+	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, util.SyntaxError(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr)
@@ -50,7 +54,7 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo, targetFt *types.FieldType) (Expression, error) {
 	e, err := ParseSimpleExprWithTableInfo(ctx, exprStr, tableInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	e = BuildCastFunction(ctx, e, targetFt)
 	return e, nil
@@ -63,7 +67,7 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 	rewriter := &simpleRewriter{ctx: ctx, schema: NewSchema(columns...)}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {
-		return nil, errors.Trace(rewriter.err)
+		return nil, rewriter.err
 	}
 	return rewriter.pop(), nil
 }
@@ -72,16 +76,19 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 // The expression string must only reference the column in the given schema.
 func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
 	exprStr = "select " + exprStr
-	stmts, err := parser.New().Parse(exprStr, "", "")
+	stmts, warns, err := parser.New().Parse(exprStr, "", "")
+	for _, warn := range warns {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
+	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, util.SyntaxWarn(err)
 	}
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	exprs := make([]Expression, 0, len(fields))
 	for _, field := range fields {
 		expr, err := RewriteSimpleExprWithSchema(ctx, field.Expr, schema)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		exprs = append(exprs, expr)
 	}
@@ -93,7 +100,7 @@ func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, sche
 	rewriter := &simpleRewriter{ctx: ctx, schema: schema}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {
-		return nil, errors.Trace(rewriter.err)
+		return nil, rewriter.err
 	}
 	return rewriter.pop(), nil
 }
@@ -115,7 +122,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 	case *ast.ColumnNameExpr:
 		column, err := sr.rewriteColumn(v)
 		if err != nil {
-			sr.err = errors.Trace(err)
+			sr.err = err
 			return originInNode, false
 		}
 		sr.push(column)
@@ -126,7 +133,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		sr.funcCallToExpression(v)
 	case *ast.FuncCastExpr:
 		arg := sr.pop()
-		sr.err = errors.Trace(CheckArgsNotMultiColumnRow(arg))
+		sr.err = CheckArgsNotMultiColumnRow(arg)
 		if sr.err != nil {
 			return retNode, false
 		}
@@ -151,7 +158,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		}
 	case *driver.ParamMarkerExpr:
 		var value Expression
-		value, sr.err = GetParamExpression(sr.ctx, v, sr.useCache())
+		value, sr.err = GetParamExpression(sr.ctx, v)
 		if sr.err != nil {
 			return retNode, false
 		}
@@ -192,7 +199,6 @@ func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		function, sr.err = NewFunction(sr.ctx, v.Op.String(), types.NewFieldType(mysql.TypeUnspecified), left, right)
 	}
 	if sr.err != nil {
-		sr.err = errors.Trace(sr.err)
 		return
 	}
 	sr.push(function)
@@ -200,7 +206,7 @@ func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 
 func (sr *simpleRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	args := sr.popN(len(v.Args))
-	sr.err = errors.Trace(CheckArgsNotMultiColumnRow(args...))
+	sr.err = CheckArgsNotMultiColumnRow(args...)
 	if sr.err != nil {
 		return
 	}
@@ -272,7 +278,7 @@ func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, 
 			var err error
 			funcs[i], err = sr.constructBinaryOpFunction(GetFuncArg(l, i), GetFuncArg(r, i), op)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 		}
 		if op == ast.NE {
@@ -293,15 +299,15 @@ func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, 
 		var err error
 		l, err = PopRowFirstArg(sr.ctx, l)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		r, err = PopRowFirstArg(sr.ctx, r)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		expr3, err = sr.constructBinaryOpFunction(l, r, op)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		return NewFunction(sr.ctx, ast.If, types.NewFieldType(mysql.TypeTiny), expr1, expr2, expr3)
 	}
@@ -336,7 +342,7 @@ func (sr *simpleRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 func (sr *simpleRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 	pattern := sr.pop()
 	expr := sr.pop()
-	sr.err = errors.Trace(CheckArgsNotMultiColumnRow(expr, pattern))
+	sr.err = CheckArgsNotMultiColumnRow(expr, pattern)
 	if sr.err != nil {
 		return
 	}
@@ -350,7 +356,7 @@ func (sr *simpleRewriter) likeToScalarFunc(v *ast.PatternLikeExpr) {
 func (sr *simpleRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {
 	parttern := sr.pop()
 	expr := sr.pop()
-	sr.err = errors.Trace(CheckArgsNotMultiColumnRow(expr, parttern))
+	sr.err = CheckArgsNotMultiColumnRow(expr, parttern)
 	if sr.err != nil {
 		return
 	}
@@ -362,7 +368,7 @@ func (sr *simpleRewriter) rowToScalarFunc(v *ast.RowExpr) {
 	elems := sr.popN(len(v.Values))
 	function, err := NewFunction(sr.ctx, ast.RowFunc, elems[0].GetType(), elems...)
 	if err != nil {
-		sr.err = errors.Trace(err)
+		sr.err = err
 		return
 	}
 	sr.push(function)
@@ -372,7 +378,7 @@ func (sr *simpleRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	right := sr.pop()
 	left := sr.pop()
 	expr := sr.pop()
-	sr.err = errors.Trace(CheckArgsNotMultiColumnRow(expr))
+	sr.err = CheckArgsNotMultiColumnRow(expr)
 	if sr.err != nil {
 		return
 	}
@@ -382,18 +388,17 @@ func (sr *simpleRewriter) betweenToExpression(v *ast.BetweenExpr) {
 		r, sr.err = NewFunction(sr.ctx, ast.LE, &v.Type, expr, right)
 	}
 	if sr.err != nil {
-		sr.err = errors.Trace(sr.err)
 		return
 	}
 	function, err := NewFunction(sr.ctx, ast.LogicAnd, &v.Type, l, r)
 	if err != nil {
-		sr.err = errors.Trace(err)
+		sr.err = err
 		return
 	}
 	if v.Not {
 		function, err = NewFunction(sr.ctx, ast.UnaryNot, &v.Type, function)
 		if err != nil {
-			sr.err = errors.Trace(err)
+			sr.err = err
 			return
 		}
 	}
@@ -414,7 +419,7 @@ func (sr *simpleRewriter) notToExpression(hasNot bool, op string, tp *types.Fiel
 	args ...Expression) Expression {
 	opFunc, err := NewFunction(sr.ctx, op, tp, args...)
 	if err != nil {
-		sr.err = errors.Trace(err)
+		sr.err = err
 		return nil
 	}
 	if !hasNot {
@@ -423,7 +428,7 @@ func (sr *simpleRewriter) notToExpression(hasNot bool, op string, tp *types.Fiel
 
 	opFunc, err = NewFunction(sr.ctx, ast.UnaryNot, tp, opFunc)
 	if err != nil {
-		sr.err = errors.Trace(err)
+		sr.err = err
 		return nil
 	}
 	return opFunc

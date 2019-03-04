@@ -48,6 +48,35 @@ func (s *testEvaluatorSuite) TestJSONType(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestJSONQuote(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONQuote]
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{nil, nil},
+		{``, `""`},
+		{`""`, `"\"\""`},
+		{`a`, `"a"`},
+		{`3`, `"3"`},
+		{`{"a": "b"}`, `"{\"a\": \"b\"}"`},
+		{`{"a":     "b"}`, `"{\"a\":     \"b\"}"`},
+		{`hello,"quoted string",world`, `"hello,\"quoted string\",world"`},
+		{`hello,"宽字符",world`, `"hello,\"宽字符\",world"`},
+		{`Invalid Json string	is OK`, `"Invalid Json string\tis OK"`},
+		{`1\u2232\u22322`, `"1\\u2232\\u22322"`},
+	}
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+	}
+}
+
 func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONUnquote]
@@ -187,6 +216,39 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 			j2 := d.GetMysqlJSON()
 			cmp := json.CompareBinary(j1, j2)
 			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
+		case nil:
+			c.Assert(d.IsNull(), IsTrue)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONMergePreserve(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONMergePreserve]
+	tbl := []struct {
+		Input    []interface{}
+		Expected interface{}
+	}{
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{`{}`, `[]`}, `[{}]`},
+		{[]interface{}{`{}`, `[]`, `3`, `"4"`}, `[{}, 3, "4"]`},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+
+		switch x := t.Expected.(type) {
+		case string:
+			j1, err := json.ParseBinaryFromString(x)
+			c.Assert(err, IsNil)
+			j2 := d.GetMysqlJSON()
+			cmp := json.CompareBinary(j1, j2)
+			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
+		case nil:
+			c.Assert(d.IsNull(), IsTrue)
 		}
 	}
 }
@@ -559,6 +621,65 @@ func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
 				c.Assert(cmp, Equals, 0)
 			case nil:
 				c.Assert(d.IsNull(), IsTrue)
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONDepth(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONDepth]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{`null`}, 1, true},
+		{[]interface{}{`true`}, 1, true},
+		{[]interface{}{`false`}, 1, true},
+		{[]interface{}{`1`}, 1, true},
+		{[]interface{}{`-1`}, 1, true},
+		{[]interface{}{`1.1`}, 1, true},
+		{[]interface{}{`"1"`}, 1, true},
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		// Tests depth
+		{[]interface{}{`{}`}, 1, true},
+		{[]interface{}{`[]`}, 1, true},
+		{[]interface{}{`[10, 20]`}, 2, true},
+		{[]interface{}{`[[], {}]`}, 2, true},
+		{[]interface{}{`{"Name": "Homer"}`}, 2, true},
+		{[]interface{}{`[10, {"a": 20}]`}, 3, true},
+		{[]interface{}{`{"Person": {"Name": "Homer", "Age": 39, "Hobbies": ["Eating", "Sleeping"]} }`}, 4, true},
+		{[]interface{}{`{"a":1}`}, 2, true},
+		{[]interface{}{`{"a":[1]}`}, 3, true},
+		{[]interface{}{`{"b":2, "c":3}`}, 2, true},
+		{[]interface{}{`[1]`}, 2, true},
+		{[]interface{}{`[1,2]`}, 2, true},
+		{[]interface{}{`[1,2,[1,3]]`}, 3, true},
+		{[]interface{}{`[1,2,[1,[5,[3]]]]`}, 5, true},
+		{[]interface{}{`[1,2,[1,[5,{"a":[2,3]}]]]`}, 6, true},
+		{[]interface{}{`[{"a":1}]`}, 3, true},
+		{[]interface{}{`[{"a":1,"b":2}]`}, 3, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 4, true},
+		// Tests non-json
+		{[]interface{}{`a`}, nil, false},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
 			c.Assert(err, NotNil)

@@ -14,15 +14,19 @@
 package executor
 
 import (
+	"context"
+	"fmt"
+
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // UpdateExec represents a new update executor.
@@ -33,13 +37,15 @@ type UpdateExec struct {
 	OrderedList []*expression.Assignment
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
-	updatedRowKeys map[int64]map[int64]struct{}
+	// The value is true if the row is changed, or false otherwise
+	updatedRowKeys map[int64]map[int64]bool
 	tblID2table    map[int64]table.Table
 
 	rows        [][]types.Datum // The rows fetched from TableExec.
 	newRowsData [][]types.Datum // The new values to be set.
 	fetched     bool
 	cursor      int
+	matched     uint64 // a counter of matched rows during update
 	// columns2Handle stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see executor.cols2Handle
 	columns2Handle cols2HandleSlice
@@ -55,14 +61,14 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 		return nil, nil
 	}
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[int64]map[int64]struct{})
+		e.updatedRowKeys = make(map[int64]map[int64]bool)
 	}
 	row := e.rows[e.cursor]
 	newData := e.newRowsData[e.cursor]
 	for id, cols := range schema.TblID2Handle {
 		tbl := e.tblID2table[id]
 		if e.updatedRowKeys[id] == nil {
-			e.updatedRowKeys[id] = make(map[int64]struct{})
+			e.updatedRowKeys[id] = make(map[int64]bool)
 		}
 		for _, col := range cols {
 			offset := getTableOffset(schema, col)
@@ -74,9 +80,24 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			handle := row[col.Index].GetInt64()
 			oldData := row[offset:end]
 			newTableData := newData[offset:end]
+			updatable := false
 			flags := assignFlag[offset:end]
-			_, ok := e.updatedRowKeys[id][handle]
-			if ok {
+			for _, flag := range flags {
+				if flag {
+					updatable = true
+					break
+				}
+			}
+			if !updatable {
+				// If there's nothing to update, we can just skip current row
+				continue
+			}
+			changed, ok := e.updatedRowKeys[id][handle]
+			if !ok {
+				// Row is matched for the first time, increment `matched` counter
+				e.matched++
+			}
+			if changed {
 				// Each matched row is updated once, even if it matches the conditions multiple times.
 				continue
 			}
@@ -84,9 +105,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			// Update row
 			changed, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
 			if err1 == nil {
-				if changed {
-					e.updatedRowKeys[id][handle] = struct{}{}
-				}
+				e.updatedRowKeys[id][handle] = changed
 				continue
 			}
 
@@ -113,14 +132,20 @@ func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 }
 
 // Next implements the Executor Next interface.
-func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *UpdateExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("update.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
+	req.Reset()
 	if !e.fetched {
 		err := e.fetchChunkRows(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		e.fetched = true
+		e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(e.rows)))
 
 		for {
 			row, err := e.exec(e.children[0].Schema())
@@ -156,7 +181,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	chk := e.children[0].newFirstChunk()
 	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
-		err := e.children[0].Next(ctx, chk)
+		err := e.children[0].Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -188,6 +213,10 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 
 	if types.ErrDataTooLong.Equal(err) {
 		return resetErrDataTooLong(colName.O, rowIdx+1, err)
+	}
+
+	if types.ErrOverflow.Equal(err) {
+		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
 	}
 
 	return errors.Trace(err)
@@ -223,6 +252,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
+	e.setMessage()
 	return e.SelectExec.Close()
 }
 
@@ -241,4 +271,14 @@ func (e *UpdateExec) getUpdateColumns(ctx sessionctx.Context, schemaLen int) ([]
 		assignFlag[idx] = true
 	}
 	return assignFlag, nil
+}
+
+// setMessage sets info message(ERR_UPDATE_INFO) generated by UPDATE statement
+func (e *UpdateExec) setMessage() {
+	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	numMatched := e.matched
+	numChanged := stmtCtx.UpdatedRows()
+	numWarnings := stmtCtx.WarningCount()
+	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUpdateInfo], numMatched, numChanged, numWarnings)
+	stmtCtx.SetMessage(msg)
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testInferTypeSuite{})
@@ -132,11 +133,11 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		stmt, err := s.ParseOneStmt(sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		err = se.NewTxn()
+		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = plannercore.Preprocess(ctx, stmt, is, false)
+		err = plannercore.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil, comment)
 		p, err := plannercore.BuildLogicalPlan(ctx, stmt, is)
 		c.Assert(err, IsNil, comment)

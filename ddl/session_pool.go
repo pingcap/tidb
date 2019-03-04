@@ -21,12 +21,20 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/mock"
+	log "github.com/sirupsen/logrus"
 )
 
 // sessionPool is used to new session.
 type sessionPool struct {
-	mu      sync.Mutex
+	mu struct {
+		sync.Mutex
+		closed bool
+	}
 	resPool *pools.ResourcePool
+}
+
+func newSessionPool(resPool *pools.ResourcePool) *sessionPool {
+	return &sessionPool{resPool: resPool}
 }
 
 // get gets sessionctx from context resource pool.
@@ -36,6 +44,14 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 		return mock.NewContext(), nil
 	}
 
+	sg.mu.Lock()
+	if sg.mu.closed {
+		sg.mu.Unlock()
+		return nil, errors.Errorf("sessionPool is closed.")
+	}
+	sg.mu.Unlock()
+
+	// no need to protect sg.resPool
 	resource, err := sg.resPool.Get()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -53,6 +69,8 @@ func (sg *sessionPool) put(ctx sessionctx.Context) {
 		return
 	}
 
+	// no need to protect sg.resPool, even the sg.resPool is closed, the ctx still need to
+	// put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
 	sg.resPool.Put(ctx.(pools.Resource))
 }
 
@@ -60,10 +78,12 @@ func (sg *sessionPool) put(ctx sessionctx.Context) {
 func (sg *sessionPool) close() {
 	sg.mu.Lock()
 	defer sg.mu.Unlock()
-	if sg.resPool == nil {
+	// prevent closing resPool twice.
+	if sg.mu.closed || sg.resPool == nil {
 		return
 	}
 
+	log.Info("[ddl] closing sessionPool")
 	sg.resPool.Close()
-	sg.resPool = nil
+	sg.mu.closed = true
 }

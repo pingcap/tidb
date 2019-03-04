@@ -355,6 +355,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CoalesceInt:
 		f = &builtinCoalesceIntSig{base}
 
+	case tipb.ScalarFuncSig_CaseWhenJson:
+		f = &builtinCaseWhenJSONSig{base}
 	case tipb.ScalarFuncSig_CaseWhenDecimal:
 		f = &builtinCaseWhenDecimalSig{base}
 	case tipb.ScalarFuncSig_CaseWhenDuration:
@@ -412,6 +414,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 
 	case tipb.ScalarFuncSig_JsonTypeSig:
 		f = &builtinJSONTypeSig{base}
+	case tipb.ScalarFuncSig_JsonQuoteSig:
+		f = &builtinQuoteSig{base}
 	case tipb.ScalarFuncSig_JsonUnquoteSig:
 		f = &builtinJSONUnquoteSig{base}
 	case tipb.ScalarFuncSig_JsonArraySig:
@@ -436,6 +440,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinLikeSig{base}
 	case tipb.ScalarFuncSig_JsonLengthSig:
 		f = &builtinJSONLengthSig{base}
+	case tipb.ScalarFuncSig_JsonDepthSig:
+		f = &builtinJSONDepthSig{base}
 
 	case tipb.ScalarFuncSig_InInt:
 		f = &builtinInIntSig{base}
@@ -457,7 +463,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 
 	default:
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
-		return nil, errors.Trace(e)
+		return nil, e
 	}
 	return f, nil
 }
@@ -467,7 +473,7 @@ func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFu
 	ctx.GetSessionVars().StmtCtx = sc
 	f, err := getSignatureByPB(ctx, sigCode, tp, args)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
@@ -482,7 +488,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_ColumnRef:
 		_, offset, err := codec.DecodeInt(expr.Val)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		return &Column{Index: int(offset), RetType: tps[offset]}, nil
 	case tipb.ExprType_Null:
@@ -505,6 +511,8 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		return convertDuration(expr.Val)
 	case tipb.ExprType_MysqlTime:
 		return convertTime(expr.Val, expr.FieldType, sc.TimeZone)
+	case tipb.ExprType_MysqlJson:
+		return convertJSON(expr.Val)
 	}
 	if expr.Tp != tipb.ExprType_ScalarFunc {
 		panic("should be a tipb.ExprType_ScalarFunc")
@@ -515,7 +523,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		if child.Tp == tipb.ExprType_ValueList {
 			results, err := decodeValueList(child.Val)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if len(results) == 0 {
 				return &Constant{Value: types.NewDatum(false), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil
@@ -525,7 +533,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		}
 		arg, err := PBToExpr(child, tps, sc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		args = append(args, arg)
 	}
@@ -546,19 +554,19 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 	ft := fieldTypeFromPB(ftPB)
 	_, v, err := codec.DecodeUint(data)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	var t types.Time
 	t.Type = ft.Tp
 	t.Fsp = ft.Decimal
 	err = t.FromPackedUint(v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
 		err = t.ConvertTimeZone(time.UTC, tz)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	return &Constant{Value: types.NewTimeDatum(t), RetType: ft}, nil
@@ -570,7 +578,7 @@ func decodeValueList(data []byte) ([]Expression, error) {
 	}
 	list, err := codec.Decode(data, 1)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	result := make([]Expression, 0, len(list))
 	for _, value := range list {
@@ -639,4 +647,16 @@ func convertDuration(val []byte) (*Constant, error) {
 	}
 	d.SetMysqlDuration(types.Duration{Duration: time.Duration(i), Fsp: types.MaxFsp})
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeDuration)}, nil
+}
+
+func convertJSON(val []byte) (*Constant, error) {
+	var d types.Datum
+	_, d, err := codec.DecodeOne(val)
+	if err != nil {
+		return nil, errors.Errorf("invalid json % x", val)
+	}
+	if d.Kind() != types.KindMysqlJSON {
+		return nil, errors.Errorf("invalid Datum.Kind() %d", d.Kind())
+	}
+	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeJSON)}, nil
 }

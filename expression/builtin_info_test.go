@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
@@ -120,10 +121,40 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 
 func (s *testEvaluatorSuite) TestBenchMark(c *C) {
 	defer testleak.AfterTest(c)()
-	fc := funcs[ast.Benchmark]
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, nil)))
-	c.Assert(f, IsNil)
-	c.Assert(err, ErrorMatches, "*FUNCTION BENCHMARK does not exist")
+
+	cases := []struct {
+		LoopCount  int
+		Expression interface{}
+		Expected   int64
+		IsNil      bool
+	}{
+		{-3, 1, 0, true},
+		{0, 1, 0, false},
+		{3, 1, 0, false},
+		{3, 1.234, 0, false},
+		{3, types.NewDecFromFloatForTest(1.234), 0, false},
+		{3, "abc", 0, false},
+		{3, types.CurrentTime(mysql.TypeDatetime), 0, false},
+		{3, types.CurrentTime(mysql.TypeTimestamp), 0, false},
+		{3, types.CurrentTime(mysql.TypeDuration), 0, false},
+		{3, json.CreateBinary("[1]"), 0, false},
+	}
+
+	for _, t := range cases {
+		f, err := newFunctionForTest(s.ctx, ast.Benchmark, s.primitiveValsToConstants([]interface{}{
+			t.LoopCount,
+			t.Expression,
+		})...)
+		c.Assert(err, IsNil)
+
+		d, err := f.Eval(chunk.Row{})
+		c.Assert(err, IsNil)
+		if t.IsNil {
+			c.Assert(d.IsNull(), IsTrue)
+		} else {
+			c.Assert(d.GetInt64(), Equals, t.Expected)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestCharset(c *C) {
@@ -154,7 +185,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.PrevAffectedRows = 10
+	sessionVars.StmtCtx.PrevAffectedRows = 10
 
 	f, err := funcs[ast.RowCount].getFunction(ctx, nil)
 	c.Assert(err, IsNil)
@@ -203,7 +234,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 			err error
 		)
 		if t.insertID > 0 {
-			s.ctx.GetSessionVars().PrevLastInsertID = t.insertID
+			s.ctx.GetSessionVars().StmtCtx.PrevLastInsertID = t.insertID
 		}
 
 		if t.args != nil {

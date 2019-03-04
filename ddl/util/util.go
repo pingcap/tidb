@@ -14,6 +14,7 @@
 package util
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 
@@ -21,9 +22,9 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -68,14 +69,14 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 	}
 
 	rs := rss[0]
-	chk := rs.NewChunk()
-	it := chunk.NewIterator4Chunk(chk)
+	req := rs.NewRecordBatch()
+	it := chunk.NewIterator4Chunk(req.Chunk)
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(context.TODO(), req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if chk.NumRows() == 0 {
+		if req.NumRows() == 0 {
 			break
 		}
 
@@ -108,8 +109,13 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 		return errors.Trace(err)
 	}
 
-	sql = fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
-	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	return RemoveFromGCDeleteRange(ctx, dr.JobID, dr.ElementID)
+}
+
+// RemoveFromGCDeleteRange is exported for ddl pkg to use.
+func RemoveFromGCDeleteRange(ctx sessionctx.Context, jobID, elementID int64) error {
+	sql := fmt.Sprintf(completeDeleteRangeSQL, jobID, elementID)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 
@@ -127,4 +133,40 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
+}
+
+// LoadDDLReorgVars loads ddl reorg variable from mysql.global_variables.
+func LoadDDLReorgVars(ctx sessionctx.Context) error {
+	return LoadGlobalVars(ctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize})
+}
+
+// LoadDDLVars loads ddl variable from mysql.global_variables.
+func LoadDDLVars(ctx sessionctx.Context) error {
+	return LoadGlobalVars(ctx, []string{variable.TiDBDDLErrorCountLimit})
+}
+
+const loadGlobalVarsSQL = "select HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (%s)"
+
+// LoadGlobalVars loads global variable from mysql.global_variables.
+func LoadGlobalVars(ctx sessionctx.Context, varNames []string) error {
+	if sctx, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
+		nameList := ""
+		for i, name := range varNames {
+			if i > 0 {
+				nameList += ", "
+			}
+			nameList += fmt.Sprintf("'%s'", name)
+		}
+		sql := fmt.Sprintf(loadGlobalVarsSQL, nameList)
+		rows, _, err := sctx.ExecRestrictedSQL(ctx, sql)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, row := range rows {
+			varName := row.GetString(0)
+			varValue := row.GetString(1)
+			variable.SetLocalSystemVar(varName, varValue)
+		}
+	}
+	return nil
 }

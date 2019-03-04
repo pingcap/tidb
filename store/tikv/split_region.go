@@ -15,13 +15,13 @@ package tikv
 
 import (
 	"bytes"
+	"context"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // SplitRegion splits the region contains splitKey into 2 regions: [start,

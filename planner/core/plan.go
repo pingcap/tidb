@@ -49,10 +49,10 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		return tsk
 	}
 	tsk = finishCopTask(ctx, tsk)
-	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.Cols, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Cols))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
-	for _, col := range p.Cols {
-		sort.ByItems = append(sort.ByItems, &ByItems{col, p.Desc})
+	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
+	for _, col := range p.Items {
+		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
 	}
 	return sort.attach2Task(tsk)
 }
@@ -68,7 +68,7 @@ type LogicalPlan interface {
 	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns.
-	PruneColumns([]*expression.Column)
+	PruneColumns([]*expression.Column) error
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -82,8 +82,11 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
-	// deriveStats derives statistic info between plans.
-	deriveStats() (*property.StatsInfo, error)
+	// recursiveDeriveStats derives statistic info between plans.
+	recursiveDeriveStats() (*property.StatsInfo, error)
+
+	// DeriveStats derives statistic info for current plan node given child stats.
+	DeriveStats(childStats []*property.StatsInfo) (*property.StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -125,7 +128,7 @@ type PhysicalPlan interface {
 	ExplainInfo() string
 
 	// getChildReqProps gets the required property by child index.
-	getChildReqProps(idx int) *property.PhysicalProperty
+	GetChildReqProps(idx int) *property.PhysicalProperty
 
 	// StatsCount returns the count of property.StatsInfo for this plan.
 	StatsCount() float64
@@ -137,7 +140,7 @@ type PhysicalPlan interface {
 	SetChildren(...PhysicalPlan)
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-	ResolveIndices()
+	ResolveIndices() error
 }
 
 type baseLogicalPlan struct {
@@ -161,7 +164,7 @@ type basePhysicalPlan struct {
 	children         []PhysicalPlan
 }
 
-func (p *basePhysicalPlan) getChildReqProps(idx int) *property.PhysicalProperty {
+func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return p.childrenReqProps[idx]
 }
 
@@ -226,11 +229,11 @@ func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) error {
 	if len(p.children) == 0 {
-		return
+		return nil
 	}
-	p.children[0].PruneColumns(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols)
 }
 
 // basePlan implements base Plan interface.

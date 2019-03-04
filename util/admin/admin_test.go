@@ -14,6 +14,7 @@
 package admin_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -287,14 +287,16 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	tbInfo := tbl.Meta()
 
-	alloc := autoid.NewAllocator(s.store, dbInfo.ID)
+	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false)
 	tb, err := tables.TableFromMeta(alloc, tbInfo)
 	c.Assert(err, IsNil)
 	indices := tb.Indices()
-	c.Assert(s.ctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11), false)
+	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
+	_, err = tb.AddRecord(s.ctx, types.MakeDatums(1, 10, 11))
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	txn, err := s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 
 	record1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(1), int64(10), int64(11))}
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
@@ -304,11 +306,13 @@ func (s *testSuite) TestScan(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
-	c.Assert(s.ctx.NewTxn(), IsNil)
-	_, err = tb.AddRecord(s.ctx, record2.Values, false)
+	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
+	_, err = tb.AddRecord(s.ctx, record2.Values)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
-	txn, err := s.store.Begin()
+	txn, err = s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 
 	records, nextHandle, err := ScanTableRecord(se, txn, tb, int64(1), 1)
@@ -327,10 +331,10 @@ func (s *testSuite) TestScan(c *C) {
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
 	kvIndex := tables.NewIndex(tb.Meta().ID, tb.Meta(), indices[0].Meta())
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
+	idxRows, _, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1, idxRow2})
-	idxRows, nextVals, err = ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 1)
+	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 1)
 	c.Assert(err, IsNil)
 	c.Assert(idxRows, DeepEquals, []*RecordData{idxRow1})
 	idxRows, nextVals, err = ScanIndexData(sc, txn, kvIndex, nextVals, 1)
@@ -346,12 +350,14 @@ func (s *testSuite) TestScan(c *C) {
 	ctx := se.(sessionctx.Context)
 	s.testIndex(c, ctx, db.L, tb, tb.Indices()[0])
 
-	c.Assert(s.ctx.NewTxn(), IsNil)
+	c.Assert(s.ctx.NewTxn(context.Background()), IsNil)
 	err = tb.RemoveRecord(s.ctx, 1, record1.Values)
 	c.Assert(err, IsNil)
 	err = tb.RemoveRecord(s.ctx, 2, record2.Values)
 	c.Assert(err, IsNil)
-	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+	txn, err = s.ctx.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 }
 
 func newDiffRetError(prefix string, ra, rb *RecordData) string {

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,225 +14,154 @@
 package core
 
 import (
-	"sort"
-
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	log "github.com/sirupsen/logrus"
 )
 
-// getCartesianJoinGroup collects all the inner join tables of a left deep join
-// tree. The traversal of join tree is stopped and returns a nil group if:
-// 1. reach a reordered join node, or:
-// 2. reach a non-cartesian join node, or:
-// 3. reach a join node which has a preferred join algorithm.
-// 4. reach a straight join node.
+// extractJoinGroup extracts all the join nodes connected with continuous
+// InnerJoins to construct a join group. This join group is further used to
+// construct a new join order based on a reorder algorithm.
 //
-// An example of left deep join tree is:
-//
-//    "cartesian join 1"
-//      	|	\
-//      	|	"right child 1"
-//      	|
-//    "cartesian join 2"
-//      	|	\
-//      	|	"right child 2"
-//      	|
-//    "cartesian join ..."
-//      	|	\
-//      	|	"right child ..."
-//      	|
-//    "cartesian join n"
-//      	|	\
-//      	|	"right child n"
-//      	|
-//    "left deep child"
-//
-// The result of getCartesianJoinGroup is:
-// {"left deep child", "right child n", ..., "right child 2", "right child 1"}
-func getCartesianJoinGroup(p *LogicalJoin) []LogicalPlan {
-	if p.reordered || !p.cartesianJoin || p.preferJoinType > uint(0) || p.StraightJoin {
-		return nil
+// For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
+// results in a join group {a, b, LeftJoin(c, d)}.
+func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
+	join, isJoin := p.(*LogicalJoin)
+	if !isJoin || join.preferJoinType > uint(0) || join.JoinType != InnerJoin || join.StraightJoin {
+		return []LogicalPlan{p}, nil, nil
 	}
 
-	lChild := p.children[0]
-	rChild := p.children[1]
+	lhsGroup, lhsEqualConds, lhsOtherConds := extractJoinGroup(join.children[0])
+	rhsGroup, rhsEqualConds, rhsOtherConds := extractJoinGroup(join.children[1])
 
-	lhsJoinTree, ok := lChild.(*LogicalJoin)
-	if !ok {
-		return []LogicalPlan{lChild, rChild}
-	}
-
-	lhsJoinGroup := getCartesianJoinGroup(lhsJoinTree)
-	if lhsJoinGroup == nil {
-		return nil
-	}
-
-	return append(lhsJoinGroup, rChild)
-}
-
-func findNodeIndexInGroup(groups []LogicalPlan, col *expression.Column) int {
-	for i, plan := range groups {
-		if plan.Schema().Contains(col) {
-			return i
-		}
-	}
-	log.Errorf("Unknown columns %s, position %d", col, col.UniqueID)
-	return -1
+	group = append(group, lhsGroup...)
+	group = append(group, rhsGroup...)
+	eqEdges = append(eqEdges, join.EqualConditions...)
+	eqEdges = append(eqEdges, lhsEqualConds...)
+	eqEdges = append(eqEdges, rhsEqualConds...)
+	otherConds = append(otherConds, join.OtherConditions...)
+	otherConds = append(otherConds, lhsOtherConds...)
+	otherConds = append(otherConds, rhsOtherConds...)
+	return group, eqEdges, otherConds
 }
 
 type joinReOrderSolver struct {
-	graph      []edgeList
-	group      []LogicalPlan
-	visited    []bool
-	resultJoin LogicalPlan
-	groupRank  []*rankInfo
-	ctx        sessionctx.Context
 }
 
-type edgeList []*rankInfo
-
-func (l edgeList) Len() int {
-	return len(l)
+type jrNode struct {
+	p       LogicalPlan
+	cumCost float64
 }
 
-func (l edgeList) Less(i, j int) bool {
-	return l[i].rate < l[j].rate
+func (s *joinReOrderSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
+	return s.optimizeRecursive(p.context(), p)
 }
 
-func (l edgeList) Swap(i, j int) {
-	l[i], l[j] = l[j], l[i]
-}
-
-type rankInfo struct {
-	nodeID int
-	rate   float64
-}
-
-func (e *joinReOrderSolver) Less(i, j int) bool {
-	return e.groupRank[i].rate < e.groupRank[j].rate
-}
-
-func (e *joinReOrderSolver) Swap(i, j int) {
-	e.groupRank[i], e.groupRank[j] = e.groupRank[j], e.groupRank[i]
-}
-
-func (e *joinReOrderSolver) Len() int {
-	return len(e.groupRank)
-}
-
-// reorderJoin implements a simple join reorder algorithm. It will extract all the equal conditions and compose them to a graph.
-// Then walk through the graph and pick the nodes connected by some edges to compose a join tree.
-// We will pick the node with least result set as early as possible.
-func (e *joinReOrderSolver) reorderJoin(group []LogicalPlan, conds []expression.Expression) {
-	e.graph = make([]edgeList, len(group))
-	e.group = group
-	e.visited = make([]bool, len(group))
-	e.resultJoin = nil
-	e.groupRank = make([]*rankInfo, len(group))
-	for i := 0; i < len(e.groupRank); i++ {
-		e.groupRank[i] = &rankInfo{
-			nodeID: i,
-			rate:   1.0,
-		}
-	}
-	for _, cond := range conds {
-		if f, ok := cond.(*expression.ScalarFunction); ok {
-			if f.FuncName.L == ast.EQ {
-				lCol, lok := f.GetArgs()[0].(*expression.Column)
-				rCol, rok := f.GetArgs()[1].(*expression.Column)
-				if lok && rok {
-					lID := findNodeIndexInGroup(group, lCol)
-					rID := findNodeIndexInGroup(group, rCol)
-					if lID != rID {
-						e.graph[lID] = append(e.graph[lID], &rankInfo{nodeID: rID})
-						e.graph[rID] = append(e.graph[rID], &rankInfo{nodeID: lID})
-						continue
-					}
-				}
-			}
-			id := -1
-			rate := 1.0
-			cols := expression.ExtractColumns(f)
-			for _, col := range cols {
-				idx := findNodeIndexInGroup(group, col)
-				if id == -1 {
-					switch f.FuncName.L {
-					case ast.EQ:
-						rate *= 0.1
-					case ast.LT, ast.LE, ast.GE, ast.GT:
-						rate *= 0.3
-					// TODO: Estimate it more precisely in future.
-					default:
-						rate *= 0.9
-					}
-					id = idx
-				} else {
-					id = -1
-					break
-				}
-			}
-			if id != -1 {
-				e.groupRank[id].rate *= rate
+// optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
+func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
+	var err error
+	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
+	if len(curJoinGroup) > 1 {
+		for i := range curJoinGroup {
+			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
+			if err != nil {
+				return nil, err
 			}
 		}
-	}
-	for _, node := range e.graph {
-		for _, edge := range node {
-			edge.rate = e.groupRank[edge.nodeID].rate
+		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
+			ctx:        ctx,
+			otherConds: otherConds,
 		}
-	}
-	sort.Sort(e)
-	for _, edge := range e.graph {
-		sort.Sort(edge)
-	}
-	var cartesianJoinGroup []LogicalPlan
-	for j := 0; j < len(e.groupRank); j++ {
-		i := e.groupRank[j].nodeID
-		if !e.visited[i] {
-			e.resultJoin = e.group[i]
-			e.walkGraphAndComposeJoin(i)
-			cartesianJoinGroup = append(cartesianJoinGroup, e.resultJoin)
+		groupSolver := &joinReorderGreedySingleGroupSolver{
+			baseSingleGroupJoinOrderSolver: baseGroupSolver,
+			eqEdges:                        eqEdges,
 		}
+		p, err = groupSolver.solve(curJoinGroup)
+		if err != nil {
+			return nil, err
+		}
+		return p, nil
 	}
-	e.makeBushyJoin(cartesianJoinGroup)
+	newChildren := make([]LogicalPlan, 0, len(p.Children()))
+	for _, child := range p.Children() {
+		newChild, err := s.optimizeRecursive(ctx, child)
+		if err != nil {
+			return nil, err
+		}
+		newChildren = append(newChildren, newChild)
+	}
+	p.SetChildren(newChildren...)
+	return p, nil
 }
 
-// Make cartesian join as bushy tree.
-func (e *joinReOrderSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) {
+type baseSingleGroupJoinOrderSolver struct {
+	ctx          sessionctx.Context
+	curJoinGroup []*jrNode
+	otherConds   []expression.Expression
+}
+
+// baseNodeCumCost calculate the cumulative cost of the node in the join group.
+func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode LogicalPlan) float64 {
+	cost := groupNode.statsInfo().RowCount
+	for _, child := range groupNode.Children() {
+		cost += s.baseNodeCumCost(child)
+	}
+	return cost
+}
+
+// makeBushyJoin build bushy tree for the nodes which have no equal condition to connect them.
+func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) LogicalPlan {
+	resultJoinGroup := make([]LogicalPlan, 0, (len(cartesianJoinGroup)+1)/2)
 	for len(cartesianJoinGroup) > 1 {
-		resultJoinGroup := make([]LogicalPlan, 0, len(cartesianJoinGroup))
+		resultJoinGroup = resultJoinGroup[:0]
 		for i := 0; i < len(cartesianJoinGroup); i += 2 {
 			if i+1 == len(cartesianJoinGroup) {
 				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
 				break
 			}
-			resultJoinGroup = append(resultJoinGroup, e.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1]))
+			newJoin := s.newCartesianJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1])
+			for i := len(s.otherConds) - 1; i >= 0; i-- {
+				cols := expression.ExtractColumns(s.otherConds[i])
+				if newJoin.schema.ColumnsIndices(cols) != nil {
+					newJoin.OtherConditions = append(newJoin.OtherConditions, s.otherConds[i])
+					s.otherConds = append(s.otherConds[:i], s.otherConds[i+1:]...)
+				}
+			}
+			resultJoinGroup = append(resultJoinGroup, newJoin)
 		}
-		cartesianJoinGroup = resultJoinGroup
+		cartesianJoinGroup, resultJoinGroup = resultJoinGroup, cartesianJoinGroup
 	}
-	e.resultJoin = cartesianJoinGroup[0]
+	return cartesianJoinGroup[0]
 }
 
-func (e *joinReOrderSolver) newJoin(lChild, rChild LogicalPlan) *LogicalJoin {
+func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {
 	join := LogicalJoin{
 		JoinType:  InnerJoin,
 		reordered: true,
-	}.Init(e.ctx)
+	}.Init(s.ctx)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	return join
 }
 
-// walkGraph implements a dfs algorithm. Each time it picks a edge with lowest rate, which has been sorted before.
-func (e *joinReOrderSolver) walkGraphAndComposeJoin(u int) {
-	e.visited[u] = true
-	for _, edge := range e.graph[u] {
-		v := edge.nodeID
-		if !e.visited[v] {
-			e.resultJoin = e.newJoin(e.resultJoin, e.group[v])
-			e.walkGraphAndComposeJoin(v)
+func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(eqEdges []*expression.ScalarFunction, remainedOtherConds []expression.Expression,
+	lChild, rChild LogicalPlan) (*LogicalJoin, []expression.Expression) {
+	newJoin := s.newCartesianJoin(lChild, rChild)
+	newJoin.EqualConditions = eqEdges
+	for _, eqCond := range newJoin.EqualConditions {
+		newJoin.LeftJoinKeys = append(newJoin.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
+		newJoin.RightJoinKeys = append(newJoin.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
+	}
+	for i := len(remainedOtherConds) - 1; i >= 0; i-- {
+		cols := expression.ExtractColumns(remainedOtherConds[i])
+		if newJoin.schema.ColumnsIndices(cols) != nil {
+			newJoin.OtherConditions = append(newJoin.OtherConditions, remainedOtherConds[i])
+			remainedOtherConds = append(remainedOtherConds[:i], remainedOtherConds[i+1:]...)
 		}
 	}
+	return newJoin, remainedOtherConds
+}
+
+// calcJoinCumCost calculates the cumulative cost of the join node.
+func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join LogicalPlan, lNode, rNode *jrNode) float64 {
+	return join.statsInfo().RowCount + lNode.cumCost + rNode.cumCost
 }

@@ -14,12 +14,14 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -39,9 +41,9 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
+// processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte)
 }
@@ -93,13 +95,18 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 // The reason we need update is that chunk with 0 rows indicating we already finished current query, we need prepare for
 // next query.
 // If stmt is not nil and chunk with some rows inside, we simply update last query found rows by the number of row in chunk.
-func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
-	err := a.executor.Next(ctx, chk)
+func (a *recordSet) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("recordSet.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
+	err := a.executor.Next(ctx, req)
 	if err != nil {
 		a.lastErr = err
 		return errors.Trace(err)
 	}
-	numRows := chk.NumRows()
+	numRows := req.NumRows()
 	if numRows == 0 {
 		if a.stmt != nil {
 			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
@@ -112,9 +119,9 @@ func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// NewChunk create a new chunk using NewChunk function in chunk package.
-func (a *recordSet) NewChunk() *chunk.Chunk {
-	return a.executor.newFirstChunk()
+// NewRecordBatch create a recordBatch base on top-level executor's newFirstChunk().
+func (a *recordSet) NewRecordBatch() *chunk.RecordBatch {
+	return chunk.NewRecordBatch(a.executor.newFirstChunk())
 }
 
 func (a *recordSet) Close() error {
@@ -171,7 +178,7 @@ func (a *ExecStmt) IsReadOnly() bool {
 func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
+	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
 		return 0, errors.Trace(err)
 	}
 	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
@@ -210,7 +217,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
-	if err := e.Open(ctx); err != nil {
+	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
 		return nil, errors.Trace(err)
 	}
@@ -229,6 +236,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		}
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd)
+		a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
@@ -241,14 +249,27 @@ func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 		return a.handleNoDelayExecutor(ctx, sctx, e)
 	}
 
+	var txnStartTS uint64
+	txn, err1 := sctx.Txn(false)
+	if err1 != nil {
+		return nil, errors.Trace(err)
+	}
+	if txn.Valid() {
+		txnStartTS = txn.StartTS()
+	}
 	return &recordSet{
 		executor:   e,
 		stmt:       a,
-		txnStartTS: sctx.Txn().StartTS(),
+		txnStartTS: txnStartTS,
 	}, nil
 }
 
 func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("executor.handleNoDelayExecutor", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -263,13 +284,18 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 	defer func() {
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
-		if sctx.Txn() != nil {
-			txnTS = sctx.Txn().StartTS()
+		// Don't active pending txn here.
+		if txn, err1 := sctx.Txn(false); err1 != nil {
+			log.Error(err1)
+		} else {
+			if txn.Valid() {
+				txnTS = txn.StartTS()
+			}
 		}
 		a.LogSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.Next(ctx, e.newFirstChunk())
+	err = e.Next(ctx, chunk.NewRecordBatch(e.newFirstChunk()))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -282,14 +308,17 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
-		var err error
-		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		isPointGet, err := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if isPointGet {
 			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
-		} else {
-			log.Debugf("con:%d ActivePendingTxn %s", ctx.GetSessionVars().ConnectionID, a.Text)
-			err = ctx.ActivePendingTxn()
+		} else if ctx.GetSessionVars().SnapshotTS != 0 {
+			if _, ok := a.Plan.(*plannercore.CheckTable); ok {
+				err = ctx.InitTxnWithStartTS(ctx.GetSessionVars().SnapshotTS)
+			}
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -367,12 +396,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[QUERY] %vcost_time:%vs %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime.Seconds(), execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
 		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[SLOW_QUERY] %vcost_time:%vs %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime.Seconds(), execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 		metrics.TotalQueryProcHistogram.Observe(costTime.Seconds())
 		metrics.TotalCopProcHistogram.Observe(execDetail.ProcessTime.Seconds())
 		metrics.TotalCopWaitHistogram.Observe(execDetail.WaitTime.Seconds())
@@ -405,23 +434,27 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 
 // IsPointGetWithPKOrUniqueKeyByAutoCommit returns true when meets following conditions:
 //  1. ctx is auto commit tagged
-//  2. txn is nil
+//  2. txn is not valid
 //  2. plan is point get by pk or unique key
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) bool {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) (bool, error) {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
-		return false
+		return false, nil
 	}
 
 	// check txn
-	if ctx.Txn() != nil {
-		return false
+	txn, err := ctx.Txn(false)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if txn.Valid() {
+		return false, nil
 	}
 
 	// check plan
 	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
 		if len(proj.Children()) != 1 {
-			return false
+			return false, nil
 		}
 		p = proj.Children()[0]
 	}
@@ -429,16 +462,16 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannerco
 	switch v := p.(type) {
 	case *plannercore.PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PhysicalIndexLookUpReader:
 		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
+		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
 	case *plannercore.PointGetPlan:
-		return true
+		return true, nil
 	default:
-		return false
+		return false, nil
 	}
 }

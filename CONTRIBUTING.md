@@ -15,7 +15,7 @@ A Contributor refers to the person who contributes to the following projects:
 
 ## How to become a TiDB Contributor?
 
-If a PR (Pull Request) submitted to the TiDB / TiKV / TiSpark / PD / Docs／Docs-cn projects by you is approved and merged, then you become a TiDB Contributor. 
+If a PR (Pull Request) submitted to the TiDB/TiKV/TiSpark/PD/Docs/Docs-cn projects by you is approved and merged, then you become a TiDB Contributor.
 
 You are also encouraged to participate in the projects in the following ways:
 - Actively answer technical questions asked by community users.
@@ -63,8 +63,25 @@ please [set one up](http://golang.org/doc/code.html).
 
 The version of GO should be **1.11** or above.
 
-After installation, you'll need `GOPATH` defined,
-and `PATH` modified to access your Go binaries.
+After installation, there are two ways to build TiDB binary.
+
+#### For a quick taste
+
+The `GOPATH` is not necessary.
+
+```
+mkdir tmp
+cd tmp
+echo 'module tidb' > go.mod
+GO111MODULE=on go get github.com/pingcap/tidb@c385cbdcca83eeed283139814a7ea149e3116e66
+GO111MODULE=on go build -o tidb-server github.com/pingcap/tidb/tidb-server
+```
+
+The `c385cbdcca83eeed283139814a7ea149e3116e66` can be changed to any other commit hash. Try the latest commit hash [here](https://github.com/pingcap/tidb/commits/master).
+
+#### For development
+
+You'll need `GOPATH` defined, and `PATH` modified to access your Go binaries.
 
 A common setup is the following but you could always google a setup for your own flavor.
 

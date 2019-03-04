@@ -115,7 +115,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 
 	// For TypeBlob
 	ft = NewFieldType(mysql.TypeBlob)
-	v, err = Convert(&invalidMockType{}, ft)
+	_, err = Convert(&invalidMockType{}, ft)
 	c.Assert(err, NotNil)
 
 	// Nil
@@ -250,7 +250,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	sc := new(stmtctx.StatementContext)
-	v, err = d.ToDecimal(sc)
+	_, err = d.ToDecimal(sc)
 	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
 
 	sc.IgnoreTruncate = true
@@ -266,7 +266,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(2015, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(2015))
-	v, err = Convert(1800, ft)
+	_, err = Convert(1800, ft)
 	c.Assert(err, NotNil)
 	dt, err := ParseDate(nil, "2015-11-11")
 	c.Assert(err, IsNil)
@@ -591,8 +591,10 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeLong, " .002e3  ", "2")
 	signedAccept(c, mysql.TypeLong, " 20e-2  ", "0")
 	signedAccept(c, mysql.TypeLong, " -20e-2  ", "0")
-	signedAccept(c, mysql.TypeLong, " +2.51 ", "2")
-	signedAccept(c, mysql.TypeLong, " -3.58", "-3")
+	signedAccept(c, mysql.TypeLong, " +2.51 ", "3")
+	signedAccept(c, mysql.TypeLong, " -9999.5 ", "-10000")
+	signedAccept(c, mysql.TypeLong, " 999.4", "999")
+	signedAccept(c, mysql.TypeLong, " -3.58", "-4")
 	signedDeny(c, mysql.TypeLong, " 1a ", "1")
 	signedDeny(c, mysql.TypeLong, " +1+ ", "1")
 

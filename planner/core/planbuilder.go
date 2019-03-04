@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/schemautil"
 )
 
 type visitInfo struct {
@@ -40,6 +41,7 @@ type visitInfo struct {
 	db        string
 	table     string
 	column    string
+	err       error
 }
 
 type tableHintInfo struct {
@@ -92,19 +94,23 @@ const (
 	onClause
 	orderByClause
 	whereClause
+	windowClause
 	groupByClause
 	showStatement
+	globalOrderByClause
 )
 
 var clauseMsg = map[clauseCode]string{
-	unknowClause:  "",
-	fieldList:     "field list",
-	havingClause:  "having clause",
-	onClause:      "on clause",
-	orderByClause: "order clause",
-	whereClause:   "where clause",
-	groupByClause: "group statement",
-	showStatement: "show statement",
+	unknowClause:        "",
+	fieldList:           "field list",
+	havingClause:        "having clause",
+	onClause:            "on clause",
+	orderByClause:       "order clause",
+	whereClause:         "where clause",
+	groupByClause:       "group statement",
+	showStatement:       "show statement",
+	globalOrderByClause: "global ORDER clause",
+	windowClause:        "field list", // For window functions that in field list.
 }
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -116,7 +122,7 @@ type PlanBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
-	// Collect the visit information for privilege check.
+	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
@@ -131,6 +137,8 @@ type PlanBuilder struct {
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
+
+	windowSpecs map[string]ast.WindowSpec
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -193,9 +201,9 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt:
-		return b.buildSimple(node.(ast.StmtNode)), nil
+		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
-		return b.buildDDL(x), nil
+		return b.buildDDL(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -214,34 +222,38 @@ func (b *PlanBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
 }
 
 func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
+	var p LogicalPlan
 	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx)
-
-	p := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
+	dual.SetSchema(expression.NewSchema())
+	p = dual
+	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx)
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
-		expr, _, err := b.rewrite(astExpr, dual, nil, true)
+		expr, np, err := b.rewrite(astExpr, p, nil, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		p.Exprs = append(p.Exprs, expr)
+		p = np
+		proj.Exprs = append(proj.Exprs, expr)
 		schema.Append(&expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  expr.GetType(),
 		})
 	}
-	if dual.schema == nil {
-		dual.schema = expression.NewSchema()
-	}
-	p.SetChildren(dual)
-	p.self = p
-	p.SetSchema(schema)
-	p.calculateNoDelay = true
-	return p, nil
+	proj.SetChildren(p)
+	proj.self = proj
+	proj.SetSchema(schema)
+	proj.calculateNoDelay = true
+	return proj, nil
 }
 
 func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	p := &Set{}
 	for _, vars := range v.Variables {
+		if vars.IsGlobal {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+		}
 		assign := &expression.VarAssignment{
 			Name:     vars.Name,
 			IsGlobal: vars.IsGlobal,
@@ -272,7 +284,7 @@ func (b *PlanBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 	return p, nil
 }
 
-// Detect aggregate function or groupby clause.
+// detectSelectAgg detects an aggregate function or GROUP BY clause.
 func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
@@ -292,6 +304,15 @@ func (b *PlanBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 			if ast.HasAggFlag(item.Expr) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
+	for _, f := range sel.Fields.Fields {
+		if ast.HasWindowFlag(f.Expr) {
+			return true
 		}
 	}
 	return false
@@ -381,15 +402,6 @@ func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableI
 	return remainedPaths
 }
 
-func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexInfo {
-	for _, idx := range indices {
-		if idx.Name.L == name.L {
-			return idx
-		}
-	}
-	return nil
-}
-
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock ast.SelectLockType) *LogicalLock {
 	selectLock := LogicalLock{Lock: lock}.Init(b.ctx)
 	selectLock.SetChildren(src)
@@ -401,8 +413,11 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		// TODO: Prepared statement from variable expression do not work as expected.
-		// p.SQLText, _ = x.SQLVar.GetValue().(string)
+		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
+			p.SQLText = v
+		} else {
+			p.SQLText = "NULL"
+		}
 	} else {
 		p.SQLText = x.SQLText
 	}
@@ -536,12 +551,20 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ShowSlow{ShowSlow: as.ShowSlow}
 		p.SetSchema(buildShowSlowSchema())
 		ret = p
+	case ast.AdminRestoreTable:
+		if len(as.JobIDs) > 0 {
+			ret = &RestoreTable{JobID: as.JobIDs[0]}
+		} else if len(as.Tables) > 0 {
+			ret = &RestoreTable{Table: as.Tables[0], JobNum: as.JobNumber}
+		} else {
+			return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
+		}
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
 
 	// Admin command can only be executed by administrator.
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return ret, nil
 }
 
@@ -622,13 +645,9 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 // getColsInfo returns the info of index columns, normal columns and primary key.
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
-	// idxNames contains all the normal columns that can be analyzed more effectively, because those columns occur as index
-	// columns or primary key columns with integer type.
-	var idxNames []string
 	if tbl.PKIsHandle {
 		for _, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				idxNames = append(idxNames, col.Name.L)
 				pkCol = col
 			}
 		}
@@ -636,22 +655,13 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	for _, idx := range tn.TableInfo.Indices {
 		if idx.State == model.StatePublic {
 			indicesInfo = append(indicesInfo, idx)
-			if len(idx.Columns) == 1 {
-				idxNames = append(idxNames, idx.Columns[0].Name.L)
-			}
 		}
 	}
 	for _, col := range tbl.Columns {
-		isIndexCol := false
-		for _, idx := range idxNames {
-			if idx == col.Name.L {
-				isIndexCol = true
-				break
-			}
+		if col == pkCol {
+			continue
 		}
-		if !isIndexCol {
-			colsInfo = append(colsInfo, col)
-		}
+		colsInfo = append(colsInfo, col)
 	}
 	return
 }
@@ -691,6 +701,9 @@ func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]i
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) {
 	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	for _, tbl := range as.TableNames {
+		if tbl.TableInfo.IsView() {
+			return nil, errors.Errorf("analyze %s is not supported now.", tbl.Name.O)
+		}
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs, err := getPhysicalIDs(tbl.TableInfo, as.PartitionNames)
 		if err != nil {
@@ -718,7 +731,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
-		idx := findIndexByName(tblInfo.Indices, idxName)
+		idx := schemautil.FindIndexByName(idxName.L, tblInfo.Indices)
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
@@ -752,6 +765,16 @@ const (
 )
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	for _, tbl := range as.TableNames {
+		user := b.ctx.GetSessionVars().User
+		var insertErr, selectErr error
+		if user != nil {
+			insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+			selectErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
+	}
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
 	} else {
@@ -778,9 +801,11 @@ func buildShowNextRowID() *expression.Schema {
 func buildShowDDLFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 4)...)
 	schema.Append(buildColumn("", "SCHEMA_VER", mysql.TypeLonglong, 4))
-	schema.Append(buildColumn("", "OWNER", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "OWNER_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "OWNER_ADDRESS", mysql.TypeVarchar, 32))
 	schema.Append(buildColumn("", "RUNNING_JOBS", mysql.TypeVarchar, 256))
 	schema.Append(buildColumn("", "SELF_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
 
 	return schema
 }
@@ -902,6 +927,7 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 		Flag:        show.Flag,
 		Full:        show.Full,
 		User:        show.User,
+		IfNotExists: show.IfNotExists,
 		GlobalScope: show.GlobalScope,
 	}.Init(b.ctx)
 	switch showTp := show.Tp; showTp {
@@ -914,15 +940,27 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 	case ast.ShowWarnings, ast.ShowErrors:
 		p.SetSchema(buildShowWarningsSchema())
 	default:
+		isView := false
 		switch showTp {
 		case ast.ShowTables, ast.ShowTableStatus:
 			if p.DBName == "" {
 				return nil, ErrNoDB
 			}
 		case ast.ShowCreateTable:
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "")
+			user := b.ctx.GetSessionVars().User
+			var err error
+			if user != nil {
+				err = ErrTableaccessDenied.GenWithStackByArgs("SHOW", user.AuthUsername, user.AuthHostname, show.Table.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
+			if table, err := b.is.TableByName(show.Table.Schema, show.Table.Name); err == nil {
+				isView = table.Meta().IsView()
+			}
+		case ast.ShowCreateView:
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, "", "", "", err)
 		}
-		p.SetSchema(buildShowSchema(show))
+		p.SetSchema(buildShowSchema(show, isView))
 	}
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
@@ -948,21 +986,33 @@ func (b *PlanBuilder) buildShow(show *ast.ShowStmt) (Plan, error) {
 			}
 			p.Conditions = append(p.Conditions, expr)
 		}
-		p.ResolveIndices()
+		err := p.ResolveIndices()
+		if err != nil {
+			return nil, err
+		}
 	}
 	return p, nil
 }
 
-func (b *PlanBuilder) buildSimple(node ast.StmtNode) Plan {
+func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
-	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
+	case *ast.CreateUserStmt:
+		if raw.IsCreateRole {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateRolePriv, "", "", "", err)
+		} else {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
+		}
+	case *ast.DropUserStmt, *ast.AlterUserStmt:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
-	case *ast.SetPwdStmt, *ast.RevokeStmt:
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+	case *ast.RevokeStmt:
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	case *ast.KillStmt:
 		// If you have the SUPER privilege, you can kill all threads and statements.
 		// Otherwise, you can kill only your own threads and statements.
@@ -972,12 +1022,16 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) Plan {
 			if pi, ok := processList[raw.ConnectionID]; ok {
 				loginUser := b.ctx.GetSessionVars().User
 				if pi.User != loginUser.Username {
-					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 				}
 			}
 		}
+	case *ast.UseStmt:
+		if raw.DBName == "" {
+			return nil, ErrNoDB
+		}
 	}
-	return p
+	return p, nil
 }
 
 func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitInfo {
@@ -985,7 +1039,7 @@ func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitI
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
 	tableName := stmt.Level.TableName
-	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "")
+	vi = appendVisitInfo(vi, mysql.GrantPriv, dbName, tableName, "", nil)
 
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
@@ -1000,11 +1054,11 @@ func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitI
 			}
 			break
 		}
-		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "")
+		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
 	}
 
 	for _, priv := range allPrivs {
-		vi = appendVisitInfo(vi, priv, dbName, tableName, "")
+		vi = appendVisitInfo(vi, priv, dbName, tableName, "", nil)
 	}
 
 	return vi
@@ -1074,6 +1128,13 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
 	}
 	tableInfo := tn.TableInfo
+	if tableInfo.IsView() {
+		err := errors.Errorf("insert into view %s is not supported now.", tableInfo.Name.O)
+		if insert.IsReplace {
+			err = errors.Errorf("replace into view %s is not supported now.", tableInfo.Name.O)
+		}
+		return nil, err
+	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema := expression.TableInfo2SchemaWithDBName(b.ctx, tn.Schema, tableInfo)
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
@@ -1092,6 +1153,7 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		privilege: mysql.InsertPriv,
 		db:        tn.DBInfo.Name.L,
 		table:     tableInfo.Name.L,
+		err:       nil,
 	})
 
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx)
@@ -1157,8 +1219,8 @@ func (b *PlanBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 		return nil, errors.Trace(err)
 	}
 
-	insertPlan.ResolveIndices()
-	return insertPlan, nil
+	err = insertPlan.ResolveIndices()
+	return insertPlan, err
 }
 
 func (p *Insert) validateOnDup(onDup []*ast.Assignment, colMap map[string]*table.Column, tblInfo *model.TableInfo) (map[string]struct{}, []*expression.Column, error) {
@@ -1395,48 +1457,85 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
+func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.AlterPriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 	case *ast.CreateDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.CreatePriv,
 			db:        v.Name,
+			err:       nil,
 		})
 	case *ast.CreateIndexStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.IndexPriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 	case *ast.CreateTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.CreatePriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 		if v.ReferTable != nil {
 			b.visitInfo = append(b.visitInfo, visitInfo{
 				privilege: mysql.SelectPriv,
 				db:        v.ReferTable.Schema.L,
 				table:     v.ReferTable.Name.L,
+				err:       nil,
 			})
+		}
+	case *ast.CreateViewStmt:
+		plan, err := b.Build(v.Select)
+		if err != nil {
+			return nil, err
+		}
+		schema := plan.Schema()
+		if v.Cols != nil && len(v.Cols) != schema.Len() {
+			return nil, ddl.ErrViewWrongList
+		}
+		// we use fieldList to store schema.Columns temporary
+		var fieldList = make([]*ast.SelectField, schema.Len())
+		for i, col := range schema.Columns {
+			fieldList[i] = &ast.SelectField{AsName: col.ColName}
+		}
+		v.Select.(*ast.SelectStmt).Fields.Fields = fieldList
+		if _, ok := plan.(LogicalPlan); ok {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.CreateViewPriv,
+				db:        v.ViewName.Schema.L,
+				table:     v.ViewName.Name.L,
+				err:       nil,
+			})
+		}
+		if v.Definer.CurrentUser {
+			v.Definer = b.ctx.GetSessionVars().User
+		}
+		if b.ctx.GetSessionVars().User != nil && v.Definer.String() != b.ctx.GetSessionVars().User.String() {
+			err = ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+			b.visitInfo = append(b.visitInfo, visitInfo{privilege: mysql.SuperPriv, db: "", table: "", err: err})
 		}
 	case *ast.DropDatabaseStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.DropPriv,
 			db:        v.Name,
+			err:       nil,
 		})
 	case *ast.DropIndexStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.IndexPriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 	case *ast.DropTableStmt:
 		for _, tableVal := range v.Tables {
@@ -1444,6 +1543,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 				privilege: mysql.DropPriv,
 				db:        tableVal.Schema.L,
 				table:     tableVal.Name.L,
+				err:       nil,
 			})
 		}
 	case *ast.TruncateTableStmt:
@@ -1451,41 +1551,53 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 			privilege: mysql.DeletePriv,
 			db:        v.Table.Schema.L,
 			table:     v.Table.Name.L,
+			err:       nil,
 		})
 	case *ast.RenameTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.AlterPriv,
 			db:        v.OldTable.Schema.L,
 			table:     v.OldTable.Name.L,
+			err:       nil,
 		})
 		b.visitInfo = append(b.visitInfo, visitInfo{
 			privilege: mysql.AlterPriv,
 			db:        v.NewTable.Schema.L,
 			table:     v.NewTable.Name.L,
+			err:       nil,
 		})
 	}
 
 	p := &DDL{Statement: node}
-	return p
+	return p, nil
 }
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok {
-		return nil, errors.New("trace only supports select query")
+	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok && trace.Format == "row" {
+		return nil, errors.New("trace only supports select query when format is row")
 	}
 
-	p := &Trace{StmtNode: trace.Stmt}
+	p := &Trace{StmtNode: trace.Stmt, Format: trace.Format}
 
-	retFields := []string{"operation", "duration", "spanID"}
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-	schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
-
-	schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
-	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
-	p.SetSchema(schema)
+	switch trace.Format {
+	case "row":
+		retFields := []string{"operation", "duration", "spanID"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
+		schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+	case "json":
+		retFields := []string{"json"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+		p.SetSchema(schema)
+	default:
+		return nil, errors.New("trace format should be one of 'row' or 'json'")
+	}
 	return p, nil
 }
 
@@ -1588,7 +1700,7 @@ func buildShowWarningsSchema() *expression.Schema {
 }
 
 // buildShowSchema builds column info for ShowStmt including column name and type.
-func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
+func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 	var names []string
 	var ftypes []byte
 	switch s.Tp {
@@ -1608,7 +1720,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			"Create_options", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong,
-			mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowColumns:
 		names = table.ColDescFieldNames(s.Full)
@@ -1625,9 +1737,22 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowCreateTable:
-		names = []string{"Table", "Create Table"}
+		if !isView {
+			names = []string{"Table", "Create Table"}
+		} else {
+			names = []string{"View", "Create View", "character_set_client", "collation_connection"}
+		}
+	case ast.ShowCreateUser:
+		if s.User != nil {
+			names = []string{fmt.Sprintf("CREATE USER for %s", s.User)}
+		}
+	case ast.ShowCreateView:
+		names = []string{"View", "Create View", "character_set_client", "collation_connection"}
 	case ast.ShowCreateDatabase:
 		names = []string{"Database", "Create Database"}
+	case ast.ShowDrainerStatus:
+		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowGrants:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("Grants for %s", s.User)}
@@ -1643,21 +1768,24 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPlugins:
-		names = []string{"Name", "Status", "Type", "Library", "License"}
+		names = []string{"Name", "Status", "Type", "Library", "License", "Version"}
 		ftypes = []byte{
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 		}
 	case ast.ShowProcessList:
-		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
+		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+	case ast.ShowPumpStatus:
+		names = []string{"NodeID", "Address", "State", "Max_Commit_Ts", "Update_Time"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowStatsMeta:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowStatsHistograms:
-		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size"}
+		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size", "Correlation"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
-			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble}
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeDouble}
 	case ast.ShowStatsBuckets:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Bucket_id", "Count",
 			"Repeats", "Lower_Bound", "Upper_Bound"}
@@ -1670,7 +1798,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
 	case ast.ShowMasterStatus:
-		names = []string{"File", "UniqueID", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
+		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPrivileges:
 		names = []string{"Privilege", "Context", "Comment"}

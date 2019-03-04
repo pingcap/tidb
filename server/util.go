@@ -287,8 +287,17 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 			continue
 		}
 		switch col.Type {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong:
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
 			tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
+			buffer = dumpLengthEncodedString(buffer, tmp)
+		case mysql.TypeYear:
+			year := row.GetInt64(i)
+			tmp = tmp[:0]
+			if year == 0 {
+				tmp = append(tmp, '0', '0', '0', '0')
+			} else {
+				tmp = strconv.AppendInt(tmp, year, 10)
+			}
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeLonglong:
 			if mysql.HasUnsignedFlag(uint(columns[i].Flag)) {
@@ -332,6 +341,21 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 		}
 	}
 	return buffer, nil
+}
+
+func lengthEncodedIntSize(n uint64) int {
+	switch {
+	case n <= 250:
+		return 1
+
+	case n <= 0xffff:
+		return 3
+
+	case n <= 0xffffff:
+		return 4
+	}
+
+	return 9
 }
 
 const (

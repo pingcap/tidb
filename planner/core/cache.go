@@ -31,6 +31,10 @@ var (
 	preparedPlanCacheEnabledValue int32
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
 	PreparedPlanCacheCapacity uint
+	// PreparedPlanCacheMemoryGuardRatio stores the global config "prepared-plan-cache-memory-guard-ratio".
+	PreparedPlanCacheMemoryGuardRatio float64
+	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-max-memory".
+	PreparedPlanCacheMaxMemory uint64
 )
 
 const (
@@ -50,10 +54,7 @@ func SetPreparedPlanCache(isEnabled bool) {
 // PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
 func PreparedPlanCacheEnabled() bool {
 	isEnabled := atomic.LoadInt32(&preparedPlanCacheEnabledValue)
-	if isEnabled == preparedPlanCacheEnabled {
-		return true
-	}
-	return false
+	return isEnabled == preparedPlanCacheEnabled
 }
 
 type pstmtPlanCacheKey struct {
@@ -70,12 +71,14 @@ type pstmtPlanCacheKey struct {
 
 // Hash implements Key interface.
 func (key *pstmtPlanCacheKey) Hash() []byte {
-	if key.hash == nil {
+	if len(key.hash) == 0 {
 		var (
 			dbBytes    = hack.Slice(key.database)
 			bufferSize = len(dbBytes) + 8*6
 		)
-		key.hash = make([]byte, 0, bufferSize)
+		if key.hash == nil {
+			key.hash = make([]byte, 0, bufferSize)
+		}
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
 		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
@@ -85,6 +88,18 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
 	}
 	return key.hash
+}
+
+// SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
+// so we can reuse Key instead of new every time.
+func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64) {
+	psStmtKey, isPsStmtKey := key.(*pstmtPlanCacheKey)
+	if !isPsStmtKey {
+		return
+	}
+	psStmtKey.pstmtID = pstmtID
+	psStmtKey.schemaVersion = schemaVersion
+	psStmtKey.hash = psStmtKey.hash[:0]
 }
 
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.

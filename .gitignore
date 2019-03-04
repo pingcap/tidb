@@ -7,10 +7,12 @@ coverage.out
 *.swp
 *.log
 tags
-temp_parser_file
-y.output
 profile.coverprofile
 explain_test
 cmd/explaintest/explain-test.out
-_tools/
+cmd/explaintest/explaintest_tidb-server
 *.fail.go
+tools/bin/
+vendor
+/_tools/
+.DS_Store

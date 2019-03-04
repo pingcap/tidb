@@ -35,15 +35,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var _ = Suite(&testStatsUpdateSuite{})
+var _ = Suite(&testStatsSuite{})
 
-type testStatsUpdateSuite struct {
+type testStatsSuite struct {
 	store kv.Storage
 	do    *domain.Domain
 	hook  logHook
 }
 
-func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
+func (s *testStatsSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	// Add the hook here to avoid data race.
 	log.AddHook(&s.hook)
@@ -52,13 +52,13 @@ func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testStatsUpdateSuite) TearDownSuite(c *C) {
+func (s *testStatsSuite) TearDownSuite(c *C) {
 	s.do.Close()
 	s.store.Close()
 	testleak.AfterTest(c)()
 }
 
-func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
+func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -179,7 +179,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
 
-func (s *testStatsUpdateSuite) TestRollback(c *C) {
+func (s *testStatsSuite) TestRollback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -202,7 +202,7 @@ func (s *testStatsUpdateSuite) TestRollback(c *C) {
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 }
 
-func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
+func (s *testStatsSuite) TestMultiSession(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -259,7 +259,7 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 	rs.Check(testkit.Rows("60"))
 }
 
-func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
+func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -305,7 +305,7 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
 
-func (s *testStatsUpdateSuite) TestUpdatePartition(c *C) {
+func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -355,7 +355,7 @@ func (s *testStatsUpdateSuite) TestUpdatePartition(c *C) {
 	}
 }
 
-func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
+func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -384,8 +384,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(1))
@@ -403,8 +402,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(2))
@@ -414,8 +412,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(3))
@@ -425,8 +422,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(4))
@@ -456,7 +452,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 3)
 }
 
-func (s *testStatsUpdateSuite) TestAutoUpdatePartition(c *C) {
+func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -486,14 +482,13 @@ func (s *testStatsUpdateSuite) TestAutoUpdatePartition(c *C) {
 	testKit.MustExec("insert into t values (1)")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	err = h.HandleAutoAnalyze(is)
-	c.Assert(err, IsNil)
+	h.HandleAutoAnalyze(is)
 	stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	c.Assert(stats.Count, Equals, int64(1))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 }
 
-func (s *testStatsUpdateSuite) TestTableAnalyzed(c *C) {
+func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -527,7 +522,7 @@ func (s *testStatsUpdateSuite) TestTableAnalyzed(c *C) {
 	c.Assert(statistics.TableAnalyzed(statsTbl), IsTrue)
 }
 
-func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
+func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
@@ -597,7 +592,7 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(0))
 }
 
-func (s *testStatsUpdateSuite) TestUpdatePartitionErrorRate(c *C) {
+func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
@@ -656,7 +651,7 @@ func appendBucket(h *statistics.Histogram, l, r int64) {
 	h.AppendBucket(&lower, &upper, 0, 0)
 }
 
-func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
+func (s *testStatsSuite) TestSplitRange(c *C) {
 	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
 	appendBucket(h, 1, 1)
 	appendBucket(h, 2, 5)
@@ -701,7 +696,7 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 				HighExclude: t.exclude[i+1],
 			})
 		}
-		ranges = h.SplitRange(ranges)
+		ranges = h.SplitRange(nil, ranges, false)
 		var ranStrs []string
 		for _, ran := range ranges {
 			ranStrs = append(ranStrs, ran.String())
@@ -710,7 +705,7 @@ func (s *testStatsUpdateSuite) TestSplitRange(c *C) {
 	}
 }
 
-func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
+func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -782,7 +777,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	feedback := h.GetQueryFeedback()
 	c.Assert(len(feedback), Equals, 0)
 
-	// Test only collect for max number of ranges.
+	// Test only collect for max number of Ranges.
 	statistics.MaxNumberOfRanges = 0
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
@@ -822,7 +817,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 }
 
-func (s *testStatsUpdateSuite) TestQueryFeedbackForPartition(c *C) {
+func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -900,7 +895,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedbackForPartition(c *C) {
 	testKit.MustExec("drop table t")
 }
 
-func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
+func (s *testStatsSuite) TestUpdateSystemTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -915,7 +910,7 @@ func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
 	c.Assert(len(feedback), Equals, 0)
 }
 
-func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
+func (s *testStatsSuite) TestOutOfOrderUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -946,7 +941,7 @@ func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
 	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("0"))
 }
 
-func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
+func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -969,14 +964,14 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := table.Meta()
-	tbl := h.GetTableStats(tblInfo)
+	h.GetTableStats(tblInfo)
 
 	testKit.MustQuery("select * from t use index(idx) where b <= 5")
 	testKit.MustQuery("select * from t where a > 1")
 	testKit.MustQuery("select * from t use index(idx) where b = 5")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
-	tbl = h.GetTableStats(tblInfo)
+	tbl := h.GetTableStats(tblInfo)
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
@@ -1000,7 +995,7 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 }
 
-func (s *testStatsUpdateSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
+func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -1051,7 +1046,7 @@ func (hook *logHook) Fire(entry *log.Entry) error {
 	return nil
 }
 
-func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
+func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 
 	oriProbability := statistics.FeedbackProbability
@@ -1113,7 +1108,7 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	}
 }
 
-func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
+func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 	columns := map[int64]*statistics.Column{}
 	columns[1] = &statistics.Column{Count: 1}
 	tests := []struct {
@@ -1124,6 +1119,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 		end    string
 		now    string
 		result bool
+		reason string
 	}{
 		// table was never analyzed and has reach the limit
 		{
@@ -1134,6 +1130,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: true,
+			reason: "table unanalyzed",
 		},
 		// table was never analyzed but has not reach the limit
 		{
@@ -1144,6 +1141,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
@@ -1154,6 +1152,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but modify count is small
 		{
@@ -1164,6 +1163,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but not within time period
 		{
@@ -1174,6 +1174,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:02 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and but not within time period
 		{
@@ -1184,6 +1185,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "06:00 +0800",
 			now:    "10:00 +0800",
 			result: false,
+			reason: "",
 		},
 		// table was already analyzed and within time period
 		{
@@ -1194,6 +1196,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "00:01 +0800",
 			now:    "00:00 +0800",
 			result: true,
+			reason: "too many modifications",
 		},
 		// table was already analyzed and within time period
 		{
@@ -1204,6 +1207,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			end:    "06:00 +0800",
 			now:    "23:00 +0800",
 			result: true,
+			reason: "too many modifications",
 		},
 	}
 	for _, test := range tests {
@@ -1213,11 +1217,13 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 		c.Assert(err, IsNil)
 		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
 		c.Assert(err, IsNil)
-		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
+		needAnalyze, reason := statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now)
+		c.Assert(needAnalyze, Equals, test.result)
+		c.Assert(strings.HasPrefix(reason, test.reason), IsTrue)
 	}
 }
 
-func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
+func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 
@@ -1294,7 +1300,74 @@ func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
 	}
 }
 
-func (s *testStatsUpdateSuite) TestFeedbackRanges(c *C) {
+func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
+	}
+	testKit.MustExec("analyze table t with 3 buckets")
+	testKit.MustExec("delete from t where a = 1")
+	testKit.MustExec("delete from t where b > 10")
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	h := s.do.StatsHandle()
+	tests := []struct {
+		sql     string
+		hist    string
+		rangeID int64
+		idxID   int64
+		eqCount uint32
+	}{
+		{
+			// The real count of `a = 1` is 0.
+			sql: "select * from t where a = 1 and b < 21",
+			hist: "column:2 ndv:20 totColSize:20\n" +
+				"num: 4 lower_bound: -9223372036854775808 upper_bound: 6 repeats: 0\n" +
+				"num: 3 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 6 lower_bound: 14 upper_bound: 19 repeats: 1",
+			rangeID: tblInfo.Columns[1].ID,
+			idxID:   tblInfo.Indices[0].ID,
+			eqCount: 3,
+		},
+		{
+			// The real count of `b > 10` is 0.
+			sql: "select * from t where a = 2 and b > 10",
+			hist: "column:2 ndv:20 totColSize:20\n" +
+				"num: 4 lower_bound: -9223372036854775808 upper_bound: 6 repeats: 0\n" +
+				"num: 2 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 6 lower_bound: 14 upper_bound: 19 repeats: 1",
+			rangeID: tblInfo.Columns[1].ID,
+			idxID:   tblInfo.Indices[0].ID,
+			eqCount: 3,
+		},
+	}
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		h.Update(is)
+		tbl := h.GetTableStats(tblInfo)
+		c.Assert(tbl.Columns[t.rangeID].ToString(0), Equals, tests[i].hist)
+		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+		c.Assert(err, IsNil)
+		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
+	}
+}
+
+func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
@@ -1360,5 +1433,63 @@ func (s *testStatsUpdateSuite) TestFeedbackRanges(c *C) {
 		tblInfo := table.Meta()
 		tbl := h.GetTableStats(tblInfo)
 		c.Assert(tbl.Columns[t.colID].ToString(0), Equals, tests[i].hist)
+	}
+}
+
+func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+	oriProbability := statistics.FeedbackProbability
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MaxNumberOfRanges = oriNumber
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a tinyint unsigned, primary key(a))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t with 3 buckets")
+	for i := 30; i < 40; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	tests := []struct {
+		sql  string
+		hist string
+	}{
+		{
+			sql: "select * from t where a <= 50",
+			hist: "column:1 ndv:30 totColSize:0\n" +
+				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+		},
+		{
+			sql: "select count(*) from t",
+			hist: "column:1 ndv:30 totColSize:0\n" +
+				"num: 8 lower_bound: 0 upper_bound: 7 repeats: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 255 repeats: 0",
+		},
+	}
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		c.Assert(err, IsNil)
+		h.Update(is)
+		tblInfo := table.Meta()
+		tbl := h.GetTableStats(tblInfo)
+		c.Assert(tbl.Columns[1].ToString(0), Equals, tests[i].hist)
 	}
 }

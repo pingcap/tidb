@@ -16,7 +16,6 @@ package expression
 import (
 	"fmt"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -100,11 +99,7 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 				c.Value.SetNull()
 				return c.Value, nil
 			}
-			retType := types.NewFieldType(c.RetType.Tp)
-			if retType.Tp == mysql.TypeUnspecified {
-				retType.Tp = mysql.TypeVarString
-			}
-			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, retType)
+			val, err := dt.ConvertTo(sf.GetCtx().GetSessionVars().StmtCtx, c.RetType)
 			if err != nil {
 				return dt, err
 			}
@@ -119,14 +114,14 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			return 0, true, errors.Trace(err)
+			return 0, true, err
 		}
 		if dt.IsNull() {
 			return 0, true, nil
 		}
 		val, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return 0, true, errors.Trace(err)
+			return 0, true, err
 		}
 		c.Value.SetInt64(val)
 	} else {
@@ -136,7 +131,7 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToInt64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, err
 	}
 	return c.Value.GetInt64(), false, nil
 }
@@ -146,14 +141,14 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool,
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			return 0, true, errors.Trace(err)
+			return 0, true, err
 		}
 		if dt.IsNull() {
 			return 0, true, nil
 		}
 		val, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return 0, true, errors.Trace(err)
+			return 0, true, err
 		}
 		c.Value.SetFloat64(val)
 	} else {
@@ -163,7 +158,7 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool,
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToFloat64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, err
 	}
 	return c.Value.GetFloat64(), false, nil
 }
@@ -173,14 +168,14 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			return "", true, errors.Trace(err)
+			return "", true, err
 		}
 		if dt.IsNull() {
 			return "", true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
-			return "", true, errors.Trace(err)
+			return "", true, err
 		}
 		c.Value.SetString(val)
 	} else {
@@ -189,7 +184,7 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool
 		}
 	}
 	res, err := c.Value.ToString()
-	return res, err != nil, errors.Trace(err)
+	return res, err != nil, err
 }
 
 // EvalDecimal returns decimal representation of Constant.
@@ -197,7 +192,7 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDe
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			return nil, true, errors.Trace(err)
+			return nil, true, err
 		}
 		if dt.IsNull() {
 			return nil, true, nil
@@ -209,7 +204,7 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDe
 		}
 	}
 	res, err := c.Value.ToDecimal(ctx.GetSessionVars().StmtCtx)
-	return res, err != nil, errors.Trace(err)
+	return res, err != nil, err
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
@@ -217,18 +212,18 @@ func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			return types.Time{}, true, errors.Trace(err)
+			return types.Time{}, true, err
 		}
 		if dt.IsNull() {
 			return types.Time{}, true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
-			return types.Time{}, true, errors.Trace(err)
+			return types.Time{}, true, err
 		}
 		tim, err := types.ParseDatetime(ctx.GetSessionVars().StmtCtx, val)
 		if err != nil {
-			return types.Time{}, true, errors.Trace(err)
+			return types.Time{}, true, err
 		}
 		c.Value.SetMysqlTime(tim)
 	} else {
@@ -244,18 +239,18 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			return types.Duration{}, true, errors.Trace(err)
+			return types.Duration{}, true, err
 		}
 		if dt.IsNull() {
 			return types.Duration{}, true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
-			return types.Duration{}, true, errors.Trace(err)
+			return types.Duration{}, true, err
 		}
 		dur, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, val, types.MaxFsp)
 		if err != nil {
-			return types.Duration{}, true, errors.Trace(err)
+			return types.Duration{}, true, err
 		}
 		c.Value.SetMysqlDuration(dur)
 	} else {
@@ -271,14 +266,14 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSO
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			return json.BinaryJSON{}, true, errors.Trace(err)
+			return json.BinaryJSON{}, true, err
 		}
 		if dt.IsNull() {
 			return json.BinaryJSON{}, true, nil
 		}
 		val, err := dt.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeJSON))
 		if err != nil {
-			return json.BinaryJSON{}, true, errors.Trace(err)
+			return json.BinaryJSON{}, true, err
 		}
 		fmt.Println("const eval json", val.GetMysqlJSON().String())
 		c.Value.SetMysqlJSON(val.GetMysqlJSON())
@@ -326,20 +321,21 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 	}
 	_, err := c.Eval(chunk.Row{})
 	if err != nil {
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 	}
 	c.hashcode = append(c.hashcode, constantFlag)
 	c.hashcode, err = codec.EncodeValue(sc, c.hashcode, c.Value)
 	if err != nil {
-		terror.Log(errors.Trace(err))
+		terror.Log(err)
 	}
 	return c.hashcode
 }
 
 // ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ *Schema) Expression {
-	return c
+func (c *Constant) ResolveIndices(_ *Schema) (Expression, error) {
+	return c, nil
 }
 
-func (c *Constant) resolveIndices(_ *Schema) {
+func (c *Constant) resolveIndices(_ *Schema) error {
+	return nil
 }

@@ -66,6 +66,7 @@ const (
 	tableTableSpaces                        = "TABLESPACES"
 	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	tableProcesslist                        = "PROCESSLIST"
+	tableTiDBIndexes                        = "TIDB_INDEXES"
 )
 
 type columnInfo struct {
@@ -144,9 +145,10 @@ var tablesCols = []columnInfo{
 	{"UPDATE_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"CHECK_TIME", mysql.TypeDatetime, 19, 0, nil, nil},
 	{"TABLE_COLLATION", mysql.TypeVarchar, 32, mysql.NotNullFlag, "utf8_bin", nil},
-	{"CHECK_SUM", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"CHECKSUM", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_OPTIONS", mysql.TypeVarchar, 255, 0, nil, nil},
 	{"TABLE_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"TIDB_TABLE_ID", mysql.TypeLonglong, 21, 0, nil, nil},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -530,6 +532,18 @@ var tableProcesslistCols = []columnInfo{
 	{"Info", mysql.TypeString, 512, 0, nil, nil},
 }
 
+var tableTiDBIndexesCols = []columnInfo{
+	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"NON_UNIQUE", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"KEY_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SEQ_IN_INDEX", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"COLUMN_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"SUB_PART", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_COMMENT", mysql.TypeVarchar, 2048, 0, nil, nil},
+	{"INDEX_ID", mysql.TypeLonglong, 21, 0, nil, nil},
+}
+
 func dataForCharacterSets() (records [][]types.Datum) {
 
 	charsets := charset.GetAllCharsets()
@@ -660,9 +674,9 @@ func dataForEngines() (records [][]types.Datum) {
 
 var filesCols = []columnInfo{
 	{"FILE_ID", mysql.TypeLonglong, 4, 0, nil, nil},
-	{"FILE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
+	{"FILE_NAME", mysql.TypeVarchar, 4000, 0, nil, nil},
 	{"FILE_TYPE", mysql.TypeVarchar, 20, 0, nil, nil},
-	{"TABLESPACE_NAME", mysql.TypeVarchar, 20, 0, nil, nil},
+	{"TABLESPACE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_CATALOG", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_SCHEMA", mysql.TypeVarchar, 64, 0, nil, nil},
 	{"TABLE_NAME", mysql.TypeVarchar, 64, 0, nil, nil},
@@ -684,9 +698,12 @@ var filesCols = []columnInfo{
 	{"RECOVER_TIME", mysql.TypeLonglong, 4, 0, nil, nil},
 	{"TRANSACTION_COUNTER", mysql.TypeLonglong, 4, 0, nil, nil},
 	{"VERSION", mysql.TypeLonglong, 21, 0, nil, nil},
-	{"ROW_FORMAT", mysql.TypeVarchar, 21, 0, nil, nil},
+	{"ROW_FORMAT", mysql.TypeVarchar, 10, 0, nil, nil},
 	{"TABLE_ROWS", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"AVG_ROW_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"MAX_DATA_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
+	{"INDEX_LENGTH", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"DATA_FREE", mysql.TypeLonglong, 21, 0, nil, nil},
 	{"CREATE_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
 	{"UPDATE_TIME", mysql.TypeDatetime, -1, 0, nil, nil},
@@ -816,7 +833,7 @@ func (c *statsCache) setLoading(loading bool) {
 
 func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.Lock()
-	if time.Now().Sub(c.modifyTime) < TableStatsCacheExpiry || c.loading {
+	if time.Since(c.modifyTime) < TableStatsCacheExpiry || c.loading {
 		tableRows, colLength := c.tableRows, c.colLength
 		c.mu.Unlock()
 		return tableRows, colLength, nil
@@ -867,6 +884,43 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	return autoIncID, nil
 }
 
+func dataForViews(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if !table.IsView() {
+				continue
+			}
+			collation := table.Collate
+			charset := table.Charset
+			if collation == "" {
+				collation = mysql.DefaultCollationName
+			}
+			if charset == "" {
+				charset = mysql.DefaultCharset
+			}
+			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			record := types.MakeDatums(
+				catalogVal,                      // TABLE_CATALOG
+				schema.Name.O,                   // TABLE_SCHEMA
+				table.Name.O,                    // TABLE_NAME
+				table.View.SelectStmt,           // VIEW_DEFINITION
+				table.View.CheckOption.String(), // CHECK_OPTION
+				"NO",                            // IS_UPDATABLE
+				table.View.Definer.String(),     // DEFINER
+				table.View.Security.String(),    // SECURITY_TYPE
+				charset,                         // CHARACTER_SET_CLIENT
+				collation,                       // COLLATION_CONNECTION
+			)
+			rows = append(rows, record)
+		}
+	}
+	return rows, nil
+}
+
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
@@ -888,44 +942,140 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				Type: createTimeTp,
 			}
 
+			createOptions := ""
+
 			if checker != nil && !checker.RequestVerification(schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
-			autoIncID, err := getAutoIncrementID(ctx, schema, table)
-			if err != nil {
-				return nil, errors.Trace(err)
+			if !table.IsView() {
+				if table.GetPartitionInfo() != nil {
+					createOptions = "partitioned"
+				}
+				autoIncID, err := getAutoIncrementID(ctx, schema, table)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				rowCount := tableRowsMap[table.ID]
+				dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
+				avgRowLength := uint64(0)
+				if rowCount != 0 {
+					avgRowLength = dataLength / rowCount
+				}
+				record := types.MakeDatums(
+					catalogVal,    // TABLE_CATALOG
+					schema.Name.O, // TABLE_SCHEMA
+					table.Name.O,  // TABLE_NAME
+					"BASE TABLE",  // TABLE_TYPE
+					"InnoDB",      // ENGINE
+					uint64(10),    // VERSION
+					"Compact",     // ROW_FORMAT
+					rowCount,      // TABLE_ROWS
+					avgRowLength,  // AVG_ROW_LENGTH
+					dataLength,    // DATA_LENGTH
+					uint64(0),     // MAX_DATA_LENGTH
+					indexLength,   // INDEX_LENGTH
+					uint64(0),     // DATA_FREE
+					autoIncID,     // AUTO_INCREMENT
+					createTime,    // CREATE_TIME
+					nil,           // UPDATE_TIME
+					nil,           // CHECK_TIME
+					collation,     // TABLE_COLLATION
+					nil,           // CHECKSUM
+					createOptions, // CREATE_OPTIONS
+					table.Comment, // TABLE_COMMENT
+					table.ID,      // TIDB_TABLE_ID
+				)
+				rows = append(rows, record)
+			} else {
+				record := types.MakeDatums(
+					catalogVal,    // TABLE_CATALOG
+					schema.Name.O, // TABLE_SCHEMA
+					table.Name.O,  // TABLE_NAME
+					"VIEW",        // TABLE_TYPE
+					nil,           // ENGINE
+					nil,           // VERSION
+					nil,           // ROW_FORMAT
+					nil,           // TABLE_ROWS
+					nil,           // AVG_ROW_LENGTH
+					nil,           // DATA_LENGTH
+					nil,           // MAX_DATA_LENGTH
+					nil,           // INDEX_LENGTH
+					nil,           // DATA_FREE
+					nil,           // AUTO_INCREMENT
+					createTime,    // CREATE_TIME
+					nil,           // UPDATE_TIME
+					nil,           // CHECK_TIME
+					nil,           // TABLE_COLLATION
+					nil,           // CHECKSUM
+					nil,           // CREATE_OPTIONS
+					"VIEW",        // TABLE_COMMENT
+					table.ID,      // TIDB_TABLE_ID
+				)
+				rows = append(rows, record)
 			}
-			rowCount := tableRowsMap[table.ID]
-			dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
-			avgRowLength := uint64(0)
-			if rowCount != 0 {
-				avgRowLength = dataLength / rowCount
+		}
+	}
+	return rows, nil
+}
+
+func dataForIndexes(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
+	checker := privilege.GetPrivilegeManager(ctx)
+	var rows [][]types.Datum
+	for _, schema := range schemas {
+		for _, tb := range schema.Tables {
+			if checker != nil && !checker.RequestVerification(schema.Name.L, tb.Name.L, "", mysql.AllPrivMask) {
+				continue
 			}
-			record := types.MakeDatums(
-				catalogVal,    // TABLE_CATALOG
-				schema.Name.O, // TABLE_SCHEMA
-				table.Name.O,  // TABLE_NAME
-				"BASE TABLE",  // TABLE_TYPE
-				"InnoDB",      // ENGINE
-				uint64(10),    // VERSION
-				"Compact",     // ROW_FORMAT
-				rowCount,      // TABLE_ROWS
-				avgRowLength,  // AVG_ROW_LENGTH
-				dataLength,    // DATA_LENGTH
-				uint64(0),     // MAX_DATA_LENGTH
-				indexLength,   // INDEX_LENGTH
-				uint64(0),     // DATA_FREE
-				autoIncID,     // AUTO_INCREMENT
-				createTime,    // CREATE_TIME
-				nil,           // UPDATE_TIME
-				nil,           // CHECK_TIME
-				collation,     // TABLE_COLLATION
-				nil,           // CHECKSUM
-				"",            // CREATE_OPTIONS
-				table.Comment, // TABLE_COMMENT
-			)
-			rows = append(rows, record)
+
+			if tb.PKIsHandle {
+				var pkCol *model.ColumnInfo
+				for _, col := range tb.Cols() {
+					if mysql.HasPriKeyFlag(col.Flag) {
+						pkCol = col
+						break
+					}
+				}
+				record := types.MakeDatums(
+					schema.Name.O, // TABLE_SCHEMA
+					tb.Name.O,     // TABLE_NAME
+					0,             // NON_UNIQUE
+					"PRIMARY",     // KEY_NAME
+					1,             // SEQ_IN_INDEX
+					pkCol.Name.O,  // COLUMN_NAME
+					nil,           // SUB_PART
+					"",            // INDEX_COMMENT
+					0,             // INDEX_ID
+				)
+				rows = append(rows, record)
+			}
+			for _, idxInfo := range tb.Indices {
+				if idxInfo.State != model.StatePublic {
+					continue
+				}
+				for i, col := range idxInfo.Columns {
+					nonUniq := 1
+					if idxInfo.Unique {
+						nonUniq = 0
+					}
+					var subPart interface{}
+					if col.Length != types.UnspecifiedLength {
+						subPart = col.Length
+					}
+					record := types.MakeDatums(
+						schema.Name.O,   // TABLE_SCHEMA
+						tb.Name.O,       // TABLE_NAME
+						nonUniq,         // NON_UNIQUE
+						idxInfo.Name.O,  // KEY_NAME
+						i+1,             // SEQ_IN_INDEX
+						col.Name.O,      // COLUMN_NAME
+						subPart,         // SUB_PART
+						idxInfo.Comment, // INDEX_COMMENT
+						idxInfo.ID,      // INDEX_ID
+					)
+					rows = append(rows, record)
+				}
+			}
 		}
 	}
 	return rows, nil
@@ -1318,6 +1468,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableTableSpaces:                        tableTableSpacesCols,
 	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
 	tableProcesslist:                        tableProcesslistCols,
+	tableTiDBIndexes:                        tableTiDBIndexesCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1363,6 +1514,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForSchemata(dbs)
 	case tableTables:
 		fullRows, err = dataForTables(ctx, dbs)
+	case tableTiDBIndexes:
+		fullRows, err = dataForIndexes(ctx, dbs)
 	case tableColumns:
 		fullRows = dataForColumns(ctx, dbs)
 	case tableStatistics:
@@ -1390,6 +1543,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableEngines:
 		fullRows = dataForEngines()
 	case tableViews:
+		fullRows, err = dataForViews(ctx, dbs)
 	case tableRoutines:
 	// TODO: Fill the following tables.
 	case tableSchemaPrivileges:
@@ -1490,7 +1644,7 @@ func (it *infoschemaTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
-func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
@@ -1528,5 +1682,122 @@ func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, e
 }
 
 func (it *infoschemaTable) Type() table.Type {
+	return table.VirtualTable
+}
+
+// VirtualTable is a dummy table.Table implementation.
+type VirtualTable struct{}
+
+// IterRecords implements table.Table Type interface.
+func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+	fn table.RecordIterFunc) error {
+	if len(startKey) != 0 {
+		return table.ErrUnsupportedOp
+	}
+	return nil
+}
+
+// RowWithCols implements table.Table Type interface.
+func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+	return nil, table.ErrUnsupportedOp
+}
+
+// Row implements table.Table Type interface.
+func (vt *VirtualTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
+	return nil, table.ErrUnsupportedOp
+}
+
+// Cols implements table.Table Type interface.
+func (vt *VirtualTable) Cols() []*table.Column {
+	return nil
+}
+
+// WritableCols implements table.Table Type interface.
+func (vt *VirtualTable) WritableCols() []*table.Column {
+	return nil
+}
+
+// Indices implements table.Table Type interface.
+func (vt *VirtualTable) Indices() []table.Index {
+	return nil
+}
+
+// WritableIndices implements table.Table Type interface.
+func (vt *VirtualTable) WritableIndices() []table.Index {
+	return nil
+}
+
+// DeletableIndices implements table.Table Type interface.
+func (vt *VirtualTable) DeletableIndices() []table.Index {
+	return nil
+}
+
+// RecordPrefix implements table.Table Type interface.
+func (vt *VirtualTable) RecordPrefix() kv.Key {
+	return nil
+}
+
+// IndexPrefix implements table.Table Type interface.
+func (vt *VirtualTable) IndexPrefix() kv.Key {
+	return nil
+}
+
+// FirstKey implements table.Table Type interface.
+func (vt *VirtualTable) FirstKey() kv.Key {
+	return nil
+}
+
+// RecordKey implements table.Table Type interface.
+func (vt *VirtualTable) RecordKey(h int64) kv.Key {
+	return nil
+}
+
+// AddRecord implements table.Table Type interface.
+func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...*table.AddRecordOpt) (recordID int64, err error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// RemoveRecord implements table.Table Type interface.
+func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+	return table.ErrUnsupportedOp
+}
+
+// UpdateRecord implements table.Table Type interface.
+func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+	return table.ErrUnsupportedOp
+}
+
+// AllocAutoID implements table.Table Type interface.
+func (vt *VirtualTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+	return 0, table.ErrUnsupportedOp
+}
+
+// Allocator implements table.Table Type interface.
+func (vt *VirtualTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
+	return nil
+}
+
+// RebaseAutoID implements table.Table Type interface.
+func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+	return table.ErrUnsupportedOp
+}
+
+// Meta implements table.Table Type interface.
+func (vt *VirtualTable) Meta() *model.TableInfo {
+	return nil
+}
+
+// GetPhysicalID implements table.Table GetPhysicalID interface.
+func (vt *VirtualTable) GetPhysicalID() int64 {
+	return 0
+}
+
+// Seek implements table.Table Type interface.
+func (vt *VirtualTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
+	return 0, false, table.ErrUnsupportedOp
+}
+
+// Type implements table.Table Type interface.
+func (vt *VirtualTable) Type() table.Type {
 	return table.VirtualTable
 }

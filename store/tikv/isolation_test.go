@@ -16,6 +16,7 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -24,9 +25,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
-	"golang.org/x/net/context"
 )
 
+// testIsolationSuite represents test isolation suite.
 // The test suite takes too long under the race detector.
 type testIsolationSuite struct {
 	OneByOneSuite
