@@ -93,7 +93,7 @@ func parseSlowLog(scanner *bufio.Scanner) ([]map[string]types.Datum, error) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		// Check slow log entry start flag.
-		if !startFlag && strings.Contains(line, variable.SlowLogStartPrefixStr) {
+		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			value, err := parseSlowLogField(variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):])
 			if err != nil {
 				log.Errorf("parse slow log error: %v", err)
