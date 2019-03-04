@@ -189,14 +189,14 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables statsCache, iter *chu
 			var err error
 			lower, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				log.Debug("Decode bucket lower bound failed", zap.Error(err), zap.Stack("error stack"))
+				log.Debug("Decode bucket lower bound failed", zap.String("error stack", errors.ErrorStack(err)))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
 			upper, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				log.Debug("Decode bucket upper bound failed", zap.Error(err), zap.Stack("error stack"))
+				log.Debug("Decode bucket upper bound failed", zap.String("error stack", errors.ErrorStack(err)))
 				delete(table.Columns, histID)
 				continue
 			}

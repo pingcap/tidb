@@ -299,7 +299,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 	for _, fb := range feedback.feedback {
 		skip, err := fb.adjustFeedbackBoundaries(sc, &min, &max)
 		if err != nil {
-			log.Debug("Adjust feedback boundaries failed", zap.Error(err), zap.Stack("error stack"))
+			log.Debug("Adjust feedback boundaries failed", zap.String("error stack", errors.ErrorStack(err)))
 			continue
 		}
 		if skip {
@@ -328,7 +328,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		res, err := bkt.lower.CompareDatum(nil, fb.lower)
 		if err != nil {
 			log.Debug("Compare datum failed", zap.Any("value1", bkt.lower),
-				zap.Any("value2", fb.lower), zap.Error(err), zap.Stack("error stack"))
+				zap.Any("value2", fb.lower), zap.String("error stack", errors.ErrorStack(err)))
 			continue
 		}
 		if res > 0 {
@@ -337,7 +337,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		res, err = bkt.upper.CompareDatum(nil, fb.upper)
 		if err != nil {
 			log.Debug("Compare datum failed", zap.Any("value1", bkt.upper),
-				zap.Any("value2", fb.upper), zap.Error(err), zap.Stack("error stack"))
+				zap.Any("value2", fb.upper), zap.String("error stack", errors.ErrorStack(err)))
 			continue
 		}
 		if res < 0 {
@@ -357,7 +357,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	vals = append(vals, *b.lower)
 	err := types.SortDatums(nil, vals)
 	if err != nil {
-		log.Debug("Sort datums failed", zap.Error(err), zap.Stack("error stack"))
+		log.Debug("Sort datums failed", zap.String("error stack", errors.ErrorStack(err)))
 		vals = vals[:0]
 		vals = append(vals, *b.lower, *b.upper)
 		return vals
@@ -376,7 +376,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 		cmp, err := vals[total-1].CompareDatum(nil, &vals[i])
 		if err != nil {
 			log.Debug("Compare datum failed", zap.Any("value1", vals[total-1]), zap.Any("value2", vals[i]),
-				zap.Error(err), zap.Stack("error stack"))
+				zap.String("error stack", errors.ErrorStack(err)))
 			continue
 		}
 		if cmp == 0 {

@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"fmt"
-	"go.uber.org/zap"
 	"math"
 	"strings"
 	"sync"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 const (

@@ -16,7 +16,6 @@ package statistics
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"math"
 	"strconv"
 	"strings"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 type tableDeltaMap map[int64]variable.TableDelta
@@ -392,7 +392,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debug("Error occurred when encoding feedback, err: %s", zap.Error(err), zap.Stack("error stack"))
+		log.Debug("Error occurred when encoding feedback, err: %s", zap.String("error stack", errors.ErrorStack(err)))
 		return nil
 	}
 	var isIndex int64
