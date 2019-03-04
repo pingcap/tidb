@@ -575,7 +575,7 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 
 			// wait projectionInputFetcher blocked on fetching data
 			// from child in the background.
-			time.Sleep(time.Millisecond * 5)
+			time.Sleep(time.Millisecond * 25)
 		}
 		c.Assert(exec.Close(), IsNil)
 		c.Assert(ds.checkNumNextCalled(), IsNil)
