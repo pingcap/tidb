@@ -466,6 +466,14 @@ import (
 	substring		"SUBSTRING"
 	timestampAdd		"TIMESTAMPADD"
 	timestampDiff		"TIMESTAMPDIFF"
+	tokudbDefault	"TOKUDB_DEFAULT"
+	tokudbFast	"TOKUDB_FAST"
+	tokudbLzma	"TOKUDB_LZMA"
+	tokudbQuickLZ	"TOKUDB_QUICKLZ"
+	tokudbSnappy	"TOKUDB_SNAPPY"
+	tokudbSmall	"TOKUDB_SMALL"
+	tokudbUncompressed	"TOKUDB_UNCOMPRESSED"
+	tokudbZlib	"TOKUDB_ZLIB"
 	top			"TOP"
 	trim			"TRIM"
 	variance		"VARIANCE"
@@ -3053,7 +3061,7 @@ NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
 | "INPLACE" | "INSTANT" | "INTERNAL" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM"
 | "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" | "VARIANCE" | "VAR_POP" | "VAR_SAMP"
-| "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM" | "NEXT_ROW_ID"
+| "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOKUDB_DEFAULT" | "TOKUDB_FAST" | "TOKUDB_LZMA" | "TOKUDB_QUICKLZ" | "TOKUDB_SNAPPY" | "TOKUDB_SMALL" | "TOKUDB_UNCOMPRESSED" | "TOKUDB_ZLIB" | "TOP" | "TRIM" | "NEXT_ROW_ID"
 
 /************************************************************************************
  *
@@ -6769,6 +6777,38 @@ RowFormat:
 |	"ROW_FORMAT" EqOpt "COMPACT"
 	{
 		$$ = ast.RowFormatCompact
+	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_DEFAULT"
+	{
+		$$ = ast.TokuDBRowFormatDefault
+	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_FAST"
+	{
+		$$ = ast.TokuDBRowFormatFast
+	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_SMALL"
+	{
+		$$ = ast.TokuDBRowFormatSmall
+	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_ZLIB"
+	{
+		$$ = ast.TokuDBRowFormatZlib
+	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_QUICKLZ"
+	{
+		$$ = ast.TokuDBRowFormatQuickLZ
+	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_LZMA"
+	{
+		$$ = ast.TokuDBRowFormatLzma
+	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_SNAPPY"
+	{
+		$$ = ast.TokuDBRowFormatSnappy
+	}
+|	"ROW_FORMAT" EqOpt "TOKUDB_UNCOMPRESSED"
+	{
+		$$ = ast.TokuDBRowFormatUncompressed
 	}
 
 /*************************************Type Begin***************************************/
