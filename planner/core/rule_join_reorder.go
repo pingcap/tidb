@@ -79,10 +79,10 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			p, err = groupSolver.solve(curJoinGroup)
 		} else {
 			dpSolver := &joinReorderDPSolver{
-				ctx: ctx,
+				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
-			dpSolver.newJoin = dpSolver.newJoinWithConds
-			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges), otherConds)
+			dpSolver.newJoin = dpSolver.newJoinWithEdges
+			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges))
 		}
 		if err != nil {
 			return nil, err
@@ -151,22 +151,15 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 	return join
 }
 
-func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(eqEdges []*expression.ScalarFunction, remainedOtherConds []expression.Expression,
-	lChild, rChild LogicalPlan) (*LogicalJoin, []expression.Expression) {
+func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) LogicalPlan {
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
+	newJoin.OtherConditions = otherConds
 	for _, eqCond := range newJoin.EqualConditions {
 		newJoin.LeftJoinKeys = append(newJoin.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
 		newJoin.RightJoinKeys = append(newJoin.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
-	for i := len(remainedOtherConds) - 1; i >= 0; i-- {
-		cols := expression.ExtractColumns(remainedOtherConds[i])
-		if newJoin.schema.ColumnsIndices(cols) != nil {
-			newJoin.OtherConditions = append(newJoin.OtherConditions, remainedOtherConds[i])
-			remainedOtherConds = append(remainedOtherConds[:i], remainedOtherConds[i+1:]...)
-		}
-	}
-	return newJoin, remainedOtherConds
+	return newJoin
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.

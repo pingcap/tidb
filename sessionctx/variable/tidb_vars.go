@@ -289,7 +289,7 @@ const (
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
 	DefEnableWindowFunction          = false
-	DefTiDBOptJoinOrderAlgoThreshold = 10
+	DefTiDBOptJoinOrderAlgoThreshold = 0
 )
 
 // Process global variables.

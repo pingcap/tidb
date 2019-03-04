@@ -18,11 +18,10 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/sessionctx"
 )
 
 type joinReorderDPSolver struct {
-	ctx     sessionctx.Context
+	*baseSingleGroupJoinOrderSolver
 	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, otherConds []expression.Expression) LogicalPlan
 }
 
@@ -37,8 +36,18 @@ type joinGroupNonEqEdge struct {
 	expr    expression.Expression
 }
 
-func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds, otherConds []expression.Expression) (LogicalPlan, error) {
-	adjacents := make([][]int, len(joinGroup))
+func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expression.Expression) (LogicalPlan, error) {
+	for _, node := range joinGroup {
+		_, err := node.recursiveDeriveStats()
+		if err != nil {
+			return nil, err
+		}
+		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
+			p:       node,
+			cumCost: s.baseNodeCumCost(node),
+		})
+	}
+	adjacents := make([][]int, len(s.curJoinGroup))
 	totalEqEdges := make([]joinGroupEqEdge, 0, len(eqConds))
 	addEqEdge := func(node1, node2 int, edgeContent *expression.ScalarFunction) {
 		totalEqEdges = append(totalEqEdges, joinGroupEqEdge{
@@ -63,8 +72,8 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds, otherConds
 		}
 		addEqEdge(lIdx, rIdx, sf)
 	}
-	totalNonEqEdges := make([]joinGroupNonEqEdge, 0, len(otherConds))
-	for _, cond := range otherConds {
+	totalNonEqEdges := make([]joinGroupNonEqEdge, 0, len(s.otherConds))
+	for _, cond := range s.otherConds {
 		cols := expression.ExtractColumns(cond)
 		mask := uint(0)
 		ids := make([]int, 0, len(cols))
@@ -148,11 +157,10 @@ func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents 
 func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGroup []LogicalPlan,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) (LogicalPlan, error) {
 	nodeCnt := uint(len(newPos2OldPos))
-	bestPlan := make([]LogicalPlan, 1<<nodeCnt)
-	bestCost := make([]int64, 1<<nodeCnt)
+	bestPlan := make([]*jrNode, 1<<nodeCnt)
 	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
 	for i := uint(0); i < nodeCnt; i++ {
-		bestPlan[1<<i] = joinGroup[newPos2OldPos[i]]
+		bestPlan[1<<i] = s.curJoinGroup[newPos2OldPos[i]]
 	}
 	// Enumerate the nodeBitmap from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
 	for nodeBitmap := uint(1); nodeBitmap < (1 << nodeCnt); nodeBitmap++ {
@@ -175,17 +183,23 @@ func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGr
 			if len(usedEdges) == 0 {
 				continue
 			}
-			join, err := s.newJoinWithEdge(bestPlan[sub], bestPlan[remain], usedEdges, otherConds)
+			join, err := s.newJoinWithEdge(bestPlan[sub].p, bestPlan[remain].p, usedEdges, otherConds)
 			if err != nil {
 				return nil, err
 			}
-			if bestPlan[nodeBitmap] == nil || bestCost[nodeBitmap] > join.statsInfo().Count()+bestCost[remain]+bestCost[sub] {
-				bestPlan[nodeBitmap] = join
-				bestCost[nodeBitmap] = join.statsInfo().Count() + bestCost[remain] + bestCost[sub]
+			curCost := s.calcJoinCumCost(join, bestPlan[sub], bestPlan[remain])
+			if bestPlan[nodeBitmap] == nil {
+				bestPlan[nodeBitmap] = &jrNode{
+					p:       join,
+					cumCost: curCost,
+				}
+			} else if bestPlan[nodeBitmap].cumCost > curCost {
+				bestPlan[nodeBitmap].p = join
+				bestPlan[nodeBitmap].cumCost = curCost
 			}
 		}
 	}
-	return bestPlan[(1<<nodeCnt)-1], nil
+	return bestPlan[(1<<nodeCnt)-1].p, nil
 }
 
 func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
@@ -276,15 +290,5 @@ func (s *joinReorderDPSolver) newJoinWithConds(leftPlan, rightPlan LogicalPlan, 
 		join.LeftJoinKeys = append(join.LeftJoinKeys, eqCond.GetArgs()[0].(*expression.Column))
 		join.RightJoinKeys = append(join.RightJoinKeys, eqCond.GetArgs()[1].(*expression.Column))
 	}
-	return join
-}
-
-func (s *joinReorderDPSolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {
-	join := LogicalJoin{
-		JoinType:  InnerJoin,
-		reordered: true,
-	}.Init(s.ctx)
-	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-	join.SetChildren(lChild, rChild)
 	return join
 }

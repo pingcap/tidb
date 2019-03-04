@@ -123,5 +123,17 @@ func (s *joinReorderGreedySingleGroupSolver) checkConnectionAndMakeJoin(leftNode
 	if len(usedEdges) == 0 {
 		return nil, nil
 	}
-	return s.newJoinWithEdges(usedEdges, remainOtherConds, leftNode, rightNode)
+	var otherConds []expression.Expression
+loopOtherCond:
+	for i := len(remainOtherConds) - 1; i >= 0; i-- {
+		cols := expression.ExtractColumns(remainOtherConds[i])
+		for _, col := range cols {
+			if !leftNode.Schema().Contains(col) && !rightNode.Schema().Contains(col) {
+				continue loopOtherCond
+			}
+		}
+		otherConds = append(otherConds, remainOtherConds[i])
+		remainOtherConds = append(remainOtherConds[:i], remainOtherConds[i+1:]...)
+	}
+	return s.newJoinWithEdges(leftNode, rightNode, usedEdges, otherConds), remainOtherConds
 }
