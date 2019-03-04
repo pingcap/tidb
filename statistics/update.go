@@ -392,7 +392,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debug("Error occurred when encoding feedback, err: %s", zap.String("error stack", errors.ErrorStack(err)))
+		log.Debug("Error occurred when encoding feedback", zap.String("error stack", errors.ErrorStack(err)))
 		return nil
 	}
 	var isIndex int64
@@ -740,7 +740,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		return false
 	}
 	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()); needAnalyze {
-		log.Info("[stats]", zap.String("sql", sql), zap.String("reason", reason))
+		log.Info("[stats] auto analyze triggered", zap.String("sql", sql), zap.String("reason", reason))
 		h.execAutoAnalyze(sql)
 		return true
 	}
@@ -750,7 +750,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, sta
 		}
 		if _, ok := statsTbl.Indices[idx.ID]; !ok {
 			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
-			log.Info("[stats] index unanalyzed", zap.String("sql", sql))
+			log.Info("[stats] auto analyze for unanalyzed", zap.String("sql", sql))
 			h.execAutoAnalyze(sql)
 			return true
 		}
@@ -764,7 +764,7 @@ func (h *Handle) execAutoAnalyze(sql string) {
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
-		log.Error("[stats] auto sql failed", zap.String("sql", sql), zap.Duration("cost_time", dur),
+		log.Error("[stats] auto analyze failed", zap.String("sql", sql), zap.Duration("cost_time", dur),
 			zap.String("error stack", errors.ErrorStack(err)))
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
 	} else {
