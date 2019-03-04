@@ -14,6 +14,9 @@
 package aggregation
 
 import (
+	"strings"
+
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -26,4 +29,23 @@ type WindowFuncDesc struct {
 // NewWindowFuncDesc creates a window function signature descriptor.
 func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) *WindowFuncDesc {
 	return &WindowFuncDesc{newBaseFuncDesc(ctx, name, args)}
+}
+
+// partitionWindowFuncs is the functions that operate on the entire partition,
+// they should not have frame specifications.
+var partitionWindowFuncs = map[string]struct{}{
+	ast.WindowFuncCumeDist:    {},
+	ast.WindowFuncDenseRank:   {},
+	ast.WindowFuncLag:         {},
+	ast.WindowFuncLead:        {},
+	ast.WindowFuncNtile:       {},
+	ast.WindowFuncPercentRank: {},
+	ast.WindowFuncRank:        {},
+	ast.WindowFuncRowNumber:   {},
+}
+
+// NeedFrame checks if the function need frame specification.
+func NeedFrame(name string) bool {
+	_, ok := partitionWindowFuncs[strings.ToLower(name)]
+	return !ok
 }

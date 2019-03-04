@@ -81,4 +81,16 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 1 2", "2 2 2"))
 	result = tk.MustQuery("select a, b, dense_rank() over(order by a, b) from t")
 	result.Check(testkit.Rows("1 1 1", "1 2 2", "2 1 3", "2 2 4"))
+
+	result = tk.MustQuery("select row_number() over(rows between 1 preceding and 1 following) from t")
+	result.Check(testkit.Rows("1", "2", "3", "4"))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Note 3599 Window function 'row_number' ignores the frame clause of window '<unnamed window>' and aggregates over the whole partition"))
+
+	result = tk.MustQuery("select a, sum(a) over() from t")
+	result.Check(testkit.Rows("1 6", "1 6", "2 6", "2 6"))
+	result = tk.MustQuery("select a, sum(a) over(order by a) from t")
+	result.Check(testkit.Rows("1 2", "1 2", "2 6", "2 6"))
+	result = tk.MustQuery("select a, sum(a) over(order by a, b) from t")
+	result.Check(testkit.Rows("1 1", "1 2", "2 4", "2 6"))
 }
