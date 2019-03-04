@@ -33,10 +33,10 @@ import (
 const secondsPerYear = 60 * 60 * 24 * 365
 
 // SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
-// Max worker count is maxDDLReorgWorkerCount.
+// Max worker count is MaxDDLReorgWorkerCount.
 func SetDDLReorgWorkerCounter(cnt int32) {
-	if cnt > maxDDLReorgWorkerCount {
-		cnt = maxDDLReorgWorkerCount
+	if cnt > MaxDDLReorgWorkerCount {
+		cnt = MaxDDLReorgWorkerCount
 	}
 	atomic.StoreInt32(&ddlReorgWorkerCounter, cnt)
 }

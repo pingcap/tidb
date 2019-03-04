@@ -1014,6 +1014,12 @@ func (w *worker) waitTaskFinish(cancel context.CancelFunc, reorgInfo *reorgInfo,
 		log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
 			totalAddedCount, task.startHandle, task.result.nextHandle, task.result.addedCount, elapsedTime)
 	}
+	// check err for close doingTaskCh first.
+	select {
+	case err := <-errCh:
+		return errors.Trace(err)
+	default:
+	}
 	return nil
 }
 
@@ -1101,8 +1107,8 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	defer func() {
 		closeAddIndexWorkers(idxWorkers)
 	}()
-	availableWorkerCh := make(chan *addIndexWorker, workerCnt) // max worker count
-	doingTaskCh := make(chan *reorgIndexTask, 128)             // max worker count
+	availableWorkerCh := make(chan *addIndexWorker, variable.MaxDDLReorgWorkerCount) // max worker count
+	doingTaskCh := make(chan *reorgIndexTask, variable.MaxDDLReorgWorkerCount)       // max worker count
 	errCh := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -1156,18 +1162,16 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			//      }
 			//}
 
-			sendKVRanges := kvRanges[:workerCnt]
-			remains := kvRanges[workerCnt:]
-			err = sendRangeTaskToWorkers(ctx, t, reorgInfo, sendKVRanges, availableWorkerCh, doingTaskCh)
+			err = sendRangeTaskToWorkers(ctx, t, reorgInfo, kvRanges[:workerCnt], availableWorkerCh, doingTaskCh)
 			if err != nil {
 				errCh <- errors.Trace(err)
 				return
 			}
 			log.Infof("[ddl-reorg] start %d workers to reorg index of %v region ranges, handle range:[%v, %v).", len(idxWorkers), len(kvRanges), startHandle, endHandle)
-			if len(remains) == 0 {
+			if len(kvRanges) == workerCnt {
 				break
 			}
-			startHandle, _, err = decodeHandleRange(remains[0])
+			startHandle, _, err = decodeHandleRange(kvRanges[workerCnt])
 			if err != nil {
 				errCh <- errors.Trace(err)
 				return

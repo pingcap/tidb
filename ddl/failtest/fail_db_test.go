@@ -346,9 +346,8 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
 	lastSetWorkerCnt := int32(16)
 	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
-	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", 16))
 
 	gofail.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`)
 	defer gofail.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum")
