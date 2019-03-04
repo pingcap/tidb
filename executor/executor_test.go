@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
@@ -1487,7 +1488,9 @@ func (s *testSuite) TestMultiUpdate(c *C) {
 func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual)`)
+	_, err := tk.Exec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual)`)
+	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("c").Error())
+	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (b+8) virtual)`)
 	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int, c int)`)
 
 	tests := []struct {
@@ -1877,7 +1880,7 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plannercore.Preprocess(ctx, stmtNode, infoSchema, false)
+		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		p, err := planner.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
@@ -2202,6 +2205,17 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	r.Check(testkit.Rows("t CREATE TABLE `t` (\n" + "  `a` int(11) DEFAULT NULL,\n" + "  `b` timestamp DEFAULT '2019-01-17 06:46:14'\n" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	r = tk.MustQuery(`select a,b from t order by a`)
 	r.Check(testkit.Rows("1 2019-01-17 06:46:14", "2 2019-01-17 06:46:14"))
+	// Test the column's version is greater than ColumnInfoVersion1.
+	sctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(sctx).InfoSchema()
+	c.Assert(is, NotNil)
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
+	tk.MustExec("insert into t set a=3")
+	r = tk.MustQuery(`select a,b from t order by a`)
+	r.Check(testkit.Rows("1 2019-01-17 06:46:14", "2 2019-01-17 06:46:14", "3 2019-01-17 06:46:14"))
+	tk.MustExec("delete from t where a=3")
+	// Change time zone back.
 	tk.MustExec("set time_zone = '+08:00'")
 	r = tk.MustQuery(`select a,b from t order by a`)
 	r.Check(testkit.Rows("1 2019-01-17 14:46:14", "2 2019-01-17 14:46:14"))
@@ -3615,4 +3629,21 @@ func (s *testSuite) TestStrToDateBuiltin(c *C) {
 	tk.MustQuery(`select str_to_date('18+10+22','%y+%m+%d') from dual`).Check(testkit.Rows("2018-10-22"))
 	tk.MustQuery(`select str_to_date('18=10=22','%y=%m=%d') from dual`).Check(testkit.Rows("2018-10-22"))
 	tk.MustQuery(`select str_to_date('18_10_22','%y_%m_%d') from dual`).Check(testkit.Rows("2018-10-22"))
+}
+
+func (s *testSuite) TestReadPartitionedTable(c *C) {
+	// Test three reader on partitioned table.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec("create table pt (a int, b int, index i_b(b)) partition by range (a) (partition p1 values less than (2), partition p2 values less than (4), partition p3 values less than (6))")
+	for i := 0; i < 6; i++ {
+		tk.MustExec(fmt.Sprintf("insert into pt values(%d, %d)", i, i))
+	}
+	// Table reader
+	tk.MustQuery("select * from pt order by a").Check(testkit.Rows("0 0", "1 1", "2 2", "3 3", "4 4", "5 5"))
+	// Index reader
+	tk.MustQuery("select b from pt where b = 3").Check(testkit.Rows("3"))
+	// Index lookup
+	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
 }
