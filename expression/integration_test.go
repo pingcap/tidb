@@ -32,6 +32,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -3464,6 +3465,13 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	_, err = tk.Exec("set global transaction read write;")
 	r = tk.MustQuery(`select @@session.tx_read_only, @@global.tx_read_only, @@session.transaction_read_only, @@global.transaction_read_only;`)
 	r.Check(testkit.Rows("0 0 0 0"))
+
+	_, err = tk.Exec("set @@global.max_user_connections='';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 }
 
 func (s *testIntegrationSuite) TestIssues(c *C) {
