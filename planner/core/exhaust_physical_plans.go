@@ -666,7 +666,8 @@ func (cwc *ColWithCompareOps) String() string {
 	return buffer.String()
 }
 
-func (ijHelper *indexJoinBuildHelper) checkIndex(tmpSchema *expression.Schema, idxCols []*expression.Column, colLens []int) {
+func (ijHelper *indexJoinBuildHelper) checkIndex(innerKeys []*expression.Column, idxCols []*expression.Column, colLens []int) {
+	tmpSchema := expression.NewSchema(innerKeys...)
 	ijHelper.curIdxOff2KeyOff = make([]int, len(idxCols))
 	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	ijHelper.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
@@ -750,8 +751,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		return nil
 	}
 	accesses := make([]expression.Expression, 0, len(idxCols))
-	tmpSchema := expression.NewSchema(innerJoinKeys...)
-	ijHelper.checkIndex(tmpSchema, idxCols, colLengths)
+	ijHelper.checkIndex(innerJoinKeys, idxCols, colLengths)
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
 	// If no index column appears in join key, we just break.
 	// TODO: It may meet this case: There's no join key condition, but have compare filters.
