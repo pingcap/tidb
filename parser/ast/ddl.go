@@ -1183,6 +1183,14 @@ const (
 	RowFormatCompressed
 	RowFormatRedundant
 	RowFormatCompact
+	TokuDBRowFormatDefault
+	TokuDBRowFormatFast
+	TokuDBRowFormatSmall
+	TokuDBRowFormatZlib
+	TokuDBRowFormatQuickLZ
+	TokuDBRowFormatLzma
+	TokuDBRowFormatSnappy
+	TokuDBRowFormatUncompressed
 )
 
 // OnDuplicateCreateTableSelectType is the option that handle unique key values in 'CREATE TABLE ... SELECT'.
@@ -1281,6 +1289,22 @@ func (n *TableOption) Restore(ctx *RestoreCtx) error {
 			ctx.WriteKeyWord("REDUNDANT")
 		case RowFormatCompact:
 			ctx.WriteKeyWord("COMPACT")
+		case TokuDBRowFormatDefault:
+			ctx.WriteKeyWord("TOKUDB_DEFAULT")
+		case TokuDBRowFormatFast:
+			ctx.WriteKeyWord("TOKUDB_FAST")
+		case TokuDBRowFormatSmall:
+			ctx.WriteKeyWord("TOKUDB_SMALL")
+		case TokuDBRowFormatZlib:
+			ctx.WriteKeyWord("TOKUDB_ZLIB")
+		case TokuDBRowFormatQuickLZ:
+			ctx.WriteKeyWord("TOKUDB_QUICKLZ")
+		case TokuDBRowFormatLzma:
+			ctx.WriteKeyWord("TOKUDB_LZMA")
+		case TokuDBRowFormatSnappy:
+			ctx.WriteKeyWord("TOKUDB_SNAPPY")
+		case TokuDBRowFormatUncompressed:
+			ctx.WriteKeyWord("TOKUDB_UNCOMPRESSED")
 		default:
 			return errors.Errorf("invalid TableOption: TableOptionRowFormat: %d", n.UintValue)
 		}
