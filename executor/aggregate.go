@@ -626,7 +626,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 			return nil
 		}
 		if result.err != nil {
-			return errors.Trace(result.err)
+			return result.err
 		}
 		if chk.NumRows() > 0 {
 			e.isChildReturnEmpty = false
