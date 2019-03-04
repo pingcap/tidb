@@ -645,13 +645,9 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 // getColsInfo returns the info of index columns, normal columns and primary key.
 func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []*model.ColumnInfo, pkCol *model.ColumnInfo) {
 	tbl := tn.TableInfo
-	// idxNames contains all the normal columns that can be analyzed more effectively, because those columns occur as index
-	// columns or primary key columns with integer type.
-	var idxNames []string
 	if tbl.PKIsHandle {
 		for _, col := range tbl.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				idxNames = append(idxNames, col.Name.L)
 				pkCol = col
 			}
 		}
@@ -659,22 +655,13 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	for _, idx := range tn.TableInfo.Indices {
 		if idx.State == model.StatePublic {
 			indicesInfo = append(indicesInfo, idx)
-			if len(idx.Columns) == 1 {
-				idxNames = append(idxNames, idx.Columns[0].Name.L)
-			}
 		}
 	}
 	for _, col := range tbl.Columns {
-		isIndexCol := false
-		for _, idx := range idxNames {
-			if idx == col.Name.L {
-				isIndexCol = true
-				break
-			}
+		if col == pkCol {
+			continue
 		}
-		if !isIndexCol {
-			colsInfo = append(colsInfo, col)
-		}
+		colsInfo = append(colsInfo, col)
 	}
 	return
 }
@@ -1011,7 +998,15 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 	p := &Simple{Statement: node}
 
 	switch raw := node.(type) {
-	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt:
+	case *ast.CreateUserStmt:
+		if raw.IsCreateRole {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE ROLE")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateRolePriv, "", "", "", err)
+		} else {
+			err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
+		}
+	case *ast.DropUserStmt, *ast.AlterUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
 	case *ast.GrantStmt:
@@ -1782,9 +1777,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool) (schema *expression.Schema) {
 		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowStatsHistograms:
-		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size"}
+		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size", "Correlation"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
-			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble}
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeDouble}
 	case ast.ShowStatsBuckets:
 		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Bucket_id", "Count",
 			"Repeats", "Lower_Bound", "Upper_Bound"}

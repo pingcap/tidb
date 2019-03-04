@@ -240,22 +240,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 func (p *PhysicalMergeJoin) initCompareFuncs() {
 	p.CompareFuncs = make([]expression.CompareFunc, 0, len(p.LeftKeys))
 	for i := range p.LeftKeys {
-		switch expression.GetAccurateCmpType(p.LeftKeys[i], p.RightKeys[i]) {
-		case types.ETInt:
-			p.CompareFuncs = append(p.CompareFuncs, expression.CompareInt)
-		case types.ETReal:
-			p.CompareFuncs = append(p.CompareFuncs, expression.CompareReal)
-		case types.ETDecimal:
-			p.CompareFuncs = append(p.CompareFuncs, expression.CompareDecimal)
-		case types.ETString:
-			p.CompareFuncs = append(p.CompareFuncs, expression.CompareString)
-		case types.ETDuration:
-			p.CompareFuncs = append(p.CompareFuncs, expression.CompareDuration)
-		case types.ETDatetime, types.ETTimestamp:
-			p.CompareFuncs = append(p.CompareFuncs, expression.CompareTime)
-		case types.ETJson:
-			p.CompareFuncs = append(p.CompareFuncs, expression.CompareJSON)
-		}
+		p.CompareFuncs = append(p.CompareFuncs, expression.GetCmpFunction(p.LeftKeys[i], p.RightKeys[i]))
 	}
 }
 

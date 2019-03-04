@@ -1300,6 +1300,73 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	}
 }
 
+func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
+	}
+	testKit.MustExec("analyze table t with 3 buckets")
+	testKit.MustExec("delete from t where a = 1")
+	testKit.MustExec("delete from t where b > 10")
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	h := s.do.StatsHandle()
+	tests := []struct {
+		sql     string
+		hist    string
+		rangeID int64
+		idxID   int64
+		eqCount uint32
+	}{
+		{
+			// The real count of `a = 1` is 0.
+			sql: "select * from t where a = 1 and b < 21",
+			hist: "column:2 ndv:20 totColSize:20\n" +
+				"num: 4 lower_bound: -9223372036854775808 upper_bound: 6 repeats: 0\n" +
+				"num: 3 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 6 lower_bound: 14 upper_bound: 19 repeats: 1",
+			rangeID: tblInfo.Columns[1].ID,
+			idxID:   tblInfo.Indices[0].ID,
+			eqCount: 3,
+		},
+		{
+			// The real count of `b > 10` is 0.
+			sql: "select * from t where a = 2 and b > 10",
+			hist: "column:2 ndv:20 totColSize:20\n" +
+				"num: 4 lower_bound: -9223372036854775808 upper_bound: 6 repeats: 0\n" +
+				"num: 2 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 6 lower_bound: 14 upper_bound: 19 repeats: 1",
+			rangeID: tblInfo.Columns[1].ID,
+			idxID:   tblInfo.Indices[0].ID,
+			eqCount: 3,
+		},
+	}
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		h.Update(is)
+		tbl := h.GetTableStats(tblInfo)
+		c.Assert(tbl.Columns[t.rangeID].ToString(0), Equals, tests[i].hist)
+		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+		c.Assert(err, IsNil)
+		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
+	}
+}
+
 func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)

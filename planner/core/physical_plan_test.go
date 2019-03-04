@@ -659,7 +659,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 
-		core.Preprocess(se, stmt, s.is, false)
+		core.Preprocess(se, stmt, s.is)
 		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
@@ -1339,7 +1339,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		// Index Join + Union Scan + Union All is not supported now.
 		{
 			sql:  "select /*+ TIDB_INLJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
-			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->TableReader(Table(t))}->UnionScan([])->UnionAll{TableReader(Table(t))->TableReader(Table(t))}->UnionScan([])}(t1.a,t2.a)",
+			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}->UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}}(t1.a,t2.a)",
 			is:   pis,
 		},
 	}
