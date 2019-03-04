@@ -20,7 +20,7 @@ import (
 
 // extractJoinGroup extracts all the join nodes connected with continuous
 // InnerJoins to construct a join group. This join group is further used to
-// construct a new join order based on a greedy algorithm.
+// construct a new join order based on a reorder algorithm.
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, LeftJoin(c, d)}.
@@ -56,8 +56,7 @@ func (s *joinReOrderSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 	return s.optimizeRecursive(p.context(), p)
 }
 
-// optimizeRecursive first checks that whether the current plan tree is start with a join group.
-// If so it will call the reorder algorithm to reorder the join group.
+// optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
 	var err error
 	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
