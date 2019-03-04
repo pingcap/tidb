@@ -351,33 +351,26 @@ func SetLevel(level string) error {
 type correlationIDType int
 
 const (
-	connIDKey correlationIDType = 1 + iota
-	recvTsKey
+	ctxLogKey correlationIDType = iota
 )
 
 // Logger gets a contextual logger from current context.
 // contextual logger will output common fields from context.
 func Logger(ctx context.Context) *zap.Logger {
-	newLogger := plog.L()
-	if ctx != nil {
-		if connID, ok := ctx.Value(connIDKey).(uint32); ok {
-			newLogger = newLogger.With(zap.Uint32("connID", connID))
-		}
-		if recvTs, ok := ctx.Value(recvTsKey).(int64); ok {
-			newLogger = newLogger.With(zap.Int64("recvTs", recvTs))
-		}
+	if ctxlogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		return ctxlogger
 	}
-	return newLogger
+	return plog.L()
 }
 
 // WithConnID attaches connId to context.
 func WithConnID(ctx context.Context, connID uint32) context.Context {
-	return context.WithValue(ctx, connIDKey, connID)
+	return context.WithValue(ctx, ctxLogKey, plog.L().With(zap.Uint32("connID", connID)))
 }
 
 // WithRecvTs attaches current packet received timestamp to context.
 // except load data, it's common that sql to one request packet in mysql protocol,
 // so we can use recvTs to gather log for some sql request on one connection.
 func WithRecvTs(ctx context.Context, recvTs int64) context.Context {
-	return context.WithValue(ctx, recvTsKey, recvTs)
+	return context.WithValue(ctx, ctxLogKey, plog.L().With(zap.Int64("recvTs", recvTs)))
 }
