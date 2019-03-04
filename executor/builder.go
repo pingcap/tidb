@@ -1563,6 +1563,8 @@ func (b *executorBuilder) corColInAccess(p plannercore.PhysicalPlan) bool {
 	return false
 }
 
+func (b *executorBUilder) buildIndexLookUpMergeJoin(v plannercore.PhysicalIndexJoin)
+
 func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin) Executor {
 	outerExec := b.build(v.Children()[v.OuterIndex])
 	if b.err != nil {
@@ -1627,6 +1629,24 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.innerCtx.keyCols = innerKeyCols
 	e.joinResult = e.newFirstChunk()
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
+
+	// If the inner join keys are the suffix set of the index, then return the IndexLookUpMergeJoin
+	if idxReader, ok := v.innerPlan.(*plannercore.PhysicalIndexReader); ok {
+		is := idxReader.(*plannercore.PhysicalIndexScan)
+		idx := is.IdxCols
+		if len(v.InnerJoinkeys) <= len(idx) {
+			isInnerKeysSuffix := true
+			for i, innerKey := range v.InnerJoinKeys {
+				if innerKey != idx[i] {
+					isInnerKeysSuffix = false
+					break
+				}
+			}
+			if isInnerKeysSuffix {
+				return &IndexLookUpMergeJoin{e}
+			}
+		}
+	}
 	return e
 }
 
