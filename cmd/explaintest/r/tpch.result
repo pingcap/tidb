@@ -612,7 +612,7 @@ Sort_25	2406.00	root	profit.nation:asc, profit.o_year:desc
         │ └─TableReader_40	1.00	root	data:TableScan_39
         │   └─TableScan_39	1.00	cop	table:orders, range: decided by [tpch.lineitem.l_orderkey], keep order:false
         └─IndexLookUp_34	1.00	root	
-          ├─IndexScan_32	1.00	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [tpch.lineitem.l_suppkey tpch.lineitem.l_partkey], keep order:false
+          ├─IndexScan_32	1.00	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [tpch.lineitem.l_partkey tpch.lineitem.l_suppkey], keep order:false
           └─TableScan_33	1.00	cop	table:partsupp, keep order:false
 /*
 Q10 Returned Item Reporting Query

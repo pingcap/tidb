@@ -78,22 +78,51 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
+// StringWithJoinKeys formats the range with join keys and keyOff2IdxOff for index join in explain command
 func (ran *Range) StringWithJoinKeys(keys []*expression.Column, keyOff2IdxOff []int) string {
+	maxIdxOff := -1
+	for _, idxOff := range keyOff2IdxOff {
+		if maxIdxOff < idxOff {
+			maxIdxOff = idxOff
+		}
+	}
+
+	idxOff2Key := make([]*expression.Column, maxIdxOff+1)
+	for keyOff, idxOff := range keyOff2IdxOff {
+		if idxOff >= 0 {
+			idxOff2Key[idxOff] = keys[keyOff]
+		}
+	}
+
+	// resolve used keys and arrange keys by idxOff
+	var usedKeys []*expression.Column
+	for i := 0; i < len(idxOff2Key); i++ {
+		if i >= len(ran.LowVal) {
+			break
+		}
+
+		key := idxOff2Key[i]
+		if key != nil {
+			usedKeys = append(usedKeys, key)
+		}
+	}
+
+	if len(usedKeys) == len(ran.LowVal) {
+		return fmt.Sprintf("%v", usedKeys)
+	}
+
 	lowStrs := make([]string, 0, len(ran.LowVal))
 	for i, d := range ran.LowVal {
 		var key *expression.Column
-
-		for j, k := range keys {
-			if keyOff2IdxOff[j] == i {
-				key = k
-				break
-			}
+		if i < len(idxOff2Key) {
+			key = idxOff2Key[i]
+		} else {
+			key = nil
 		}
 
 		if key == nil {
 			lowStrs = append(lowStrs, formatDatum(d, true))
 		} else {
-
 			lowStrs = append(lowStrs, key.String())
 		}
 	}
@@ -101,18 +130,15 @@ func (ran *Range) StringWithJoinKeys(keys []*expression.Column, keyOff2IdxOff []
 	highStrs := make([]string, 0, len(ran.HighVal))
 	for i, d := range ran.HighVal {
 		var key *expression.Column
-
-		for j, k := range keys {
-			if keyOff2IdxOff[j] == i {
-				key = k
-				break
-			}
+		if i < len(idxOff2Key) {
+			key = idxOff2Key[i]
+		} else {
+			key = nil
 		}
 
 		if key == nil {
 			highStrs = append(highStrs, formatDatum(d, false))
 		} else {
-
 			highStrs = append(highStrs, key.String())
 		}
 	}

@@ -58,7 +58,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 		}
 	}
 	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range:")
+		fmt.Fprintf(buffer, ", range: decided by ")
 		for i, idxRange := range p.rangesWithFakeConds {
 			fmt.Fprintf(buffer, idxRange.StringWithJoinKeys(p.rangeDecidedBy, p.keyOff2IdxOff))
 			if i+1 < len(p.rangesWithFakeConds) {

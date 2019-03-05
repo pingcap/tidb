@@ -138,7 +138,7 @@ func (s *testAnalyzeSuite) TestIssue8058(c *C) {
 		"  │ └─Selection_30 0.01 cop eq(test.w.day, 2018-10-23 00:00:00.000000), in(test.w.cid, 73151457924606867)",
 		"  │   └─TableScan_29 10000.00 cop table:w, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─IndexReader_16 10.00 root index:IndexScan_15",
-		"    └─IndexScan_15 10.00 cop table:n, index:pid, nid, range:[863 test.w.nid,863 test.w.nid], keep order:false, stats:pseudo",
+		"    └─IndexScan_15 10.00 cop table:n, index:pid, nid, range: decided by [863 test.w.nid,863 test.w.nid], keep order:false, stats:pseudo",
 	))
 	testKit.MustQuery(`explain select count(1) from w join n on w.nid = n.nid where n.pid in (863, 534) and cid in(73151457924606867) and day = '2018-10-23'`).Check(testkit.Rows(
 		"StreamAgg_13 1.00 root funcs:count(1)",
@@ -147,7 +147,31 @@ func (s *testAnalyzeSuite) TestIssue8058(c *C) {
 		"  │ └─Selection_34 0.01 cop eq(test.w.day, 2018-10-23 00:00:00.000000), in(test.w.cid, 73151457924606867)",
 		"  │   └─TableScan_33 10000.00 cop table:w, range:[-inf,+inf], keep order:false, stats:pseudo",
 		"  └─IndexReader_16 10.00 root index:IndexScan_15",
-		"    └─IndexScan_15 10.00 cop table:n, index:pid, nid, range:[534 test.w.nid,534 test.w.nid], [863 test.w.nid,863 test.w.nid], keep order:false, stats:pseudo",
+		"    └─IndexScan_15 10.00 cop table:n, index:pid, nid, range: decided by [534 test.w.nid,534 test.w.nid], [863 test.w.nid,863 test.w.nid], keep order:false, stats:pseudo",
+	))
+
+	testKit.MustExec(`create table t1(a int not null, b int not null, c int not null, d int not null, index idx_ab(a, b, c, d))`)
+	testKit.MustExec(`create table t2(a int not null, b int not null, c int not null, d int not null)`)
+	testKit.MustQuery(`explain select /*+ TIDB_INLJ(t1, t2) */ count(1) from t1 join t2 on t1.d = t2.d and t1.a = t2.a where t1.b = 2`).Check(testkit.Rows(
+		"StreamAgg_12 1.00 root funcs:count(1)",
+		"└─IndexJoin_20 12.50 root inner join, inner:IndexReader_19, outer key:test.t2.a, inner key:test.t1.a, other cond:eq(test.t1.d, test.t2.d)",
+		"  ├─IndexReader_19 10.00 root index:IndexScan_18",
+		"  │ └─IndexScan_18 10.00 cop table:t1, index:a, b, c, d, range: decided by [test.t2.a 2,test.t2.a 2], keep order:false, stats:pseudo",
+		"  └─TableReader_22 10000.00 root data:TableScan_21",
+		"    └─TableScan_21 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+	))
+
+	testKit.MustExec(`drop table if exists t1, t2`)
+	testKit.MustExec(`create table t1(a int not null, b int not null, index idx_ab(a, b))`)
+	testKit.MustExec(`create table t2(a int not null, b int not null, c int not null)`)
+	testKit.MustQuery(`explain select /*+ TIDB_INLJ(t1, t2) */ count(1) from t1 join t2 on t1.b = t2.b and t1.a = t2.a where t2.c = 1000`).Check(testkit.Rows(
+		"StreamAgg_12 1.00 root funcs:count(1)",
+		"└─IndexJoin_21 12.50 root inner join, inner:IndexReader_20, outer key:test.t2.b, test.t2.a, inner key:test.t1.b, test.t1.a",
+		"  ├─IndexReader_20 10.00 root index:IndexScan_19",
+		"  │ └─IndexScan_19 10.00 cop table:t1, index:a, b, range: decided by [test.t2.a test.t2.b], keep order:false, stats:pseudo",
+		"  └─TableReader_24 10.00 root data:Selection_23",
+		"    └─Selection_23 10.00 cop eq(test.t2.c, 1000)",
+		"      └─TableScan_22 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
 
