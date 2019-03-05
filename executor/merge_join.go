@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"github.com/pingcap/tidb/sessionctx"
 	"sync"
 	"time"
@@ -25,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
-	log "github.com/sirupsen/logrus"
 )
 
 // MergeJoinExec implements the merge join algorithm.
@@ -116,7 +114,7 @@ type mergeJoinCompareWorker struct {
 
 	joinKeys []*expression.Column
 
-	mergeWorkerCount int
+	concurrency int
 	ctx              sessionctx.Context
 
 	innerRow      chunk.Row
@@ -152,10 +150,6 @@ type mergeJoinMergeWorker struct {
 }
 
 func (mw *mergeJoinMergeWorker) run(ctx context.Context) {
-	defer func() {
-		log.Info("mergeWorker:", mw.workerId, "exit")
-	}()
-	log.Info("mergeWorker:", mw.workerId, "start")
 	ok, joinResult := mw.getNewJoinResult(ctx)
 	if !ok {
 		return
@@ -163,7 +157,6 @@ func (mw *mergeJoinMergeWorker) run(ctx context.Context) {
 
 	var mt *mergeTask
 	for {
-		fmt.Println(mw.workerId," wait for task")
 		select {
 		case <-ctx.Done():
 			ok = false
@@ -172,7 +165,6 @@ func (mw *mergeJoinMergeWorker) run(ctx context.Context) {
 		case mt, ok = <-mw.mergeTaskCh:
 		}
 
-		fmt.Println(mw.workerId," get merge task:" , mt)
 		if !ok {
 			return
 		}
@@ -183,9 +175,7 @@ func (mw *mergeJoinMergeWorker) run(ctx context.Context) {
 		if mt.cmp < 0 {
 			var outerRow chunk.Row
 			for idx := mt.outerFrom; idx < mt.outerEnd; idx++ {
-				fmt.Println("xxx")
 				outerRow = mt.outerRows[idx]
-				fmt.Println("task get" , outerRow.GetInt64(0))
 				mw.joiner.onMissMatch(outerRow, joinResult.chk)
 
 				if joinResult.chk.NumRows() == mw.maxChunkSize {
@@ -205,7 +195,6 @@ func (mw *mergeJoinMergeWorker) run(ctx context.Context) {
 
 			var outerRow chunk.Row
 			for idx := mt.outerFrom; idx < mt.outerEnd; {
-				fmt.Println("yyy")
 				outerRow = mt.outerRows[idx]
 				if !mt.outerSelected[idx] {
 					mw.joiner.onMissMatch(outerRow, joinResult.chk)
@@ -250,8 +239,6 @@ func (mw *mergeJoinMergeWorker) run(ctx context.Context) {
 		}
 
 		mt.waitGroup.Done()
-
-		fmt.Println(mw.workerId, " end process task")
 	}
 }
 
@@ -312,7 +299,6 @@ func (ow outerMergeJoinFetchWorker) run(ctx context.Context) { //row with the sa
 		fetchResult.selected, err = expression.VectorizedFilterByRow(ow.ctx, ow.outerTable.filter, fetchResult.fetchRow, fetchResult.selected)
 
 		if len(fetchResult.fetchRow) > 0 || fetchResult.err != nil{
-			fmt.Println("fetchResult.fetchRow len:" , len(fetchResult.fetchRow), "fetchResult.fetchRow:",fetchResult.fetchRow[0].GetInt64(0), ",select:" , fetchResult.selected[0])
 			ow.outerFetchResultCh <- fetchResult
 		}
 
@@ -359,29 +345,6 @@ func (mw *mergeJoinCompareWorker) run(ctx context.Context) {
 	mw.joinToChunk(ctx)
 }
 
-/*func (mw *mergeJoinCompareWorker) fetchNextInnerSameKeyGroup(ctx context.Context) (bool, error, bool) {
-	select {
-	case innerResult, ok := <-mw.innerFetchResultCh:
-
-		if !ok {
-			mw.innerRows = make([]chunk.Row, 0)
-			return false, nil, false
-		}
-
-		if innerResult.err != nil {
-			return false, errors.Trace(innerResult.err), false
-		}
-
-		mw.innerRows = innerResult.fetchRow
-		mw.innerIter4Row = chunk.NewIterator4Slice(mw.innerRows)
-		mw.innerIter4Row.Begin()
-
-		return true, nil, false
-	case <-ctx.Done():
-		return false, nil, true
-	}
-}*/
-
 func (mw *mergeJoinCompareWorker) fetchNextInnerSameKeyGroup(ctx context.Context) bool {
 	select {
 	case innerResult, ok := <-mw.innerFetchResultCh:
@@ -421,7 +384,6 @@ func (mw *mergeJoinCompareWorker) fetchNextOuterSameKeyGroup(ctx context.Context
 		mw.outerRows = outerResult.fetchRow
 		mw.outerIter4Row = chunk.NewIterator4Slice(mw.outerRows)
 		mw.outerRow = mw.outerIter4Row.Begin()
-		fmt.Println("mw outerRow:" , mw.outerRow.GetInt64(0))
 		mw.outerSelected = outerResult.selected
 		mw.outerRowIdx = 0
 		return true
@@ -441,23 +403,18 @@ func (mw *mergeJoinCompareWorker) joinToChunk(ctx context.Context) {
 	}
 
 	for {
-		fmt.Println("compare")
 		//第一步，找第一个为selected的outerRow，然后compare，是否匹配，不管匹配或不匹配，都得把所有的outerRow切分成joinWorkerCount份，然后分给这些joinWorker去执行
 		for mw.outerRow != mw.outerIter4Row.End() && !mw.outerSelected[mw.outerRowIdx] {
 			mw.outerRow = mw.outerIter4Row.Next()
 			mw.outerRowIdx = mw.outerRowIdx + 1
-			fmt.Println("xxxxxxxxxxxx")
 		}
 
 		cmpResult := -1
 		if mw.outerRow != mw.outerIter4Row.End() {
 			if len(mw.innerRows) > 0 {
-				fmt.Println("mw.outRow" , mw.outerRow.GetInt64(0) , ", innerRow:" , mw.innerRows[0].GetInt64(0))
 				cmpResult = compareChunkRow(mw.compareFuncs, mw.outerRow, mw.innerRows[0], mw.outerJoinKeys, mw.innerJoinKeys)
 			}
 		}
-
-		fmt.Println("cmp:" , cmpResult)
 
 		if cmpResult > 0 {
 			if !mw.fetchNextInnerSameKeyGroup(ctx) {
@@ -468,8 +425,8 @@ func (mw *mergeJoinCompareWorker) joinToChunk(ctx context.Context) {
 
 		joinResultCh := make(chan *mergejoinWorkerResult) //所有的sameKey的outer row共享一个channel
 		waitGroup := new(sync.WaitGroup)
-		hasLeft := len(mw.outerRows) % mw.mergeWorkerCount
-		outerRowCountPreTask := len(mw.outerRows) / mw.mergeWorkerCount
+		hasLeft := len(mw.outerRows) % mw.concurrency
+		outerRowCountPreTask := len(mw.outerRows) / mw.concurrency
 		for idx := 0; idx < len(mw.outerRows); {
 			mt := &mergeTask{waitGroup: waitGroup} //重新new一个
 			mt.cmp = cmpResult
@@ -478,7 +435,7 @@ func (mw *mergeJoinCompareWorker) joinToChunk(ctx context.Context) {
 			mt.outerSelected = mw.outerSelected
 			mt.outerFrom = idx
 			mt.joinResultCh = joinResultCh
-			if len(mw.outerRows) < mw.mergeWorkerCount {
+			if len(mw.outerRows) < mw.concurrency {
 				mt.outerEnd = idx + 1
 				idx = idx + 1
 			} else {
@@ -643,18 +600,17 @@ func (e *MergeJoinExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *MergeJoinExec) Open(ctx context.Context) error {
-	start := time.Now()
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
-	joinWorkerCount := 1
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	closeCh := make(chan struct{})
 	e.closeCh = closeCh
-	taskCh := make(chan *mergeTask, joinWorkerCount)
+	taskCh := make(chan *mergeTask, concurrency)
 	e.mergeTaskCh = taskCh
-	joinChkResourceChs := make([]chan *chunk.Chunk, joinWorkerCount)
-	for i := 0; i < joinWorkerCount; i++ {
+	joinChkResourceChs := make([]chan *chunk.Chunk, concurrency)
+	for i := 0; i < concurrency; i++ {
 		joinChkResourceChs[i] = make(chan *chunk.Chunk, 1)
 		joinChkResourceChs[i] <- e.newFirstChunk()
 	}
@@ -676,18 +632,15 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 	ow := e.newOuterFetchWorker(outerFetchResultCh)
 	go ow.run(ctx)
 
-	mergeWorkerMergeTaskCh := make(chan *mergeTask, joinWorkerCount)
-	for i := 0; i < joinWorkerCount; i++ {
+	mergeWorkerMergeTaskCh := make(chan *mergeTask, concurrency)
+	for i := 0; i < concurrency; i++ {
 		mw := e.newMergeWorker(i, mergeWorkerMergeTaskCh, joinChkResourceChs[i])
 		go mw.run(ctx)
 	}
 
-	cw := e.newCompareWorker(innerFetchResultCh, outerFetchResultCh, mergeWorkerMergeTaskCh, taskCh, joinWorkerCount)
+	cw := e.newCompareWorker(innerFetchResultCh, outerFetchResultCh, mergeWorkerMergeTaskCh, taskCh, concurrency)
 	go cw.run(ctx)
 
-	cost := time.Since(start)
-
-	log.Info("start merge join cost:", cost)
 	return nil
 }
 
@@ -707,7 +660,7 @@ func (e *MergeJoinExec) newInnerFetchWorker(innerResultCh chan<- *innerFetchResu
 }
 
 func (e *MergeJoinExec) newCompareWorker(innerFetchResulCh chan *innerFetchResult, outerFetchResultCh chan *outerFetchResult,
-	mergeWorkerMergeTaskCh chan *mergeTask, taskCh chan *mergeTask, joinWorkerCount int) *mergeJoinCompareWorker {
+	mergeWorkerMergeTaskCh chan *mergeTask, taskCh chan *mergeTask, concurrency int) *mergeJoinCompareWorker {
 	return &mergeJoinCompareWorker{
 		innerFetchResultCh: innerFetchResulCh,
 		outerFetchResultCh: outerFetchResultCh,
@@ -715,7 +668,7 @@ func (e *MergeJoinExec) newCompareWorker(innerFetchResulCh chan *innerFetchResul
 		ctx:                e.ctx,
 		mergeWorkerTaskCh:  mergeWorkerMergeTaskCh,
 		taskCh:             taskCh,
-		mergeWorkerCount:   joinWorkerCount,
+		concurrency:   concurrency,
 		compareFuncs:       e.compareFuncs,
 		outerJoinKeys:      e.outerTable.joinKeys,
 		innerJoinKeys:      e.innerTable.joinKeys,

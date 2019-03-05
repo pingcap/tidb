@@ -17,7 +17,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -133,10 +132,6 @@ var (
 )
 
 func main() {
-
-	go func() {
-		http.ListenAndServe("0.0.0.0:8000", nil)
-	}()
 	flag.Parse()
 	if *version {
 		fmt.Println(printer.GetTiDBInfo())
