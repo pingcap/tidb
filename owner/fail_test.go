@@ -63,6 +63,10 @@ var (
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
+	// New version of clientv3 can not test use this unix socket.
+	// https://godoc.org/github.com/coreos/etcd/clientv3
+	c.Skip("moved to go.etcd.io/etcd/clientv3, and behavior is changed")
+
 	defer testleak.AfterTest(c)()
 
 	func() {
