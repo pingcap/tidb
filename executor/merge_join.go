@@ -258,7 +258,7 @@ func (mw *mergeJoinMergeWorker) run() {
 			//			mw.outerSelected = mergeTask.outerSelected
 			//			mw.outerRowIdx = 0
 			var outerRow chunk.Row
-			for idx := mergeTask.outerFrom ; idx < mergeTask.outerEnd ; idx++ {
+			for idx := mergeTask.outerFrom ; idx < mergeTask.outerEnd ; {
 				outerRow = mergeTask.outerRows[idx]
 				matched, err := mw.joiner.tryToMatch(outerRow, mw.innerIter4Row, joinResult.chk)
 				if err != nil {
@@ -277,6 +277,7 @@ func (mw *mergeJoinMergeWorker) run() {
 					mw.innerIter4Row.Begin()
 //					mw.outerRow = mw.outerIter4Row.Next()
 					//					mw.outerRowIdx = mw.outerRowIdx + 1
+					idx++
 				}
 
 				if joinResult.chk.NumRows() >= mw.maxChunkSize {
