@@ -1,0 +1,23 @@
+DROP TABLE IF EXISTS a;
+DROP TABLE IF EXISTS b;
+
+CREATE TABLE a(c1 int);
+CREATE TABLE b(c1 int);
+EXPLAIN SELECT DISTINCT a.c1 FROM a LEFT JOIN b ON true WHERE (b.c1 = 1 OR a.c1 = 1);
+
+DROP TABLE IF EXISTS a;
+DROP TABLE IF EXISTS b;
+CREATE TABLE `a` (
+  `x` int(11) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`x`),
+  UNIQUE KEY `a_id_index` (`x`)
+);
+
+CREATE TABLE `b` (
+  `x` int(11) DEFAULT NULL,
+  `y` bigint(20) DEFAULT NULL,
+  `z` int(11) DEFAULT NULL,
+  UNIQUE KEY `b_id_index` (`x`,`y`,`z`)
+);
+
+EXPLAIN SELECT a.x FROM a LEFT JOIN b ON b.z = a.x WHERE (b.y = 1 OR a.x = 20) GROUP BY a.x;

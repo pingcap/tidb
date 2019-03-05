@@ -42,13 +42,14 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 
 	outerPlan := p.children[1^innerChildIdx]
 	innerPlan := p.children[innerChildIdx]
-	// outer join elimination with duplicate agnostic aggregate functions
-	if o.isAggColsAllFromOuterTable(outerPlan, aggCols) {
-		return outerPlan
-	}
+
 	// outer join elimination without duplicate agnostic aggregate functions
 	if !o.isParentColsAllFromOuterTable(outerPlan, parentSchema) {
 		return p
+	}
+	// outer join elimination with duplicate agnostic aggregate functions
+	if o.isAggColsAllFromOuterTable(outerPlan, aggCols) {
+		return outerPlan
 	}
 	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
 	if o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys) {
@@ -175,13 +176,28 @@ func (o *outerJoinEliminator) isDuplicateAgnosticAgg(p LogicalPlan) (_ bool, col
 
 func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Column, parentSchema *expression.Schema) LogicalPlan {
 	// check the duplicate agnostic aggregate functions
+	childParentSchema := p.Schema()
 	if ok, newCols := o.isDuplicateAgnosticAgg(p); ok {
 		aggCols = newCols
+		childParentSchema = &expression.Schema{
+			Columns: aggCols,
+		}
+	}
+	if logicalSort, ok := p.(*LogicalSort); ok {
+		// p is logical sort, we should consider its ByItems instead of Schema
+		// since LogicalSort does not store Schema
+		cols := make([]*expression.Column, 0)
+		for _, v := range logicalSort.ByItems {
+			cols = append(cols, expression.ExtractColumns(v.Expr)...)
+		}
+		childParentSchema = &expression.Schema{
+			Columns: cols,
+		}
 	}
 
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild := o.doOptimize(child, aggCols, p.Schema())
+		newChild := o.doOptimize(child, aggCols, childParentSchema)
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)

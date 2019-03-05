@@ -1,0 +1,37 @@
+DROP TABLE IF EXISTS a;
+DROP TABLE IF EXISTS b;
+CREATE TABLE a(c1 int);
+CREATE TABLE b(c1 int);
+EXPLAIN SELECT DISTINCT a.c1 FROM a LEFT JOIN b ON true WHERE (b.c1 = 1 OR a.c1 = 1);
+id	count	task	operator info
+HashAgg_9	6400.00	root	group by:test.a.c1, funcs:firstrow(test.a.c1)
+└─Selection_10	64000000.00	root	or(eq(test.b.c1, 1), eq(test.a.c1, 1))
+  └─HashLeftJoin_11	80000000.00	root	left outer join, inner:TableReader_16
+    ├─TableReader_13	10000.00	root	data:TableScan_12
+    │ └─TableScan_12	10000.00	cop	table:a, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableReader_16	8000.00	root	data:Selection_15
+      └─Selection_15	8000.00	cop	1
+        └─TableScan_14	10000.00	cop	table:b, range:[-inf,+inf], keep order:false, stats:pseudo
+DROP TABLE IF EXISTS a;
+DROP TABLE IF EXISTS b;
+CREATE TABLE `a` (
+`x` int(11) NOT NULL AUTO_INCREMENT,
+PRIMARY KEY (`x`),
+UNIQUE KEY `a_id_index` (`x`)
+);
+CREATE TABLE `b` (
+`x` int(11) DEFAULT NULL,
+`y` bigint(20) DEFAULT NULL,
+`z` int(11) DEFAULT NULL,
+UNIQUE KEY `b_id_index` (`x`,`y`,`z`)
+);
+EXPLAIN SELECT a.x FROM a LEFT JOIN b ON b.z = a.x WHERE (b.y = 1 OR a.x = 20) GROUP BY a.x;
+id	count	task	operator info
+HashAgg_10	6400.00	root	group by:test.a.x, funcs:firstrow(test.a.x)
+└─Selection_15	8000.00	root	or(eq(test.b.y, 1), eq(test.a.x, 20))
+  └─HashLeftJoin_16	10000.00	root	left outer join, inner:TableReader_21, equal:[eq(test.a.x, test.b.z)]
+    ├─TableReader_18	10000.00	root	data:TableScan_17
+    │ └─TableScan_17	10000.00	cop	table:a, range:[-inf,+inf], keep order:false, stats:pseudo
+    └─TableReader_21	7992.00	root	data:Selection_20
+      └─Selection_20	7992.00	cop	not(isnull(test.b.z)), or(eq(test.b.y, 1), eq(test.b.z, 20))
+        └─TableScan_19	10000.00	cop	table:b, range:[-inf,+inf], keep order:false, stats:pseudo
