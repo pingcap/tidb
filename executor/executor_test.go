@@ -2210,6 +2210,7 @@ func (s *testSuite) TestTimestampDefaultValueTimeZone(c *C) {
 	is := domain.GetDomain(sctx).InfoSchema()
 	c.Assert(is, NotNil)
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 	tb.Cols()[1].Version = model.ColumnInfoVersion1 + 1
 	tk.MustExec("insert into t set a=3")
 	r = tk.MustQuery(`select a,b from t order by a`)
