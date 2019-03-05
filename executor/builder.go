@@ -827,6 +827,11 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			leftExec.retTypes(), rightExec.retTypes()),
 	}
 
+	e.compareFuncs = make([]chunk.CompareFunc, 0, len(v.LeftKeys))
+	for i := range v.LeftKeys {
+		e.compareFuncs = append(e.compareFuncs, chunk.GetCompareFunc(v.LeftKeys[i].RetType))
+	}
+
 	leftKeys := v.LeftKeys
 	rightKeys := v.RightKeys
 
@@ -842,17 +847,6 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 	e.outerTable.filter = v.LeftConditions
 	e.outerTable.joinKeys = v.LeftKeys
 
-/*	e.innerTable = &mergeJoinInnerTable{
-		reader:   rightExec,
-		joinKeys: rightKeys,
-	}
-
-	e.outerTable = &mergeJoinOuterTable{
-		reader: leftExec,
-		filter: v.LeftConditions,
-		keys:   leftKeys,
-	}
-*/
 	if v.JoinType == plannercore.RightOuterJoin {
 		e.outerIdx = 1
 		e.outerTable.reader = rightExec

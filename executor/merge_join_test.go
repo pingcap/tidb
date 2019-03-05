@@ -214,6 +214,10 @@ const plan3 = `[[TableScan_12 {
 } ]]`
 
 func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
+	fmt.Println("start checkMergeAndRun")
+	defer func() {
+		fmt.Println("end checkMergeAndRun")
+	}()
 	explainedSQL := "explain " + sql
 	result := tk.MustQuery(explainedSQL)
 	resultStr := fmt.Sprintf("%v", result.Rows())
@@ -224,6 +228,10 @@ func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
 }
 
 func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testkit.Result {
+	fmt.Println("start checkPlanAndRun")
+	defer func() {
+		fmt.Println("end checkPlanAndRun")
+	}()
 	explainedSQL := "explain " + sql
 	tk.MustQuery(explainedSQL)
 
@@ -236,6 +244,11 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 }
 
 func (s *testSuite1) TestMergeJoin(c *C) {
+	fmt.Println("start TestMergeJoin")
+	defer func() {
+		fmt.Println("end TestMergeJoin")
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -257,6 +270,7 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 	result = checkMergeAndRun(tk, c, "select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1")
 	result.Check(testkit.Rows("1 1 <nil> <nil>", "2 2 2 3"))
 
+	fmt.Println("adadedewewew")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("drop table if exists t3")
@@ -271,6 +285,8 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 
 	result = tk.MustQuery("select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 left join t2 on t1.c1 = t2.c1 right join t3 on t2.c1 = t3.c1 order by t1.c1, t1.c2, t2.c1, t2.c2, t3.c1, t3.c2;")
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil> 5 5", "<nil> <nil> <nil> <nil> 9 9", "1 1 1 1 1 1"))
+
+	fmt.Println("djeiwjdiowjdiojeioejiow")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int)")
@@ -300,6 +316,8 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 	result = tk.MustQuery("select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , t1 b where a.c1 = b.c1;")
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
 	tk.MustExec("rollback;")
+
+	fmt.Println("djeiwjdiowjdiojeioejiowe3e3e34r3")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
@@ -362,9 +380,16 @@ func (s *testSuite1) TestMergeJoin(c *C) {
 		"1",
 		"0",
 	))
+
+	fmt.Println("xxxxxxxxxxxxxxxxxxxx")
 }
 
 func (s *testSuite1) Test3WaysMergeJoin(c *C) {
+	fmt.Println("start Test3WaysMergeJoin")
+	defer func() {
+		fmt.Println("end Test3WaysMergeJoin")
+	}()
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -387,4 +412,6 @@ func (s *testSuite1) Test3WaysMergeJoin(c *C) {
 	// On the other hand, t1 order kept so no final sort appended
 	result = checkPlanAndRun(tk, c, plan3, "select /*+ TIDB_SMJ(t1,t2,t3) */ * from t1 right outer join t2 on t1.c1 = t2.c1 join t3 on t1.c1 = t3.c1 order by 1")
 	result.Check(testkit.Rows("2 2 2 3 2 4", "3 3 3 4 3 10"))
+
+	fmt.Println("yyyyyyyyyyyyyyyyyyyyyyyyy")
 }
