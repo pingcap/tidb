@@ -1859,8 +1859,6 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
 		windowMap                     map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
-		pbyCols                       []expression.Expression
-		obyCols                       []expression
 	)
 
 	if sel.From != nil {
@@ -1929,12 +1927,6 @@ func (b *PlanBuilder) buildSelect(sel *ast.SelectStmt) (p LogicalPlan, err error
 		for k, v := range totalMap {
 			totalMap[k] = aggIndexMap[v]
 		}
-	}
-
-	hasWindow := b.detectWindowFunc(sel)
-	if hasWindow {
-		windowFuncs, totalMap = b.extractWindowFuncs(sel.Fields.Fields)
-		var windowIndexMap, err = b.buildWindowFunc(p, windowFuncs)
 	}
 
 	var oldLen int
