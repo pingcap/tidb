@@ -81,4 +81,14 @@ func (s *testSuite2) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 1 2", "2 2 2"))
 	result = tk.MustQuery("select a, b, dense_rank() over(order by a, b) from t")
 	result.Check(testkit.Rows("1 1 1", "1 2 2", "2 1 3", "2 2 4"))
+
+	result = tk.MustQuery("select a, first_value(a) over(), last_value(a) over() from t")
+	result.Check(testkit.Rows("1 1 2", "1 1 2", "2 1 2", "2 1 2"))
+	result = tk.MustQuery("select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t")
+	result.Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
+	result = tk.MustQuery("select a, first_value(a) over(rows between 1 following and 1 following), last_value(a) over(rows between 1 following and 1 following) from t")
+	result.Check(testkit.Rows("1 1 1", "1 2 2", "2 2 2", "2 <nil> <nil>"))
+	result = tk.MustQuery("select a, first_value(rand(0)) over(), last_value(rand(0)) over() from t")
+	result.Check(testkit.Rows("1 0.9451961492941164 0.05434383959970039", "1 0.9451961492941164 0.05434383959970039",
+		"2 0.9451961492941164 0.05434383959970039", "2 0.9451961492941164 0.05434383959970039"))
 }
