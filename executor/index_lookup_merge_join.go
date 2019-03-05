@@ -33,6 +33,7 @@ import (
 	"golang.org/x/net/context"
 )
 
+// IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
 type IndexLookUpMergeJoin struct {
 	baseExecutor
 
