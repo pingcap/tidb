@@ -23,6 +23,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -2712,6 +2713,13 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
+	}
+	if spec.Name.L != "" {
+		ref, ok := b.windowSpecs[spec.Name.L]
+		if !ok {
+			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
+		}
+		spec = ref
 	}
 	lenPartition := 0
 	if spec.PartitionBy != nil {
