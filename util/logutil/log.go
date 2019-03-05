@@ -24,7 +24,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	plog "github.com/pingcap/log"
 	zaplog "github.com/pingcap/log"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
@@ -348,11 +347,9 @@ func SetLevel(level string) error {
 	return nil
 }
 
-type correlationIDType int
+type ctxKeyType int
 
-const (
-	ctxLogKey correlationIDType = iota
-)
+const ctxLogKey ctxKeyType = iota
 
 // Logger gets a contextual logger from current context.
 // contextual logger will output common fields from context.
@@ -360,17 +357,29 @@ func Logger(ctx context.Context) *zap.Logger {
 	if ctxlogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
 		return ctxlogger
 	}
-	return plog.L()
+	return zaplog.L()
 }
 
 // WithConnID attaches connId to context.
 func WithConnID(ctx context.Context, connID uint32) context.Context {
-	return context.WithValue(ctx, ctxLogKey, plog.L().With(zap.Uint32("connID", connID)))
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
 }
 
 // WithRecvTs attaches current packet received timestamp to context.
-// except load data, it's common that sql to one request packet in mysql protocol,
+// it's common that each SQL has a packet receive timestamp in MySQL Protocol,
 // so we can use recvTs to gather log for some sql request on one connection.
 func WithRecvTs(ctx context.Context, recvTs int64) context.Context {
-	return context.WithValue(ctx, ctxLogKey, plog.L().With(zap.Int64("recvTs", recvTs)))
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Int64("recvTs", recvTs)))
 }

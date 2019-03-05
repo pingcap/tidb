@@ -128,7 +128,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	if err := cc.readOptionalSSLRequestAndHandshakeResponse(ctx); err != nil {
 		err1 := cc.writeError(err)
 		if err1 != nil {
-			logutil.Logger(ctx).Debug("readOptionalSSLRequestAndHandshakeResponse error", zap.Error(err1))
+			logutil.Logger(ctx).Debug("writeError failed", zap.Error(err1))
 		}
 		return errors.Trace(err)
 	}
@@ -233,7 +233,7 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		logutil.Logger(ctx).Warn("get sysval wait_timeout error, use default value")
+		logutil.Logger(ctx).Warn("get sysval wait_timeout error, use default value", zap.Error(err))
 		// if get waitTimeout error, use default value
 		return variable.DefWaitTimeout
 	}
@@ -253,9 +253,9 @@ type handshakeResponse41 struct {
 func parseOldHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse41, data []byte) (parsedBytes int, err error) {
 	// Ensure there are enough data to read:
 	// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse320
-	logutil.Logger(ctx).Debug("try to parse hanshake response as Protocol::HandshakeResponse320", zap.ByteString("data", data))
+	logutil.Logger(ctx).Debug("try to parse hanshake response as Protocol::HandshakeResponse320", zap.ByteString("packet data", data))
 	if len(data) < 2+3 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("data", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packet data", data))
 		return 0, mysql.ErrMalformPacket
 	}
 	offset := 0
@@ -280,7 +280,7 @@ func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeRespons
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("data", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packet data", data))
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -309,7 +309,7 @@ func parseHandshakeResponseHeader(ctx context.Context, packet *handshakeResponse
 	// Ensure there are enough data to read:
 	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
 	if len(data) < 4+4+1+23 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("data", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packet data", data))
 		return 0, mysql.ErrMalformPacket
 	}
 
@@ -334,7 +334,7 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("data", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packet data", data))
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -387,7 +387,7 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 			row := data[offset : offset+int(num)]
 			attrs, err := parseAttrs(row)
 			if err != nil {
-				logutil.Logger(ctx).Warn("parse attrs error", zap.Error(err),
+				logutil.Logger(ctx).Warn("parse attrs failed", zap.Error(err),
 					zap.String("stack", errors.ErrorStack(err)))
 				return nil
 			}
@@ -431,7 +431,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	var pos int
 
 	if len(data) < 2 {
-		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("data", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packet data", data))
 		return mysql.ErrMalformPacket
 	}
 
@@ -537,7 +537,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("connection running loop panic",
 				zap.String("lastCmd", cc.lastCmd),
-				zap.String("err", fmt.Sprintf("%v", r)),
+				zap.Reflect("err", r),
 				zap.String("stack", string(buf)),
 			)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
@@ -567,11 +567,14 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
 					idleTime := time.Since(start)
-					logutil.Logger(ctx).Info("read packet timeout, close this connection", zap.Duration("idle", idleTime), zap.Uint64("waitTimeout", waitTimeout))
+					logutil.Logger(ctx).Info("read packet timeout, close this connection",
+						zap.Duration("idle", idleTime),
+						zap.Uint64("waitTimeout", waitTimeout),
+					)
 				} else {
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {
-						logutil.Logger(ctx).Error("read packet error, close this connection", zap.String("stack", errStack))
+						logutil.Logger(ctx).Error("read packet failed, close this connection", zap.Error(err), zap.String("stack", errStack))
 					}
 				}
 			}
@@ -588,10 +591,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 				cc.addMetrics(data[0], startTime, nil)
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
-				logutil.Logger(ctx).Error("result undetermined error, close this connection", zap.Error(err))
+				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
 				return
 			} else if terror.ErrCritical.Equal(err) {
-				logutil.Logger(ctx).Error("critical error, stop the server listener", zap.Error(err))
+				logutil.Logger(ctx).Error("critical error, stop the server listener", zap.Error(err), zap.String("stack", errors.ErrorStack(err)))
 				metrics.CriticalErrorCounter.Add(1)
 				select {
 				case cc.server.stopListenerCh <- struct{}{}:
@@ -939,7 +942,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		curData, err = cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				logutil.Logger(ctx).Error("read packet err", zap.Error(err))
+				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
 				break
 			}
 		}
@@ -1103,7 +1106,7 @@ func (cc *clientConn) writeResultset(ctx context.Context, rs ResultSet, binary b
 		buf := make([]byte, 4096)
 		stackSize := runtime.Stack(buf, false)
 		buf = buf[:stackSize]
-		logutil.Logger(ctx).Error("query write result panic", zap.String("lastCmd", cc.lastCmd), zap.String("stack", string(buf)))
+		logutil.Logger(ctx).Error("write query result panic", zap.String("lastCmd", cc.lastCmd), zap.String("stack", string(buf)))
 	}()
 	var err error
 	if mysql.HasCursorExistsFlag(serverStatus) {
