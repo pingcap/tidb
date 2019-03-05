@@ -157,7 +157,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 
 	// Sanity check for startTS.
 	if txn.StartTS() == math.MaxUint64 {
-		err = errors.Errorf("try to commit with invalid startTS: %d" txn.StartTS())
+		err = errors.Errorf("try to commit with invalid startTS: %d", txn.StartTS())
 		log.Errorf("con:%d 2PC commit err: %v", connID, err)
 		return nil, errors.Trace(err)
 	}
