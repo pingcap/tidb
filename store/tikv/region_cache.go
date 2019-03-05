@@ -363,7 +363,8 @@ func (c *RegionCache) dropRegionFromCache(verID RegionVerID) {
 }
 
 // loadRegion loads region from pd client, and picks the first peer as leader.
-// If the given key is the end key of the region that you want, you may set the second argument to true. This is useful when processing in reverse order.
+// If the given key is the end key of the region that you want, you may set the
+// third argument to true. This is useful when processing in reverse order.
 func (c *RegionCache) loadRegion(bo *Backoffer, key []byte, isEndKey bool) (*Region, error) {
 	var backoffErr error
 	searchPrev := false
