@@ -663,8 +663,12 @@ type FrameBound struct {
 	Type      ast.BoundType
 	UnBounded bool
 	Num       uint64
-	// For `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`, we will build the date_add or date_sub functions.
-	DateCalcFunc expression.Expression
+	// CalcFunc is used for range framed windows.
+	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
+	// and plus or minus for frames like `1 preceding`.
+	CalcFunc expression.Expression
+	// CmpFunc is used to decide whether one row is included in the current frame.
+	CmpFunc expression.CompareFunc
 }
 
 // LogicalWindow represents a logical window function plan.
@@ -680,4 +684,33 @@ type LogicalWindow struct {
 // GetWindowResultColumn returns the column storing the result of the window function.
 func (p *LogicalWindow) GetWindowResultColumn() *expression.Column {
 	return p.schema.Columns[p.schema.Len()-1]
+}
+
+// extractCorColumnsBySchema only extracts the correlated columns that match the specified schema.
+// e.g. If the correlated columns from plan are [t1.a, t2.a, t3.a] and specified schema is [t2.a, t2.b, t2.c],
+// only [t2.a] is returned.
+func extractCorColumnsBySchema(p LogicalPlan, schema *expression.Schema) []*expression.CorrelatedColumn {
+	corCols := p.extractCorrelatedCols()
+	resultCorCols := make([]*expression.CorrelatedColumn, schema.Len())
+	for _, corCol := range corCols {
+		idx := schema.ColumnIndex(&corCol.Column)
+		if idx != -1 {
+			if resultCorCols[idx] == nil {
+				resultCorCols[idx] = &expression.CorrelatedColumn{
+					Column: *schema.Columns[idx],
+					Data:   new(types.Datum),
+				}
+			}
+			corCol.Data = resultCorCols[idx].Data
+		}
+	}
+	// Shrink slice. e.g. [col1, nil, col2, nil] will be changed to [col1, col2].
+	length := 0
+	for _, col := range resultCorCols {
+		if col != nil {
+			resultCorCols[length] = col
+			length++
+		}
+	}
+	return resultCorCols[:length]
 }
