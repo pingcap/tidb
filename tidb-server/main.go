@@ -24,13 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "net/http/pprof"
-
-	"github.com/opentracing/opentracing-go"
+	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
