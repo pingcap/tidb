@@ -23,7 +23,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -2703,6 +2702,15 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 	b.optFlag |= flagEliminateProjection
 
 	var items []*ast.ByItem
+	if expr.Spec.Name.L != "" {
+		ref, ok := b.windowSpecs[expr.Spec.Name.L]
+		if !ok {
+			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(expr.Spec.Name.O)
+		}
+		expr.Spec = ref
+	} else {
+		expr.Spec.Name = model.NewCIStr("<unnamed window>")
+	}
 	spec := expr.Spec
 	if spec.Ref.L != "" {
 		ref, ok := b.windowSpecs[spec.Ref.L]
@@ -2714,13 +2722,7 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 			return nil, nil, nil, nil, err
 		}
 	}
-	if spec.Name.L != "" {
-		ref, ok := b.windowSpecs[spec.Name.L]
-		if !ok {
-			return nil, nil, nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(spec.Ref.O)
-		}
-		spec = ref
-	}
+
 	lenPartition := 0
 	if spec.PartitionBy != nil {
 		items = append(items, spec.PartitionBy.Items...)
@@ -2917,9 +2919,6 @@ func (b *PlanBuilder) buildWindowFunctionFrame(spec *ast.WindowSpec, orderByItem
 }
 
 func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExpr, aggMap map[*ast.AggregateFuncExpr]int) (*LogicalWindow, error) {
-	if expr.Spec.Name.O == "" {
-		expr.Spec.Name = model.NewCIStr("<unnamed window>")
-	}
 	p, partitionBy, orderBy, args, err := b.buildProjectionForWindow(p, expr, aggMap)
 	if err != nil {
 		return nil, err
