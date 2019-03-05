@@ -81,9 +81,39 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.RecordBatch) (err erro
 		return nil
 	case *ast.DropStatsStmt:
 		err = e.executeDropStats(x)
+	case *ast.SetRoleStmt:
+		err = e.executeSetRole(x)
 	}
 	e.done = true
 	return errors.Trace(err)
+}
+
+func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
+	checkDup := make(map[string]bool)
+
+	// Check whether RoleNameList contain duplicate role name.
+	for _, r := range s.RoleList {
+		if r.Hostname == "" {
+			r.Hostname = "%"
+		}
+		if r.Username == "" {
+			return errors.New("Role name can not be empty")
+		}
+		roleName := r.Username + "@" + r.Hostname
+		_, dup := checkDup[roleName]
+		if dup {
+			return errors.New("Duplicate role")
+		} else {
+			checkDup[roleName] = true
+		}
+	}
+
+	checker := privilege.GetPrivilegeManager(e.ctx)
+	ok := checker.ActiveRoles(e.ctx, s.RoleList)
+	if !ok {
+		return errors.New("Error occur when activing roles")
+	}
+	return nil
 }
 
 func (e *SimpleExec) dbAccessDenied(dbname string) error {
@@ -352,7 +382,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 }
 
 func userExists(ctx sessionctx.Context, name string, host string) (bool, error) {
-	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.UserTable, name, host)
+	sql := fmt.Sprintf(`SELECT * FROM %s.%s WHERE User='%s' AND Host='%s';`, mysql.SystemDB, mysql.RoleEdgeTable, name, host)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return false, errors.Trace(err)

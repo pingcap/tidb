@@ -191,6 +191,9 @@ type SessionVars struct {
 	// params for prepared statements
 	PreparedParams []types.Datum
 
+	// ActiveRoles stores active roles for current user
+	ActiveRoles []*auth.RoleIdentity
+
 	// retry information
 	RetryInfo *RetryInfo
 	// Should be reset on transaction finished.

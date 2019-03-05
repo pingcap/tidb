@@ -186,3 +186,19 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 
 	return
 }
+
+// ActiveRoles implements privilege.Manager ActiveRoles interface.
+func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) bool {
+	mysqlPrivilege := p.Handle.Get()
+	u := p.user
+	h := p.host
+	for _, r := range roleList {
+		ok := mysqlPrivilege.FindRole(u, h, r)
+		if !ok {
+			log.Errorf("Role: %+v doesn't grant for user", r)
+			return false
+		}
+	}
+	ctx.GetSessionVars().ActiveRoles = roleList
+	return true
+}

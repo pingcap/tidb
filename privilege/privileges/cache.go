@@ -16,6 +16,7 @@ package privileges
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/auth"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -104,12 +105,34 @@ type columnsPrivRecord struct {
 	patTypes []byte
 }
 
+type RoleGraphEdgesTable struct {
+	roleList map[string]bool
+}
+
+func (g *RoleGraphEdgesTable) Find(user, host string) bool {
+	if host == "" {
+		host = "%"
+	}
+	key := user + "@" + host
+	_, ok := g.roleList[key]
+	if ok {
+		return true
+	}
+	return false
+}
+
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
 	User        []UserRecord
 	DB          []dbRecord
 	TablesPriv  []tablesPrivRecord
 	ColumnsPriv []columnsPrivRecord
+	RoleGraph   map[string]*RoleGraphEdgesTable
+}
+
+func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdentity) bool {
+	key := user + "@" + host
+	return p.RoleGraph[key].Find(role.Username, role.Hostname)
 }
 
 // LoadAll loads the tables from database to memory.
@@ -153,6 +176,16 @@ func noSuchTable(err error) bool {
 		}
 	}
 	return false
+}
+
+// LoadRoleGraph loads the mysql.role_edges table from database.
+func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
+	p.RoleGraph = make(map[string]*RoleGraphEdgesTable)
+	err := p.loadTable(ctx, "select FROM_USER, FROM_HOST, TO_USER, TO_HOST from mysql.role_edges;", p.decodeRoleEdgesTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // LoadUserTable loads the mysql.user table from database.
@@ -378,6 +411,32 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row chunk.Row, fs []*ast.Resul
 		}
 	}
 	p.TablesPriv = append(p.TablesPriv, value)
+	return nil
+}
+
+func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*ast.ResultField) error {
+	var fromUser, fromHost, toHost, toUser string
+	for i, f := range fs {
+		switch {
+		case f.ColumnAsName.L == "FROM_HOST":
+			fromHost = row.GetString(i)
+		case f.ColumnAsName.L == "FROM_USER":
+			fromHost = row.GetString(i)
+		case f.ColumnAsName.L == "TO_HOST":
+			toHost = row.GetString(i)
+		case f.ColumnAsName.L == "TO_USER":
+			toUser = row.GetString(i)
+		}
+	}
+	fromKey := fromUser + "@" + fromHost
+	toKey := toUser + "@" + toHost
+	if value, ok := p.RoleGraph[toKey]; ok {
+		value.roleList[fromKey] = true
+	} else {
+		p.RoleGraph[toKey] = &RoleGraphEdgesTable{}
+		p.RoleGraph[toKey].roleList = make(map[string]bool)
+		p.RoleGraph[toKey].roleList[toKey] = true
+	}
 	return nil
 }
 
