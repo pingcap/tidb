@@ -263,8 +263,7 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 	return selected, nil
 }
 
-
-// VectorizedFilter applies a list of filters to a Chunk and
+// VectorizedFilter applies a list of filters to a rowSlice and
 // returns a bool slice, which indicates whether a row is passed the filters.
 // Filters is executed vectorized.
 func VectorizedFilterByRow(ctx sessionctx.Context, filters []Expression, rows []chunk.Row, selected []bool) ([]bool, error) {
@@ -277,7 +276,7 @@ func VectorizedFilterByRow(ctx sessionctx.Context, filters []Expression, rows []
 		if filter.GetType().EvalType() != types.ETInt {
 			isIntType = false
 		}
-		for idx :=0 ; idx < len(rows) ; idx++ {
+		for idx := 0; idx < len(rows); idx++ {
 			row := rows[idx]
 			if !selected[idx] {
 				continue
