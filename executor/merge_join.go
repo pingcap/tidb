@@ -190,7 +190,7 @@ type mergeJoinMergeWorker struct {
 	innerJoinKeys []*expression.Column
 
 	outerRows []chunk.Row
-	outerRow  chunk.Row
+//	outerRow  chunk.Row
 	//	outerSelected    []bool
 	//	outerRowIdx	  int
 	outerIter4Row chunk.Iterator
@@ -271,7 +271,7 @@ func (mw *mergeJoinMergeWorker) run() {
 
 				if mw.innerIter4Row.Current() == mw.innerIter4Row.End() {
 					if !hasMatch {
-						mw.joiner.onMissMatch(mw.outerRow, joinResult.chk)
+						mw.joiner.onMissMatch(outerRow, joinResult.chk)
 					}
 					hasMatch = false
 					mw.innerIter4Row.Begin()
@@ -543,56 +543,6 @@ func (mw *mergeJoinCompareWorker) joinToChunk(ctx context.Context) {
 			close(joinResultCh)
 			//fmt.Println("close join channel")
 		}()
-		/*
-			mt.cmp = cmpResult
-			if cmpResult == 0 {
-				mt.innerRows = mw.innerRows
-			}
-
-			for ;mw.outerRow != mw.outerIter4Row.End();{
-				if mw.outerSelected[mw.outerRowIdx] {
-					mt.outerRows = append(mt.outerRows , mw.outerRow)
-				}
-
-				if len(mt.outerRows) == mw.outerRowsPreTask {
-					//if cmpResult == 0 {
-					//	fmt.Println("before join-worker outerRow len", len(mt.outerRows), mt.outerRows[0].GetInt64(0))
-					//	fmt.Println("before join-worker innerRows len", len(mt.innerRows), mt.innerRows[0].GetInt64(0))
-					//} else {
-					//	fmt.Println("before join-worker outerRow len", len(mt.outerRows), mt.outerRows[0].GetInt64(0))
-					//}
-
-					mw.mergeWorkerTaskCh <- mt
-					mw.taskCh <- mt
-
-					mt = &mergeTask{joinResultCh : make(chan *mergejoinWorkerResult)} //重新new一个
-					mt.cmp = cmpResult
-					if cmpResult == 0 {
-						mt.innerRows = mw.innerRows
-					}
-				}
-				mw.outerRow = mw.outerIter4Row.Next()
-				mw.outerRowIdx = mw.outerRowIdx + 1
-			}
-
-			if len(mt.outerRows) != 0 {
-				mw.mergeWorkerTaskCh <- mt
-				mw.taskCh <- mt
-
-				mt = &mergeTask{joinResultCh : make(chan *mergejoinWorkerResult)} //重新new一个
-			}
-
-			if cmpResult < 0 {
-				if ok, err = mw.fetchNextOuterRows() ; err != nil {
-					mt.buildErr = errors.Trace(err)
-					mw.taskCh <- mt
-					return
-				}
-
-				if !ok {
-					return
-				}
-			}*/
 
 		if cmpResult == 0 {
 			if ok, err = mw.fetchNextOuterRows(); err != nil {
@@ -869,9 +819,9 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		taskCh:            taskCh,
 		outerRowsPreTask:  1,
 		mergeWorkerCount:  joinWorkerCount,
-		compareFuncs:      e.compareFuncs,
-		outerJoinKeys:     e.outerKeys,
-		innerJoinKeys:     e.innerKeys,
+		compareFuncs:      e.innerTable.compareFuncs,
+		outerJoinKeys:     e.outerTable.joinKeys,
+		innerJoinKeys:     e.innerTable.joinKeys,
 	}
 	e.mergeTaskCh = taskCh
 	e.closeCh = closeCh
@@ -953,36 +903,3 @@ func (e *MergeJoinExec) getNextTask(ctx context.Context) *mergeTask {
 
 	return nil
 }
-
-/*
-// fetchNextInnerRows fetches the next join group, within which all the rows
-// have the same join key, from the inner table.
-func (innerTable *mergeJoinInnerTable) fetchNextInnerRows() (err error) {
-	innerTable.innerRows, err = innerTable.rowsWithSameKey()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	innerTable.innerIter4Row = chunk.NewIterator4Slice(innerTable.innerRows)
-	innerTable.innerIter4Row.Begin()
-	return nil
-}
-
-func (outerTable *mergeJoinOuterTable) fetchNextOuterRows(ctx context.Context) (err error) {
-	outerFetchResult,ok := <- outerTable.mergeJoinCompareWorker.outerFetchResultCh
-
-	if !ok {
-		return errors.Errorf("outer channel closed")
-	}
-
-	outerTable.chk = outerFetchResult.resultChunk
-
-	outerTable.iter = chunk.NewIterator4Chunk(outerTable.chk)
-	outerTable.iter.Begin()
-	outerTable.selected, err = expression.VectorizedFilter(outerTable.mergeJoinCompareWorker.ctx, outerTable.filter, outerTable.iter, outerTable.selected)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	outerTable.row = outerTable.iter.Begin()
-	return nil
-}
-*/
