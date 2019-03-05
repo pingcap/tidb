@@ -85,19 +85,20 @@ func (s *Scanner) Next() error {
 		return errors.New("scanner iterator is invalid")
 	}
 	for {
+		// On reverse mode, s.cache get keys in descend order.
+		// So just if in reverse mode, add the index and we will get right order.
 		s.idx++
-
 		if s.idx >= len(s.cache) {
 			if s.eof {
 				s.Close()
 				return nil
 			}
 			if err := s.getData(bo); err != nil {
-				// set idx to len and set nextstartKey prevLoc.EndKey
 				s.Close()
 				return errors.Trace(err)
 			}
-			if len(s.cache) == 0 {
+			// getData may return blank region after region was fully consummed.
+			if s.idx >= len(s.cache) {
 				continue
 			}
 		}
@@ -115,7 +116,6 @@ func (s *Scanner) Next() error {
 				s.Close()
 				return errors.Trace(err)
 			}
-
 			// The check here does not violate the KeyOnly semantic, because current's value
 			// is filled by resolveCurrentLock which fetches the value by snapshot.get, so an empty
 			// value stands for NotExist
@@ -149,7 +149,6 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 func (s *Scanner) getData(bo *Backoffer) error {
 	log.Debugf("txn getData nextStartKey[%q], reverse[%v] txn %d", s.nextStartKey, s.reverse, s.startTS())
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
-
 	for {
 		var loc *KeyLocation
 		var err error
@@ -177,7 +176,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				NotFillCache: s.snapshot.notFillCache,
 			},
 		}
-		// Reverse seek will not set endKey yet.
+		// Reverse seek will not limit endKey.
 		if !s.reverse && len(s.endKey) > 0 && len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, s.endKey) < 0 {
 			req.Scan.EndKey = loc.EndKey
 		}
@@ -217,6 +216,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				pair.Key = lock.Key
 			}
 		}
+		// On reverse mode, keys we want was lay in descand order.
 		s.cache, s.idx = kvPairs, 0
 		if len(kvPairs) < s.batchSize {
 			// No more data in current Region. Next getData() starts
