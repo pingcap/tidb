@@ -83,6 +83,7 @@ check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign
 	# TEST in CI
 	# $(path_to_add)
 	# $(PATH)
+	ls -l tools/bin/
 	# TEST in CI
 	tools/bin/gometalinter --disable-all --deadline 120s \
 	  --enable misspell \
