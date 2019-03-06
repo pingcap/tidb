@@ -37,6 +37,7 @@ require (
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/montanaflynn/stats v0.0.0-20180911141734-db72e6cae808 // indirect
 	github.com/myesui/uuid v1.0.0 // indirect
+	github.com/ngaut/log v0.0.0-20180314031856-b8e36e7ba5ac
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/onsi/ginkgo v1.7.0 // indirect

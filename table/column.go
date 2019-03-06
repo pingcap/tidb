@@ -360,27 +360,36 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		}
 		return value, nil
 	}
+
 	// Check and get timestamp/datetime default value.
+	sc := ctx.GetSessionVars().StmtCtx
+	var needChangeTimeZone bool
+	originalTZ := sc.TimeZone
+	// If the column's default value is not ZeroDatetimeStr nor CurrentTimestamp, should use the time zone of the default value itself.
+	if col.Tp == mysql.TypeTimestamp {
+		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
+			needChangeTimeZone = true
+			// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.
+			sc.TimeZone = timeutil.SystemLocation()
+			if col.Version >= model.ColumnInfoVersion1 {
+				sc.TimeZone = time.UTC
+			}
+			defer func() { sc.TimeZone = originalTZ }()
+		}
+	}
 	value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
 	if err != nil {
 		return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
 			col.Name, errors.Trace(err))
 	}
-	// If column is timestamp, and default value is not current_timestamp, should convert the default value to the current session time zone.
-	if col.Tp == mysql.TypeTimestamp {
-		if vv, ok := defaultVal.(string); ok && vv != types.ZeroDatetimeStr && strings.ToUpper(vv) != strings.ToUpper(ast.CurrentTimestamp) {
-			t := value.GetMysqlTime()
-			// For col.Version = 0, the timezone information of default value is already lost, so use the system timezone as the default value timezone.
-			defaultTimeZone := timeutil.SystemLocation()
-			if col.Version >= model.ColumnInfoVersion1 {
-				defaultTimeZone = time.UTC
-			}
-			err = t.ConvertTimeZone(defaultTimeZone, ctx.GetSessionVars().Location())
-			if err != nil {
-				return value, errors.Trace(err)
-			}
-			value.SetMysqlTime(t)
+	// If the column's default value is not ZeroDatetimeStr nor CurrentTimestamp, should convert the default value to the current session time zone.
+	if needChangeTimeZone {
+		t := value.GetMysqlTime()
+		err = t.ConvertTimeZone(sc.TimeZone, ctx.GetSessionVars().Location())
+		if err != nil {
+			return value, errors.Trace(err)
 		}
+		value.SetMysqlTime(t)
 	}
 	return value, nil
 }

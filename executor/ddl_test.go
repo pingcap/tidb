@@ -725,3 +725,11 @@ func (s *testSuite3) TestCheckDefaultFsp(c *C) {
 	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
 	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
 }
+
+func (s *testSuite3) TestTimestampMinDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tdv;")
+	tk.MustExec("create table tdv(a int);")
+	tk.MustExec("ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';")
+}
