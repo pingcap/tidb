@@ -42,7 +42,13 @@ func (c *testChunkSizeControlClient) SetDelay(regionID uint64, dur time.Duration
 	c.regionDelay[regionID] = dur
 }
 
-func manipulateCluster(cluster *mocktikv.Cluster, region1ID uint64, splitKeys [][]byte) []uint64 {
+func manipulateCluster(cluster *mocktikv.Cluster, splitKeys [][]byte) []uint64 {
+	regions := cluster.GetAllRegions()
+	if len(regions) != 1 {
+		panic("invalid length of regions")
+	}
+	region1ID := regions[0].Meta.Id
+
 	allRegionIDs := make([]uint64, 0, len(splitKeys)+1)
 	allRegionIDs = append(allRegionIDs, region1ID)
 	for i, key := range splitKeys {
@@ -88,23 +94,27 @@ func (s *testChunkSizeControlSuite) initClusterAndStore(
 	c.Assert(err, IsNil)
 }
 
-func (s *testChunkSizeControlSuite) TestChunkSizeControl(c *C) {
+func (s *testChunkSizeControlSuite) initTable(c *C, tableName, tableSQL string) (*testkit.TestKit, *testChunkSizeControlClient, *mocktikv.Cluster, int64) {
 	// init store
 	client := &testChunkSizeControlClient{regionDelay: make(map[uint64]time.Duration)}
 	cluster := mocktikv.NewCluster()
-	_, _, regionID := mocktikv.BootstrapWithSingleStore(cluster)
+	mocktikv.BootstrapWithSingleStore(cluster)
 	s.initClusterAndStore(c, cluster, client)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	// create a test table
-	tk.MustExec("create table t (a int, primary key (a))")
-	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	// create the test table
+	tk.MustExec(tableSQL)
+	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 	c.Assert(err, IsNil)
-	tid := tbl.Meta().ID
+	return tk, client, cluster, tbl.Meta().ID
+}
+
+func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
+	tk, client, cluster, tid := s.initTable(c, "t", "create table t (a int, primary key (a))")
 
 	// construct two regions split by 100
 	splitKeys := generateSplitKeyForInt(tid, []int{100})
-	regionIDs := manipulateCluster(cluster, regionID, splitKeys)
+	regionIDs := manipulateCluster(cluster, splitKeys)
 
 	// insert one record into each regions
 	tk.MustExec("insert into t values (1), (101)")
@@ -118,6 +128,10 @@ func (s *testChunkSizeControlSuite) TestChunkSizeControl(c *C) {
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = s.parseTimeCost(c, results.Rows()[0])
 	c.Assert(cost, Not(Less), time.Second)
+}
+
+func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
+
 }
 
 func (s *testChunkSizeControlSuite) parseTimeCost(c *C, line []interface{}) time.Duration {
