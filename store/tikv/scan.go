@@ -250,13 +250,13 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		if s.reverse {
 			// when reverse, region start_key is the first contains in current region
 			// and next start key will start at here to make sure we will not miss any key.
-			s.nextStartKey = kvPairs[len(kvPairs)-1]
+			s.nextStartKey = kvPairs[0].GetKey()
 		} else {
 			// next getData() starts from the last key in kvPairs (but skip
 			// it by appending a '\x00' to the key). Note that next getData()
 			// may get an empty response if the Region in fact does not have
 			// more data.
-			lastKey := kvPairs[len(kvPairs)-1]
+			lastKey := kvPairs[len(kvPairs)-1].GetKey()
 			s.nextStartKey = kv.Key(lastKey).Next()
 		}
 		return nil
