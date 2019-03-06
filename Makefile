@@ -8,7 +8,7 @@ endif
 FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
 CURDIR := $(shell pwd)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO        := GO111MODULE=on go
@@ -84,7 +84,6 @@ check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign
 	  --enable misspell \
 	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
-
 check-slow:tools/bin/gometalinter tools/bin/gosec
 	tools/bin/gometalinter --disable-all \
 	  --enable errcheck \
