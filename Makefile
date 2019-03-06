@@ -59,7 +59,7 @@ build:
 	$(GOBUILD)
 
 # Install the check tools.
-check-setup:tools/bin/megacheck tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
+check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
 check: fmt errcheck lint tidy check-static
 
@@ -76,7 +76,7 @@ goword:tools/bin/goword
 gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
-check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign tools/bin/megacheck
+check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign
 	@ # TODO: enable megacheck.
 	@ # TODO: gometalinter has been DEPRECATED.
 	@ # https://github.com/alecthomas/gometalinter/issues/590
