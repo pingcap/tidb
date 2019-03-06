@@ -129,11 +129,11 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 	client.SetDelay(regionIDs[0], time.Second)
 	results := tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
 	cost := s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Less, noBlockThreshold)
+	c.Assert(cost, Less, noBlockThreshold) // finish quickly since there is one record in region1
 
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Not(Less), time.Second)
+	c.Assert(cost, Not(Less), time.Second) // have to wait for the record returned by region2
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
@@ -154,11 +154,11 @@ func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
 	client.SetDelay(regionIDs[0], time.Second)
 	results := tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
 	cost := s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Less, noBlockThreshold)
+	c.Assert(cost, Less, noBlockThreshold) // finish quickly since there is one record in region1
 
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Not(Less), time.Second)
+	c.Assert(cost, Not(Less), time.Second) // have to wait for the record returned by region2
 }
 
 func (s *testChunkSizeControlSuite) parseTimeCost(c *C, line []interface{}) time.Duration {
