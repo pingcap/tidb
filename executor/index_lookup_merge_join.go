@@ -46,9 +46,7 @@ type IndexLookUpMergeJoin struct {
 
 	joiner joiner
 
-	task       *lookUpMergeJoinTask
-	joinResult *chunk.Chunk
-	innerIter  chunk.Iterator
+	task *lookUpMergeJoinTask
 
 	indexRanges   []*ranger.Range
 	keyOff2IdxOff []int
@@ -74,7 +72,11 @@ type lookUpMergeJoinTask struct {
 	outerMatch  []bool
 
 	innerResult *chunk.List
+	innerIter   chunk.Iterator
 	lookUpKeys  *chunk.Chunk
+
+	sameKeyRows *chunk.Chunk
+	sameKeyIter chunk.Iterator
 
 	doneCh      chan error
 	cursor      int
@@ -206,7 +208,6 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 		}()
 	}
 	req.Reset()
-	e.joinResult.Reset()
 	task, err := e.getFinishedTask(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -222,28 +223,27 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			}
 		}
 
-		if e.innerIter == nil {
-			e.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
-			e.innerIter.Begin()
-		}
-		if e.innerIter.Current() == e.innerIter.End() {
-			task.innerCursor++
-			if task.innerCursor < task.innerResult.NumChunks() {
-				e.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
-				e.innerIter.Begin()
+		if task.innerIter == nil {
+			task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
+			err = e.fetchNextOuterRows(task)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 		outerRow := task.outerResult.GetRow(task.cursor)
 
 		cmpResult := -1
 		if task.outerMatch[task.cursor] {
-			cmpResult, err = e.compare(outerRow, e.innerIter.Current())
+			cmpResult, err = e.compare(outerRow, task.innerIter.Current())
 			if err != nil {
 				return nil
 			}
 		}
 		if cmpResult > 0 {
-			e.innerIter.Next()
+			err = e.fetchNextOuterRows(task)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			continue
 		}
 		if cmpResult < 0 {
@@ -259,7 +259,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			continue
 		}
 
-		matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req.Chunk)
+		matched, isNull, err := e.joiner.tryToMatch(outerRow, task.sameKeyIter, req.Chunk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -267,7 +267,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 		task.hasMatch = task.hasMatch || matched
 		task.hasNull = task.hasNull || isNull
 
-		if e.innerIter.Current() == e.innerIter.End() {
+		if task.innerIter.Current() == task.innerIter.End() {
 			if !task.hasMatch {
 				e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
 			}
@@ -280,6 +280,33 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			return errors.Trace(err)
 		}
 	}
+}
+
+func (e *IndexLookUpMergeJoin) fetchNextOuterRows(task *lookUpMergeJoinTask) error {
+	task.sameKeyRows.Reset()
+	task.sameKeyIter = chunk.NewIterator4Chunk(task.sameKeyRows)
+	task.sameKeyIter.Begin()
+	if task.innerCursor >= task.innerResult.NumChunks() {
+		return nil
+	}
+	key := task.innerIter.Current()
+
+	var err error
+	var cmpRes int
+	for cmpRes, err = e.compare(key, task.innerIter.Current()); cmpRes == 0 && err == nil; cmpRes, err = e.compare(key, task.innerIter.Current()) {
+		task.sameKeyRows.AppendRow(task.innerIter.Current())
+		task.innerIter.Next()
+		if task.innerIter.Current() == task.innerIter.End() {
+			task.innerCursor++
+			if task.innerCursor >= task.innerResult.NumChunks() {
+				return nil
+			}
+			task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
+			task.innerIter.Begin()
+		}
+	}
+
+	return errors.Trace(err)
 }
 
 func (e *IndexLookUpMergeJoin) compare(outerRow, innerRow chunk.Row) (int, error) {
@@ -376,7 +403,7 @@ func (omw *outerMergeWorker) pushToChan(ctx context.Context, task *lookUpMergeJo
 	return false
 }
 
-// buildTask builds a lookupMergeJoinTask and read outer rows.
+// buildTask builds a lookUpMergeJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task
 func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTask, error) {
 	omw.executor.newFirstChunk()
