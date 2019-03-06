@@ -214,4 +214,13 @@ var (
 			Buckets: prometheus.ExponentialBuckets(1, 2, 30),
 			Help:    "batch wait duration",
 		})
+
+	TiKVTwoPCDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name: "twopc_duration",
+			Help: "no help",
+			Buckets: prometheus.ExponentialBuckets(0.0005, 2, 20),
+		}, []string{LblType})
 )

@@ -121,6 +121,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVTxnWriteKVCountHistogram)
 	prometheus.MustRegister(TiKVTxnWriteSizeHistogram)
 	prometheus.MustRegister(TiKVLocalLatchWaitTimeHistogram)
+	prometheus.MustRegister(TiKVTwoPCDuration)
 	prometheus.MustRegister(TimeJumpBackCounter)
 	prometheus.MustRegister(TransactionCounter)
 	prometheus.MustRegister(TransactionDuration)

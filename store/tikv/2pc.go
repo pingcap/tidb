@@ -647,21 +647,18 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	start = time.Now()
 	if c.hasMaxReadTs {
-		metrics.TiKVTxnCommitTsSourceCounter.WithLabelValues("calculated").Inc()
 		c.commitTS = c.maxReadTs + 1
 		if c.startTS > c.maxReadTs {
 			c.commitTS = c.startTS + 1
 		}
 	} else {
-		metrics.TiKVTxnCommitTsSourceCounter.WithLabelValues("pd").Inc()
-		start = time.Now()
 		commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
 		if err != nil {
 			log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
 			return errors.Trace(err)
 		}
-		c.detail.GetCommitTsTime = time.Since(start)
 
 		// check commitTS
 		if commitTS <= c.startTS {
@@ -672,6 +669,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		}
 		c.commitTS = commitTS
 	}
+	c.detail.GetCommitTsTime = time.Since(start)
 	if err = c.checkSchemaValid(); err != nil {
 		return errors.Trace(err)
 	}
@@ -698,6 +696,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		}
 		log.Debugf("con:%d 2PC succeed with error: %v, tid: %d", c.connID, err, c.startTS)
 	}
+	metrics.TiKVTwoPCDuration.WithLabelValues("prewrite").Observe(c.detail.PrewriteTime.Seconds())
+	metrics.TiKVTwoPCDuration.WithLabelValues("commit_ts").Observe(c.detail.GetCommitTsTime.Seconds())
+	metrics.TiKVTwoPCDuration.WithLabelValues("commit").Observe(c.detail.CommitTime.Seconds())
 	return nil
 }
 
