@@ -469,7 +469,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	firstJobID := job.ID
 	tests := buildCancelJobTests(firstJobID)
 	var checkErr error
-	var mu sync.RWMutex
+	var mu sync.Mutex
 	var test *testCancelJob
 	updateTest := func(t *testCancelJob) {
 		mu.Lock()
@@ -482,12 +482,12 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		}
 		// This hook only valid for the related test job.
 		// This is use to avoid parallel test fail.
-		mu.RLock()
+		mu.Lock()
 		if len(test.jobIDs) > 0 && test.jobIDs[0] != job.ID {
-			mu.RUnlock()
+			mu.Unlock()
 			return
 		}
-		mu.RUnlock()
+		mu.Unlock()
 		if checkErr != nil {
 			return
 		}
@@ -504,9 +504,9 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			checkErr = errors.Trace(err1)
 			return
 		}
-		mu.RLock()
+		mu.Lock()
 		checkErr = checkCancelState(txn, job, test)
-		mu.RUnlock()
+		mu.Unlock()
 		if checkErr != nil {
 			return
 		}
