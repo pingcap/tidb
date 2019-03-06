@@ -64,7 +64,7 @@ check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/g
 check: fmt errcheck lint tidy check-static
 
 # These need to be fixed before they can be ran regularly
-check-fail: goword check-static check-slow
+check-fail: goword check-slow
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -84,6 +84,7 @@ check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign
 	  --enable misspell \
 	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
+
 check-slow:tools/bin/gometalinter tools/bin/gosec
 	tools/bin/gometalinter --disable-all \
 	  --enable errcheck \
