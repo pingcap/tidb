@@ -255,7 +255,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan, ot
 				resultJoinGroup = append(resultJoinGroup, cartesianJoinGroup[i])
 				break
 			}
-			// TODO:Since the other condition may involve no less than two tables, e.g. t1.a = t2.b+t3.c.
+			// TODO:Since the other condition may involve more than two tables, e.g. t1.a = t2.b+t3.c.
 			//  So We'll need a extra stage to deal with it.
 			// Currently, we just add it when building cartesianJoinGroup.
 			mergedSchema := expression.MergeSchema(cartesianJoinGroup[i].Schema(), cartesianJoinGroup[i+1].Schema())

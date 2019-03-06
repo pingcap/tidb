@@ -71,8 +71,8 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			ctx:        ctx,
 			otherConds: otherConds,
 		}
-		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinOrderAlgoThreshold {
-			groupSolver := &joinReorderGreedySingleGroupSolver{
+		if len(curJoinGroup) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold {
+			groupSolver := &joinReorderGreedySolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 				eqEdges:                        eqEdges,
 			}
