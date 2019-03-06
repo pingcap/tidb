@@ -90,7 +90,6 @@ type PhysicalIndexScan struct {
 
 	// AccessCondition is used to calculate range.
 	AccessCondition []expression.Expression
-	filterCondition []expression.Expression
 
 	Table      *model.TableInfo
 	Index      *model.IndexInfo
@@ -115,7 +114,7 @@ type PhysicalIndexScan struct {
 	// It is used for query feedback.
 	Hist *statistics.Histogram
 
-	rangeDecidedBy string
+	rangeInfo string
 
 	// The index scan may be on a partition.
 	isPartition     bool

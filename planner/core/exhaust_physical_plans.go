@@ -532,7 +532,7 @@ func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader Physi
 }
 
 // constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, remainedConds []expression.Expression,
+func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, filterConds []expression.Expression,
 	outerJoinKeys []*expression.Column, us *LogicalUnionScan, rangeInfo string) PhysicalPlan {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -543,9 +543,8 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 		dataSourceSchema: ds.schema,
 		KeepOrder:        false,
 		Ranges:           ranger.FullRange(),
-		rangeDecidedBy:   rangeInfo,
+		rangeInfo:        rangeInfo,
 	}.Init(ds.ctx)
-	is.filterCondition = remainedConds
 
 	var rowCount float64
 	idxHist, ok := ds.statisticTable.Indices[idx.ID]
@@ -568,7 +567,7 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	}
 
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(remainedConds, idx.Columns, ds.tableInfo)
+	indexConds, tblConds := splitIndexFilterConditions(filterConds, idx.Columns, ds.tableInfo)
 	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
 	t := finishCopTask(ds.ctx, cop)
@@ -679,28 +678,28 @@ func (ijHelper *indexJoinBuildHelper) checkIndex(innerKeys []*expression.Column,
 	}
 }
 
-func (ijHelper *indexJoinBuildHelper) analyzeSimpleFilters(innerPlan *DataSource, keyMatchedLen, matchedKeyCnt int) ([]expression.Expression, []expression.Expression, []expression.Expression) {
-	remained := make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
+// findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
+// first part is the continuous eq/in conditions on current unused index columns.
+// second part is the conditions which cannot be used for building ranges.
+// third part is the other conditions for future use.
+func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) ([]expression.Expression, []expression.Expression, []expression.Expression) {
+	uselessFilters := make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
 	rangeFilterCandidates := make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
-	// This loop deal first filter out the expressions that contains columns not in index.
+	// This loop finds the possible filters which can be used to build ranges.
+	// If the filter contains index column covered by join keys, it will be useless since we always use join key to build range for that index column..
 	for _, innerFilter := range innerPlan.pushedDownConds {
 		affectedCols := expression.ExtractColumns(innerFilter)
 		if expression.ColumnSliceIsIntersect(affectedCols, ijHelper.curPossibleUsedKeys) {
-			remained = append(remained, innerFilter)
+			uselessFilters = append(uselessFilters, innerFilter)
 			continue
 		}
 		rangeFilterCandidates = append(rangeFilterCandidates, innerFilter)
 	}
-	// Extract the eq/in functions of possible join key. This returned list keeps the same order with index column.
-	notKeyEqAndIn, remainedEqAndIn, rangeFilterCandidates, _ := ranger.ExtractEqAndInCondition(innerPlan.ctx, rangeFilterCandidates, ijHelper.curNotUsedIndexCols, ijHelper.curNotUsedColLens)
-	// We hope that the index cols appeared in the join keys can all be used to build range. If it cannot be satisfied,
-	// we'll mark this index as cannot be used for index join.
-	// So we should make sure that all columns before the keyMatchedLen is join key or has eq/in function.
-	if len(notKeyEqAndIn) < keyMatchedLen-matchedKeyCnt {
-		return nil, nil, nil
-	}
-	remained = append(remained, remainedEqAndIn...)
-	return notKeyEqAndIn, remained, rangeFilterCandidates
+	// Extract the eq/in functions of possible join key.
+	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
+	eqOrInOnUnusedIdxCols, remainedEqOrIn, rangeFilterCandidates, _ := ranger.ExtractEqAndInCondition(innerPlan.ctx, rangeFilterCandidates, ijHelper.curNotUsedIndexCols, ijHelper.curNotUsedColLens)
+	uselessFilters = append(uselessFilters, remainedEqOrIn...)
+	return eqOrInOnUnusedIdxCols, uselessFilters, rangeFilterCandidates
 }
 
 func (ijHelper *indexJoinBuildHelper) analyzeOtherFilters(nextCol *expression.Column,
@@ -763,7 +762,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 			break
 		}
 	}
-	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.analyzeSimpleFilters(innerPlan, keyMatchedLen, matchedKeyCnt)
+	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
 	accesses = append(accesses, notKeyEqAndIn...)
 	// We hope that the index cols appeared in the join keys can all be used to build range. If it cannot be satisfied,
 	// we'll mark this index as cannot be used for index join.
@@ -772,7 +771,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		return nil
 	}
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
-	// If all cols have been considered, we can return the current result.
+	// If all the idnex columns are covered by eq/in conditions, we don't need to consider other conditions anymore
 	if lastColPos == len(idxCols) {
 		remained = append(remained, rangeFilterCandidates...)
 		ranges, err := ijHelper.buildTemplateRange(matchedKeyCnt, notKeyEqAndIn, nil, false)
