@@ -61,7 +61,7 @@ func (s *testSuite2) TestStmtLabel(c *C) {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
 		is := executor.GetInfoSchema(tk.Se)
-		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is, false)
+		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is)
 		c.Assert(err, IsNil)
 		_, err = planner.Optimize(tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
