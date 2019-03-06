@@ -1495,6 +1495,8 @@ func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
 		}
 		return node, true
+	case *ast.SubqueryExpr:
+		return node, true
 	}
 	return node, false
 }
