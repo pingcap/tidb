@@ -83,6 +83,33 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	return info, nil
 }
 
+// IsJobRollbackable checks whether the job can be rollback.
+func IsJobRollbackable(job *model.Job) bool {
+	switch job.Type {
+	case model.ActionDropIndex:
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
+		if job.SchemaState == model.StateDeleteOnly ||
+			job.SchemaState == model.StateDeleteReorganization {
+			return false
+		}
+	case model.ActionDropSchema, model.ActionDropTable:
+		// To simplify the rollback logic, cannot be canceled in the following states.
+		if job.SchemaState == model.StateWriteOnly ||
+			job.SchemaState == model.StateDeleteOnly {
+			return false
+		}
+	case model.ActionDropColumn, model.ActionModifyColumn,
+		model.ActionDropTablePartition, model.ActionAddTablePartition,
+		model.ActionRebaseAutoID, model.ActionShardRowID,
+		model.ActionTruncateTable, model.ActionAddForeignKey,
+		model.ActionDropForeignKey:
+		if job.SchemaState != model.StateNone {
+			return false
+		}
+	}
+	return true
+}
+
 // CancelJobs cancels the DDL jobs.
 func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
@@ -106,13 +133,18 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			found = true
 			// These states can't be cancelled.
 			if job.IsDone() || job.IsSynced() {
-				errs[i] = errors.New("This job is finished, so can't be cancelled")
+				errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(id)
 				continue
 			}
 			// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
 			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
 				continue
 			}
+			if !IsJobRollbackable(job) {
+				errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+				continue
+			}
+
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
 			err := job.DecodeArgs(job.RawArgs)
@@ -130,7 +162,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			}
 		}
 		if !found {
-			errs[i] = errors.New("Can't find this job")
+			errs[i] = ErrDDLJobNotFound.GenWithStackByArgs(id)
 		}
 	}
 	return errs, nil
@@ -413,8 +445,8 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.Flag) {
-					return false, errors.New("Miss")
+				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
 				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
@@ -553,20 +585,20 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	return nil
 }
 
-func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) decoder.RowDecoder {
+func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
 	cols := t.Cols()
 	tblInfo := t.Meta()
 	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
 	for _, v := range decodeCol {
 		col := cols[v.Offset]
 		tpExpr := decoder.Column{
-			Info: col.ToInfo(),
+			Col: col,
 		}
 		if col.IsGenerated() && !col.GeneratedStored {
 			for _, c := range cols {
 				if _, ok := col.Dependences[c.Name.L]; ok {
 					decodeColsMap[c.ID] = decoder.Column{
-						Info: c.ToInfo(),
+						Col: c,
 					}
 				}
 			}
@@ -574,11 +606,11 @@ func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	return decoder.NewRowDecoder(cols, decodeColsMap)
+	return decoder.NewRowDecoder(t, decodeColsMap)
 }
 
 // genExprs use to calculate generated column value.
-func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder decoder.RowDecoder) ([]types.Datum, error) {
+func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder *decoder.RowDecoder) ([]types.Datum, error) {
 	key := t.RecordKey(h)
 	value, err := txn.Get(key)
 	if err != nil {
@@ -602,7 +634,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 	}
 
-	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
+	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, h, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -620,8 +652,8 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 		ri, ok := rowMap[col.ID]
 		if !ok {
-			if mysql.HasNotNullFlag(col.Flag) {
-				return nil, errors.New("Miss")
+			if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+				return nil, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h)
 			}
 			// NULL value is regarded as its default value.
 			colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
@@ -663,7 +695,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -699,6 +731,9 @@ const (
 	codeDataNotEqual       terror.ErrCode = 1
 	codeRepeatHandle                      = 2
 	codeInvalidColumnState                = 3
+	codeDDLJobNotFound                    = 4
+	codeCancelFinishedJob                 = 5
+	codeCannotCancelDDLJob                = 6
 )
 
 var (
@@ -706,4 +741,10 @@ var (
 	ErrDataInConsistent   = terror.ClassAdmin.New(codeDataNotEqual, "data isn't equal")
 	errRepeatHandle       = terror.ClassAdmin.New(codeRepeatHandle, "handle is repeated")
 	errInvalidColumnState = terror.ClassAdmin.New(codeInvalidColumnState, "invalid column state")
+	// ErrDDLJobNotFound indicates the job id was not found.
+	ErrDDLJobNotFound = terror.ClassAdmin.New(codeDDLJobNotFound, "DDL Job:%v not found")
+	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
+	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(codeCancelFinishedJob, "This job:%v is finished, so can't be cancelled")
+	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
+	ErrCannotCancelDDLJob = terror.ClassAdmin.New(codeCannotCancelDDLJob, "This job:%v is almost finished, can't be cancelled now")
 )

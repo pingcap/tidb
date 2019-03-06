@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	log "github.com/sirupsen/logrus"
 )
 
 func (e *ShowExec) fetchShowStatsMeta() error {
@@ -81,6 +82,10 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		return
 	}
 	for _, col := range statsTbl.Columns {
+		// Pass a nil StatementContext to avoid column stats being marked as needed.
+		if col.IsInvalid(nil, false) {
+			continue
+		}
 		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.Count))
 	}
 	for _, idx := range statsTbl.Indices {
@@ -99,6 +104,7 @@ func (e *ShowExec) histogramToRow(dbName, tblName, partitionName, colName string
 		hist.NDV,
 		hist.NullCount,
 		avgColSize,
+		hist.Correlation,
 	})
 }
 
@@ -115,10 +121,14 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
 			if pi == nil {
-				e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
+				if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl)); err != nil {
+					log.Error(errors.ErrorStack(err))
+				}
 			} else {
 				for _, def := range pi.Definitions {
-					e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID))
+					if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, def.Name.O, h.GetPartitionStats(tbl, def.ID)); err != nil {
+						log.Error(errors.ErrorStack(err))
+					}
 				}
 			}
 		}

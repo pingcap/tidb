@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -21,7 +22,6 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 type testSnapshotSuite struct {

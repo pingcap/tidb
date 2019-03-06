@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"math"
 	"runtime"
 	"sort"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var (
@@ -123,7 +123,7 @@ func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
 	if sc.InInsertStmt {
 		flags |= model.FlagInInsertStmt
-	} else if sc.InUpdateOrDeleteStmt {
+	} else if sc.InUpdateStmt || sc.InDeleteStmt {
 		flags |= model.FlagInUpdateOrDeleteStmt
 	} else if sc.InSelectStmt {
 		flags |= model.FlagInSelectStmt
@@ -213,6 +213,8 @@ func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexSca
 type IndexReaderExecutor struct {
 	baseExecutor
 
+	// For a partitioned table, the IndexReaderExecutor works on a partition, so
+	// the type of this table field is actually `table.PhysicalTable`.
 	table           table.Table
 	index           *model.IndexInfo
 	physicalTableID int64
@@ -237,23 +239,27 @@ type IndexReaderExecutor struct {
 
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
-	e.ctx.StoreQueryFeedback(e.feedback)
 	err := e.result.Close()
 	e.result = nil
+	if e.runtimeStats != nil {
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID())
+		copStats.SetRowNum(e.feedback.Actual())
+	}
+	e.ctx.StoreQueryFeedback(e.feedback)
 	return errors.Trace(err)
 }
 
 // Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("tableReader.Next", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	err := e.result.Next(ctx, chk)
+	err := e.result.Next(ctx, req.Chunk)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
@@ -286,6 +292,11 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		}
 	}
 
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
+	}
+
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -298,7 +309,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		e.feedback.Invalidate()
 		return errors.Trace(err)
 	}
-	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
+	e.result, err = distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.retTypes(), e.feedback, getPhysicalPlanIDs(e.plans))
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -311,13 +322,12 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 type IndexLookUpExecutor struct {
 	baseExecutor
 
-	table           table.Table
-	index           *model.IndexInfo
-	physicalTableID int64
-	keepOrder       bool
-	desc            bool
-	ranges          []*ranger.Range
-	dagPB           *tipb.DAGRequest
+	table     table.Table
+	index     *model.IndexInfo
+	keepOrder bool
+	desc      bool
+	ranges    []*ranger.Range
+	dagPB     *tipb.DAGRequest
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
 	tableRequest *tipb.DAGRequest
@@ -360,7 +370,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -411,6 +421,11 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 
 // startIndexWorker launch a background goroutine to fetch handles, send the results to workCh.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []kv.KeyRange, workCh chan<- *lookupTableTask) error {
+	if e.runtimeStats != nil {
+		collExec := true
+		e.dagPB.CollectExecutionSummaries = &collExec
+	}
+
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
 		SetDAGRequest(e.dagPB).
@@ -423,7 +438,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return errors.Trace(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.Select(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback)
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback, getPhysicalPlanIDs(e.idxPlans))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -443,15 +458,21 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	e.idxWorkerWg.Add(1)
 	go func() {
 		ctx1, cancel := context.WithCancel(ctx)
-		err := worker.fetchHandles(ctx1, result)
+		count, err := worker.fetchHandles(ctx1, result)
 		if err != nil {
 			e.feedback.Invalidate()
 		}
-		e.ctx.StoreQueryFeedback(e.feedback)
 		cancel()
 		if err := result.Close(); err != nil {
 			log.Error("close Select result failed:", errors.ErrorStack(err))
 		}
+		if e.runtimeStats != nil {
+			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ExplainID())
+			copStats.SetRowNum(count)
+			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID())
+			copStats.SetRowNum(count)
+		}
+		e.ctx.StoreQueryFeedback(e.feedback)
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
@@ -485,18 +506,14 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:    newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
-		table:           e.table,
-		physicalTableID: e.physicalTableID,
-		dagPB:           e.tableRequest,
-		streaming:       e.tableStreaming,
-		feedback:        statistics.NewQueryFeedback(0, nil, 0, false),
-		corColInFilter:  e.corColInTblSide,
-		plans:           e.tblPlans,
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
+		table:          e.table,
+		dagPB:          e.tableRequest,
+		streaming:      e.tableStreaming,
+		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter: e.corColInTblSide,
+		plans:          e.tblPlans,
 	}
-	// We assign `nil` to `runtimeStats` to forbidden `TableWorker` driven `IndexLookupExecutor`'s runtime stats collecting,
-	// because TableWorker information isn't showing in explain result now.
-	tableReaderExec.runtimeStats = nil
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
 	if err != nil {
 		log.Error(err)
@@ -521,16 +538,20 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.finished = nil
 	e.memTracker.Detach()
 	e.memTracker = nil
+	if e.runtimeStats != nil {
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ExplainID())
+		copStats.SetRowNum(e.feedback.Actual())
+	}
 	return nil
 }
 
 // Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
@@ -540,9 +561,9 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 			return nil
 		}
 		for resultTask.cursor < len(resultTask.rows) {
-			chk.AppendRow(resultTask.rows[resultTask.cursor])
+			req.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
-			if chk.NumRows() >= e.maxChunkSize {
+			if req.NumRows() >= e.maxChunkSize {
 				return nil
 			}
 		}
@@ -585,7 +606,7 @@ type indexWorker struct {
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are sent to workCh to be further processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (err error) {
+func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult) (count int64, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -612,17 +633,18 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			w.resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
-			return err
+			return count, err
 		}
 		if len(handles) == 0 {
-			return nil
+			return count, nil
 		}
+		count += int64(len(handles))
 		task := w.buildTableTask(handles)
 		select {
 		case <-ctx.Done():
-			return nil
+			return count, nil
 		case <-w.finished:
-			return nil
+			return count, nil
 		case w.workCh <- task:
 			w.resultCh <- task
 		}
@@ -730,7 +752,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := tableReader.newFirstChunk()
-		err = tableReader.Next(ctx, chk)
+		err = tableReader.Next(ctx, chunk.NewRecordBatch(chk))
 		if err != nil {
 			log.Error(err)
 			return errors.Trace(err)
@@ -795,4 +817,12 @@ func GetLackHandles(expectedHandles []int64, obtainedHandlesMap map[int64]struct
 	}
 
 	return diffHandles
+}
+
+func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []string {
+	planIDs := make([]string, 0, len(plans))
+	for _, p := range plans {
+		planIDs = append(planIDs, p.ExplainID())
+	}
+	return planIDs
 }

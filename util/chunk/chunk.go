@@ -33,7 +33,11 @@ type Chunk struct {
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
 	// capacity indicates the max number of rows this chunk can hold.
+	// TODO: replace all usages of capacity to requiredRows and remove this field
 	capacity int
+
+	// requiredRows indicates how many rows the parent executor want.
+	requiredRows int
 }
 
 // Capacity constants.
@@ -63,6 +67,13 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 		}
 	}
 	chk.numVirtualRows = 0
+
+	// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
+	// like how we judge whether a chunk is full now, then the statement
+	// "chk.NumRows() < maxChunkSize"
+	// is equal to
+	// "!chk.IsFull()".
+	chk.requiredRows = maxChunkSize
 	return chk
 }
 
@@ -80,6 +91,7 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 	newChk.columns = renewColumns(chk.columns, newCap)
 	newChk.numVirtualRows = 0
 	newChk.capacity = newCap
+	newChk.requiredRows = maxChunkSize
 	return newChk
 }
 
@@ -133,9 +145,33 @@ func newVarLenColumn(cap int, old *column) *column {
 	}
 }
 
+// RequiredRows returns how many rows is considered full.
+func (c *Chunk) RequiredRows() int {
+	return c.requiredRows
+}
+
+// SetRequiredRows sets the number of required rows.
+func (c *Chunk) SetRequiredRows(requiredRows, maxChunkSize int) *Chunk {
+	if requiredRows <= 0 || requiredRows > maxChunkSize {
+		requiredRows = maxChunkSize
+	}
+	c.requiredRows = requiredRows
+	return c
+}
+
+// IsFull returns if this chunk is considered full.
+func (c *Chunk) IsFull() bool {
+	return c.NumRows() >= c.requiredRows
+}
+
 // MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
 func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
+}
+
+// MakeRefTo copies columns `src.columns[srcColIdx]` to `c.columns[dstColIdx]`.
+func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) {
+	c.columns[dstColIdx] = src.columns[srcColIdx]
 }
 
 // SwapColumn swaps column "c.columns[colIdx]" with column
@@ -205,6 +241,15 @@ func (c *Chunk) Reset() {
 	c.numVirtualRows = 0
 }
 
+// CopyConstruct creates a new chunk and copies this chunk's data into it.
+func (c *Chunk) CopyConstruct() *Chunk {
+	newChk := &Chunk{numVirtualRows: c.numVirtualRows, capacity: c.capacity, columns: make([]*column, len(c.columns))}
+	for i := range c.columns {
+		newChk.columns[i] = c.columns[i].copyConstruct()
+	}
+	return newChk
+}
+
 // GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
 // The doubled capacity should not be larger than maxChunkSize.
 // TODO: this method will be used in following PR.
@@ -220,6 +265,7 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	c.capacity = newCap
 	c.columns = renewColumns(c.columns, newCap)
 	c.numVirtualRows = 0
+	c.requiredRows = maxChunkSize
 }
 
 // reCalcCapacity calculates the capacity for another Chunk based on the current
@@ -288,7 +334,8 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 //    when the Insert() function is called parallelly, the data race on a byte
 //    can not be avoided although the manipulated bits are different inside a
 //    byte.
-func (c *Chunk) PreAlloc(row Row) {
+func (c *Chunk) PreAlloc(row Row) (rowIdx uint32) {
+	rowIdx = uint32(c.NumRows())
 	for i, srcCol := range row.c.columns {
 		dstCol := c.columns[i]
 		dstCol.appendNullBitmap(!srcCol.isNull(row.idx))
@@ -304,16 +351,28 @@ func (c *Chunk) PreAlloc(row Row) {
 			continue
 		}
 		// Grow the capacity according to golang.growslice.
+		// Implementation differences with golang:
+		// 1. We double the capacity when `dstCol.data < 1024*elemLen bytes` but
+		// not `1024 bytes`.
+		// 2. We expand the capacity to 1.5*originCap rather than 1.25*originCap
+		// during the slow-increasing phase.
 		newCap := cap(dstCol.data)
 		doubleCap := newCap << 1
 		if needCap > doubleCap {
 			newCap = needCap
 		} else {
-			if len(dstCol.data) < 1024 {
+			avgElemLen := elemLen
+			if !srcCol.isFixed() {
+				avgElemLen = len(dstCol.data) / len(dstCol.offsets)
+			}
+			// slowIncThreshold indicates the threshold exceeding which the
+			// dstCol.data capacity increase fold decreases from 2 to 1.5.
+			slowIncThreshold := 1024 * avgElemLen
+			if len(dstCol.data) < slowIncThreshold {
 				newCap = doubleCap
 			} else {
 				for 0 < newCap && newCap < needCap {
-					newCap += newCap / 4
+					newCap += newCap / 2
 				}
 				if newCap <= 0 {
 					newCap = needCap
@@ -322,6 +381,7 @@ func (c *Chunk) PreAlloc(row Row) {
 		}
 		dstCol.data = make([]byte, len(dstCol.data)+elemLen, newCap)
 	}
+	return
 }
 
 // Insert inserts `row` on the position specified by `rowIdx`.

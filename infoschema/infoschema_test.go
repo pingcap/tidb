@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
@@ -120,7 +119,7 @@ func (*testSuite) TestT(c *C) {
 
 	schemaNames := is.AllSchemaNames()
 	c.Assert(schemaNames, HasLen, 3)
-	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{infoschema.Name, perfschema.Name, "Test"}), IsTrue)
+	c.Assert(testutil.CompareUnorderedStringSlice(schemaNames, []string{infoschema.Name, "PERFORMANCE_SCHEMA", "Test"}), IsTrue)
 
 	schemas := is.AllSchemas()
 	c.Assert(schemas, HasLen, 3)
@@ -148,6 +147,7 @@ func (*testSuite) TestT(c *C) {
 
 	c.Assert(is.TableExists(dbName, tbName), IsTrue)
 	c.Assert(is.TableExists(dbName, noexist), IsFalse)
+	c.Assert(is.TableIsView(dbName, tbName), IsFalse)
 
 	tb, ok := is.TableByID(tbID)
 	c.Assert(ok, IsTrue)
@@ -165,7 +165,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
 
-	tb, err = is.TableByName(dbName, noexist)
+	_, err = is.TableByName(dbName, noexist)
 	c.Assert(err, NotNil)
 
 	tbs := is.SchemaTables(dbName)
@@ -180,7 +180,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(tb, NotNil)
 
 	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
-		meta.NewMeta(txn).CreateTable(dbID, tblInfo)
+		meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
 		return errors.Trace(err)
 	})
 	c.Assert(err, IsNil)
@@ -247,7 +247,7 @@ func (*testSuite) TestInfoTables(c *C) {
 	is := handle.Get()
 	c.Assert(is, NotNil)
 
-	info_tables := []string{
+	infoTables := []string{
 		"SCHEMATA",
 		"TABLES",
 		"COLUMNS",
@@ -280,7 +280,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
 		"PROCESSLIST",
 	}
-	for _, t := range info_tables {
+	for _, t := range infoTables {
 		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))
 		c.Assert(err1, IsNil)
 		c.Assert(tb, NotNil)

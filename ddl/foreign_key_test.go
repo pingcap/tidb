@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -24,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testForeighKeySuite{})
@@ -38,14 +37,12 @@ type testForeighKeySuite struct {
 }
 
 func (s *testForeighKeySuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_foreign")
 }
 
 func (s *testForeighKeySuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
 }
 
 func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
@@ -78,7 +75,7 @@ func (s *testForeighKeySuite) testCreateForeignKey(c *C, tblInfo *model.TableInf
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{fkInfo},
 	}
-	err := s.ctx.NewTxn()
+	err := s.ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	err = s.d.doDDLJob(s.ctx, job)
 	c.Assert(err, IsNil)
@@ -123,12 +120,14 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	testCreateSchema(c, ctx, d, s.dbInfo)
 	tblInfo := testTableInfo(c, d, "t", 3)
 
-	err := ctx.NewTxn()
+	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
 
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	// fix data race
@@ -162,7 +161,9 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 
 	job := s.testCreateForeignKey(c, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
 	testCheckJobDone(c, d, job, true)
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	mu.Lock()
 	hErr := hookErr
@@ -208,7 +209,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	c.Assert(hErr, IsNil)
 	c.Assert(ok, IsTrue)
 
-	err = ctx.NewTxn()
+	err = ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 
 	tc.onJobUpdated = func(job *model.Job) {
@@ -220,6 +221,8 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
 	testCheckJobDone(c, d, job, false)
 
-	err = ctx.Txn(true).Commit(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }

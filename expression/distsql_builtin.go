@@ -414,6 +414,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 
 	case tipb.ScalarFuncSig_JsonTypeSig:
 		f = &builtinJSONTypeSig{base}
+	case tipb.ScalarFuncSig_JsonQuoteSig:
+		f = &builtinQuoteSig{base}
 	case tipb.ScalarFuncSig_JsonUnquoteSig:
 		f = &builtinJSONUnquoteSig{base}
 	case tipb.ScalarFuncSig_JsonArraySig:
@@ -461,7 +463,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 
 	default:
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
-		return nil, errors.Trace(e)
+		return nil, e
 	}
 	return f, nil
 }
@@ -471,7 +473,7 @@ func newDistSQLFunctionBySig(sc *stmtctx.StatementContext, sigCode tipb.ScalarFu
 	ctx.GetSessionVars().StmtCtx = sc
 	f, err := getSignatureByPB(ctx, sigCode, tp, args)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
@@ -486,7 +488,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_ColumnRef:
 		_, offset, err := codec.DecodeInt(expr.Val)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		return &Column{Index: int(offset), RetType: tps[offset]}, nil
 	case tipb.ExprType_Null:
@@ -521,7 +523,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		if child.Tp == tipb.ExprType_ValueList {
 			results, err := decodeValueList(child.Val)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			if len(results) == 0 {
 				return &Constant{Value: types.NewDatum(false), RetType: types.NewFieldType(mysql.TypeLonglong)}, nil
@@ -531,7 +533,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		}
 		arg, err := PBToExpr(child, tps, sc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 		args = append(args, arg)
 	}
@@ -552,19 +554,19 @@ func convertTime(data []byte, ftPB *tipb.FieldType, tz *time.Location) (*Constan
 	ft := fieldTypeFromPB(ftPB)
 	_, v, err := codec.DecodeUint(data)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	var t types.Time
 	t.Type = ft.Tp
 	t.Fsp = ft.Decimal
 	err = t.FromPackedUint(v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
 		err = t.ConvertTimeZone(time.UTC, tz)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, err
 		}
 	}
 	return &Constant{Value: types.NewTimeDatum(t), RetType: ft}, nil
@@ -576,7 +578,7 @@ func decodeValueList(data []byte) ([]Expression, error) {
 	}
 	list, err := codec.Decode(data, 1)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	result := make([]Expression, 0, len(list))
 	for _, value := range list {

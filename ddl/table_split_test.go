@@ -15,6 +15,8 @@ package ddl_test
 
 import (
 	"bytes"
+	"context"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -24,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
-	"golang.org/x/net/context"
 )
 
 type testDDLTableSplitSuite struct{}
@@ -37,11 +38,11 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	defer store.Close()
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
-	ddl.EnableSplitTableRegion = true
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer dom.Close()
-	ddl.EnableSplitTableRegion = false
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	infoSchema := dom.InfoSchema()
 	c.Assert(infoSchema, NotNil)
 	t, err := infoSchema.TableByName(model.NewCIStr("mysql"), model.NewCIStr("tidb"))
@@ -59,7 +60,7 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 
 		// Region cache may be out of date, so we need to drop this expired region and load it again.
 		cache.DropRegion(loc.Region)
-		if bytes.Compare(loc.StartKey, []byte(regionStartKey)) == 0 {
+		if bytes.Equal(loc.StartKey, []byte(regionStartKey)) {
 			return
 		}
 		time.Sleep(3 * time.Millisecond)

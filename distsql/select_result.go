@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
-	"golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -68,6 +69,10 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+
+	// copPlanIDs contains all copTasks' planIDs,
+	// which help to collect copTasks' runtime stats.
+	copPlanIDs []string
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -116,7 +121,7 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
+	for !chk.IsFull() {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
@@ -157,9 +162,10 @@ func (r *selectResult) getSelectResp() error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
+		r.updateCopRuntimeStats(re.result.GetExecDetails().CalleeAddress)
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
-		sc.MergeExecDetails(re.result.GetExecDetails())
+		sc.MergeExecDetails(re.result.GetExecDetails(), nil)
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
@@ -167,11 +173,30 @@ func (r *selectResult) getSelectResp() error {
 	}
 }
 
+func (r *selectResult) updateCopRuntimeStats(callee string) {
+	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+		return
+	}
+	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+		log.Errorf("invalid cop task execution summaries length, expected: %v, received: %v",
+			len(r.copPlanIDs), len(r.selectResp.GetExecutionSummaries()))
+		return
+	}
+
+	for i, detail := range r.selectResp.GetExecutionSummaries() {
+		if detail != nil && detail.TimeProcessedNs != nil &&
+			detail.NumProducedRows != nil && detail.NumIterations != nil {
+			planID := r.copPlanIDs[i]
+			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+				RecordOneCopTask(planID, callee, detail)
+		}
+	}
+}
+
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
-	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
+	for !chk.IsFull() && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {

@@ -309,7 +309,9 @@ type functionClass interface {
 	getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error)
 }
 
-// funcs holds all registered builtin functions.
+// funcs holds all registered builtin functions. When new function is added,
+// check expression/function_traits.go to see if it should be appended to
+// any set there.
 var funcs = map[string]functionClass{
 	// common functions
 	ast.Coalesce: &coalesceFunctionClass{baseFunctionClass{ast.Coalesce, 1, -1}},
@@ -413,6 +415,7 @@ var funcs = map[string]functionClass{
 	ast.Year:             &yearFunctionClass{baseFunctionClass{ast.Year, 1, 1}},
 	ast.YearWeek:         &yearWeekFunctionClass{baseFunctionClass{ast.YearWeek, 1, 2}},
 	ast.LastDay:          &lastDayFunctionClass{baseFunctionClass{ast.LastDay, 1, 1}},
+	ast.TiDBParseTso:     &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},

@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -246,9 +245,9 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		var ok bool
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
-				value, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+				value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 				if err != nil {
-					terror.Log(errors.Trace(err))
+					terror.Log(err)
 					return nil
 				}
 				if !value {
@@ -292,10 +291,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
-	solver := &propConstSolver{}
-	solver.colMapper = make(map[int64]int)
-	solver.ctx = ctx
-	return solver.solve(conditions)
+	return newPropConstSolver().PropagateConstant(ctx, conditions)
 }
 
 type propOuterJoinConstSolver struct {
@@ -304,6 +300,10 @@ type propOuterJoinConstSolver struct {
 	filterConds []Expression
 	outerSchema *Schema
 	innerSchema *Schema
+	// nullSensitive indicates if this outer join is null sensitive, if true, we cannot generate
+	// additional `col is not null` condition from column equal conditions. Specifically, this value
+	// is true for LeftOuterSemiJoin and AntiLeftOuterSemiJoin.
+	nullSensitive bool
 }
 
 func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
@@ -338,9 +338,9 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 		var ok bool
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
-				value, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
+				value, _, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 				if err != nil {
-					terror.Log(errors.Trace(err))
+					terror.Log(err)
 					return nil
 				}
 				if !value {
@@ -465,7 +465,7 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 // 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
 // Derived new expressions must be appended into join condition, not filter condition.
 func (s *propOuterJoinConstSolver) propagateColumnEQ() {
-	visited := make([]bool, len(s.joinConds)+len(s.filterConds))
+	visited := make([]bool, 2*len(s.joinConds)+len(s.filterConds))
 	s.unionSet = disjointset.NewIntSet(len(s.columns))
 	var outerCol, innerCol *Column
 	// Only consider column equal condition in joinConds.
@@ -477,6 +477,22 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			innerID := s.getColID(innerCol)
 			s.unionSet.Union(outerID, innerID)
 			visited[i] = true
+			// Generate `innerCol is not null` from `outerCol = innerCol`. Note that `outerCol is not null`
+			// does not hold since we are in outer join.
+			// For AntiLeftOuterSemiJoin, this does not work, for example:
+			// `select *, t1.a not in (select t2.b from t t2) from t t1` does not imply `t2.b is not null`.
+			// For LeftOuterSemiJoin, this does not work either, for example:
+			// `select *, t1.a in (select t2.b from t t2) from t t1`
+			// rows with t2.b is null would impact whether LeftOuterSemiJoin should output 0 or null if there
+			// is no row satisfying t2.b = t1.a
+			if s.nullSensitive {
+				continue
+			}
+			childCol := s.innerSchema.RetrieveColumn(innerCol)
+			if !mysql.HasNotNullFlag(childCol.RetType.Flag) {
+				notNullExpr := BuildNotNullExpr(s.ctx, childCol)
+				s.joinConds = append(s.joinConds, notNullExpr)
+			}
 		}
 	}
 	lenJoinConds := len(s.joinConds)
@@ -542,12 +558,32 @@ func propagateConstantDNF(ctx sessionctx.Context, conds []Expression) []Expressi
 // Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
-func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Expression, outerSchema, innerSchema *Schema) ([]Expression, []Expression) {
+func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Expression,
+	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
-		outerSchema: outerSchema,
-		innerSchema: innerSchema,
+		outerSchema:   outerSchema,
+		innerSchema:   innerSchema,
+		nullSensitive: nullSensitive,
 	}
 	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx
 	return solver.solve(joinConds, filterConds)
+}
+
+// PropagateConstantSolver is a constant propagate solver.
+type PropagateConstantSolver interface {
+	PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression
+}
+
+// newPropConstSolver returns a PropagateConstantSolver.
+func newPropConstSolver() PropagateConstantSolver {
+	solver := &propConstSolver{}
+	solver.colMapper = make(map[int64]int)
+	return solver
+}
+
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
+func (s *propConstSolver) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+	s.ctx = ctx
+	return s.solve(conditions)
 }

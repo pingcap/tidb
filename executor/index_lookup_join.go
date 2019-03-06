@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"sort"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var _ Executor = &IndexLookUpJoin{}
@@ -94,6 +94,7 @@ type lookUpJoinTask struct {
 	doneCh   chan error
 	cursor   int
 	hasMatch bool
+	hasNull  bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -146,9 +147,12 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	// The trick here is `getStartTS` will cache start ts in the dataReaderBuilder,
 	// so even txn is destroyed later, the dataReaderBuilder could still use the
 	// cached start ts to construct DAG.
-	e.innerCtx.readerBuilder.getStartTS()
+	_, err := e.innerCtx.readerBuilder.getStartTS()
+	if err != nil {
+		return err
+	}
 
-	err := e.children[0].Open(ctx)
+	err = e.children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -208,12 +212,12 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 }
 
 // Next implements the Executor interface.
-func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.RecordBatch) error {
 	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
-	chk.Reset()
+	req.Reset()
 	e.joinResult.Reset()
 	for {
 		task, err := e.getFinishedTask(ctx)
@@ -231,20 +235,22 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, err := e.joiner.tryToMatch(outerRow, e.innerIter, chk)
+			matched, isNull, err := e.joiner.tryToMatch(outerRow, e.innerIter, req.Chunk)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			task.hasMatch = task.hasMatch || matched
+			task.hasNull = task.hasNull || isNull
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
 			if !task.hasMatch {
-				e.joiner.onMissMatch(outerRow, chk)
+				e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
 			}
 			task.cursor++
 			task.hasMatch = false
+			task.hasNull = false
 		}
-		if chk.NumRows() == e.maxChunkSize {
+		if req.NumRows() == e.maxChunkSize {
 			return nil
 		}
 	}
@@ -356,7 +362,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 
 	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for task.outerResult.NumRows() < ow.batchSize {
-		err := ow.executor.Next(ctx, ow.executorChk)
+		err := ow.executor.Next(ctx, chunk.NewRecordBatch(ow.executorChk))
 		if err != nil {
 			return task, errors.Trace(err)
 		}
@@ -477,7 +483,12 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 	dLookupKey := make([]types.Datum, 0, keyLen)
 	for i, keyCol := range iw.outerCtx.keyCols {
 		outerValue := outerRow.GetDatum(keyCol, iw.outerCtx.rowTypes[keyCol])
-
+		// Join-on-condition can be promised to be equal-condition in
+		// IndexNestedLoopJoin, thus the filter will always be false if
+		// outerValue is null, and we don't need to lookup it.
+		if outerValue.IsNull() {
+			return nil, nil
+		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
@@ -539,7 +550,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := innerExec.Next(ctx, iw.executorChk)
+		err := innerExec.Next(ctx, chunk.NewRecordBatch(iw.executorChk))
 		if err != nil {
 			return errors.Trace(err)
 		}

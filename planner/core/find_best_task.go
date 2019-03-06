@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/tools/container/intsets"
 )
 
 const (
@@ -48,22 +49,17 @@ var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, prop
 var invalidTask = &rootTask{cst: math.MaxFloat64}
 
 // getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
-// consider the case that all expression are columns and all of them are asc or desc.
+// consider the case that all expression are columns.
 func getPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) {
-	desc := false
-	cols := make([]*expression.Column, 0, len(items))
-	for i, item := range items {
+	propItems := make([]property.Item, 0, len(items))
+	for _, item := range items {
 		col, ok := item.Expr.(*expression.Column)
 		if !ok {
 			return nil, false
 		}
-		cols = append(cols, col)
-		desc = item.Desc
-		if i > 0 && item.Desc != items[i-1].Desc {
-			return nil, false
-		}
+		propItems = append(propItems, property.Item{Col: col, Desc: item.Desc})
 	}
-	return &property.PhysicalProperty{Cols: cols, Desc: desc}, true
+	return &property.PhysicalProperty{Items: propItems}, true
 }
 
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
@@ -100,7 +96,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 
 	// If prop.enforced is true, cols of prop as parameter in exhaustPhysicalPlans should be nil
 	// And reset it for enforcing task prop and storing map<prop,task>
-	oldPropCols := prop.Cols
+	oldPropCols := prop.Items
 	if prop.Enforced {
 		// First, get the bestTask without enforced prop
 		prop.Enforced = false
@@ -110,16 +106,16 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 		}
 		prop.Enforced = true
 		// Next, get the bestTask with enforced prop
-		prop.Cols = []*expression.Column{}
+		prop.Items = []property.Item{}
 	}
 	physicalPlans := p.self.exhaustPhysicalPlans(prop)
-	prop.Cols = oldPropCols
+	prop.Items = oldPropCols
 
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
 		childTasks = childTasks[:0]
 		for i, child := range p.children {
-			childTask, err := child.findBestTask(pp.getChildReqProps(i))
+			childTask, err := child.findBestTask(pp.GetChildReqProps(i))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -185,7 +181,7 @@ func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task tas
 func (ds *DataSource) tryToGetDualTask() (task, error) {
 	for _, cond := range ds.pushedDownConds {
 		if con, ok := cond.(*expression.Constant); ok && con.DeferredExpr == nil {
-			result, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, chunk.Row{})
+			result, _, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, chunk.Row{})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -199,6 +195,135 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 		}
 	}
 	return nil, nil
+}
+
+// candidatePath is used to maintain required info for skyline pruning.
+type candidatePath struct {
+	path         *accessPath
+	columnSet    *intsets.Sparse // columnSet is the set of columns that occurred in the access conditions.
+	isSingleScan bool
+	isMatchProp  bool
+}
+
+// compareColumnSet will compares the two set. The last return value is used to indicate
+// if they are comparable, it is false when both two sets have columns that do not occur in the other.
+// When the second return value is true, the value of first:
+// (1) -1 means that `l` is a strict subset of `r`;
+// (2) 0 means that `l` equals to `r`;
+// (3) 1 means that `l` is a strict superset of `r`.
+func compareColumnSet(l, r *intsets.Sparse) (int, bool) {
+	lLen, rLen := l.Len(), r.Len()
+	if lLen < rLen {
+		// -1 is meaningful only when l.SubsetOf(r) is true.
+		return -1, l.SubsetOf(r)
+	}
+	if lLen == rLen {
+		// 0 is meaningful only when l.SubsetOf(r) is true.
+		return 0, l.SubsetOf(r)
+	}
+	// 1 is meaningful only when r.SubsetOf(l) is true.
+	return 1, r.SubsetOf(l)
+}
+
+func compareBool(l, r bool) int {
+	if l == r {
+		return 0
+	}
+	if l == false {
+		return -1
+	}
+	return 1
+}
+
+// compareCandidates is the core of skyline pruning. It compares the two candidate paths on three dimensions:
+// (1): the set of columns that occurred in the access condition,
+// (2): whether or not it matches the physical property
+// (3): does it require a double scan.
+// If `x` is not worse than `y` at all factors,
+// and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
+func compareCandidates(lhs, rhs *candidatePath) int {
+	setsResult, comparable := compareColumnSet(lhs.columnSet, rhs.columnSet)
+	if !comparable {
+		return 0
+	}
+	scanResult := compareBool(lhs.isSingleScan, rhs.isSingleScan)
+	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
+	sum := setsResult + scanResult + matchResult
+	if setsResult >= 0 && scanResult >= 0 && matchResult >= 0 && sum > 0 {
+		return 1
+	}
+	if setsResult <= 0 && scanResult <= 0 && matchResult <= 0 && sum < 0 {
+		return -1
+	}
+	return 0
+}
+
+func (ds *DataSource) getTableCandidate(path *accessPath, prop *property.PhysicalProperty) *candidatePath {
+	candidate := &candidatePath{path: path}
+	pkCol := ds.getPKIsHandleCol()
+	candidate.isMatchProp = len(prop.Items) == 1 && pkCol != nil && prop.Items[0].Col.Equal(nil, pkCol)
+	candidate.columnSet = expression.ExtractColumnSet(path.accessConds)
+	candidate.isSingleScan = true
+	return candidate
+}
+
+func (ds *DataSource) getIndexCandidate(path *accessPath, prop *property.PhysicalProperty) *candidatePath {
+	candidate := &candidatePath{path: path}
+	all, _ := prop.AllSameOrder()
+	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+	// it needs not to keep order for index scan.
+	if !prop.IsEmpty() && all {
+		for i, col := range path.index.Columns {
+			if col.Name.L == prop.Items[0].Col.ColName.L {
+				candidate.isMatchProp = matchIndicesProp(path.index.Columns[i:], prop.Items)
+				break
+			} else if i >= path.eqCondCount {
+				break
+			}
+		}
+	}
+	candidate.columnSet = expression.ExtractColumnSet(path.accessConds)
+	candidate.isSingleScan = isCoveringIndex(ds.schema.Columns, path.index.Columns, ds.tableInfo.PKIsHandle)
+	return candidate
+}
+
+// skylinePruning prunes access paths according to different factors. An access path can be pruned only if
+// there exists a path that is not worse than it at all factors and there is at least one better factor.
+func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candidatePath {
+	candidates := make([]*candidatePath, 0, 4)
+	for _, path := range ds.possibleAccessPaths {
+		// if we already know the range of the scan is empty, just return a TableDual
+		if len(path.ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+			return []*candidatePath{{path: path}}
+		}
+		var currentCandidate *candidatePath
+		if path.isTablePath {
+			currentCandidate = ds.getTableCandidate(path, prop)
+		} else if len(path.accessConds) > 0 || !prop.IsEmpty() || path.forced {
+			// We will use index to generate physical plan if:
+			// this path's access cond is not nil or
+			// we have prop to match or
+			// this index is forced to choose.
+			currentCandidate = ds.getIndexCandidate(path, prop)
+		} else {
+			continue
+		}
+		pruned := false
+		for i := len(candidates) - 1; i >= 0; i-- {
+			result := compareCandidates(candidates[i], currentCandidate)
+			if result == 1 {
+				pruned = true
+				// We can break here because the current candidate cannot prune others anymore.
+				break
+			} else if result == -1 {
+				candidates = append(candidates[:i], candidates[i+1:]...)
+			}
+		}
+		if !pruned {
+			candidates = append(candidates, currentCandidate)
+		}
+	}
+	return candidates
 }
 
 // findBestTask implements the PhysicalPlan interface.
@@ -217,7 +342,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
-	oldPropCols := prop.Cols
+	oldPropCols := prop.Items
 	if prop.Enforced {
 		// First, get the bestTask without enforced prop
 		prop.Enforced = false
@@ -231,14 +356,14 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			return
 		}
 		// Next, get the bestTask with enforced prop
-		prop.Cols = []*expression.Column{}
+		prop.Items = []property.Item{}
 	}
 	defer func() {
 		if err != nil {
 			return
 		}
 		if prop.Enforced {
-			prop.Cols = oldPropCols
+			prop.Items = oldPropCols
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 		}
 		ds.storeTask(prop, t)
@@ -255,7 +380,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 
 	t = invalidTask
 
-	for _, path := range ds.possibleAccessPaths {
+	candidates := ds.skylinePruning(prop)
+	for _, candidate := range candidates {
+		path := candidate.path
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats)
@@ -265,7 +392,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}, nil
 		}
 		if path.isTablePath {
-			tblTask, err := ds.convertToTableScan(prop, path)
+			tblTask, err := ds.convertToTableScan(prop, candidate)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -274,18 +401,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err
 			}
 			continue
 		}
-		// We will use index to generate physical plan if:
-		// this path's access cond is not nil or
-		// we have prop to match or
-		// this index is forced to choose.
-		if len(path.accessConds) > 0 || len(prop.Cols) > 0 || path.forced {
-			idxTask, err := ds.convertToIndexScan(prop, path)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if idxTask.cost() < t.cost() {
-				t = idxTask
-			}
+		idxTask, err := ds.convertToIndexScan(prop, candidate)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if idxTask.cost() < t.cost() {
+			t = idxTask
 		}
 	}
 	return
@@ -327,7 +448,8 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
-func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *accessPath) (task task, err error) {
+func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
+	path := candidate.path
 	idx := path.index
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -350,7 +472,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	}
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
-	if !isCoveringIndex(ds.schema.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+	if !candidate.isSingleScan {
 		// If it's parent requires single read task, return max cost.
 		if prop.TaskTp == property.CopSingleReadTaskType {
 			return invalidTask, nil
@@ -369,23 +491,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 		return invalidTask, nil
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
-	// Check if this plan matches the property.
-	matchProperty := false
-	if !prop.IsEmpty() {
-		for i, col := range idx.Columns {
-			// not matched
-			if col.Name.L == prop.Cols[0].ColName.L {
-				matchProperty = matchIndicesProp(idx.Columns[i:], prop.Cols)
-				break
-			} else if i >= path.eqCondCount {
-				break
-			}
-		}
-	}
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+	if (candidate.isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
 		selectivity := ds.stats.RowCount / path.countAfterAccess
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
@@ -393,13 +502,14 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 	is.stats.UsePseudoStats = ds.statisticTable.Pseudo
 	cop.cst = rowCount * scanFactor
 	task = cop
-	if matchProperty {
-		if prop.Desc {
+	if candidate.isMatchProp {
+		if prop.Items[0].Desc {
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
 		if cop.tablePlan != nil {
 			cop.tablePlan.(*PhysicalTableScan).appendExtraHandleCol(ds)
+			cop.doubleReadNeedProj = true
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
@@ -477,12 +587,12 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	}
 }
 
-func matchIndicesProp(idxCols []*model.IndexColumn, propCols []*expression.Column) bool {
-	if len(idxCols) < len(propCols) {
+func matchIndicesProp(idxCols []*model.IndexColumn, propItems []property.Item) bool {
+	if len(idxCols) < len(propItems) {
 		return false
 	}
-	for i, col := range propCols {
-		if idxCols[i].Length != types.UnspecifiedLength || col.ColName.L != idxCols[i].Name.L {
+	for i, item := range propItems {
+		if idxCols[i].Length != types.UnspecifiedLength || item.Col.ColName.L != idxCols[i].Name.L {
 			return false
 		}
 	}
@@ -503,7 +613,7 @@ func splitIndexFilterConditions(conditions []expression.Expression, indexColumns
 }
 
 // convertToTableScan converts the DataSource to table scan.
-func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *accessPath) (task task, err error) {
+func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
 	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
@@ -518,15 +628,14 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 		physicalTableID: ds.physicalTableID,
 	}.Init(ds.ctx)
 	ts.SetSchema(ds.schema)
-	var pkCol *expression.Column
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-			pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
 				ts.Hist = &ds.statisticTable.Columns[pkColInfo.ID].Histogram
 			}
 		}
 	}
+	path := candidate.path
 	ts.Ranges = path.ranges
 	ts.AccessCondition, ts.filterCondition = path.accessConds, path.tableFilters
 	rowCount := path.countAfterAccess
@@ -535,19 +644,18 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := len(prop.Cols) == 1 && pkCol != nil && prop.Cols[0].Equal(nil, pkCol)
 	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+	if (candidate.isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
 		selectivity := ds.stats.RowCount / rowCount
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
 	ts.stats = property.NewSimpleStats(rowCount)
 	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
 	copTask.cst = rowCount * scanFactor
-	if matchProperty {
-		if prop.Desc {
+	if candidate.isMatchProp {
+		if prop.Items[0].Desc {
 			ts.Desc = true
 			copTask.cst = rowCount * descScanFactor
 		}

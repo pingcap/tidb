@@ -14,6 +14,7 @@
 package owner
 
 import (
+	"context"
 	"math"
 	"net"
 	"os"
@@ -21,22 +22,18 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(&logutil.LogConfig{
-		Level:  logLevel,
-		Format: "highlight",
-	})
+	logutil.InitLogger(logutil.NewLogConfig(logLevel, "highlight", "", logutil.EmptyFileLogConfig, false))
 	TestingT(t)
 }
 

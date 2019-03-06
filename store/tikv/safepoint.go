@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"crypto/tls"
 	"strconv"
 	"sync"
@@ -22,7 +23,6 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/pingcap/errors"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 // Safe point constants.
@@ -69,7 +69,7 @@ func (w *MockSafePointKV) Put(k string, v string) error {
 func (w *MockSafePointKV) Get(k string) (string, error) {
 	w.mockLock.RLock()
 	defer w.mockLock.RUnlock()
-	elem, _ := w.store[k]
+	elem := w.store[k]
 	return elem, nil
 }
 

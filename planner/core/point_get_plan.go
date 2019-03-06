@@ -88,8 +88,8 @@ func (p *PointGetPlan) ExplainInfo() string {
 	return buffer.String()
 }
 
-// getChildReqProps gets the required property by child index.
-func (p *PointGetPlan) getChildReqProps(idx int) *property.PhysicalProperty {
+// GetChildReqProps gets the required property by child index.
+func (p *PointGetPlan) GetChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
 }
 
@@ -116,7 +116,9 @@ func (p *PointGetPlan) Children() []PhysicalPlan {
 func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-func (p *PointGetPlan) ResolveIndices() {}
+func (p *PointGetPlan) ResolveIndices() error {
+	return nil
+}
 
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
@@ -148,8 +150,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if selStmt.Having != nil || selStmt.LockTp != ast.SelectLockNone {
 		return nil
 	} else if selStmt.Limit != nil {
-		sc := ctx.GetSessionVars().StmtCtx
-		count, offset, err := extractLimitCountOffset(sc, selStmt.Limit)
+		count, offset, err := extractLimitCountOffset(ctx, selStmt.Limit)
 		if err != nil || count == 0 || offset > 0 {
 			return nil
 		}
@@ -456,7 +457,10 @@ func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*
 			return nil
 		}
 		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
-		newAssign.Expr = expr.ResolveIndices(fastSelect.schema)
+		newAssign.Expr, err = expr.ResolveIndices(fastSelect.schema)
+		if err != nil {
+			return nil
+		}
 		orderedList = append(orderedList, newAssign)
 	}
 	return orderedList

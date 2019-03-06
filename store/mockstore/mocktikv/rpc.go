@@ -15,6 +15,7 @@ package mocktikv
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"golang.org/x/net/context"
 )
 
 // For gofail injection.
@@ -53,6 +53,13 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				PrimaryLock: locked.Primary,
 				LockVersion: locked.StartTS,
 				LockTtl:     locked.TTL,
+			},
+		}
+	}
+	if alreadyExist, ok := errors.Cause(err).(*ErrKeyAlreadyExist); ok {
+		return &kvrpcpb.KeyError{
+			AlreadyExist: &kvrpcpb.AlreadyExist{
+				Key: alreadyExist.Key,
 			},
 		}
 	}
@@ -101,15 +108,15 @@ type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore MVCCStore
 
-	// store id for current request
+	// storeID stores id for current request
 	storeID uint64
-	// Used for handling normal request.
+	// startKey is used for handling normal request.
 	startKey []byte
 	endKey   []byte
-	// Used for handling coprocessor request.
+	// rawStartKey is used for handling coprocessor request.
 	rawStartKey []byte
 	rawEndKey   []byte
-	// Used for current request.
+	// isolationLevel is used for current request.
 	isolationLevel kvrpcpb.IsolationLevel
 }
 
@@ -171,14 +178,14 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	// Region epoch does not match.
 	if !proto.Equal(region.GetRegionEpoch(), ctx.GetRegionEpoch()) {
 		nextRegion, _ := h.cluster.GetRegionByKey(region.GetEndKey())
-		newRegions := []*metapb.Region{region}
+		currentRegions := []*metapb.Region{region}
 		if nextRegion != nil {
-			newRegions = append(newRegions, nextRegion)
+			currentRegions = append(currentRegions, nextRegion)
 		}
 		return &errorpb.Error{
-			Message: *proto.String("stale epoch"),
-			StaleEpoch: &errorpb.StaleEpoch{
-				NewRegions: newRegions,
+			Message: *proto.String("epoch not match"),
+			EpochNotMatch: &errorpb.EpochNotMatch{
+				CurrentRegions: currentRegions,
 			},
 		}
 	}
@@ -475,7 +482,30 @@ func (h *rpcHandler) handleKvRawScan(req *kvrpcpb.RawScanRequest) *kvrpcpb.RawSc
 			},
 		}
 	}
-	pairs := rawKV.RawScan(req.GetStartKey(), h.endKey, int(req.GetLimit()))
+
+	var pairs []Pair
+	if req.Reverse {
+		lowerBound := h.startKey
+		if bytes.Compare(req.EndKey, lowerBound) > 0 {
+			lowerBound = req.EndKey
+		}
+		pairs = rawKV.RawReverseScan(
+			req.StartKey,
+			lowerBound,
+			int(req.GetLimit()),
+		)
+	} else {
+		upperBound := h.endKey
+		if len(req.EndKey) > 0 && (len(upperBound) == 0 || bytes.Compare(req.EndKey, upperBound) < 0) {
+			upperBound = req.EndKey
+		}
+		pairs = rawKV.RawScan(
+			req.StartKey,
+			upperBound,
+			int(req.GetLimit()),
+		)
+	}
+
 	return &kvrpcpb.RawScanResponse{
 		Kvs: convertToPbPairs(pairs),
 	}
@@ -749,6 +779,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		ctx1, cancel := context.WithCancel(ctx)
 		copStream, err := handler.handleCopStream(ctx1, r)
 		if err != nil {
+			cancel()
 			return nil, errors.Trace(err)
 		}
 

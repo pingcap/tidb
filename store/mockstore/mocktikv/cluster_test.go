@@ -15,6 +15,7 @@ package mocktikv_test
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"strconv"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testClusterSuite{})

@@ -14,9 +14,8 @@
 package oracle
 
 import (
+	"context"
 	"time"
-
-	"golang.org/x/net/context"
 )
 
 // Oracle is the interface that provides strictly ascending timestamps.

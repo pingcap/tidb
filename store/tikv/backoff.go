@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -87,7 +87,7 @@ const (
 	boTiKVRPC backoffType = iota
 	BoTxnLock
 	boTxnLockFast
-	boPDRPC
+	BoPDRPC
 	BoRegionMiss
 	BoUpdateLeader
 	boServerBusy
@@ -104,7 +104,7 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
 		return NewBackoffFn(200, 3000, EqualJitter)
 	case boTxnLockFast:
 		return NewBackoffFn(vars.BackoffLockFast, 3000, EqualJitter)
-	case boPDRPC:
+	case BoPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case BoRegionMiss:
 		// change base time to 2ms, because it may recover soon.
@@ -125,7 +125,7 @@ func (t backoffType) String() string {
 		return "txnLock"
 	case boTxnLockFast:
 		return "txnLockFast"
-	case boPDRPC:
+	case BoPDRPC:
 		return "pdRPC"
 	case BoRegionMiss:
 		return "regionMiss"
@@ -143,7 +143,7 @@ func (t backoffType) TError() error {
 		return ErrTiKVServerTimeout
 	case BoTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
-	case boPDRPC:
+	case BoPDRPC:
 		return ErrPDServerTimeout.GenWithStackByArgs(txnRetryableMark)
 	case BoRegionMiss, BoUpdateLeader:
 		return ErrRegionUnavailable
@@ -239,7 +239,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
-		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
+		errMsg := fmt.Sprintf("%s backoffer.maxSleep %dms is exceeded, errors:", typ.String(), b.maxSleep)
 		for i, err := range b.errors {
 			// Print only last 3 errors for non-DEBUG log levels.
 			if log.GetLevel() == log.DebugLevel || i >= len(b.errors)-3 {

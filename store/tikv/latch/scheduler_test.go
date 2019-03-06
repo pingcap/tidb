@@ -86,7 +86,7 @@ func generate() [][]byte {
 
 func contains(x []byte, set [][]byte) bool {
 	for _, y := range set {
-		if bytes.Compare(x, y) == 0 {
+		if bytes.Equal(x, y) {
 			return true
 		}
 	}

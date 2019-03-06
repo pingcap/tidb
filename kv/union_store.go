@@ -14,8 +14,6 @@
 package kv
 
 import (
-	"bytes"
-
 	"github.com/pingcap/errors"
 )
 
@@ -23,9 +21,8 @@ import (
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
 	MemBuffer
-	// CheckLazyConditionPairs loads all lazy values from store then checks if all values are matched.
-	// Lazy condition pairs should be checked before transaction commit.
-	CheckLazyConditionPairs() error
+	// Returns related condition pair
+	LookupConditionPair(k Key) *conditionPair
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -54,6 +51,14 @@ type conditionPair struct {
 	key   Key
 	value []byte
 	err   error
+}
+
+func (c *conditionPair) ShouldNotExist() bool {
+	return len(c.value) == 0
+}
+
+func (c *conditionPair) Err() error {
+	return c.err
 }
 
 // unionStore is an in-memory Store which contains a buffer for write and a
@@ -105,7 +110,7 @@ type lazyMemBuffer struct {
 
 func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 	if lmb.mb == nil {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, ErrNotExist
 	}
 
 	return lmb.mb.Get(k)
@@ -176,7 +181,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 			} else {
 				us.markLazyConditionPair(k, nil, ErrKeyExists)
 			}
-			return nil, errors.Trace(ErrNotExist)
+			return nil, ErrNotExist
 		}
 	}
 	if IsErrNotFound(err) {
@@ -186,7 +191,7 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 		return v, errors.Trace(err)
 	}
 	if len(v) == 0 {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, ErrNotExist
 	}
 	return v, nil
 }
@@ -201,30 +206,9 @@ func (us *unionStore) markLazyConditionPair(k Key, v []byte, e error) {
 	}
 }
 
-// CheckLazyConditionPairs implements the UnionStore interface.
-func (us *unionStore) CheckLazyConditionPairs() error {
-	if len(us.lazyConditionPairs) == 0 {
-		return nil
-	}
-	keys := make([]Key, 0, len(us.lazyConditionPairs))
-	for _, v := range us.lazyConditionPairs {
-		keys = append(keys, v.key)
-	}
-	values, err := us.snapshot.BatchGet(keys)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for k, v := range us.lazyConditionPairs {
-		if len(v.value) == 0 {
-			if _, exist := values[k]; exist {
-				return errors.Trace(v.err)
-			}
-		} else {
-			if bytes.Compare(values[k], v.value) != 0 {
-				return errors.Trace(ErrLazyConditionPairsNotMatch)
-			}
-		}
+func (us *unionStore) LookupConditionPair(k Key) *conditionPair {
+	if c, ok := us.lazyConditionPairs[string(k)]; ok {
+		return c
 	}
 	return nil
 }

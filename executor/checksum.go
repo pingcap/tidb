@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"context"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 var _ Executor = &ChecksumTableExec{}
@@ -83,17 +83,17 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 }
 
 // Next implements the Executor Next interface.
-func (e *ChecksumTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+func (e *ChecksumTableExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	req.Reset()
 	if e.done {
 		return nil
 	}
 	for _, t := range e.tables {
-		chk.AppendString(0, t.DBInfo.Name.O)
-		chk.AppendString(1, t.TableInfo.Name.O)
-		chk.AppendUint64(2, t.Response.Checksum)
-		chk.AppendUint64(3, t.Response.TotalKvs)
-		chk.AppendUint64(4, t.Response.TotalBytes)
+		req.AppendString(0, t.DBInfo.Name.O)
+		req.AppendString(1, t.TableInfo.Name.O)
+		req.AppendUint64(2, t.Response.Checksum)
+		req.AppendUint64(3, t.Response.TotalKvs)
+		req.AppendUint64(4, t.Response.TotalBytes)
 	}
 	e.done = true
 	return nil

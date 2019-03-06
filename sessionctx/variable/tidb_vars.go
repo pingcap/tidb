@@ -71,6 +71,10 @@ const (
 	// split data into multiple batches and use a single txn for each batch. This will be helpful when deleting large data.
 	TiDBBatchDelete = "tidb_batch_delete"
 
+	// tidb_batch_commit is used to enable/disable auto-split the transaction.
+	// If set this option on, the transaction will be committed when it reaches stmt-count-limit and starts a new transaction.
+	TiDBBatchCommit = "tidb_batch_commit"
+
 	// tidb_dml_batch_size is used to split the insert/delete data into small batches.
 	// It only takes effort when tidb_batch_insert/tidb_batch_delete is on.
 	// Its default value is 20000. When the row size is large, 20k rows could be larger than 100MB.
@@ -122,6 +126,9 @@ const (
 	// on: always enable table partition.
 	// off: always disable table partition.
 	TiDBEnableTablePartition = "tidb_enable_table_partition"
+
+	// TiDBCheckMb4ValueInUtf8 is used to control whether to enable the check wrong utf8 value.
+	TiDBCheckMb4ValueInUtf8 = "tidb_check_mb4_value_in_utf8"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -168,8 +175,11 @@ const (
 	// when we need to keep the data output order the same as the order of index data.
 	TiDBIndexSerialScanConcurrency = "tidb_index_serial_scan_concurrency"
 
-	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
+	// TiDBMaxChunkSize is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
+
+	// TiDBInitChunkSize is used to control the init chunk size during query execution.
+	TiDBInitChunkSize = "tidb_init_chunk_size"
 
 	// tidb_enable_cascades_planner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
@@ -200,6 +210,12 @@ const (
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
 
+	// tidb_ddl_reorg_batch_size defines the transaction batch size of ddl reorg workers.
+	TiDBDDLReorgBatchSize = "tidb_ddl_reorg_batch_size"
+
+	// tidb_ddl_error_count_limit defines the count of ddl error limit.
+	TiDBDDLErrorCountLimit = "tidb_ddl_error_count_limit"
+
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
@@ -215,6 +231,9 @@ const (
 	// tidb_constraint_check_in_place indicates to check the constraint when the SQL executing.
 	// It could hurt the performance of bulking insert when it is ON.
 	TiDBConstraintCheckInPlace = "tidb_constraint_check_in_place"
+
+	// tidb_enable_window_function is used to control whether to enable the window function.
+	TiDBEnableWindowFunction = "tidb_enable_window_function"
 )
 
 // Default TiDB system variable values.
@@ -237,9 +256,13 @@ const (
 	DefOptInSubqToJoinAndAgg         = true
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
+	DefBatchCommit                   = false
 	DefCurretTS                      = 0
-	DefMaxChunkSize                  = 32
+	DefInitChunkSize                 = 32
+	DefMaxChunkSize                  = 1024
 	DefDMLBatchSize                  = 20000
+	DefMaxPreparedStmtCount          = -1
+	DefWaitTimeout                   = 28800
 	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
@@ -255,18 +278,26 @@ const (
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
 	DefTiDBDDLReorgWorkerCount       = 16
+	DefTiDBDDLReorgBatchSize         = 1024
+	DefTiDBDDLErrorCountLimit        = 512
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
 	DefTiDBForcePriority             = mysql.NoPriority
 	DefTiDBUseRadixJoin              = false
+	DefEnableWindowFunction          = false
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog      uint32
-	ddlReorgWorkerCounter  int32  = DefTiDBDDLReorgWorkerCount
-	maxDDLReorgWorkerCount int32  = 128
-	DDLSlowOprThreshold    uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	ForcePriority                 = int32(DefTiDBForcePriority)
-	ServerHostname, _             = os.Hostname()
+	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32 = 128
+	ddlReorgBatchSize      int32 = DefTiDBDDLReorgBatchSize
+	ddlErrorCountlimit     int64 = DefTiDBDDLErrorCountLimit
+	// Export for testing.
+	MaxDDLReorgBatchSize int32  = 10240
+	MinDDLReorgBatchSize int32  = 32
+	DDLSlowOprThreshold  uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	ForcePriority               = int32(DefTiDBForcePriority)
+	ServerHostname, _           = os.Hostname()
 )

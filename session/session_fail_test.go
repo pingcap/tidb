@@ -14,21 +14,108 @@
 package session_test
 
 import (
-	gofail "github.com/etcd-io/gofail/runtime"
+	"context"
+
 	. "github.com/pingcap/check"
+	gofail "github.com/pingcap/gofail/runtime"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
 func (s *testSessionSuite) TestFailStatementCommit(c *C) {
-	defer gofail.Disable("github.com/pingcap/tidb/session/mockStmtCommitError")
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1)")
+
 	gofail.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`)
+	_, err := tk.Exec("insert into t values (2),(3),(4),(5)")
+	c.Assert(err, NotNil)
+
+	gofail.Disable("github.com/pingcap/tidb/session/mockStmtCommitError")
+
+	_, err = tk.Exec("select * from t")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("insert into t values (3)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("insert into t values (4)")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("commit")
+	c.Assert(err, NotNil)
+
+	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+
+	tk.MustExec("insert into t values (1)")
+
+	tk.MustExec("begin")
 	tk.MustExec("insert into t values (2)")
+	tk.MustExec("commit")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (3)")
+	tk.MustExec("rollback")
+
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2"))
+}
+
+func (s *testSessionSuite) TestFailStatementCommitInRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int)")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("insert into t values (2),(3),(4),(5)")
+	tk.MustExec("insert into t values (6)")
+
+	gofail.Enable("github.com/pingcap/tidb/session/mockCommitError8942", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/session/mockStmtCommitError", `return(true)`)
 	_, err := tk.Exec("commit")
 	c.Assert(err, NotNil)
-	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+	gofail.Disable("github.com/pingcap/tidb/session/mockCommitError8942")
+	gofail.Disable("github.com/pingcap/tidb/session/mockStmtCommitError")
+
+	tk.MustExec("insert into t values (6)")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("6"))
+}
+
+func (s *testSessionSuite) TestGetTSFailDirtyState(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int)")
+
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, "mockGetTSFail", struct{}{})
+	tk.Se.Execute(ctx, "select * from t")
+
+	// Fix a bug that active txn fail set TxnState.fail to error, and then the following write
+	// affected by this fail flag.
+	tk.MustExec("insert into t values (1)")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
+}
+
+func (s *testSessionSuite) TestGetTSFailDirtyStateInretry(c *C) {
+	defer gofail.Disable("github.com/pingcap/tidb/session/mockCommitError")
+	defer gofail.Disable("github.com/pingcap/tidb/session/mockGetTSErrorInRetry")
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (id int)")
+
+	gofail.Enable("github.com/pingcap/tidb/session/mockCommitError", `return(true)`)
+	gofail.Enable("github.com/pingcap/tidb/session/mockGetTSErrorInRetry", `return(true)`)
+	tk.MustExec("insert into t values (2)")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("2"))
+}
+
+func (s *testSessionSuite) TestRetryPreparedSleep(c *C) {
+	defer gofail.Disable("github.com/pingcap/tidb/store/tmpMaxTxnTime")
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t (c1 int)")
+	tk.MustExec("insert t values (11)")
+
+	gofail.Enable("github.com/pingcap/tidb/store/tmpMaxTxnTime", `return(2)->return(0)`)
+	tk.MustExec("begin")
+	tk.MustExec("update t set c1=? where c1=11;", 21)
+	tk.MustExec("insert into t select sleep(3)")
+	tk.MustExec("commit")
+
+	tk.MustQuery("select c1 from t").Check(testkit.Rows("21", "0"))
 }

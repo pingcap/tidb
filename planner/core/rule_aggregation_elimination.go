@@ -85,11 +85,17 @@ func (a *aggregationEliminateChecker) rewriteExpr(ctx sessionctx.Context, aggFun
 func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
+	// If is count(expr not null), we will change it to constant 1.
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
-		isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
-		isNullExprs = append(isNullExprs, isNullExpr)
+		if mysql.HasNotNullFlag(expr.GetType().Flag) {
+			isNullExprs = append(isNullExprs, expression.Zero)
+		} else {
+			isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
+			isNullExprs = append(isNullExprs, isNullExpr)
+		}
 	}
+
 	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
 	newExpr := expression.NewFunctionInternal(ctx, ast.If, targetTp, innerExpr, expression.Zero, expression.One)
 	return newExpr
@@ -119,7 +125,10 @@ func (a *aggregationEliminateChecker) wrapCastFunction(ctx sessionctx.Context, a
 func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, _ := a.optimize(child)
+		newChild, err := a.optimize(child)
+		if err != nil {
+			return nil, err
+		}
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
