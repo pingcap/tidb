@@ -122,18 +122,23 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 	splitKeys := generateTableSplitKeyForInt(tid, []int{100})
 	regionIDs := manipulateCluster(cluster, splitKeys)
 
-	// insert one record into each regions
-	tk.MustExec("insert into t values (1), (101)")
+	noDelayThreshold := time.Millisecond * 100
+	delayThreshold := time.Second
+	tk.MustExec("insert into t values (1)") // insert one record into region1, and set a delay duration
+	client.SetDelay(regionIDs[0], delayThreshold)
 
-	noBlockThreshold := time.Millisecond * 100
-	client.SetDelay(regionIDs[0], time.Second)
 	results := tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
 	cost := s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Less, noBlockThreshold) // finish quickly since there is one record in region1
+	c.Assert(cost, Not(Less), delayThreshold) // have to wait for region1
+
+	tk.MustExec("insert into t values (101)") // insert one record into region2
+	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
+	cost = s.parseTimeCost(c, results.Rows()[0])
+	c.Assert(cost, Less, noDelayThreshold) // region2 return quickly
 
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Not(Less), time.Second) // have to wait for the record returned by region2
+	c.Assert(cost, Not(Less), delayThreshold) // have to wait
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
@@ -147,18 +152,23 @@ func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
 	splitKeys := generateIndexSplitKeyForInt(tid, idx, []int{100})
 	regionIDs := manipulateCluster(cluster, splitKeys)
 
-	// insert one record into each regions
-	tk.MustExec("insert into t values (1), (101)")
+	noDelayThreshold := time.Millisecond * 100
+	delayThreshold := time.Second
+	tk.MustExec("insert into t values (1)") // insert one record into region1, and set a delay duration
+	client.SetDelay(regionIDs[0], delayThreshold)
 
-	noBlockThreshold := time.Millisecond * 100
-	client.SetDelay(regionIDs[0], time.Second)
 	results := tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
 	cost := s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Less, noBlockThreshold) // finish quickly since there is one record in region1
+	c.Assert(cost, Not(Less), delayThreshold) // have to wait for region1
+
+	tk.MustExec("insert into t values (101)") // insert one record into region2
+	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
+	cost = s.parseTimeCost(c, results.Rows()[0])
+	c.Assert(cost, Less, noDelayThreshold) // region2 return quickly
 
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = s.parseTimeCost(c, results.Rows()[0])
-	c.Assert(cost, Not(Less), time.Second) // have to wait for the record returned by region2
+	c.Assert(cost, Not(Less), delayThreshold) // have to wait
 }
 
 func (s *testChunkSizeControlSuite) parseTimeCost(c *C, line []interface{}) time.Duration {
