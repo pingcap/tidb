@@ -1,4 +1,4 @@
-module github.com/pingcap/tidb/v2
+module github.com/pingcap/tidb/v3
 
 require (
 	github.com/BurntSushi/toml v0.3.1
