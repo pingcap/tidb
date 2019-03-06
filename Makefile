@@ -80,7 +80,7 @@ check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign
 	@ # TODO: enable megacheck.
 	@ # TODO: gometalinter has been DEPRECATED.
 	@ # https://github.com/alecthomas/gometalinter/issues/590
-	tools/bin/gometalinter --disable-all --deadline 120s --vendor \
+	tools/bin/gometalinter --disable-all --deadline 120s \
 	  --enable misspell \
 	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
