@@ -179,9 +179,16 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				NotFillCache: s.snapshot.notFillCache,
 			},
 		}
-		// Reverse seek will not limit endKey.
-		if !s.reverse && len(s.endKey) > 0 && len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, s.endKey) < 0 {
-			req.Scan.EndKey = loc.EndKey
+
+		// when endkey is beyond current region, stop at current boundary.
+		if s.reverse {
+			if len(s.endKey) > 0 && len(loc.StartKey) > 0 && bytes.Compare(loc.StartKey, s.endKey) < 0 {
+				req.Scan.EndKey = loc.StartKey
+			}
+		} else {
+			if len(s.endKey) > 0 && len(loc.EndKey) > 0 && bytes.Compare(loc.EndKey, s.endKey) < 0 {
+				req.Scan.EndKey = loc.EndKey
+			}
 		}
 
 		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
@@ -219,18 +226,18 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				pair.Key = lock.Key
 			}
 		}
-		// On reverse mode, keys we want was lay in descand order.
+		// On reverse mode, keys we want lay in descand order.
 		s.cache, s.idx = kvPairs, 0
 		if len(kvPairs) < s.batchSize {
-			// No more data in current Region. Next getData() starts
-			// from current Region's endKey.
 			if s.reverse {
 				s.nextStartKey = loc.StartKey
-				if len(loc.StartKey) == 0 {
+				if len(loc.StartKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) <= 0) {
 					// Current Region is the very first region.
 					s.eof = true
 				}
 			} else {
+				// No more data in current Region. Next getData() starts
+				// from current Region's endKey.
 				s.nextStartKey = loc.EndKey
 				if len(loc.EndKey) == 0 || (len(s.endKey) > 0 && kv.Key(s.nextStartKey).Cmp(kv.Key(s.endKey)) >= 0) {
 					// Current Region is the last one.
