@@ -61,7 +61,7 @@ build:
 # Install the check tools.
 check-setup:tools/bin/megacheck tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy
+check: fmt errcheck lint tidy check-static
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-static check-slow
@@ -76,11 +76,13 @@ goword:tools/bin/goword
 gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
-check-static:tools/bin/gometalinter
+check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign tools/bin/megacheck
 	@ # vet and fmt have problems with vendor when ran through metalinter
-	tools/bin/gometalinter --disable-all --deadline 120s \
+	# TODO: enable megacheck.
+	# TODO: gometalinter has been DEPRECATED.
+	# https://github.com/alecthomas/gometalinter/issues/590
+	tools/bin/gometalinter --disable-all --deadline 120s --vendor \
 	  --enable misspell \
-	  --enable megacheck \
 	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
 
@@ -226,3 +228,11 @@ tools/bin/errcheck: tools/check/go.mod
 
 tools/bin/gofail: go.mod
 	$(GO) build -o $@ github.com/pingcap/gofail
+
+tools/bin/misspell:tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/misspell github.com/client9/misspell
+
+tools/bin/ineffassign:tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
