@@ -666,12 +666,12 @@ type FrameBound struct {
 	Type      ast.BoundType
 	UnBounded bool
 	Num       uint64
-	// CalcFunc is used for range framed windows.
+	// CalcFuncs is used for range framed windows.
 	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
 	// and plus or minus for frames like `1 preceding`.
-	CalcFunc expression.Expression
-	// CmpFunc is used to decide whether one row is included in the current frame.
-	CmpFunc expression.CompareFunc
+	CalcFuncs []expression.Expression
+	// CmpFuncs is used to decide whether one row is included in the current frame.
+	CmpFuncs []expression.CompareFunc
 }
 
 // LogicalWindow represents a logical window function plan.
