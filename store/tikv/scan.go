@@ -50,6 +50,9 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, endKey []byte, batchSiz
 		endKey:       endKey,
 		reverse:      reverse,
 	}
+	if reverse {
+		scanner.nextStartKey = kv.Key(startKey).Next()
+	}
 	err := scanner.Next()
 	if kv.IsErrNotFound(err) {
 		return scanner, nil
@@ -237,12 +240,18 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			return nil
 		}
 
-		// next getData() starts from the last key in kvPairs (but skip
-		// it by appending a '\x00' to the key). Note that next getData()
-		// may get an empty response if the Region in fact does not have
-		// more data.
-		lastKey := kvPairs[len(kvPairs)-1].GetKey()
-		s.nextStartKey = kv.Key(lastKey).Next()
+		if s.reverse {
+			// when reverse, region start_key is the first contains in current region
+			// and next start key will start at here to make sure we will not miss any key.
+			s.nextStartKey = kvPairs[len(kvPairs)-1]
+		} else {
+			// next getData() starts from the last key in kvPairs (but skip
+			// it by appending a '\x00' to the key). Note that next getData()
+			// may get an empty response if the Region in fact does not have
+			// more data.
+			lastKey := kvPairs[len(kvPairs)-1]
+			s.nextStartKey = kv.Key(lastKey).Next()
+		}
 		return nil
 	}
 }
