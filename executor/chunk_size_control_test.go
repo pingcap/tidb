@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -68,6 +69,20 @@ func generateSplitKeyForInt(tid int64, splitNum []int) [][]byte {
 	return results
 }
 
+func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
+	results := make([][]byte, 0, len(splitNum))
+	for _, num := range splitNum {
+		d := types.Datum{}
+		d.SetInt64(int64(num))
+		b, err := codec.EncodeKey(nil, nil, d)
+		if err != nil {
+			panic(err)
+		}
+		results = append(results, tablecodec.EncodeIndexSeekKey(tid, idx, b))
+	}
+	return results
+}
+
 type testChunkSizeControlSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
@@ -76,41 +91,36 @@ type testChunkSizeControlSuite struct {
 func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
 }
 
-func (s *testChunkSizeControlSuite) initClusterAndStore(
-	c *C, cluster *mocktikv.Cluster, client *testChunkSizeControlClient) {
-	hijackClient := func(c tikv.Client) tikv.Client {
-		client.Client = c
-		return client
-	}
-
-	var err error
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithHijackClient(hijackClient),
-	)
-	c.Assert(err, IsNil)
-
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testChunkSizeControlSuite) initTable(c *C, tableName, tableSQL string) (*testkit.TestKit, *testChunkSizeControlClient, *mocktikv.Cluster, int64) {
+func (s *testChunkSizeControlSuite) initTable(c *C, tableSQL string) (*testkit.TestKit, *testChunkSizeControlClient, *mocktikv.Cluster) {
 	// init store
 	client := &testChunkSizeControlClient{regionDelay: make(map[uint64]time.Duration)}
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
-	s.initClusterAndStore(c, cluster, client)
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	var err error
+	s.store, err = mockstore.NewMockTikvStore(
+		mockstore.WithCluster(cluster),
+		mockstore.WithHijackClient(func(c tikv.Client) tikv.Client {
+			client.Client = c
+			return client
+		}),
+	)
+	c.Assert(err, IsNil)
+
+	// init domain
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
 
 	// create the test table
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(tableSQL)
-	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
-	c.Assert(err, IsNil)
-	return tk, client, cluster, tbl.Meta().ID
+	return tk, client, cluster
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
-	tk, client, cluster, tid := s.initTable(c, "t", "create table t (a int, primary key (a))")
+	tk, client, cluster := s.initTable(c, "create table t (a int, primary key (a))")
+	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tid := tbl.Meta().ID
 
 	// construct two regions split by 100
 	splitKeys := generateSplitKeyForInt(tid, []int{100})
@@ -131,7 +141,28 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
+	tk, client, cluster := s.initTable(c, "create table t (a int, index idx_a(a))")
+	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tid := tbl.Meta().ID
+	idx := tbl.Meta().Indices[0].ID
 
+	// construct two regions split by 100
+	splitKeys := generateIndexSplitKeyForInt(tid, idx, []int{100})
+	regionIDs := manipulateCluster(cluster, splitKeys)
+
+	// insert one record into each regions
+	tk.MustExec("insert into t values (1), (101)")
+
+	noBlockThreshold := time.Millisecond * 100
+	client.SetDelay(regionIDs[0], time.Second)
+	results := tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
+	cost := s.parseTimeCost(c, results.Rows()[0])
+	c.Assert(cost, Less, noBlockThreshold)
+
+	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
+	cost = s.parseTimeCost(c, results.Rows()[0])
+	c.Assert(cost, Not(Less), time.Second)
 }
 
 func (s *testChunkSizeControlSuite) parseTimeCost(c *C, line []interface{}) time.Duration {
