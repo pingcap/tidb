@@ -77,10 +77,9 @@ gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
 check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign tools/bin/megacheck
-	@ # vet and fmt have problems with vendor when ran through metalinter
-	# TODO: enable megacheck.
-	# TODO: gometalinter has been DEPRECATED.
-	# https://github.com/alecthomas/gometalinter/issues/590
+	@ # TODO: enable megacheck.
+	@ # TODO: gometalinter has been DEPRECATED.
+	@ # https://github.com/alecthomas/gometalinter/issues/590
 	tools/bin/gometalinter --disable-all --deadline 120s --vendor \
 	  --enable misspell \
 	  --enable ineffassign \
