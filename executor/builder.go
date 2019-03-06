@@ -1942,7 +1942,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 			partialResult:     agg.AllocPartialResult(),
 			start:             v.Frame.Start,
 			end:               v.Frame.End,
-			col:               v.OrderBy[0].Col,
+			orderByCols:       orderByCols,
 			expectedCmpResult: cmpResult,
 		}
 	}
