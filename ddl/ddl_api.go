@@ -1012,7 +1012,6 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tblInfo.ID,

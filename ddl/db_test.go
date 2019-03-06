@@ -1679,7 +1679,6 @@ func (s *testDBSuite) TestCreateTableWithLike2(c *C) {
 		if job.SchemaState == model.StateDeleteOnly {
 			go backgroundExec(s.store, "create table t2 like t1", doneCh)
 		}
-
 	}
 	originalHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1687,7 +1686,6 @@ func (s *testDBSuite) TestCreateTableWithLike2(c *C) {
 
 	// create table when refer table add column
 	s.tk.MustExec("alter table t1 add column d int")
-
 	checkTableT2Info := func() {
 		err := <-doneCh
 		c.Assert(err, IsNil)
