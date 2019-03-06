@@ -233,8 +233,7 @@ tools/bin/gofail: go.mod
 	$(GO) build -o $@ github.com/pingcap/gofail
 
 tools/bin/misspell:tools/check/go.mod
-	cd tools/check; \
-	$(GO) build -o ../bin/misspell github.com/client9/misspell
+	$(GO) get -u github.com/client9/misspell/cmd/misspell
 
 tools/bin/ineffassign:tools/check/go.mod
 	cd tools/check; \
