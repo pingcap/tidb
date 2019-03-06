@@ -2038,11 +2038,21 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
 
 	// Check generated expression with blanks.
-	s.tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)))")
+	s.tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)), c int as (a+100))")
 	result = s.tk.MustQuery(`show create table table_with_gen_col_blanks`)
 	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` char(20) GENERATED ALWAYS AS (CAST(`a` AS CHAR)) VIRTUAL\n" +
+		"  `b` char(20) GENERATED ALWAYS AS (cast(`a` as char charset utf8mb4)) VIRTUAL,\n" +
+		"  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Check generated expression with string (issue 9457).
+	s.tk.MustExec("create table table_with_gen_col_string (first_name varchar(10), last_name varchar(10), full_name varchar(255) AS (CONCAT(first_name,' ',last_name)))")
+	result = s.tk.MustQuery(`show create table table_with_gen_col_string`)
+	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
+		"  `first_name` varchar(10) DEFAULT NULL,\n" +
+		"  `last_name` varchar(10) DEFAULT NULL,\n" +
+		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`first_name`, ' ', `last_name`)) VIRTUAL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	genExprTests := []struct {

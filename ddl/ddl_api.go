@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
@@ -451,6 +452,11 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			},
 		}
 
+		var sb strings.Builder
+		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+			format.RestoreSpacesAroundBinaryOperation | format.RestoreForGeneratedColumn
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+
 		for _, v := range colDef.Options {
 			switch v.Tp {
 			case ast.ColumnOptionNotNull:
@@ -492,9 +498,12 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					return nil, nil, errors.Trace(err)
 				}
 			case ast.ColumnOptionGenerated:
-				var buf = bytes.NewBuffer([]byte{})
-				v.Expr.Format(buf)
-				col.GeneratedExprString = buf.String()
+				sb.Reset()
+				err = v.Expr.Restore(restoreCtx)
+				if err != nil {
+					return nil, nil, errors.Trace(err)
+				}
+				col.GeneratedExprString = sb.String()
 				col.GeneratedStored = v.Stored
 				_, dependColNames := findDependedColumnNames(colDef)
 				col.Dependences = dependColNames
