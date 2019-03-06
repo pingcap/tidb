@@ -1055,9 +1055,10 @@ func sendRangeTaskToWorkers(ctx context.Context, t table.Table, reorgInfo *reorg
 		var idxWorker *addIndexWorker
 		for {
 			idxWorker = <-availableWorkerCh
-			if !idxWorker.isClosed() {
-				break
+			if idxWorker.isClosed() {
+				continue
 			}
+			break
 		}
 
 		idxWorker.taskCh <- task
