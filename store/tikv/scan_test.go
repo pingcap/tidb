@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -134,5 +135,69 @@ func (s *testScanSuite) TestScan(c *C) {
 		scan, err = txn3.Iter(encodeKey(s.prefix, ""), encodeKey(s.prefix, s08d("key", upperBound)))
 		c.Assert(err, IsNil)
 		check(c, scan, upperBound, true)
+	}
+}
+
+func (s *testScanSuite) TestScanReverse(c *C) {
+	check := func(c *C, scan kv.Iterator, rowNum int, keyOnly bool) {
+		for i := rowNum; i > 0; i-- {
+			k := scan.Key()
+			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
+			if !keyOnly {
+				v := scan.Value()
+				c.Assert(v, BytesEquals, valueBytes(i))
+			}
+			// Because newScan return first item without calling scan.Next() just like go-hbase,
+			// for-loop count will decrease 1.
+			if i < rowNum-1 {
+				scan.Next()
+			}
+		}
+		scan.Next()
+		c.Assert(scan.Valid(), IsFalse)
+	}
+
+	for _, rowNum := range s.rowNums {
+		txn := s.beginTxn(c)
+		for i := 0; i < rowNum; i++ {
+			err := txn.Set(encodeKey(s.prefix, s08d("key", i)), valueBytes(i))
+			c.Assert(err, IsNil)
+		}
+		err := txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+
+		if rowNum > 123 {
+			err = s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 123)))
+			c.Assert(err, IsNil)
+		}
+
+		if rowNum > 456 {
+			err = s.store.SplitRegion(encodeKey(s.prefix, s08d("key", 456)))
+			c.Assert(err, IsNil)
+		}
+
+		startKey := strconv.Itoa(rowNum)
+		txn2 := s.beginTxn(c)
+		val, err := txn2.Get(encodeKey(s.prefix, s08d("key", 0)))
+		c.Assert(err, IsNil)
+		c.Assert(val, BytesEquals, valueBytes(0))
+		// Test scan without upperBound
+		scan, err := txn2.IterReverse(encodeKey(s.prefix, startKey))
+		c.Assert(err, IsNil)
+		check(c, scan, rowNum, false)
+
+		txn3 := s.beginTxn(c)
+		txn3.SetOption(kv.KeyOnly, true)
+		// Test scan without upper bound
+		scan, err = txn3.IterReverse(encodeKey(s.prefix, startKey))
+		c.Assert(err, IsNil)
+		check(c, scan, rowNum, true)
+
+		txn4 := s.beginTxn(c)
+		// Restore KeyOnly to false
+		txn4.SetOption(kv.KeyOnly, false)
+		scan, err = txn4.IterReverse(encodeKey(s.prefix, startKey))
+		c.Assert(err, IsNil)
+		check(c, scan, rowNum, true)
 	}
 }
