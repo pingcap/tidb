@@ -840,6 +840,16 @@ const (
 )
 
 // SlowLogFormat uses for formatting slow log.
+// The slow log output is like below:
+// # Time: 2019-02-12-19:33:56.571953 +0800
+// # Txn_start_ts: 406315658548871171
+// # User: root@127.0.0.1
+// # Conn_ID: 6
+// # Query_time: 4.895492
+// # Process_time: 0.161 Request_count: 1 Total_keys: 100001 Processed_keys: 100000
+// # DB: test
+// # Is_internal: false
+// select * from t_slim;
 func (s *SessionVars) SlowLogFormat(txnTS uint64, costTime time.Duration, execDetail execdetails.ExecDetails, indexIDs string, sql string) string {
 	var buf bytes.Buffer
 	execDetailStr := execDetail.String()
