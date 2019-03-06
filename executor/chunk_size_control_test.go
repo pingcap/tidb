@@ -25,13 +25,12 @@ var (
 	_ = Suite(&testChunkSizeControlSuite{})
 )
 
-type testChunkSizeControlClient struct {
+type testSlowClient struct {
 	tikv.Client
-
 	regionDelay map[uint64]time.Duration
 }
 
-func (c *testChunkSizeControlClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *testSlowClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	regionID := req.RegionId
 	if req.Type == tikvrpc.CmdCop && c.regionDelay[regionID] > 0 {
 		time.Sleep(c.regionDelay[regionID])
@@ -39,29 +38,27 @@ func (c *testChunkSizeControlClient) SendRequest(ctx context.Context, addr strin
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
-func (c *testChunkSizeControlClient) SetDelay(regionID uint64, dur time.Duration) {
+func (c *testSlowClient) SetDelay(regionID uint64, dur time.Duration) {
 	c.regionDelay[regionID] = dur
 }
 
+// manipulateCluster splits this cluster's region by splitKeys and returns regionIDs after split
 func manipulateCluster(cluster *mocktikv.Cluster, splitKeys [][]byte) []uint64 {
 	regions := cluster.GetAllRegions()
 	if len(regions) != 1 {
-		panic("invalid length of regions")
+		panic("this cluster has already split")
 	}
-	region1ID := regions[0].Meta.Id
 
-	allRegionIDs := make([]uint64, 0, len(splitKeys)+1)
-	allRegionIDs = append(allRegionIDs, region1ID)
+	allRegionIDs := []uint64{regions[0].Meta.Id}
 	for i, key := range splitKeys {
-		newRegionID := cluster.AllocID()
-		newPeerID := cluster.AllocID()
+		newRegionID, newPeerID := cluster.AllocID(), cluster.AllocID()
 		cluster.Split(allRegionIDs[i], newRegionID, key, []uint64{newPeerID}, newPeerID)
 		allRegionIDs = append(allRegionIDs, newRegionID)
 	}
 	return allRegionIDs
 }
 
-func generateSplitKeyForInt(tid int64, splitNum []int) [][]byte {
+func generateTableSplitKeyForInt(tid int64, splitNum []int) [][]byte {
 	results := make([][]byte, 0, len(splitNum))
 	for _, num := range splitNum {
 		results = append(results, tablecodec.EncodeRowKey(tid, codec.EncodeInt(nil, int64(num))))
@@ -72,9 +69,9 @@ func generateSplitKeyForInt(tid int64, splitNum []int) [][]byte {
 func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
 	results := make([][]byte, 0, len(splitNum))
 	for _, num := range splitNum {
-		d := types.Datum{}
+		d := new(types.Datum)
 		d.SetInt64(int64(num))
-		b, err := codec.EncodeKey(nil, nil, d)
+		b, err := codec.EncodeKey(nil, nil, *d)
 		if err != nil {
 			panic(err)
 		}
@@ -88,12 +85,11 @@ type testChunkSizeControlSuite struct {
 	dom   *domain.Domain
 }
 
-func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
-}
+func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {}
 
-func (s *testChunkSizeControlSuite) initTable(c *C, tableSQL string) (*testkit.TestKit, *testChunkSizeControlClient, *mocktikv.Cluster) {
+func (s *testChunkSizeControlSuite) initTable(c *C, tableSQL string) (*testkit.TestKit, *testSlowClient, *mocktikv.Cluster) {
 	// init store
-	client := &testChunkSizeControlClient{regionDelay: make(map[uint64]time.Duration)}
+	client := &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
 	var err error
@@ -123,7 +119,7 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 	tid := tbl.Meta().ID
 
 	// construct two regions split by 100
-	splitKeys := generateSplitKeyForInt(tid, []int{100})
+	splitKeys := generateTableSplitKeyForInt(tid, []int{100})
 	regionIDs := manipulateCluster(cluster, splitKeys)
 
 	// insert one record into each regions
