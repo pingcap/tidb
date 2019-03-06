@@ -998,9 +998,9 @@ func (w *worker) waitTaskFinish(cancel context.CancelFunc, reorgInfo *reorgInfo,
 		// task.result should never be nil here.
 		if task.result == nil {
 			cancel()
-			return errors.Errorf("[ddl-reorg] backfill index task result is nil")
+			return errors.Errorf("backfill index task result is nil")
 		}
-		// check result != nil
+		// check task.result is not nil.
 		if task.result.err == nil {
 			task.result.err = w.isReorgRunnable(reorgInfo.d)
 		}
@@ -1116,12 +1116,13 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	defer func() {
 		closeAddIndexWorkers(idxWorkers)
 	}()
-	availableWorkerCh := make(chan *addIndexWorker, variable.MaxDDLReorgWorkerCount) // max worker count
-	doingTaskCh := make(chan *reorgIndexTask, variable.MaxDDLReorgWorkerCount)       // max worker count
+	availableWorkerCh := make(chan *addIndexWorker, variable.MaxDDLReorgWorkerCount) // max worker count.
+	handlingTaskQueue := make(chan *reorgIndexTask, variable.MaxDDLReorgWorkerCount) // max worker count.
 	errCh := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		defer close(doingTaskCh)
+
+	dispatchTaskFunc := func() {
+		defer close(handlingTaskQueue)
 		for {
 			kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
 			if err != nil {
@@ -1172,7 +1173,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			//}
 
 			log.Infof("[ddl-reorg] start %d workers to reorg index of %v region ranges, handle range:[%v, %v).", len(idxWorkers), len(kvRanges), startHandle, endHandle)
-			err = sendRangeTaskToWorkers(ctx, t, reorgInfo, kvRanges[:workerCnt], availableWorkerCh, doingTaskCh)
+			err = sendRangeTaskToWorkers(ctx, t, reorgInfo, kvRanges[:workerCnt], availableWorkerCh, handlingTaskQueue)
 			if err != nil {
 				errCh <- errors.Trace(err)
 				return
@@ -1186,8 +1187,11 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 				return
 			}
 		}
-	}()
-	err = w.waitTaskFinish(cancel, reorgInfo, availableWorkerCh, doingTaskCh, errCh)
+	}
+
+	go dispatchTaskFunc()
+
+	err = w.waitTaskFinish(cancel, reorgInfo, availableWorkerCh, handlingTaskQueue, errCh)
 	return errors.Trace(err)
 }
 
