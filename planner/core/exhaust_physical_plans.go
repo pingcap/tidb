@@ -614,7 +614,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]Phys
 		join := p.getIndexJoinByOuterIdx(prop, 0)
 		if join != nil {
 			// If the plan is not nil and matches the hint, return it directly.
-			if leftOuter {
+			if leftOuter && !rightOuter {
 				return join, true
 			}
 			plans = append(plans, join...)
@@ -623,7 +623,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]Phys
 		join := p.getIndexJoinByOuterIdx(prop, 1)
 		if join != nil {
 			// If the plan is not nil and matches the hint, return it directly.
-			if rightOuter {
+			if rightOuter && !leftOuter {
 				return join, true
 			}
 			plans = append(plans, join...)
@@ -633,12 +633,12 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) ([]Phys
 		rhsCardinality := p.Children()[1].statsInfo().Count()
 
 		leftJoins := p.getIndexJoinByOuterIdx(prop, 0)
-		if leftOuter && leftJoins != nil {
+		if leftOuter && !rightOuter && leftJoins != nil {
 			return leftJoins, true
 		}
 
 		rightJoins := p.getIndexJoinByOuterIdx(prop, 1)
-		if rightOuter && rightJoins != nil {
+		if rightOuter && !leftOuter && rightJoins != nil {
 			return rightJoins, true
 		}
 
