@@ -547,14 +547,28 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	// We should guarantee that all the join's equal condition is used.
-	for _, eqCond := range eqConds {
+	// Guarantee res.AccessConds is not empty.
+	if len(res.AccessConds) == 0 {
+		return nil, nil, nil
+	}
+
+	// Find invalid fake condition and modify the joinKey's idxOff to -1.
+	var invalidFakeConds []expression.Expression
+	for i, eqCond := range eqConds {
 		if !expression.Contains(res.AccessConds, eqCond) {
-			return nil, nil, nil
+			keyOff2IdxOff[i] = -1
+			invalidFakeConds = append(invalidFakeConds, eqCond)
 		}
 	}
 
-	return res.Ranges, append(remained, res.RemainedConds...), keyOff2IdxOff
+	// Filter out invalidFakeConds from res.RemainedConds.
+	for _, cond := range res.RemainedConds {
+		if !expression.Contains(invalidFakeConds, cond) {
+			remained = append(remained, cond)
+		}
+	}
+
+	return res.Ranges, remained, keyOff2IdxOff
 }
 
 func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
