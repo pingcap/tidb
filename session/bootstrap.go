@@ -792,7 +792,7 @@ func doDMLWorks(s Session) {
 	if config.CheckTableBeforeDrop {
 		defer func() {
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", mysql.SystemDB, mysql.GlobalVariablesTable)
-			log.Warnf("%s before AfterInit GlobalSysVar", sql)
+			log.Infof("%s after InitGlobalSysVar", sql)
 			mustExecute(s, sql)
 		}()
 	}

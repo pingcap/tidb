@@ -850,7 +850,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	_, _, err = s.ExecRestrictedSQL(s, sql)
 	if err != nil && config.CheckTableBeforeDrop {
 		sql := fmt.Sprintf("admin check table `%s`.`%s`", mysql.SystemDB, mysql.GlobalVariablesTable)
-		log.Warnf("%s after SetGlobalSysVar", sql)
+		log.Infof("%s after SetGlobalSysVar", sql)
 		_, _, err := s.ExecRestrictedSQL(s, sql)
 		if err != nil {
 			return errors.Trace(err)
