@@ -954,11 +954,40 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		}
 		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
 		c.Assert(col, NotNil)
-		conds = ranger.ExtractAccessConditionsForColumn(conds, col.ColName)
+		conds = ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
 		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
 		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType)
 		c.Assert(err, IsNil)
 		got := fmt.Sprintf("%v", result)
 		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
 	}
+}
+
+func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
+	testKit.MustExec("insert into t values(1,2)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
+		"Union_11 1.80 root ",
+		"├─IndexReader_14 1.00 root index:IndexScan_13",
+		"│ └─IndexScan_13 1.00 cop table:t, index:a, b, range:(0 +inf,+inf +inf], keep order:false",
+		"└─Projection_16 0.80 root ifnull(test.t.a, test.t.b), test.t.b",
+		"  └─TableReader_19 0.80 root data:Selection_18",
+		"    └─Selection_18 0.80 cop gt(ifnull(test.t.a, test.t.b), 0)",
+		"      └─TableScan_17 1.00 cop table:t, range:[-inf,+inf], keep order:false",
+	))
+	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
+		"1 2",
+		"1 2",
+	))
 }
