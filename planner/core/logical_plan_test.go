@@ -2197,7 +2197,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		},
 		{
 			sql:    "select avg(b), max(avg(b)) over(rows between 1 preceding and 1 following) max, min(avg(b)) over(rows between 1 preceding and 1 following) min from t group by c",
-			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_4) over(rows between 1 preceding and 1 following))->Window(min(sel_agg_5) over(r     ows between 1 preceding and 1 following))->Projection",
+			result: "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t))->Projection->StreamAgg->Window(max(sel_agg_4) over(rows between 1 preceding and 1 following))->Window(min(sel_agg_5) over(rows between 1 preceding and 1 following))->Projection",
 		},
 	}
 

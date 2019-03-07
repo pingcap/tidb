@@ -349,7 +349,6 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo) (*property
 		colIdx := p.children[0].Schema().ColumnIndex(p.schema.Columns[i])
 		p.stats.Cardinality[i] = childProfile.Cardinality[colIdx]
 	}
-	copy(p.stats.Cardinality, childProfile.Cardinality)
 	p.stats.Cardinality[p.schema.Len()-1] = childProfile.RowCount
 	return p.stats, nil
 }
