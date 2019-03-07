@@ -93,20 +93,17 @@ func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
 	return results
 }
 
-type testChunkSizeControlSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-}
+type testChunkSizeControlSuite struct{}
 
 func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {}
 
-func (s *testChunkSizeControlSuite) initTable(c *C, tableSQL string) (*testkit.TestKit, *testSlowClient, *mocktikv.Cluster) {
+func (s *testChunkSizeControlSuite) initTable(c *C, tableSQL string) (
+	kv.Storage, *domain.Domain, *testkit.TestKit, *testSlowClient, *mocktikv.Cluster) {
 	// init store
 	client := &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
 	cluster := mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(cluster)
-	var err error
-	s.store, err = mockstore.NewMockTikvStore(
+	store, err := mockstore.NewMockTikvStore(
 		mockstore.WithCluster(cluster),
 		mockstore.WithHijackClient(func(c tikv.Client) tikv.Client {
 			client.Client = c
@@ -116,18 +113,18 @@ func (s *testChunkSizeControlSuite) initTable(c *C, tableSQL string) (*testkit.T
 	c.Assert(err, IsNil)
 
 	// init domain
-	s.dom, err = session.BootstrapSession(s.store)
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 
 	// create the test table
-	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk := testkit.NewTestKitWithInit(c, store)
 	tk.MustExec(tableSQL)
-	return tk, client, cluster
+	return store, dom, tk, client, cluster
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
-	tk, client, cluster := s.initTable(c, "create table t (a int, primary key (a))")
-	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	store, dom, tk, client, cluster := s.initTable(c, "create table t (a int, primary key (a))")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tbl.Meta().ID
 
@@ -152,11 +149,14 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = s.parseTimeCost(c, results.Rows()[0])
 	c.Assert(cost, Not(Less), delayThreshold) // have to wait
+
+	dom.Close()
+	store.Close()
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
-	tk, client, cluster := s.initTable(c, "create table t (a int, index idx_a(a))")
-	tbl, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	store, dom, tk, client, cluster := s.initTable(c, "create table t (a int, index idx_a(a))")
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tbl.Meta().ID
 	idx := tbl.Meta().Indices[0].ID
@@ -182,6 +182,9 @@ func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = s.parseTimeCost(c, results.Rows()[0])
 	c.Assert(cost, Not(Less), delayThreshold) // have to wait
+
+	dom.Close()
+	store.Close()
 }
 
 func (s *testChunkSizeControlSuite) parseTimeCost(c *C, line []interface{}) time.Duration {
