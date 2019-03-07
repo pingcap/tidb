@@ -339,7 +339,7 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg {
 		if job.SchemaState == model.StateNone && job.State != model.JobStateDone && job.Type != model.ActionCreateTable && job.Type != model.ActionCreateSchema &&
-			job.Type != model.ActionRebaseAutoID && job.Type != model.ActionShardRowID && job.Type != model.ActionModifyColumn && job.Type != model.ActionAddForeignKey && job.Type != model.ActionDropForeignKey {
+			job.Type != model.ActionRebaseAutoID && job.Type != model.ActionShardRowID && job.Type != model.ActionModifyColumn && job.Type != model.ActionAddForeignKey && job.Type != model.ActionDropForeignKey && job.Type != model.ActionRenameTable {
 			// If the schema state is none and is not equal to model.JobStateDone, we only test the job is finished.
 			// Unless the job is model.ActionCreateTable, model.ActionCreateSchema, model.ActionRebaseAutoID, we do the cancel anyway.
 		} else {
@@ -394,7 +394,10 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 19}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 20)}, cancelState: model.StatePublic},
 		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 21}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 20)}, cancelState: model.StatePublic},
+		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 22}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 22)}, cancelState: model.StatePublic},
+
+		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 23}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 24}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 24)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -665,6 +668,21 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(len(changedTable.Meta().ForeignKeys), Equals, 0)
+
+	// test rename table failed caused by canceled.
+	test = &tests[20]
+	renameTableArgs := []interface{}{dbInfo.ID, model.NewCIStr("t2")}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, renameTableArgs, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Name.L, Equals, "t")
+
+	// test rename table successful.
+	test = &tests[21]
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, renameTableArgs)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	c.Assert(changedTable.Meta().Name.L, Equals, "t2")
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
