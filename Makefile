@@ -8,7 +8,7 @@ endif
 FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
 CURDIR := $(shell pwd)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO        := GO111MODULE=on go
@@ -53,18 +53,18 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist test check
+dev: checklist check test 
 
 build:
 	$(GOBUILD)
 
 # Install the check tools.
-check-setup:tools/bin/megacheck tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
+check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck lint tidy
+check: fmt errcheck lint tidy check-static
 
 # These need to be fixed before they can be ran regularly
-check-fail: goword check-static check-slow
+check-fail: goword check-slow
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -76,11 +76,12 @@ goword:tools/bin/goword
 gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
-check-static:tools/bin/gometalinter
-	@ # vet and fmt have problems with vendor when ran through metalinter
+check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign
+	@ # TODO: enable megacheck.
+	@ # TODO: gometalinter has been DEPRECATED.
+	@ # https://github.com/alecthomas/gometalinter/issues/590
 	tools/bin/gometalinter --disable-all --deadline 120s \
 	  --enable misspell \
-	  --enable megacheck \
 	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
 
@@ -226,3 +227,10 @@ tools/bin/errcheck: tools/check/go.mod
 
 tools/bin/gofail: go.mod
 	$(GO) build -o $@ github.com/pingcap/gofail
+
+tools/bin/misspell:tools/check/go.mod
+	$(GO) get -u github.com/client9/misspell/cmd/misspell
+
+tools/bin/ineffassign:tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
