@@ -1527,6 +1527,11 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			if len(spec.NewColumns) != 1 {
 				return errRunMultiSchemaChanges
 			}
+			for _, v := range spec.NewColumns[0].Options {
+				if v.Stored {
+					return errUnsupportedAddColumn
+				}
+			}
 			err = d.AddColumn(ctx, ident, spec)
 		case ast.AlterTableAddPartitions:
 			err = d.AddTablePartitions(ctx, ident, spec)
