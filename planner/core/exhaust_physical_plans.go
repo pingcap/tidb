@@ -310,7 +310,7 @@ func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) 
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, outerIdx int, innerPlan PhysicalPlan,
-	ranges []*ranger.Range, keyOff2IdxOff []int, compareFilters *ColWithCompareOps) []PhysicalPlan {
+	ranges []*ranger.Range, keyOff2IdxOff []int, compareFilters *ColWithCmpFuncManager) []PhysicalPlan {
 	joinType := p.JoinType
 	outerSchema := p.children[outerIdx].Schema()
 	var (
@@ -454,7 +454,7 @@ type indexJoinBuildHelper struct {
 	chosenAccess    []expression.Expression
 	chosenRemained  []expression.Expression
 	idxOff2KeyOff   []int
-	lastColManager  *ColWithCompareOps
+	lastColManager  *ColWithCmpFuncManager
 	chosenRanges    []*ranger.Range
 
 	curPossibleUsedKeys []*expression.Column
@@ -582,9 +582,9 @@ var symmetricOp = map[string]string{
 	ast.LE: ast.GE,
 }
 
-// ColWithCompareOps is used in index join to handle the column with compare functions(>=, >, <, <=).
+// ColWithCmpFuncManager is used in index join to handle the column with compare functions(>=, >, <, <=).
 // It stores the compare functions and build ranges in execution phase.
-type ColWithCompareOps struct {
+type ColWithCmpFuncManager struct {
 	targetCol         *expression.Column
 	colLength         int
 	OpType            []string
@@ -594,7 +594,7 @@ type ColWithCompareOps struct {
 	compareFuncs      []chunk.CompareFunc
 }
 
-func (cwc *ColWithCompareOps) appendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
+func (cwc *ColWithCmpFuncManager) appendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
 	cwc.OpType = append(cwc.OpType, opName)
 	cwc.opArg = append(cwc.opArg, arg)
 	cwc.tmpConstant = append(cwc.tmpConstant, &expression.Constant{RetType: cwc.targetCol.RetType})
@@ -608,7 +608,7 @@ func (cwc *ColWithCompareOps) appendNewExpr(opName string, arg expression.Expres
 }
 
 // CompareRow compares the rows for deduplicate.
-func (cwc *ColWithCompareOps) CompareRow(lhs, rhs chunk.Row) int {
+func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
 	for i, col := range cwc.affectedColSchema.Columns {
 		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)
 		if ret != 0 {
@@ -619,7 +619,7 @@ func (cwc *ColWithCompareOps) CompareRow(lhs, rhs chunk.Row) int {
 }
 
 // BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
-func (cwc *ColWithCompareOps) BuildRangesByRow(ctx sessionctx.Context, row chunk.Row) ([]*ranger.Range, error) {
+func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx sessionctx.Context, row chunk.Row) ([]*ranger.Range, error) {
 	exprs := make([]expression.Expression, len(cwc.OpType))
 	for i, opType := range cwc.OpType {
 		constantArg, err := cwc.opArg[i].Eval(row)
@@ -640,7 +640,7 @@ func (cwc *ColWithCompareOps) BuildRangesByRow(ctx sessionctx.Context, row chunk
 	return ranges, nil
 }
 
-func (cwc *ColWithCompareOps) resolveIndices(schema *expression.Schema) (err error) {
+func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err error) {
 	for i := range cwc.opArg {
 		cwc.opArg[i], err = cwc.opArg[i].ResolveIndices(schema)
 		if err != nil {
@@ -650,7 +650,8 @@ func (cwc *ColWithCompareOps) resolveIndices(schema *expression.Schema) (err err
 	return nil
 }
 
-func (cwc *ColWithCompareOps) String() string {
+// String implements Stringer interface.
+func (cwc *ColWithCmpFuncManager) String() string {
 	buffer := bytes.NewBufferString("")
 	for i := range cwc.OpType {
 		buffer.WriteString(fmt.Sprintf("%v(%v, %v)", cwc.OpType[i], cwc.targetCol, cwc.opArg[i]))
@@ -679,12 +680,12 @@ func (ijHelper *indexJoinBuildHelper) checkIndex(innerKeys []*expression.Column,
 }
 
 // findUsefulEqAndInFilters analyzes the pushedDownConds held by inner child and split them to three parts.
-// first part is the continuous eq/in conditions on current unused index columns.
-// second part is the conditions which cannot be used for building ranges.
-// third part is the other conditions for future use.
-func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) ([]expression.Expression, []expression.Expression, []expression.Expression) {
-	uselessFilters := make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
-	rangeFilterCandidates := make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
+// usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
+// uselessFilters is the conditions which cannot be used for building ranges.
+// remainingRangeCandidates is the other conditions for future use.
+func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression) {
+	uselessFilters = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
+	remainingRangeCandidates = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
 	// This loop finds the possible filters which can be used to build ranges.
 	// If the filter contains index column covered by join keys, it will be useless since we always use join key to build range for that index column..
 	for _, innerFilter := range innerPlan.pushedDownConds {
@@ -693,17 +694,24 @@ func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSo
 			uselessFilters = append(uselessFilters, innerFilter)
 			continue
 		}
-		rangeFilterCandidates = append(rangeFilterCandidates, innerFilter)
+		remainingRangeCandidates = append(remainingRangeCandidates, innerFilter)
 	}
+	var remainedEqOrIn []expression.Expression
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
-	eqOrInOnUnusedIdxCols, remainedEqOrIn, rangeFilterCandidates, _ := ranger.ExtractEqAndInCondition(innerPlan.ctx, rangeFilterCandidates, ijHelper.curNotUsedIndexCols, ijHelper.curNotUsedColLens)
+	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _ = ranger.ExtractEqAndInCondition(
+		innerPlan.ctx, remainingRangeCandidates,
+		ijHelper.curNotUsedIndexCols,
+		ijHelper.curNotUsedColLens,
+	)
 	uselessFilters = append(uselessFilters, remainedEqOrIn...)
-	return eqOrInOnUnusedIdxCols, uselessFilters, rangeFilterCandidates
+	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates
 }
 
+// analyzeOtherFilters analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
+// The returned value is just for outputting explain information
 func (ijHelper *indexJoinBuildHelper) analyzeOtherFilters(nextCol *expression.Column,
-	innerPlan *DataSource, cwc *ColWithCompareOps) []expression.Expression {
+	innerPlan *DataSource, cwc *ColWithCmpFuncManager) []expression.Expression {
 	var lastColAccesses []expression.Expression
 loopOtherConds:
 	for _, filter := range ijHelper.join.OtherConditions {
@@ -711,31 +719,30 @@ loopOtherConds:
 		if !ok || !(sf.FuncName.L == ast.LE || sf.FuncName.L == ast.LT || sf.FuncName.L == ast.GE || sf.FuncName.L == ast.GT) {
 			continue
 		}
+		var funcName string
+		var anotherArg expression.Expression
 		if lCol, ok := sf.GetArgs()[0].(*expression.Column); ok && lCol.Equal(nil, nextCol) {
-			affectedCols := expression.ExtractColumns(sf.GetArgs()[1])
-			if len(affectedCols) == 0 {
-				continue
-			}
-			for _, col := range affectedCols {
-				if innerPlan.schema.Contains(col) {
-					continue loopOtherConds
-				}
-			}
-			lastColAccesses = append(lastColAccesses, sf)
-			cwc.appendNewExpr(sf.FuncName.L, sf.GetArgs()[1], affectedCols)
+			anotherArg = sf.GetArgs()[1]
+			funcName = sf.FuncName.L
 		} else if rCol, ok := sf.GetArgs()[1].(*expression.Column); ok && rCol.Equal(nil, nextCol) {
-			affectedCols := expression.ExtractColumns(sf.GetArgs()[0])
-			if len(affectedCols) == 0 {
-				continue
-			}
-			for _, col := range affectedCols {
-				if innerPlan.schema.Contains(col) {
-					continue loopOtherConds
-				}
-			}
-			lastColAccesses = append(lastColAccesses, sf)
-			cwc.appendNewExpr(symmetricOp[sf.FuncName.L], sf.GetArgs()[0], affectedCols)
+			anotherArg = sf.GetArgs()[0]
+			// The column manager always build expression in the form of col op arg1.
+			// So we need use the symmetric one of the current function.
+			funcName = symmetricOp[sf.FuncName.L]
+		} else {
+			continue
 		}
+		affectedCols := expression.ExtractColumns(anotherArg)
+		if len(affectedCols) == 0 {
+			continue
+		}
+		for _, col := range affectedCols {
+			if innerPlan.schema.Contains(col) {
+				continue loopOtherConds
+			}
+		}
+		lastColAccesses = append(lastColAccesses, sf)
+		cwc.appendNewExpr(funcName, anotherArg, affectedCols)
 	}
 	return lastColAccesses
 }
@@ -782,12 +789,13 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 		return nil
 	}
 	lastPossibleCol := idxCols[lastColPos]
-	lastColManager := &ColWithCompareOps{
+	lastColManager := &ColWithCmpFuncManager{
 		targetCol:         lastPossibleCol,
 		colLength:         colLengths[lastColPos],
 		affectedColSchema: expression.NewSchema(),
 	}
 	lastColAccess := ijHelper.analyzeOtherFilters(lastPossibleCol, innerPlan, lastColManager)
+	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
 	if len(lastColAccess) == 0 {
 		colAccesses, colRemained := ranger.DetachCondsForTableRange(ijHelper.join.ctx, rangeFilterCandidates, lastPossibleCol)
 		var ranges, nextColRange []*ranger.Range
@@ -821,7 +829,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(indexInfo *model.Inde
 }
 
 func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, idxInfo *model.IndexInfo, accesses,
-	remained []expression.Expression, lastColManager *ColWithCompareOps) {
+	remained []expression.Expression, lastColManager *ColWithCmpFuncManager) {
 	// We choose the index by the number of used columns of the range, the much the better.
 	// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
 	// But obviously when the range is nil, we don't need index join.

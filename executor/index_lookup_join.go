@@ -68,8 +68,8 @@ type IndexLookUpJoin struct {
 	keyOff2IdxOff []int
 	innerPtrBytes [][]byte
 
-	// lastColhelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
-	lastColhelper *plannercore.ColWithCompareOps
+	// lastColHelper store the information for last col if there's complicated filter like col > x_col and col < x_col + 100.
+	lastColHelper *plannercore.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -129,7 +129,7 @@ type innerWorker struct {
 	executorChk *chunk.Chunk
 
 	indexRanges           []*ranger.Range
-	nextColCompareFilters *plannercore.ColWithCompareOps
+	nextColCompareFilters *plannercore.ColWithCmpFuncManager
 	keyOff2IdxOff         []int
 }
 
@@ -212,7 +212,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		executorChk:           chunk.NewChunkWithCapacity(e.innerCtx.rowTypes, e.maxChunkSize),
 		indexRanges:           copiedRanges,
 		keyOff2IdxOff:         e.keyOff2IdxOff,
-		nextColCompareFilters: e.lastColhelper,
+		nextColCompareFilters: e.lastColHelper,
 	}
 	return iw
 }

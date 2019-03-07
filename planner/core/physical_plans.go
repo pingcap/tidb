@@ -239,7 +239,7 @@ type PhysicalIndexJoin struct {
 	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b=10
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
-	CompareFilters *ColWithCompareOps
+	CompareFilters *ColWithCmpFuncManager
 }
 
 // PhysicalMergeJoin represents merge join for inner/ outer join.
