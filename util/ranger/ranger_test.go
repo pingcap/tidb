@@ -978,11 +978,13 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
-		"Union_11 2.00 root ",
-		"├─IndexReader_17 1.00 root index:IndexScan_16",
-		"│ └─IndexScan_16 1.00 cop table:t, index:a, b, range:(0 +inf,+inf +inf], keep order:false",
-		"└─IndexReader_23 1.00 root index:IndexScan_22",
-		"  └─IndexScan_22 1.00 cop table:t, index:a, b, range:(0 +inf,+inf +inf], keep order:false",
+		"Union_11 1.80 root ",
+		"├─IndexReader_14 1.00 root index:IndexScan_13",
+		"│ └─IndexScan_13 1.00 cop table:t, index:a, b, range:(0 +inf,+inf +inf], keep order:false",
+		"└─Projection_16 0.80 root ifnull(test.t.a, test.t.b), test.t.b",
+		"  └─TableReader_19 0.80 root data:Selection_18",
+		"    └─Selection_18 0.80 cop gt(ifnull(test.t.a, test.t.b), 0)",
+		"      └─TableScan_17 1.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"1 2",
