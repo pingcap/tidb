@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -73,9 +72,8 @@ type lookUpMergeJoinTask struct {
 
 	innerResult *chunk.List
 	innerIter   chunk.Iterator
-	lookUpKeys  *chunk.Chunk
 
-	sameKeyRows *chunk.Chunk
+	sameKeyRows []chunk.Row
 	sameKeyIter chunk.Iterator
 
 	doneCh      chan error
@@ -151,7 +149,7 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
+func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	resultCh := make(chan *lookUpMergeJoinTask, concurrency)
 	e.resultCh = resultCh
@@ -225,28 +223,27 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 
 		if task.innerIter == nil {
 			task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
-			err = e.fetchNextOuterRows(task)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			task.innerIter.Begin()
 		}
 		outerRow := task.outerResult.GetRow(task.cursor)
 
 		cmpResult := -1
-		if task.outerMatch[task.cursor] {
+		if len(task.outerMatch) > 0 && !task.outerMatch[task.cursor] {
+			task.cursor++
+			continue
+		}
+		if task.innerIter.Current() != task.innerIter.End() {
 			cmpResult, err = e.compare(outerRow, task.innerIter.Current())
 			if err != nil {
 				return nil
 			}
 		}
-		if cmpResult > 0 {
-			err = e.fetchNextOuterRows(task)
+		if cmpResult >= 0 {
+			err = e.fetchNextOuterRows(task, outerRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			continue
-		}
-		if cmpResult < 0 {
+		} else {
 			e.joiner.onMissMatch(false, outerRow, req.Chunk)
 
 			task.cursor++
@@ -259,52 +256,57 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.RecordBatch)
 			continue
 		}
 
-		matched, isNull, err := e.joiner.tryToMatch(outerRow, task.sameKeyIter, req.Chunk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		task.hasMatch = task.hasMatch || matched
-		task.hasNull = task.hasNull || isNull
-
-		if task.innerIter.Current() == task.innerIter.End() {
-			if !task.hasMatch {
-				e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
+		for task.sameKeyIter.Current() != task.sameKeyIter.End() {
+			matched, isNull, err := e.joiner.tryToMatch(outerRow, task.sameKeyIter, req.Chunk)
+			if err != nil {
+				return errors.Trace(err)
 			}
-			task.cursor++
-			task.hasMatch = false
-			task.hasNull = false
+
+			task.hasMatch = task.hasMatch || matched
+			task.hasNull = task.hasNull || isNull
+
+			if req.Chunk.NumRows() >= e.maxChunkSize {
+				return nil
+			}
 		}
+
+		if !task.hasMatch {
+			e.joiner.onMissMatch(task.hasNull, outerRow, req.Chunk)
+		}
+		task.cursor++
+		task.hasMatch = false
+		task.hasNull = false
 
 		if req.Chunk.NumRows() >= e.maxChunkSize {
-			return errors.Trace(err)
+			return nil
 		}
 	}
 }
 
-func (e *IndexLookUpMergeJoin) fetchNextOuterRows(task *lookUpMergeJoinTask) error {
-	task.sameKeyRows.Reset()
-	task.sameKeyIter = chunk.NewIterator4Chunk(task.sameKeyRows)
-	task.sameKeyIter.Begin()
+func (e *IndexLookUpMergeJoin) fetchNextOuterRows(task *lookUpMergeJoinTask, key chunk.Row) error {
+	task.sameKeyRows = task.sameKeyRows[:0]
 	if task.innerCursor >= task.innerResult.NumChunks() {
 		return nil
 	}
-	key := task.innerIter.Current()
 
 	var err error
 	var cmpRes int
-	for cmpRes, err = e.compare(key, task.innerIter.Current()); cmpRes == 0 && err == nil; cmpRes, err = e.compare(key, task.innerIter.Current()) {
-		task.sameKeyRows.AppendRow(task.innerIter.Current())
+	for cmpRes, err = e.compare(key, task.innerIter.Current()); cmpRes >= 0 && err == nil; cmpRes, err = e.compare(key, task.innerIter.Current()) {
+		if cmpRes == 0 {
+			task.sameKeyRows = append(task.sameKeyRows, task.innerIter.Current())
+		}
 		task.innerIter.Next()
 		if task.innerIter.Current() == task.innerIter.End() {
 			task.innerCursor++
 			if task.innerCursor >= task.innerResult.NumChunks() {
-				return nil
+				break
 			}
 			task.innerIter = chunk.NewIterator4Chunk(task.innerResult.GetChunk(task.innerCursor))
 			task.innerIter.Begin()
 		}
 	}
+	task.sameKeyIter = chunk.NewIterator4Slice(task.sameKeyRows)
+	task.sameKeyIter.Begin()
 
 	return errors.Trace(err)
 }
@@ -313,8 +315,8 @@ func (e *IndexLookUpMergeJoin) compare(outerRow, innerRow chunk.Row) (int, error
 	outerKeyCols := e.outerMergeCtx.keyCols
 	innerKeyCols := e.innerMergeCtx.keyCols
 	for i := 0; i < len(outerKeyCols); i++ {
-		outerValue := outerRow.GetDatum(i, e.outerMergeCtx.rowTypes[outerKeyCols[i]])
-		innerValue := innerRow.GetDatum(i, e.innerMergeCtx.rowTypes[innerKeyCols[i]])
+		outerValue := outerRow.GetDatum(outerKeyCols[i], e.outerMergeCtx.rowTypes[outerKeyCols[i]])
+		innerValue := innerRow.GetDatum(innerKeyCols[i], e.innerMergeCtx.rowTypes[innerKeyCols[i]])
 		cmp, err := outerValue.CompareDatum(nil, &innerValue)
 		if err != nil {
 			return 0, err
@@ -411,7 +413,6 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 	task := &lookUpMergeJoinTask{
 		doneCh:      make(chan error, 1),
 		outerResult: omw.executor.newFirstChunk(),
-		lookUpKeys:  chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, omw.ctx.GetSessionVars().MaxChunkSize),
 	}
 	task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
@@ -510,18 +511,11 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 			return nil, errors.Trace(err)
 		}
 		if dLookUpKey == nil {
-			// Append null to make looUpKeys the same length as outer Result.
-			task.lookUpKeys.AppendNull(0)
 			continue
-		}
-		// Store the lookup key in chunk, so we can use it to lookup the matched inners directly.
-		for idx, key := range dLookUpKey {
-			task.lookUpKeys.AppendDatum(idx, &key)
 		}
 		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 	}
 
-	task.memTracker.Consume(task.lookUpKeys.MemoryUsage())
 	return dLookUpKeys, nil
 }
 

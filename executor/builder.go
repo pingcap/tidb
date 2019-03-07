@@ -1563,28 +1563,30 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		if !ok {
 			return e
 		}
-		idx := is.IdxCols
+		idx := is.Index.Columns
 		if len(v.InnerJoinKeys) <= len(idx) {
 			isInnerKeysSuffix := true
 			for i, innerKey := range v.InnerJoinKeys {
-				if innerKey != idx[i] {
+				if innerKey.ColName != idx[i].Name {
 					isInnerKeysSuffix = false
 					break
 				}
 			}
 			if isInnerKeysSuffix {
 				return &IndexLookUpMergeJoin{
-					baseExecutor: e.baseExecutor,
+					baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec),
 					outerMergeCtx: outerMergeCtx{
 						rowTypes: outerTypes,
 						filter:   outerFilter,
+						keyCols:  outerKeyCols,
 					},
 					innerMergeCtx: innerMergeCtx{
 						readerBuilder: &dataReaderBuilder{innerPlan, b},
 						rowTypes:      innerTypes,
+						keyCols:       innerKeyCols,
 					},
-					workerWg:      e.workerWg,
-					joiner:        e.joiner,
+					workerWg:      new(sync.WaitGroup),
+					joiner:        newJoiner(b.ctx, v.JoinType, v.OuterIndex == 1, defaultValues, v.OtherConditions, leftTypes, rightTypes),
 					indexRanges:   v.Ranges,
 					keyOff2IdxOff: v.KeyOff2IdxOff,
 				}
