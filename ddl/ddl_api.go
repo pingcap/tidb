@@ -1008,7 +1008,8 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
-	tblInfo, err := buildTableInfoWithLike(d, ident, referTbl.Meta())
+	tblInfo := buildTableInfoWithLike(ident, referTbl.Meta())
+	tblInfo.ID, err = d.genGlobalID()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1025,25 +1026,49 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	return errors.Trace(err)
 }
 
-func buildTableInfoWithLike(d *ddl, ident ast.Ident, referTblInfo *model.TableInfo) (model.TableInfo, error) {
-	var err error
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) model.TableInfo {
 	tblInfo := *referTblInfo
-	// No public column must in the last offset.
-	if tblInfo.Columns[len(tblInfo.Columns)-1].State != model.StatePublic {
-		tblInfo.Columns = tblInfo.Columns[0 : len(tblInfo.Columns)-1]
-	}
-	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-	for _, idx := range tblInfo.Indices {
-		if idx.State == model.StatePublic {
-			newIndices = append(newIndices, idx)
+	// Check non-public column and adjust column offset.
+	newColumns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
+	offsetChanged := make(map[int]int)
+	for _, col := range tblInfo.Columns {
+		if col.State == model.StatePublic {
+			newCol := col.Clone()
+			if newCol.Offset != len(newColumns) {
+				offsetChanged[newCol.Offset] = len(newColumns)
+				newCol.Offset = len(newColumns)
+			}
+			newColumns = append(newColumns, newCol)
 		}
 	}
+	// Update index column offset if have column offset changed.
+	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	if len(offsetChanged) > 0 {
+		for _, idx := range tblInfo.Indices {
+			if idx.State == model.StatePublic {
+				newIdx := idx.Clone()
+				for _, col := range newIdx.Columns {
+					if newOffset, ok := offsetChanged[col.Offset]; ok {
+						col.Offset = newOffset
+					}
+				}
+				newIndices = append(newIndices, newIdx)
+			}
+		}
+	} else {
+		// No need to clone.
+		for _, idx := range tblInfo.Indices {
+			if idx.State == model.StatePublic {
+				newIndices = append(newIndices, idx)
+			}
+		}
+	}
+	tblInfo.Columns = newColumns
 	tblInfo.Indices = newIndices
 	tblInfo.Name = ident.Name
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
-	tblInfo.ID, err = d.genGlobalID()
-	return tblInfo, errors.Trace(err)
+	return tblInfo
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
