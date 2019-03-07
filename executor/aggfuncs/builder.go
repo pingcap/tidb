@@ -65,6 +65,10 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 		return buildRank(ordinal, orderByCols, true)
 	case ast.WindowFuncRowNumber:
 		return buildRowNumber(windowFuncDesc, ordinal)
+	case ast.WindowFuncFirstValue:
+		return buildFirstValue(windowFuncDesc, ordinal)
+	case ast.WindowFuncLastValue:
+		return buildLastValue(windowFuncDesc, ordinal)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -347,4 +351,20 @@ func buildRank(ordinal int, orderByCols []*expression.Column, isDense bool) AggF
 		r.colIdx = append(r.colIdx, col.Index)
 	}
 	return r
+}
+
+func buildFirstValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	return &firstValue{baseAggFunc: base, tp: aggFuncDesc.RetTp}
+}
+
+func buildLastValue(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	return &lastValue{baseAggFunc: base, tp: aggFuncDesc.RetTp}
 }
