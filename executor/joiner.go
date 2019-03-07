@@ -460,3 +460,12 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 
 func (j *innerJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
 }
+
+func IsOuterJoiner(j joiner) bool {
+	switch j.(type) {
+	case *leftOuterSemiJoiner, *leftOuterJoiner, *rightOuterJoiner, *antiLeftOuterSemiJoiner:
+		return true
+	default:
+		return false
+	}
+}

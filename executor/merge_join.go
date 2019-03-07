@@ -236,7 +236,7 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 	return 0
 }
 
-func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
+func (e *MergeJoinExec) prepare(ctx context.Context, requiredRows int) error {
 	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
 		return errors.Trace(err)
@@ -252,7 +252,7 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 	e.outerTable.iter = chunk.NewIterator4Chunk(e.outerTable.chk)
 	e.outerTable.selected = make([]bool, 0, e.maxChunkSize)
 
-	err = e.fetchNextOuterRows(ctx)
+	err = e.fetchNextOuterRows(ctx, requiredRows)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -269,7 +269,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 	}
 	req.Reset()
 	if !e.prepared {
-		if err := e.prepare(ctx, req.Chunk); err != nil {
+		if err := e.prepare(ctx, req.RequiredRows()); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -286,7 +286,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.RecordBatch) error 
 func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasMore bool, err error) {
 	for {
 		if e.outerTable.row == e.outerTable.iter.End() {
-			err = e.fetchNextOuterRows(ctx)
+			err = e.fetchNextOuterRows(ctx, chk.RequiredRows()-chk.NumRows())
 			if err != nil || e.outerTable.chk.NumRows() == 0 {
 				return false, errors.Trace(err)
 			}
@@ -377,7 +377,13 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 // fetchNextOuterRows fetches the next Chunk of outer table. Rows in a Chunk
 // may not all belong to the same join key, but are guaranteed to be sorted
 // according to the join key.
-func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
+func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context, requiredRows int) (err error) {
+	// It's hard to calculate selectivity if there is any filter or it's inner join,
+	// so we just set the requiredRows when it's outer join and has no filter.
+	if IsOuterJoiner(e.joiner) && len(e.outerTable.filter) == 0 {
+		e.outerTable.chk.SetRequiredRows(requiredRows, e.maxChunkSize)
+	}
+
 	err = e.outerTable.reader.Next(ctx, chunk.NewRecordBatch(e.outerTable.chk))
 	if err != nil {
 		return errors.Trace(err)
