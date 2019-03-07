@@ -93,37 +93,59 @@ func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
 	return results
 }
 
-type testChunkSizeControlSuite struct{}
+type testChunkSizeControlKit struct {
+	store   kv.Storage
+	dom     *domain.Domain
+	tk      *testkit.TestKit
+	client  *testSlowClient
+	cluster *mocktikv.Cluster
+}
 
-func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {}
+type testChunkSizeControlSuite struct {
+	m map[string]*testChunkSizeControlKit
+}
 
-func (s *testChunkSizeControlSuite) initTable(c *C, tableSQL string) (
+func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
+	tableSQLs := map[string]string{}
+	tableSQLs["Limit&TableScan"] = "create table t (a int, primary key (a))"
+	tableSQLs["Limit&IndexScan"] = "create table t (a int, index idx_a(a))"
+
+	s.m = make(map[string]*testChunkSizeControlKit)
+	for name, sql := range tableSQLs {
+		kit := new(testChunkSizeControlKit)
+		s.m[name] = kit
+		kit.client = &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
+		kit.cluster = mocktikv.NewCluster()
+		mocktikv.BootstrapWithSingleStore(kit.cluster)
+
+		var err error
+		kit.store, err = mockstore.NewMockTikvStore(
+			mockstore.WithCluster(kit.cluster),
+			mockstore.WithHijackClient(func(c tikv.Client) tikv.Client {
+				kit.client.Client = c
+				return kit.client
+			}),
+		)
+		c.Assert(err, IsNil)
+
+		// init domain
+		kit.dom, err = session.BootstrapSession(kit.store)
+		c.Assert(err, IsNil)
+
+		// create the test table
+		kit.tk = testkit.NewTestKitWithInit(c, kit.store)
+		kit.tk.MustExec(sql)
+	}
+}
+
+func (s *testChunkSizeControlSuite) getKit(name string) (
 	kv.Storage, *domain.Domain, *testkit.TestKit, *testSlowClient, *mocktikv.Cluster) {
-	// init store
-	client := &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithHijackClient(func(c tikv.Client) tikv.Client {
-			client.Client = c
-			return client
-		}),
-	)
-	c.Assert(err, IsNil)
-
-	// init domain
-	dom, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-
-	// create the test table
-	tk := testkit.NewTestKitWithInit(c, store)
-	tk.MustExec(tableSQL)
-	return store, dom, tk, client, cluster
+	x := s.m[name]
+	return x.store, x.dom, x.tk, x.client, x.cluster
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
-	store, dom, tk, client, cluster := s.initTable(c, "create table t (a int, primary key (a))")
+	_, dom, tk, client, cluster := s.getKit("Limit&TableScan")
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tbl.Meta().ID
@@ -149,13 +171,10 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = s.parseTimeCost(c, results.Rows()[0])
 	c.Assert(cost, Not(Less), delayThreshold) // have to wait
-
-	dom.Close()
-	store.Close()
 }
 
 func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
-	store, dom, tk, client, cluster := s.initTable(c, "create table t (a int, index idx_a(a))")
+	_, dom, tk, client, cluster := s.getKit("Limit&IndexScan")
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tbl.Meta().ID
@@ -182,9 +201,6 @@ func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
 	results = tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = s.parseTimeCost(c, results.Rows()[0])
 	c.Assert(cost, Not(Less), delayThreshold) // have to wait
-
-	dom.Close()
-	store.Close()
 }
 
 func (s *testChunkSizeControlSuite) parseTimeCost(c *C, line []interface{}) time.Duration {
