@@ -149,7 +149,7 @@ func parseSlowLogField(field, value string) (*types.Datum, error) {
 	case mysql.TypeLonglong:
 		num, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.AddStack(err)
 		}
 		val = types.NewUintDatum(num)
 	case mysql.TypeVarchar:
