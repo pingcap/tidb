@@ -336,6 +336,20 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 			return err
 		}
 	}
+	if p.Frame != nil {
+		for i := range p.Frame.Start.CalcFuncs {
+			p.Frame.Start.CalcFuncs[i], err = p.Frame.Start.CalcFuncs[i].ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
+		}
+		for i := range p.Frame.End.CalcFuncs {
+			p.Frame.End.CalcFuncs[i], err = p.Frame.End.CalcFuncs[i].ResolveIndices(p.children[0].Schema())
+			if err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

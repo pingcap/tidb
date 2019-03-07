@@ -337,6 +337,23 @@ func (er *expressionRewriter) handleWindowFunction(v *ast.WindowFuncExpr) (ast.N
 	return v, true
 }
 
+func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {
+	var condition expression.Expression
+	if rCol, ok := r.(*expression.Column); ok && (er.asScalar || not) {
+		rCol.InOperand = true
+		// If both input columns of `!= all / = any` expression are not null, we can treat the expression
+		// as normal column equal condition.
+		if lCol, ok := l.(*expression.Column); ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			rCol.InOperand = false
+		}
+	}
+	condition, er.err = er.constructBinaryOpFunction(l, r, ast.EQ)
+	if er.err != nil {
+		return
+	}
+	er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, not)
+}
+
 func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) (ast.Node, bool) {
 	v.L.Accept(er)
 	if er.err != nil {
@@ -364,7 +381,6 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
 		return v, true
 	}
-	var condition expression.Expression
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
@@ -382,20 +398,23 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 	switch v.Op {
 	// Only EQ, NE and NullEQ can be composed with and.
 	case opcode.EQ, opcode.NE, opcode.NullEQ:
-		condition, er.err = er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
-		if er.err != nil {
-			er.err = errors.Trace(er.err)
-			return v, true
-		}
 		if v.Op == opcode.EQ {
 			if v.All {
 				er.handleEQAll(lexpr, rexpr, np)
 			} else {
-				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, false)
+				// `a = any(subq)` will be rewriten as `a in (subq)`.
+				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, false)
+				if er.err != nil {
+					return v, true
+				}
 			}
 		} else if v.Op == opcode.NE {
 			if v.All {
-				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, true)
+				// `a != all(subq)` will be rewriten as `a not in (subq)`.
+				er.buildSemiApplyFromEqualSubq(np, lexpr, rexpr, true)
+				if er.err != nil {
+					return v, true
+				}
 			} else {
 				er.handleNEAny(lexpr, rexpr, np)
 			}
@@ -657,6 +676,18 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
+		rCol := rexpr.(*expression.Column)
+		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
+		// normal column equal condition, so we specially mark the inner operand here.
+		if v.Not || asScalar {
+			rCol.InOperand = true
+			// If both input columns of `in` expression are not null, we can treat the expression
+			// as normal column equal condition instead.
+			lCol, ok := lexpr.(*expression.Column)
+			if ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
+				rCol.InOperand = false
+			}
+		}
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for _, col := range np.Schema().Columns {
@@ -668,15 +699,16 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 			return v, true
 		}
 	}
-	// a in (subq) will be rewrote as a = any(subq).
-	// a not in (subq) will be rewrote as a != all(subq).
 	checkCondition, err := er.constructBinaryOpFunction(lexpr, rexpr, ast.EQ)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	// If it's not the form of `not in (SUBQUERY)`, has no correlated column and don't need to append a scalar value. We can rewrite it to inner join.
-	if er.ctx.GetSessionVars().AllowInSubqToJoinAndAgg && !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
+	// If it's not the form of `not in (SUBQUERY)`,
+	// and has no correlated column from the current level plan(if the correlated column is from upper level,
+	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
+	// and don't need to append a scalar value, we can rewrite it to inner join.
+	if er.ctx.GetSessionVars().AllowInSubqToJoinAndAgg && !v.Not && !asScalar && len(extractCorColumnsBySchema(np, er.p.Schema())) == 0 {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection

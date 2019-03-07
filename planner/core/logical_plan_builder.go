@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -220,7 +220,12 @@ func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, der
 						}
 					}
 				}
-				if leftCol != nil && binop.FuncName.L == ast.EQ {
+				// For quries like `select a in (select a from s where s.b = t.b) from t`,
+				// if subquery is empty caused by `s.b = t.b`, the result should always be
+				// false even if t.a is null or s.a is null. To make this join "empty aware",
+				// we should differentiate `t.a = s.a` from other column equal conditions, so
+				// we put it into OtherConditions instead of EqualConditions of join.
+				if leftCol != nil && binop.FuncName.L == ast.EQ && !leftCol.InOperand && !rightCol.InOperand {
 					cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 					eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 					continue
@@ -518,7 +523,7 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil {
-				ret, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
+				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue
 				}
@@ -1688,6 +1693,8 @@ func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
 		}
 		return node, true
+	case *ast.SubqueryExpr:
+		return node, true
 	}
 	return node, false
 }
@@ -2780,11 +2787,14 @@ func (b *PlanBuilder) buildProjectionForWindow(p LogicalPlan, expr *ast.WindowFu
 func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
-	if bound.UnBounded || boundClause.Type == ast.CurrentRow {
+	if bound.UnBounded {
 		return bound, nil
 	}
 
 	if frameType == ast.Rows {
+		if bound.Type == ast.CurrentRow {
+			return bound, nil
+		}
 		// Rows type does not support interval range.
 		if boundClause.Unit != nil {
 			return nil, ErrWindowRowsIntervalUse.GenWithStackByArgs(spec.Name)
@@ -2797,6 +2807,17 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 		return bound, nil
 	}
 
+	bound.CalcFuncs = make([]expression.Expression, len(orderByItems))
+	bound.CmpFuncs = make([]expression.CompareFunc, len(orderByItems))
+	if bound.Type == ast.CurrentRow {
+		for i, item := range orderByItems {
+			col := item.Col
+			bound.CalcFuncs[i] = col
+			bound.CmpFuncs[i] = expression.GetCmpFunction(col, col)
+		}
+		return bound, nil
+	}
+
 	if len(orderByItems) != 1 {
 		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
 	}
@@ -2805,45 +2826,63 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(spec *ast.WindowSpec, orderB
 	if !isNumeric && !isTemporal {
 		return nil, ErrWindowRangeFrameOrderType.GenWithStackByArgs(spec.Name)
 	}
-	if boundClause.Unit != nil {
-		// Interval bounds only support order by temporal types.
-		if isNumeric {
-			return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
-		}
+	// Interval bounds only support order by temporal types.
+	if boundClause.Unit != nil && isNumeric {
+		return nil, ErrWindowRangeFrameNumericType.GenWithStackByArgs(spec.Name)
+	}
+	// Non-interval bound only support order by numeric types.
+	if boundClause.Unit == nil && !isNumeric {
+		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+	}
 
-		// TODO: We also need to raise error for non-deterministic expressions, like rand().
-		val, err := evalAstExpr(b.ctx, boundClause.Expr)
-		if err != nil {
-			return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
-		}
-		expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
-		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
-		if uVal < 0 || isNull || err != nil {
-			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
-		}
+	// TODO: We also need to raise error for non-deterministic expressions, like rand().
+	val, err := evalAstExpr(b.ctx, boundClause.Expr)
+	if err != nil {
+		return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(spec.Name)
+	}
+	expr := expression.Constant{Value: val, RetType: boundClause.Expr.GetType()}
+
+	// Do not raise warnings for truncate.
+	oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
+	b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate = oriIgnoreTruncate
+	if uVal < 0 || isNull || err != nil {
+		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	}
+
+	desc := orderByItems[0].Desc
+	if boundClause.Unit != nil {
 		// It can be guaranteed by the parser.
 		unitVal := boundClause.Unit.(*driver.ValueExpr)
 		unit := expression.Constant{Value: unitVal.Datum, RetType: unitVal.GetType()}
 
+		// When the order is asc:
+		//   `+` for following, and `-` for the preceding
+		// When the order is desc, `+` becomes `-` and vice-versa.
 		funcName := ast.DateAdd
-		if bound.Type == ast.Preceding {
+		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
 			funcName = ast.DateSub
 		}
-		bound.DateCalcFunc, err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
+		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
 		if err != nil {
 			return nil, err
 		}
+		bound.CmpFuncs[0] = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFuncs[0])
 		return bound, nil
 	}
-	// Non-interval bound only support order by numeric types.
-	if isTemporal {
-		return nil, ErrWindowRangeFrameTemporalType.GenWithStackByArgs(spec.Name)
+	// When the order is asc:
+	//   `+` for following, and `-` for the preceding
+	// When the order is desc, `+` becomes `-` and vice-versa.
+	funcName := ast.Plus
+	if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
+		funcName = ast.Minus
 	}
-	num, isNull, isExpectedType := getUintFromNode(b.ctx, boundClause.Expr)
-	if isNull || !isExpectedType {
-		return nil, ErrWindowFrameIllegal.GenWithStackByArgs(spec.Name)
+	bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
+	if err != nil {
+		return nil, err
 	}
-	bound.Num = num
+	bound.CmpFuncs[0] = expression.GetCmpFunction(orderByItems[0].Col, bound.CalcFuncs[0])
 	return bound, nil
 }
 
@@ -2883,6 +2922,26 @@ func (b *PlanBuilder) buildWindowFunction(p LogicalPlan, expr *ast.WindowFuncExp
 	p, partitionBy, orderBy, args, err := b.buildProjectionForWindow(p, expr, aggMap)
 	if err != nil {
 		return nil, err
+	}
+
+	needFrame := aggregation.NeedFrame(expr.F)
+	// According to MySQL, In the absence of a frame clause, the default frame depends on whether an ORDER BY clause is present:
+	//   (1) With order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW";
+	//   (2) Without order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING",
+	//       which is the same as an empty frame.
+	if needFrame && expr.Spec.Frame == nil && len(orderBy) > 0 {
+		expr.Spec.Frame = &ast.FrameClause{
+			Type: ast.Ranges,
+			Extent: ast.FrameExtent{
+				Start: ast.FrameBound{Type: ast.Preceding, UnBounded: true},
+				End:   ast.FrameBound{Type: ast.CurrentRow},
+			},
+		}
+	}
+	// For functions that operate on the entire partition, the frame clause will be ignored.
+	if !needFrame && expr.Spec.Frame != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(expr.F, expr.Spec.Name.O))
+		expr.Spec.Frame = nil
 	}
 	frame, err := b.buildWindowFunctionFrame(&expr.Spec, orderBy)
 	if err != nil {
@@ -2980,7 +3039,6 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName, asName boo
 			if x.AsName.L != "" && asName {
 				newTableName := *s
 				newTableName.Name = x.AsName
-				s.Name = x.AsName
 				input = append(input, &newTableName)
 			} else {
 				input = append(input, s)

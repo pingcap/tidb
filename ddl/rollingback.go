@@ -232,11 +232,12 @@ func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
 
 	return ver, nil
 }
-func rollingbackRebaseAutoID(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	return cancelOnlyNotHandledJob(job)
-}
 
-func rollingbackShardRowID(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	return cancelOnlyNotHandledJob(job)
 }
 
@@ -260,10 +261,12 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		err = rollingbackDropSchema(t, job)
 	case model.ActionRenameIndex:
 		ver, err = rollingbackRenameIndex(t, job)
-	case model.ActionRebaseAutoID:
-		ver, err = rollingbackRebaseAutoID(t, job)
-	case model.ActionShardRowID:
-		ver, err = rollingbackShardRowID(t, job)
+	case model.ActionTruncateTable:
+		ver, err = rollingbackTruncateTable(t, job)
+	case model.ActionRebaseAutoID, model.ActionShardRowID,
+		model.ActionModifyColumn, model.ActionAddForeignKey,
+		model.ActionDropForeignKey:
+		ver, err = cancelOnlyNotHandledJob(job)
 	default:
 		job.State = model.JobStateCancelled
 		err = errCancelledDDLJob

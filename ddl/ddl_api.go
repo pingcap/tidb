@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/schemautil"
 	"github.com/pingcap/tidb/util/set"
@@ -471,16 +472,34 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	err = checkColumnFieldLength(col)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
 	return col, constraints, nil
 }
 
-func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
+func getDefaultValue(ctx sessionctx.Context, colName string, c *ast.ColumnOption, t *types.FieldType) (interface{}, error) {
 	tp, fsp := t.Tp, t.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+		switch x := c.Expr.(type) {
+		case *ast.FuncCallExpr:
+			if x.FnName.L == ast.CurrentTimestamp {
+				defaultFsp := 0
+				if len(x.Args) == 1 {
+					if val := x.Args[0].(*driver.ValueExpr); val != nil {
+						defaultFsp = int(val.GetInt64())
+					}
+				}
+				if defaultFsp != fsp {
+					return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
+				}
+			}
+		}
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, ErrInvalidDefaultValue.GenWithStackByArgs(colName)
 		}
 
 		// Value is nil means `default null`.
@@ -664,9 +683,23 @@ func checkDuplicateColumn(cols []interface{}) error {
 	return nil
 }
 
+func checkIsAutoIncrementColumn(colDefs *ast.ColumnDef) bool {
+	for _, option := range colDefs.Options {
+		if option.Tp == ast.ColumnOptionAutoIncrement {
+			return true
+		}
+	}
+	return false
+}
+
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
+	var exists bool
+	var autoIncrementColumn string
 	for i, colDef := range colDefs {
+		if checkIsAutoIncrementColumn(colDef) {
+			exists, autoIncrementColumn = true, colDef.Name.Name.L
+		}
 		generated, depCols := findDependedColumnNames(colDef)
 		if !generated {
 			colName2Generation[colDef.Name.Name.L] = columnGenerationInDDL{
@@ -681,6 +714,16 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 			}
 		}
 	}
+
+	// Check whether the generated column refers to any auto-increment columns
+	if exists {
+		for colName, generated := range colName2Generation {
+			if _, found := generated.dependences[autoIncrementColumn]; found {
+				return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(colName)
+			}
+		}
+	}
+
 	for _, colDef := range colDefs {
 		colName := colDef.Name.Name.L
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
@@ -719,16 +762,6 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if err := checkColumnAttributes(colDef.Name.OrigColName(), colDef.Tp); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-// checkColumnsFieldLength check the maximum length limit for different character set varchar type columns.
-func checkColumnsFieldLength(cols []*table.Column) error {
-	for _, col := range cols {
-		if err := checkColumnFieldLength(col); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -845,7 +878,8 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
-		Name: tableName,
+		Name:    tableName,
+		Version: model.CurrLatestTableInfoVersion,
 	}
 	// When this function is called by MockTableInfo, we should set a particular table id.
 	// So the `ddl` structure may be nil.
@@ -1033,10 +1067,6 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	// The column charset haven't been resolved here.
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints, tableCharset, dbCharset)
 	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if err = checkColumnsFieldLength(cols); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1380,7 +1410,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 		case ast.TableOptionCompression:
 			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
-			if hasAutoIncrementColumn(tbInfo) && op.UintValue != 0 {
+			ok, _ := hasAutoIncrementColumn(tbInfo)
+			if ok && op.UintValue != 0 {
 				return errUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
@@ -1393,13 +1424,13 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 	return nil
 }
 
-func hasAutoIncrementColumn(tbInfo *model.TableInfo) bool {
+func hasAutoIncrementColumn(tbInfo *model.TableInfo) (bool, string) {
 	for _, col := range tbInfo.Columns {
 		if mysql.HasAutoIncrementFlag(col.Flag) {
-			return true
+			return true, col.Name.L
 		}
 	}
-	return false
+	return false, ""
 }
 
 // isIgnorableSpec checks if the spec type is ignorable.
@@ -1438,7 +1469,7 @@ func getCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 }
 
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
-// returns valied specs, and the occured error.
+// returns valied specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
 	validSpecs := make([]*ast.AlterTableSpec, 0, len(specs))
 	algorithm := ast.AlterAlgorithmDefault
@@ -1469,7 +1500,6 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 			// For the compatibility, we return warning instead of error when the algorithm is COPY,
 			// because the COPY ALGORITHM is not supported in TiDB.
 			ctx.GetSessionVars().StmtCtx.AppendError(err)
-			err = nil
 		}
 
 		spec.Algorithm = resolvedAlgorithm
@@ -1608,7 +1638,8 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if hasAutoIncrementColumn(t.Meta()) && uVal != 0 {
+	ok, _ := hasAutoIncrementColumn(t.Meta())
+	if ok && uVal != 0 {
 		return errUnsupportedShardRowIDBits
 	}
 	job := &model.Job{
@@ -1680,7 +1711,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 	// If new column is a generated column, do validation.
 	// NOTE: Because now we can only append columns to table,
-	// we dont't need check whether the column refers other
+	// we don't need check whether the column refers other
 	// generated columns occurring later in table.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
@@ -1689,6 +1720,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 				referableColNames[col.Name.L] = struct{}{}
 			}
 			_, dependColNames := findDependedColumnNames(specNewColumn)
+			if err = checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+				return errors.Trace(err)
+			}
 			if err = columnNamesCover(referableColNames, dependColNames); err != nil {
 				return errors.Trace(err)
 			}
@@ -1699,7 +1733,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
-	// Ingore table constraints now, maybe return error later.
+	// Ignore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
 	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil, t.Meta().Charset, schema.Charset)
@@ -2001,9 +2035,9 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
 	hasDefaultValue := false
-	value, err := getDefaultValue(ctx, option, &col.FieldType)
+	value, err := getDefaultValue(ctx, col.Name.L, option, &col.FieldType)
 	if err != nil {
-		return hasDefaultValue, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
+		return hasDefaultValue, errors.Trace(err)
 	}
 
 	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
@@ -2148,6 +2182,13 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		Name:               newColName,
 	})
 
+	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
+	// If newCol's charset is empty and the table's version less than TableInfoVersion1,
+	// we will not modify the charset of the column. This behavior is not compatible with MySQL.
+	if len(newCol.FieldType.Charset) == 0 && t.Meta().Version < model.TableInfoVersion1 {
+		newCol.FieldType.Charset = col.FieldType.Charset
+		newCol.FieldType.Collate = col.FieldType.Collate
+	}
 	err = setCharsetCollationFlenDecimal(&newCol.FieldType, t.Meta().Charset, schema.Charset)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2239,6 +2280,20 @@ func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	}
 	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
 		return ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
+	}
+
+	// If the modified column is generated, check whether it refers to any auto-increment columns.
+	for _, option := range specNewColumn.Options {
+		if option.Tp == ast.ColumnOptionGenerated {
+			_, t, err := d.getSchemaAndTableByIdent(ctx, ident)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			_, dependColNames := findDependedColumnNames(specNewColumn)
+			if err := checkAutoIncrementRef(specNewColumn.Name.Name.L, dependColNames, t.Meta()); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	originalColName := specNewColumn.Name.Name

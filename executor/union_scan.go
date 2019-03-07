@@ -18,10 +18,13 @@ import (
 	"sort"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -120,6 +123,11 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.RecordBatch) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("unionScan.Next", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+
 	if us.runtimeStats != nil {
 		start := time.Now()
 		defer func() { us.runtimeStats.Record(time.Since(start), req.NumRows()) }()
@@ -267,19 +275,31 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	return cmp, nil
 }
 
-func (us *UnionScanExec) buildAndSortAddedRows() error {
+// rowWithColsInTxn gets the row from the transaction buffer.
+func (us *UnionScanExec) rowWithColsInTxn(t table.Table, h int64, cols []*table.Column) ([]types.Datum, error) {
+	key := t.RecordKey(h)
+	txn, err := us.ctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	value, err := txn.GetMemBuffer().Get(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	v, _, err := tables.DecodeRawRowData(us.ctx, t.Meta(), h, cols, value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return v, nil
+}
+
+func (us *UnionScanExec) buildAndSortAddedRows(t table.Table) error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	t, found := GetInfoSchema(us.ctx).TableByID(us.dirty.tid)
-	if !found {
-		// t is got from a snapshot InfoSchema, so it should be found, this branch should not happen.
-		return errors.Errorf("table not found (tid: %d, schema version: %d)",
-			us.dirty.tid, GetInfoSchema(us.ctx).SchemaMetaVersion())
-	}
 	cols := t.WritableCols()
 	for h := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())
-		data, err := t.RowWithCols(us.ctx, h, cols)
+		data, err := us.rowWithColsInTxn(t, h, cols)
 		if err != nil {
 			return err
 		}
@@ -291,7 +311,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 			}
 		}
 		mutableRow.SetDatums(newData...)
-		matched, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}

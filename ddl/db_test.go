@@ -470,6 +470,52 @@ func (s *testDBSuite) TestCancelDropIndex(c *C) {
 	s.mustExec(c, "alter table t drop index idx_c2")
 }
 
+// TestCancelTruncateTable tests cancel ddl job which type is truncate table.
+func (s *testDBSuite) TestCancelTruncateTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "create database if not exists test_truncate_table")
+	s.mustExec(c, "drop table if exists t")
+	s.mustExec(c, "create table t(c1 int, c2 int)")
+	defer s.mustExec(c, "drop table t;")
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionTruncateTable && job.State == model.JobStateNone {
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = s.store
+			err := hookCtx.NewTxn(context.Background())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	_, err := s.tk.Exec("truncate table t")
+	c.Assert(checkErr, IsNil)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+}
+
 // TestCancelRenameIndex tests cancel ddl job which type is rename index.
 func (s *testDBSuite) TestCancelRenameIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
@@ -550,9 +596,6 @@ func (s *testDBSuite) TestCancelDropTableAndSchema(c *C) {
 		{true, model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]
@@ -1053,9 +1096,6 @@ func (s *testDBSuite) TestCancelDropColumn(c *C) {
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
 	hook := &ddl.TestDDLCallback{}
 	var jobID int64
 	testCase := &testCases[0]
@@ -2143,7 +2183,8 @@ func (s *testDBSuite) TestCheckTooBigFieldLength(c *C) {
 	s.tk.MustExec("create table tr_03 (id int, name varchar(65534), purchased date ) default charset=latin1;")
 
 	s.tk.MustExec("drop table if exists tr_04;")
-	s.tk.MustExec("create table tr_04 (a varchar(20000)) default charset utf8;")
+	s.tk.MustExec("create table tr_04 (a varchar(20000) ) default charset utf8;")
+	assertErrorCode(c, s.tk, "alter table tr_04 add column b varchar(20000) charset utf8mb4;", tmysql.ErrTooBigFieldlength)
 	assertErrorCode(c, s.tk, "alter table tr_04 convert to character set utf8mb4;", tmysql.ErrTooBigFieldlength)
 	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", tmysql.ErrTooBigFieldlength)
 	assertErrorCode(c, s.tk, "create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8;", tmysql.ErrTooBigFieldlength)
@@ -2164,6 +2205,7 @@ func (s *testDBSuite) TestCheckConvertToCharacter(c *C) {
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 	rs, err := s.tk.Exec("alter table t modify column a varchar(10) charset utf8 collate utf8_bin")
 	c.Assert(err, NotNil)
 	rs, err = s.tk.Exec("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin")
@@ -2175,6 +2217,7 @@ func (s *testDBSuite) TestCheckConvertToCharacter(c *C) {
 	}
 	c.Assert(t.Cols()[0].Charset, Equals, "binary")
 }
+
 func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
@@ -2260,6 +2303,54 @@ LOOP:
 		}
 	}
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.mustExec(c, "drop table t1")
+}
+
+func (s *testDBSuite) TestModifyColumnNullToNotNull(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (c1 int, c2 int);")
+
+	tbl := s.testGetTable(c, "t1")
+	var insertErr error
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		var c2 *table.Column
+		t := s.testGetTable(c, "t1")
+		for _, col := range t.Cols() {
+			if col.Name.L == "c2" {
+				c2 = col
+			}
+		}
+		if mysql.HasPreventNullInsertFlag(c2.Flag) {
+			_, insertErr = s.tk.Exec("insert into t1 values ();")
+		}
+	}
+
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
+	err := <-done
+	c.Assert(err, IsNil)
+
+	var c2 *table.Column
+	t := s.testGetTable(c, "t1")
+	for _, col := range t.Cols() {
+		if col.Name.L == "c2" {
+			c2 = col
+		}
+	}
+	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
+	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
+	c.Assert(insertErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
+	_, insertErr = s.tk.Exec("insert into t1 values ();")
+	c.Assert(insertErr.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(c, "drop table t1")
 }
@@ -2456,6 +2547,22 @@ func (s *testDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	s.mustExec(c, "delete from t where y = 2155")
 	s.mustExec(c, "alter table t add index idx_y(y1)")
 	s.mustExec(c, "alter table t drop index idx_y")
+
+	// Fix issue 9311.
+	s.tk.MustExec("create table gcai_table (id int primary key);")
+	s.tk.MustExec("insert into gcai_table values(1);")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d date DEFAULT '9999-12-31';")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN d1 date as (DATE_SUB(d, INTERVAL 31 DAY));")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx(d1);")
+	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30"))
+	s.tk.MustQuery("select d1 from gcai_table use index(idx)").Check(testkit.Rows("9999-11-30"))
+	s.tk.MustExec("admin check table gcai_table")
+	// The column is PKIsHandle in generated column expression.
+	s.tk.MustExec("ALTER TABLE gcai_table ADD COLUMN id1 int as (id+5);")
+	s.tk.MustExec("ALTER TABLE gcai_table ADD INDEX idx1(id1);")
+	s.tk.MustQuery("select * from gcai_table").Check(testkit.Rows("1 9999-12-31 9999-11-30 6"))
+	s.tk.MustQuery("select id1 from gcai_table use index(idx1)").Check(testkit.Rows("6"))
+	s.tk.MustExec("admin check table gcai_table")
 }
 
 func (s *testDBSuite) TestIssue9100(c *C) {
@@ -2471,4 +2578,32 @@ func (s *testDBSuite) TestIssue9100(c *C) {
 	tk.MustExec("create table issue9100t2 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col3)) partition by range( col1 + col3 ) (partition p1 values less than (11))")
 	_, err = tk.Exec("alter table issue9100t2 add unique index  p_col1 (col1)")
 	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+}
+
+func (s *testDBSuite) TestModifyColumnCharset(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test_db")
+	s.tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
+	defer s.mustExec(c, "drop table t_mcc;")
+
+	result := s.tk.MustQuery(`show create table t_mcc`)
+	result.Check(testkit.Rows(
+		"t_mcc CREATE TABLE `t_mcc` (\n" +
+			"  `a` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	s.tk.MustExec("alter table t_mcc modify column a varchar(8);")
+	t := s.testGetTable(c, "t_mcc")
+	t.Meta().Version = model.TableInfoVersion0
+	// When the table version is TableInfoVersion0, the following statement don't change "b" charset.
+	// So the behavior is not compatible with MySQL.
+	s.tk.MustExec("alter table t_mcc modify column b varchar(8);")
+	result = s.tk.MustQuery(`show create table t_mcc`)
+	result.Check(testkit.Rows(
+		"t_mcc CREATE TABLE `t_mcc` (\n" +
+			"  `a` varchar(8) DEFAULT NULL,\n" +
+			"  `b` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
 }
