@@ -1390,11 +1390,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
-	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
+	wcount := fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false))
+	err = vars.SetSystemVar("warning_count", wcount)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
+	err = vars.SetSystemVar("error_count", wcount)
 	if err != nil {
 		return errors.Trace(err)
 	}
