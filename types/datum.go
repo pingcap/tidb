@@ -1409,6 +1409,7 @@ func (d *Datum) ToInt64(sc *stmtctx.StatementContext) (int64, error) {
 }
 
 func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, error) {
+	// TODO: use switch case extracted function instead of looking up in map
 	lowerBound := SignedLowerBound[tp]
 	upperBound := SignedUpperBound[tp]
 	switch d.Kind() {
