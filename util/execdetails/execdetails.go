@@ -54,7 +54,7 @@ type CommitDetails struct {
 }
 
 const (
-	// ProcessTimeStr means the time of all coprocessor process.
+	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks
 	ProcessTimeStr = "Process_time"
 	// WaitTimeStr means the time of all coprocessor wait.
 	WaitTimeStr = "Wait_time"
