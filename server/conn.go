@@ -128,7 +128,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 	if err := cc.readOptionalSSLRequestAndHandshakeResponse(ctx); err != nil {
 		err1 := cc.writeError(err)
 		if err1 != nil {
-			logutil.Logger(ctx).Debug("writeError failed", logutil.Error(err1))
+			logutil.Logger(ctx).Debug("writeError failed", zap.Error(err1))
 		}
 		return errors.Trace(err)
 	}
@@ -233,7 +233,7 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 	}
 	waitTimeout, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
-		logutil.Logger(ctx).Warn("get sysval wait_timeout error, use default value", logutil.Error(err))
+		logutil.Logger(ctx).Warn("get sysval wait_timeout error, use default value", zap.Error(err))
 		// if get waitTimeout error, use default value
 		return variable.DefWaitTimeout
 	}
@@ -387,7 +387,7 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 			row := data[offset : offset+int(num)]
 			attrs, err := parseAttrs(row)
 			if err != nil {
-				logutil.Logger(ctx).Warn("parse attrs failed", logutil.Error(err))
+				logutil.Logger(ctx).Warn("parse attrs failed", zap.Error(err))
 				return nil
 			}
 			packet.Attrs = attrs
@@ -573,7 +573,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				} else {
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {
-						logutil.Logger(ctx).Error("read packet failed, close this connection", logutil.Error(err), zap.String("stack", errStack))
+						logutil.Logger(ctx).Error("read packet failed, close this connection", zap.Error(err), zap.String("stack", errStack))
 					}
 				}
 			}
@@ -590,10 +590,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 				cc.addMetrics(data[0], startTime, nil)
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
-				logutil.Logger(ctx).Error("result undetermined, close this connection", logutil.Error(err))
+				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
 				return
 			} else if terror.ErrCritical.Equal(err) {
-				logutil.Logger(ctx).Error("critical error, stop the server listener", logutil.Error(err))
+				logutil.Logger(ctx).Error("critical error, stop the server listener", zap.Error(err))
 				metrics.CriticalErrorCounter.Add(1)
 				select {
 				case cc.server.stopListenerCh <- struct{}{}:
@@ -941,7 +941,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		curData, err = cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				logutil.Logger(ctx).Error("read packet failed", logutil.Error(err))
+				logutil.Logger(ctx).Error("read packet failed", zap.Error(err))
 				break
 			}
 		}
@@ -974,7 +974,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		if txn != nil && txn.Valid() {
 			if err != nil {
 				if err1 := txn.Rollback(); err1 != nil {
-					logutil.Logger(ctx).Error("load data rollback failed", logutil.Error(err1))
+					logutil.Logger(ctx).Error("load data rollback failed", zap.Error(err1))
 				}
 				return errors.Trace(err)
 			}
@@ -1290,7 +1290,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	cc.dbname = string(hack.String(dbName))
 	err := cc.ctx.Close()
 	if err != nil {
-		logutil.Logger(ctx).Debug("close old context error", logutil.Error(err))
+		logutil.Logger(ctx).Debug("close old context error", zap.Error(err))
 	}
 	err = cc.openSessionAndDoAuth(pass)
 	if err != nil {

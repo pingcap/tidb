@@ -383,8 +383,3 @@ func WithRecvTs(ctx context.Context, recvTs int64) context.Context {
 	}
 	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Int64("recvTs", recvTs)))
 }
-
-// Error is shorthand for the common idiom NamedError("err", err).
-func Error(err error) zap.Field {
-	return zap.NamedError("err", err)
-}
