@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -806,6 +807,12 @@ func doDMLWorks(s Session) {
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
 		strings.Join(values, ", "))
 	mustExecute(s, sql)
+
+	if config.CheckTableBeforeDrop {
+		sql = fmt.Sprintf("admin check table `%s`.`%s`", mysql.SystemDB, mysql.GlobalVariablesTable)
+		log.Warnf("%s before AfterInit GlobalSysVar", sql)
+		mustExecute(s, sql)
+	}
 
 	sql = fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES("%s", "%s", "Bootstrap flag. Do not delete.")
 		ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
