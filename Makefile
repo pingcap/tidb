@@ -59,7 +59,7 @@ build:
 	$(GOBUILD)
 
 # Install the check tools.
-check-setup:tools/bin/revive tools/bin/goword tools/bin/golangci-lint tools/bin/gosec
+check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
 check: fmt errcheck lint tidy check-static
 
@@ -76,16 +76,16 @@ goword:tools/bin/goword
 gosec:tools/bin/gosec
 	tools/bin/gosec $$($(PACKAGE_DIRECTORIES))
 
-check-static:tools/bin/golangci-lint 
+check-static:tools/bin/gometalinter tools/bin/misspell tools/bin/ineffassign
 	@ # TODO: enable megacheck.
-	tools/bin/golangci-lint run --disable-all --deadline=120s \
-	  -E misspell \
-	  -E ineffassign \
+	@ # TODO: gometalinter has been DEPRECATED.
+	@ # https://github.com/alecthomas/gometalinter/issues/590
+	tools/bin/gometalinter --disable-all --deadline 120s \
+	  --enable misspell \
+	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:tools/bin/gometalinter tools/bin/gosec
-	@ # TODO: gometalinter has been DEPRECATED.
-	@ # https://github.com/alecthomas/gometalinter/issues/590
 	tools/bin/gometalinter --disable-all \
 	  --enable errcheck \
 	  $$($(PACKAGE_DIRECTORIES))
@@ -213,10 +213,10 @@ tools/bin/goword: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/goword github.com/chzchzchz/goword
 
-
-tools/bin/golangci-lint: tools/check/go.mod
+tools/bin/gometalinter: tools/check/go.mod
 	cd tools/check; \
-	$(GO) build -o ../bin/golangci-lint github.com/golangci/golangci-lint/cmd/golangci-lint
+	$(GO) build -o ../bin/gometalinter gopkg.in/alecthomas/gometalinter.v2
+
 tools/bin/gosec: tools/check/go.mod
 	cd tools/check; \
 	$(GO) build -o ../bin/gosec github.com/securego/gosec/cmd/gosec
@@ -228,3 +228,9 @@ tools/bin/errcheck: tools/check/go.mod
 tools/bin/gofail: go.mod
 	$(GO) build -o $@ github.com/pingcap/gofail
 
+tools/bin/misspell:tools/check/go.mod
+	$(GO) get -u github.com/client9/misspell/cmd/misspell
+
+tools/bin/ineffassign:tools/check/go.mod
+	cd tools/check; \
+	$(GO) build -o ../bin/ineffassign github.com/gordonklaus/ineffassign
