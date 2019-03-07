@@ -95,6 +95,22 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
 
+func (s *testEvaluatorSuite) TestCurrentRole(c *C) {
+	defer testleak.AfterTest(c)()
+	ctx := mock.NewContext()
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ActiveRoles = make([]*auth.RoleIdentity, 0, 10)
+	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_1", Hostname: "%"})
+	sessionVars.ActiveRoles = append(sessionVars.ActiveRoles, &auth.RoleIdentity{Username: "r_2", Hostname: "localhost"})
+
+	fc := funcs[ast.CurrentRole]
+	f, err := fc.getFunction(ctx, nil)
+	c.Assert(err, IsNil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(d.GetString(), Equals, "`r_1`@`%`,`r_2`@`localhost`")
+}
+
 func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()

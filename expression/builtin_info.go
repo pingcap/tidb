@@ -189,7 +189,7 @@ func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (string, bool, error) 
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
 	if len(data.ActiveRoles) == 0 {
-		return "NONE", false, nil
+		return "", false, nil
 	}
 	res := ""
 	for i, r := range data.ActiveRoles {
