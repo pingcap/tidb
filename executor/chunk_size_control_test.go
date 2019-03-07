@@ -112,6 +112,7 @@ func (s *testChunkSizeControlSuite) SetUpSuite(c *C) {
 
 	s.m = make(map[string]*testChunkSizeControlKit)
 	for name, sql := range tableSQLs {
+		// BootstrapSession is not thread-safe, so we have to prepare all resources in SetUp.
 		kit := new(testChunkSizeControlKit)
 		s.m[name] = kit
 		kit.client = &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
@@ -155,9 +156,10 @@ func (s *testChunkSizeControlSuite) TestLimitAndTableScan(c *C) {
 	regionIDs := manipulateCluster(cluster, splitKeys)
 
 	noDelayThreshold := time.Millisecond * 100
-	delayThreshold := time.Second
+	delayDuration := time.Second
+	delayThreshold := delayDuration * 9 / 10
 	tk.MustExec("insert into t values (1)") // insert one record into region1, and set a delay duration
-	client.SetDelay(regionIDs[0], delayThreshold)
+	client.SetDelay(regionIDs[0], delayDuration)
 
 	results := tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
 	cost := s.parseTimeCost(c, results.Rows()[0])
@@ -185,9 +187,10 @@ func (s *testChunkSizeControlSuite) TestLimitAndIndexScan(c *C) {
 	regionIDs := manipulateCluster(cluster, splitKeys)
 
 	noDelayThreshold := time.Millisecond * 100
-	delayThreshold := time.Second
+	delayDuration := time.Second
+	delayThreshold := delayDuration * 9 / 10
 	tk.MustExec("insert into t values (1)") // insert one record into region1, and set a delay duration
-	client.SetDelay(regionIDs[0], delayThreshold)
+	client.SetDelay(regionIDs[0], delayDuration)
 
 	results := tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 1")
 	cost := s.parseTimeCost(c, results.Rows()[0])
