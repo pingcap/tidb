@@ -16,6 +16,7 @@ package tikvrpc
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -196,6 +197,23 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 	return nil
 }
 
+var respPool = sync.Pool{
+	New: func() interface{} {
+		// The Pool's New function should generally only return pointer
+		// types, since a pointer can be put into the return interface
+		// value without an allocation:
+		return &Response{}
+	},
+}
+
+func Borrow() *Response {
+	return respPool.Get().(*Response)
+}
+
+func (resp *Response) Recyle() {
+	respPool.Put(resp)
+}
+
 // Response wraps all kv/coprocessor responses.
 type Response struct {
 	Type               CmdType
@@ -228,49 +246,70 @@ type Response struct {
 
 // FromBatchCommandsResponse converts a BatchCommands response to Response.
 func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) *Response {
+	resp := Borrow()
 	switch res := res.GetCmd().(type) {
 	case *tikvpb.BatchCommandsResponse_Response_Get:
-		return &Response{Type: CmdGet, Get: res.Get}
+		resp.Type = CmdGet
+		resp.Get = res.Get
 	case *tikvpb.BatchCommandsResponse_Response_Scan:
-		return &Response{Type: CmdScan, Scan: res.Scan}
+		resp.Type = CmdScan
+		resp.Scan = res.Scan
 	case *tikvpb.BatchCommandsResponse_Response_Prewrite:
-		return &Response{Type: CmdPrewrite, Prewrite: res.Prewrite}
+		resp.Type = CmdPrewrite
+		resp.Prewrite = res.Prewrite
 	case *tikvpb.BatchCommandsResponse_Response_Commit:
-		return &Response{Type: CmdCommit, Commit: res.Commit}
+		resp.Type = CmdCommit
+		resp.Commit = res.Commit
 	case *tikvpb.BatchCommandsResponse_Response_Cleanup:
-		return &Response{Type: CmdCleanup, Cleanup: res.Cleanup}
+		resp.Type = CmdCleanup
+		resp.Cleanup = res.Cleanup
 	case *tikvpb.BatchCommandsResponse_Response_BatchGet:
-		return &Response{Type: CmdBatchGet, BatchGet: res.BatchGet}
+		resp.Type = CmdBatchGet
+		resp.BatchGet = res.BatchGet
 	case *tikvpb.BatchCommandsResponse_Response_BatchRollback:
-		return &Response{Type: CmdBatchRollback, BatchRollback: res.BatchRollback}
+		resp.Type = CmdBatchRollback
+		resp.BatchRollback = res.BatchRollback
 	case *tikvpb.BatchCommandsResponse_Response_ScanLock:
-		return &Response{Type: CmdScanLock, ScanLock: res.ScanLock}
+		resp.Type = CmdScanLock
+		resp.ScanLock = res.ScanLock
 	case *tikvpb.BatchCommandsResponse_Response_ResolveLock:
-		return &Response{Type: CmdResolveLock, ResolveLock: res.ResolveLock}
+		resp.Type = CmdResolveLock
+		resp.ResolveLock = res.ResolveLock
 	case *tikvpb.BatchCommandsResponse_Response_GC:
-		return &Response{Type: CmdGC, GC: res.GC}
+		resp.Type = CmdGC
+		resp.GC = res.GC
 	case *tikvpb.BatchCommandsResponse_Response_DeleteRange:
-		return &Response{Type: CmdDeleteRange, DeleteRange: res.DeleteRange}
+		resp.Type = CmdDeleteRange
+		resp.DeleteRange = res.DeleteRange
 	case *tikvpb.BatchCommandsResponse_Response_RawGet:
-		return &Response{Type: CmdRawGet, RawGet: res.RawGet}
+		resp.Type = CmdRawGet
+		resp.RawGet = res.RawGet
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchGet:
-		return &Response{Type: CmdRawBatchGet, RawBatchGet: res.RawBatchGet}
+		resp.Type = CmdRawBatchGet
+		resp.RawBatchGet = res.RawBatchGet
 	case *tikvpb.BatchCommandsResponse_Response_RawPut:
-		return &Response{Type: CmdRawPut, RawPut: res.RawPut}
+		resp.Type = CmdRawPut
+		resp.RawPut = res.RawPut
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchPut:
-		return &Response{Type: CmdRawBatchPut, RawBatchPut: res.RawBatchPut}
+		resp.Type = CmdRawBatchPut
+		resp.RawBatchPut = res.RawBatchPut
 	case *tikvpb.BatchCommandsResponse_Response_RawDelete:
-		return &Response{Type: CmdRawDelete, RawDelete: res.RawDelete}
+		resp.Type = CmdRawDelete
+		resp.RawDelete = res.RawDelete
 	case *tikvpb.BatchCommandsResponse_Response_RawBatchDelete:
-		return &Response{Type: CmdRawBatchDelete, RawBatchDelete: res.RawBatchDelete}
+		resp.Type = CmdRawBatchDelete
+		resp.RawBatchDelete = res.RawBatchDelete
 	case *tikvpb.BatchCommandsResponse_Response_RawDeleteRange:
-		return &Response{Type: CmdRawDeleteRange, RawDeleteRange: res.RawDeleteRange}
+		resp.Type = CmdRawDeleteRange
+		resp.RawDeleteRange = res.RawDeleteRange
 	case *tikvpb.BatchCommandsResponse_Response_RawScan:
-		return &Response{Type: CmdRawScan, RawScan: res.RawScan}
+		resp.Type = CmdRawScan
+		resp.RawScan = res.RawScan
 	case *tikvpb.BatchCommandsResponse_Response_Coprocessor:
-		return &Response{Type: CmdCop, Cop: res.Coprocessor}
+		resp.Type = CmdCop
+		resp.Cop = res.Coprocessor
 	}
-	return nil
+	return resp
 }
 
 // CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.

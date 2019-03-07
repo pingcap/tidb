@@ -246,6 +246,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		defer resp.Recyle()
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
 			return nil, errors.Trace(err)
