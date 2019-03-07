@@ -1559,7 +1559,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 
 	// If the inner join keys are the suffix set of the index, then return the IndexLookUpMergeJoin
 	if ir, ok := innerPlan.(*plannercore.PhysicalIndexReader); ok && v.KeepOuterOrder {
-		is, ok := ir.indexPlan.(*plannercore.PhysicalIndexScan)
+		is, ok := ir.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 		if !ok {
 			return e
 		}
