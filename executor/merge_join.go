@@ -379,7 +379,7 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 // according to the join key.
 func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context, requiredRows int) (err error) {
 	// It's hard to calculate selectivity if there is any filter or it's inner join,
-	// so we just set the requiredRows when it's outer join and has no filter.
+	// so we just push the requiredRows down when it's outer join and has no filter.
 	if IsOuterJoiner(e.joiner) && len(e.outerTable.filter) == 0 {
 		e.outerTable.chk.SetRequiredRows(requiredRows, e.maxChunkSize)
 	}
