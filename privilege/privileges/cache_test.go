@@ -185,6 +185,36 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 	c.Assert(p.RequestVerification("genius", "127.0.0.1", "tctrain", "tctrainorder", "", mysql.SelectPriv), IsTrue)
 }
 
+func (s *testCacheSuite) TestLoadRoleGraph(c *C) {
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+	mustExec(c, se, "use mysql;")
+	mustExec(c, se, "truncate table user;")
+
+	var p privileges.MySQLPrivilege
+	err = p.LoadRoleGraph(se)
+	c.Assert(err, IsNil)
+	c.Assert(len(p.User), Equals, 0)
+
+	mustExec(c, se, `INSERT INTO mysql.role_edges (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ("%", "r_1", "%", "user2")`)
+	mustExec(c, se, `INSERT INTO mysql.role_edges (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ("%", "r_2", "%", "root")`)
+	mustExec(c, se, `INSERT INTO mysql.role_edges (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ("%", "r_3", "%", "user1")`)
+	mustExec(c, se, `INSERT INTO mysql.role_edges (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ("%", "r_4", "%", "root")`)
+
+	p = privileges.MySQLPrivilege{}
+	err = p.LoadRoleGraph(se)
+	c.Assert(err, IsNil)
+	graph := p.RoleGraph
+	c.Assert(graph["root@%"].Find("r_2", "%"), Equals, true)
+	c.Assert(graph["root@%"].Find("r_4", "%"), Equals, true)
+	c.Assert(graph["user2@%"].Find("r_1", "%"), Equals, true)
+	c.Assert(graph["user1@%"].Find("r_3", "%"), Equals, true)
+	_, ok := graph["illedal"]
+	c.Assert(ok, Equals, false)
+	c.Assert(graph["root@%"].Find("r_1", "%"), Equals, false)
+}
+
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)

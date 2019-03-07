@@ -80,7 +80,7 @@ require (
 	golang.org/x/text v0.3.0
 	golang.org/x/time v0.0.0-20181108054448-85acf8d2951c // indirect
 	golang.org/x/tools v0.0.0-20190130214255-bb1329dc71a0
-	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275
+	google.golang.org/genproto v0.0.0-20190108161440-ae2f86662275 // indirect
 	google.golang.org/grpc v1.17.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/stretchr/testify.v1 v1.2.2 // indirect
@@ -88,4 +88,4 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/pingcap/parser => github.com/imtbkcat/parser v0.0.0-20190303143855-d110705f7c88
+replace github.com/pingcap/parser => github.com/imtbkcat/parser v0.0.0-20190306131438-36bf9d091519

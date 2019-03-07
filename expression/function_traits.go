@@ -21,6 +21,7 @@ import (
 var UnCacheableFunctions = map[string]struct{}{
 	ast.Database:     {},
 	ast.CurrentUser:  {},
+	ast.CurrentRole:  {},
 	ast.User:         {},
 	ast.ConnectionID: {},
 	ast.LastInsertId: {},

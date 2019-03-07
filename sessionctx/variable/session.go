@@ -353,6 +353,7 @@ func NewSessionVars() *SessionVars {
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
+		ActiveRoles:               make([]*auth.RoleIdentity, 0, 10),
 		StrictSQLMode:             true,
 		Status:                    mysql.ServerStatusAutocommit,
 		StmtCtx:                   new(stmtctx.StatementContext),

@@ -105,15 +105,20 @@ type columnsPrivRecord struct {
 	patTypes []byte
 }
 
+// RoleGraphEdgesTable is used to cache relationship between and role.
 type RoleGraphEdgesTable struct {
 	roleList map[string]bool
 }
 
-func (g *RoleGraphEdgesTable) Find(user, host string) bool {
+// Find method is used to find role from table
+func (g RoleGraphEdgesTable) Find(user, host string) bool {
 	if host == "" {
 		host = "%"
 	}
 	key := user + "@" + host
+	if g.roleList == nil {
+		return false
+	}
 	_, ok := g.roleList[key]
 	if ok {
 		return true
@@ -127,12 +132,17 @@ type MySQLPrivilege struct {
 	DB          []dbRecord
 	TablesPriv  []tablesPrivRecord
 	ColumnsPriv []columnsPrivRecord
-	RoleGraph   map[string]*RoleGraphEdgesTable
+	RoleGraph   map[string]RoleGraphEdgesTable
 }
 
+// FindRole is used to detect whether this is an edge between user and role
 func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdentity) bool {
-	key := user + "@" + host
-	return p.RoleGraph[key].Find(role.Username, role.Hostname)
+	rec := p.matchUser(user, host)
+	if rec != nil && role != nil {
+		key := rec.User + "@" + rec.Host
+		return p.RoleGraph[key].Find(role.Username, role.Hostname)
+	}
+	return false
 }
 
 // LoadAll loads the tables from database to memory.
@@ -165,6 +175,14 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 		}
 		log.Warn("mysql.columns_priv missing")
 	}
+
+	err = p.LoadRoleGraph(ctx)
+	if err != nil {
+		if !noSuchTable(err) {
+			return errors.Trace(err)
+		}
+		log.Warn("mysql.role_edges missing")
+	}
 	return nil
 }
 
@@ -180,7 +198,7 @@ func noSuchTable(err error) bool {
 
 // LoadRoleGraph loads the mysql.role_edges table from database.
 func (p *MySQLPrivilege) LoadRoleGraph(ctx sessionctx.Context) error {
-	p.RoleGraph = make(map[string]*RoleGraphEdgesTable)
+	p.RoleGraph = make(map[string]RoleGraphEdgesTable)
 	err := p.loadTable(ctx, "select FROM_USER, FROM_HOST, TO_USER, TO_HOST from mysql.role_edges;", p.decodeRoleEdgesTable)
 	if err != nil {
 		return errors.Trace(err)
@@ -418,24 +436,23 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*ast.ResultFie
 	var fromUser, fromHost, toHost, toUser string
 	for i, f := range fs {
 		switch {
-		case f.ColumnAsName.L == "FROM_HOST":
+		case f.ColumnAsName.L == "from_host":
 			fromHost = row.GetString(i)
-		case f.ColumnAsName.L == "FROM_USER":
-			fromHost = row.GetString(i)
-		case f.ColumnAsName.L == "TO_HOST":
+		case f.ColumnAsName.L == "from_user":
+			fromUser = row.GetString(i)
+		case f.ColumnAsName.L == "to_host":
 			toHost = row.GetString(i)
-		case f.ColumnAsName.L == "TO_USER":
+		case f.ColumnAsName.L == "to_user":
 			toUser = row.GetString(i)
 		}
 	}
 	fromKey := fromUser + "@" + fromHost
 	toKey := toUser + "@" + toHost
-	if value, ok := p.RoleGraph[toKey]; ok {
-		value.roleList[fromKey] = true
+	if _, ok := p.RoleGraph[toKey]; ok {
+		p.RoleGraph[toKey].roleList[fromKey] = true
 	} else {
-		p.RoleGraph[toKey] = &RoleGraphEdgesTable{}
-		p.RoleGraph[toKey].roleList = make(map[string]bool)
-		p.RoleGraph[toKey].roleList[toKey] = true
+		p.RoleGraph[toKey] = RoleGraphEdgesTable{roleList: make(map[string]bool)}
+		p.RoleGraph[toKey].roleList[fromKey] = true
 	}
 	return nil
 }

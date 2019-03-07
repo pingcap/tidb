@@ -30,6 +30,7 @@ var (
 	_ functionClass = &databaseFunctionClass{}
 	_ functionClass = &foundRowsFunctionClass{}
 	_ functionClass = &currentUserFunctionClass{}
+	_ functionClass = &currentRoleFunctionClass{}
 	_ functionClass = &userFunctionClass{}
 	_ functionClass = &connectionIDFunctionClass{}
 	_ functionClass = &lastInsertIDFunctionClass{}
@@ -154,6 +155,50 @@ func (b *builtinCurrentUserSig) evalString(row chunk.Row) (string, bool, error) 
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
 	return data.User.AuthIdentityString(), false, nil
+}
+
+type currentRoleFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf.tp.Flen = 64
+	sig := &builtinCurrentRoleSig{bf}
+	return sig, nil
+}
+
+type builtinCurrentRoleSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCurrentRoleSig) Clone() builtinFunc {
+	newSig := &builtinCurrentRoleSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinCurrentUserSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
+func (b *builtinCurrentRoleSig) evalString(row chunk.Row) (string, bool, error) {
+	data := b.ctx.GetSessionVars()
+	if data == nil || data.ActiveRoles == nil {
+		return "", true, errors.Errorf("Missing session variable when eval builtin")
+	}
+	if len(data.ActiveRoles) == 0 {
+		return "NONE", false, nil
+	}
+	res := ""
+	for i, r := range data.ActiveRoles {
+		res += r.String()
+		if i != len(data.ActiveRoles)-1 {
+			res += ","
+		}
+	}
+	return res, false, nil
 }
 
 type userFunctionClass struct {
