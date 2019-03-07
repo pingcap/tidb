@@ -3495,7 +3495,7 @@ func (s *testSuite) TestSelectView(c *C) {
 	}()
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values (1,1),(1,2),(2,1),(2,2)")
-	tk.MustExec("create view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t")
+	tk.MustExec("create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t")
 	result := tk.MustQuery("select * from v")
 	result.Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
 	tk.MustExec("drop view v;")
