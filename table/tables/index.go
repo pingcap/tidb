@@ -237,7 +237,13 @@ func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues
 	}
 	err = m.Delete(key)
 	if ss != nil {
-		ss.SetAssertion(key, kv.Exist)
+		switch c.idxInfo.State {
+		case model.StatePublic:
+			// If the index is in public state, delete this index means it must exists.
+			ss.SetAssertion(key, kv.Exist)
+		default:
+			ss.SetAssertion(key, kv.None)
+		}
 	}
 	return errors.Trace(err)
 }

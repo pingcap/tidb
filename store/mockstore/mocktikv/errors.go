@@ -13,9 +13,7 @@
 
 package mocktikv
 
-import (
-	"fmt"
-)
+import "fmt"
 
 // ErrLocked is returned when trying to Read/Write on a locked key. Client should
 // backoff or cleanup the lock then retry.

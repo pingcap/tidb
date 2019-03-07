@@ -596,7 +596,7 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 	}
 
 	batch.Put(writeKey, writeValue)
-	return err
+	return nil
 }
 
 // Commit implements the MVCCStore interface.
