@@ -602,9 +602,10 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJoins []PhysicalPlan, forced bool) {
 	rightOuter := (p.preferJoinType & preferLeftAsIndexInner) > 0
 	leftOuter := (p.preferJoinType & preferRightAsIndexInner) > 0
+	hasIndexJoinHint := leftOuter || rightOuter
 
 	defer func() {
-		if !forced && (leftOuter || rightOuter) {
+		if !forced && hasIndexJoinHint {
 			// Construct warning message prefix.
 			errMsg := "Optimizer Hint TIDB_INLJ is inapplicable"
 			if p.hintInfo != nil {
@@ -647,7 +648,6 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 			return rightJoins, true
 		}
 
-		hasIndexJoinHint := leftOuter || rightOuter
 		if leftJoins != nil && lhsCardinality < rhsCardinality {
 			return leftJoins, hasIndexJoinHint
 		}
