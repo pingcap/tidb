@@ -152,6 +152,13 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 	// Convert from sec to ms
 	maxTxnTimeUse := uint64(config.GetGlobalConfig().TiKVClient.MaxTxnTimeUse) * 1000
 
+	// Sanity check for startTS.
+	if txn.StartTS() == math.MaxUint64 {
+		err = errors.Errorf("try to commit with invalid startTS: %d", txn.StartTS())
+		log.Errorf("con:%d 2PC commit err: %v", connID, err)
+		return nil, errors.Trace(err)
+	}
+
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(len(keys)))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(size))
 	return &twoPhaseCommitter{
