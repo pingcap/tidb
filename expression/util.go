@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/tools/container/intsets"
 )
 
 // Filter the input expressions, append the results to result.
@@ -92,6 +93,41 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
+// ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
+func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
+	set := &intsets.Sparse{}
+	for _, expr := range exprs {
+		extractColumnSet(expr, set)
+	}
+	return set
+}
+
+func extractColumnSet(expr Expression, set *intsets.Sparse) {
+	switch v := expr.(type) {
+	case *Column:
+		set.Insert(int(v.UniqueID))
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			extractColumnSet(arg, set)
+		}
+	}
+}
+
+func setExprColumnInOperand(expr Expression) Expression {
+	switch v := expr.(type) {
+	case *Column:
+		col := v.Clone().(*Column)
+		col.InOperand = true
+		return col
+	case *ScalarFunction:
+		args := v.GetArgs()
+		for i, arg := range args {
+			args[i] = setExprColumnInOperand(arg)
+		}
+	}
+	return expr
+}
+
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
 func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Expression {
@@ -101,7 +137,11 @@ func ColumnSubstitute(expr Expression, schema *Schema, newExprs []Expression) Ex
 		if id == -1 {
 			return v
 		}
-		return newExprs[id]
+		newExpr := newExprs[id]
+		if v.InOperand {
+			newExpr = setExprColumnInOperand(newExpr)
+		}
+		return newExpr
 	case *ScalarFunction:
 		if v.FuncName.L == ast.Cast {
 			newFunc := v.Clone().(*ScalarFunction)

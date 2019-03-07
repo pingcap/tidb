@@ -4,7 +4,7 @@ CREATE TABLE `tr` (
 `domain_type` tinyint(4) NOT NULL,
 `business_type` tinyint(4) NOT NULL,
 `trade_type` tinyint(4) NOT NULL DEFAULT '1',
-`trade_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`trade_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 `trade_status` tinyint(4) NOT NULL DEFAULT '0',
 `trade_pay_status` tinyint(4) NOT NULL DEFAULT '0',
 `delivery_type` tinyint(4) NOT NULL DEFAULT '0',
@@ -24,10 +24,10 @@ CREATE TABLE `tr` (
 `device_identy` varchar(36) NOT NULL,
 `uuid` varchar(32) NOT NULL,
 `status_flag` tinyint(4) NOT NULL,
-`client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 `client_update_time` timestamp(3) NULL DEFAULT NULL,
-`server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-`server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
 `creator_id` bigint(20) DEFAULT NULL,
 `creator_name` varchar(32) DEFAULT NULL,
 `updator_id` bigint(20) DEFAULT NULL,
@@ -66,10 +66,10 @@ CREATE TABLE `p` (
 `device_identy` varchar(36) NOT NULL,
 `uuid` varchar(32) NOT NULL,
 `status_flag` tinyint(4) NOT NULL DEFAULT '1',
-`client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 `client_update_time` timestamp(3) NULL DEFAULT NULL,
-`server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-`server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
 `creator_id` bigint(20) DEFAULT NULL,
 `creator_name` varchar(32) DEFAULT NULL,
 `updator_id` bigint(20) DEFAULT NULL,
@@ -117,10 +117,10 @@ CREATE TABLE `te` (
 `device_identy` varchar(36) NOT NULL,
 `uuid` varchar(32) NOT NULL,
 `status_flag` tinyint(4) NOT NULL,
-`client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`client_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 `client_update_time` timestamp(3) NULL DEFAULT NULL,
-`server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-`server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`server_create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+`server_update_time` timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
 `creator_id` bigint(20) DEFAULT NULL,
 `creator_name` varchar(32) DEFAULT NULL,
 `updator_id` bigint(20) DEFAULT NULL,
@@ -169,18 +169,52 @@ LIMIT 0, 5;
 id	count	task	operator info
 Projection_13	0.00	root	te.expect_time
 └─Limit_19	0.00	root	offset:0, count:5
-  └─IndexJoin_143	0.00	root	left outer join, inner:IndexReader_142, outer key:tr.id, inner key:p.relate_id
-    ├─TopN_146	0.00	root	te.expect_time:asc, offset:0, count:5
+  └─IndexJoin_104	0.00	root	left outer join, inner:IndexReader_103, outer key:tr.id, inner key:p.relate_id
+    ├─TopN_107	0.00	root	te.expect_time:asc, offset:0, count:5
     │ └─IndexJoin_36	0.00	root	inner join, inner:IndexLookUp_35, outer key:tr.id, inner key:te.trade_id
-    │   ├─IndexLookUp_107	0.00	root	
-    │   │ ├─Selection_105	0.00	cop	eq(tr.business_type, 18), in(tr.trade_type, 1)
-    │   │ │ └─IndexScan_103	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
-    │   │ └─Selection_106	0.00	cop	eq(tr.brand_identy, 32314), eq(tr.domain_type, 2)
-    │   │   └─TableScan_104	0.00	cop	table:tr, keep order:false
+    │   ├─IndexLookUp_85	0.00	root	
+    │   │ ├─Selection_83	0.00	cop	eq(tr.business_type, 18), in(tr.trade_type, 1)
+    │   │ │ └─IndexScan_81	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
+    │   │ └─Selection_84	0.00	cop	eq(tr.brand_identy, 32314), eq(tr.domain_type, 2)
+    │   │   └─TableScan_82	0.00	cop	table:tr, keep order:false
     │   └─IndexLookUp_35	250.00	root	
     │     ├─IndexScan_32	10.00	cop	table:te, index:trade_id, range: decided by [tr.id], keep order:false, stats:pseudo
     │     └─Selection_34	250.00	cop	ge(te.expect_time, 2018-04-23 00:00:00.000000), le(te.expect_time, 2018-04-23 23:59:59.000000)
     │       └─TableScan_33	10.00	cop	table:te, keep order:false, stats:pseudo
-    └─IndexReader_142	0.00	root	index:Selection_141
-      └─Selection_141	0.00	cop	not(isnull(p.relate_id))
-        └─IndexScan_140	10.00	cop	table:p, index:relate_id, range: decided by [tr.id], keep order:false, stats:pseudo
+    └─IndexReader_103	0.00	root	index:Selection_102
+      └─Selection_102	0.00	cop	not(isnull(p.relate_id))
+        └─IndexScan_101	10.00	cop	table:p, index:relate_id, range: decided by [tr.id], keep order:false, stats:pseudo
+desc select 1 as a from dual order by a limit 1;
+id	count	task	operator info
+Projection_7	1.00	root	1
+└─Limit_8	1.00	root	offset:0, count:1
+  └─TableDual_11	1.00	root	rows:1
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
+id	count	task	operator info
+Apply_15	9990.00	root	semi join, inner:Selection_19, equal:[eq(test.t1.a, test.t2.a)]
+├─TableReader_18	9990.00	root	data:Selection_17
+│ └─Selection_17	9990.00	cop	not(isnull(test.t1.a))
+│   └─TableScan_16	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Selection_19	0.80	root	not(isnull(test.t2.a))
+  └─Limit_20	1.00	root	offset:0, count:1
+    └─TableReader_26	1.00	root	data:Limit_25
+      └─Limit_25	1.00	cop	offset:0, count:1
+        └─Selection_24	1.00	cop	gt(test.t2.b, test.t1.b)
+          └─TableScan_23	1.25	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
+id	count	task	operator info
+Apply_17	9990.00	root	semi join, inner:Selection_21, equal:[eq(test.t1.a, x.a)]
+├─TableReader_20	9990.00	root	data:Selection_19
+│ └─Selection_19	9990.00	cop	not(isnull(test.t1.a))
+│   └─TableScan_18	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Selection_21	0.80	root	not(isnull(x.a))
+  └─Projection_22	1.00	root	test.t2.a, test.t1.b
+    └─Limit_23	1.00	root	offset:0, count:1
+      └─TableReader_29	1.00	root	data:Limit_28
+        └─Limit_28	1.00	cop	offset:0, count:1
+          └─Selection_27	1.00	cop	gt(test.t2.b, test.t1.b)
+            └─TableScan_26	1.25	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo

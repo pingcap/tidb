@@ -178,7 +178,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
 		// if this time it failed, the real reason for the error is schema changed.
-		err := Preprocess(ctx, prepared.Stmt, is, true)
+		err := Preprocess(ctx, prepared.Stmt, is, InPrepare)
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
@@ -529,10 +529,12 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
 		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		if runtimeStatsColl.Exists(p.ExplainID()) {
-			row = append(row, runtimeStatsColl.Get(p.ExplainID()).String())
-		} else {
-			row = append(row, "") //TODO: wait collect more executor info from tikv
+		// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
+		// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+		if runtimeStatsColl.ExistsCopStats(p.ExplainID()) {
+			row = append(row, runtimeStatsColl.GetCopStats(p.ExplainID()).String())
+		} else if runtimeStatsColl.ExistsRootStats(p.ExplainID()) {
+			row = append(row, runtimeStatsColl.GetRootStats(p.ExplainID()).String())
 		}
 	}
 	e.Rows = append(e.Rows, row)

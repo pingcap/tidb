@@ -505,7 +505,25 @@ func (mvcc *MVCCLevelDB) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte,
 	batch := &leveldb.Batch{}
 	errs := make([]error, 0, len(mutations))
 	for _, m := range mutations {
-		err := prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl)
+		// If the operation is Insert, check if key is exists at first.
+		var err error
+		if m.GetOp() == kvrpcpb.Op_Insert {
+			v, err := mvcc.getValue(m.Key, startTS, kvrpcpb.IsolationLevel_SI)
+			if err != nil {
+				errs = append(errs, err)
+				anyError = true
+				continue
+			}
+			if v != nil {
+				err = &ErrKeyAlreadyExist{
+					Key: m.Key,
+				}
+				errs = append(errs, err)
+				anyError = true
+				continue
+			}
+		}
+		err = prewriteMutation(mvcc.db, batch, m, startTS, primary, ttl)
 		errs = append(errs, err)
 		if err != nil {
 			anyError = true
@@ -554,11 +572,15 @@ func prewriteMutation(db *leveldb.DB, batch *leveldb.Batch, mutation *kvrpcpb.Mu
 		return ErrRetryable("write conflict")
 	}
 
+	op := mutation.GetOp()
+	if op == kvrpcpb.Op_Insert {
+		op = kvrpcpb.Op_Put
+	}
 	lock := mvccLock{
 		startTS: startTS,
 		primary: primary,
 		value:   mutation.Value,
-		op:      mutation.GetOp(),
+		op:      op,
 		ttl:     ttl,
 	}
 	writeKey := mvccEncode(mutation.Key, lockVer)

@@ -95,6 +95,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
+	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank:
+		a.typeInfer4NumberFuncs()
 	default:
 		panic("unsupported agg function: " + a.Name)
 	}
@@ -184,6 +186,12 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
+func (a *baseFuncDesc) typeInfer4NumberFuncs() {
+	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	a.RetTp.Flen = 21
+	types.SetBinChsClnFlag(a.RetTp)
+}
+
 // GetDefaultValue gets the default value when the function's input is null.
 // According to MySQL, default values of the function are listed as follows:
 // e.g.
@@ -213,11 +221,19 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 	return
 }
 
+// We do not need to wrap cast upon these functions,
+// since the EvalXXX method called by the arg is determined by the corresponding arg type.
+var noNeedCastAggFuncs = map[string]struct{}{
+	ast.AggFuncCount:        {},
+	ast.AggFuncMax:          {},
+	ast.AggFuncMin:          {},
+	ast.AggFuncFirstRow:     {},
+	ast.WindowFuncRowNumber: {},
+}
+
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
 func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
-	// We do not need to wrap cast upon these functions,
-	// since the EvalXXX method called by the arg is determined by the corresponding arg type.
-	if a.Name == ast.AggFuncCount || a.Name == ast.AggFuncMin || a.Name == ast.AggFuncMax || a.Name == ast.AggFuncFirstRow {
+	if _, ok := noNeedCastAggFuncs[a.Name]; ok {
 		return
 	}
 	var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression

@@ -299,6 +299,20 @@ func (s *testPrivilegeSuite) TestSelectViewSecurity(c *C) {
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "selectviewsecurity").Error())
 }
 
+func (s *testPrivilegeSuite) TestRoleAdminSecurity(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'r1'@'localhost';`)
+	mustExec(c, se, `CREATE USER 'r2'@'localhost';`)
+	mustExec(c, se, `GRANT ALL ON *.* to r1@localhost`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `create role r_test1@localhost`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `create role r_test2@localhost`)
+	c.Assert(terror.ErrorEqual(err, core.ErrSpecificAccessDenied), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 
 	se := newSession(c, s.store, s.dbName)
@@ -325,6 +339,18 @@ func (s *testPrivilegeSuite) TestCheckAuthenticate(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	se2 := newSession(c, s.store, s.dbName)
+	mustExec(c, se2, "create role 'r1'@'localhost'")
+	mustExec(c, se2, "create role 'r2'@'localhost'")
+	mustExec(c, se2, "create role 'r3@example.com'@'localhost'")
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsFalse)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3@example.com", Hostname: "localhost"}, nil, nil), IsFalse)
+
+	mustExec(c, se1, "drop user 'r1'@'localhost'")
+	mustExec(c, se1, "drop user 'r2'@'localhost'")
+	mustExec(c, se1, "drop user 'r3@example.com'@'localhost'")
 }
 
 func (s *testPrivilegeSuite) TestUseDb(c *C) {
@@ -454,6 +480,13 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
 	c.Assert(err, IsNil)
+}
+
+func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
+	pc := privilege.GetPrivilegeManager(se)
+	c.Assert(pc.GetEncodedPassword("test_encode_u", "localhost"), Equals, "*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B")
 }
 
 func mustExec(c *C, se session.Session, sql string) {

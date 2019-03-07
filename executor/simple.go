@@ -176,12 +176,18 @@ func (e *SimpleExec) executeCreateUser(s *ast.CreateUserStmt) error {
 			return errors.Trace(ErrPasswordFormat)
 		}
 		user := fmt.Sprintf(`('%s', '%s', '%s')`, spec.User.Hostname, spec.User.Username, pwd)
+		if s.IsCreateRole {
+			user = fmt.Sprintf(`('%s', '%s', '%s', 'Y')`, spec.User.Hostname, spec.User.Username, pwd)
+		}
 		users = append(users, user)
 	}
 	if len(users) == 0 {
 		return nil
 	}
 	sql := fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
+	if s.IsCreateRole {
+		sql = fmt.Sprintf(`INSERT INTO %s.%s (Host, User, Password, Account_locked) VALUES %s;`, mysql.SystemDB, mysql.UserTable, strings.Join(users, ", "))
+	}
 	_, err := e.ctx.(sqlexec.SQLExecutor).Execute(context.Background(), sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -377,16 +383,11 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		defer sysSessionPool.Put(ctx)
 		err = dom.PrivilegeHandle().Update(ctx.(sessionctx.Context))
 		return errors.Trace(err)
-	case ast.FlushStatus:
+	case ast.FlushTiDBPlugin:
 		dom := domain.GetDomain(e.ctx)
-		if plugin.Get(plugin.Audit, "ipwhitelist") != nil {
-			if cli := dom.GetEtcdClient(); cli != nil {
-				const whitelistKey = "/tidb/plugins/whitelist"
-				row := cli.KV
-				_, err := row.Put(context.Background(), whitelistKey, "")
-				if err != nil {
-					log.Warn("notify update whitelist failed:", err)
-				}
+		for _, pluginName := range s.Plugins {
+			err := plugin.NotifyFlush(dom, pluginName)
+			if err != nil {
 				return errors.Trace(err)
 			}
 		}
