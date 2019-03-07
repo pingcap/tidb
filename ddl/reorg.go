@@ -279,7 +279,7 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (maxR
 	}
 
 	ctx := context.Background()
-	// build a desc scan of tblInfo, which limit is 1, we can use it to retrive the last handle of the table.
+	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
 	result, err := d.buildDescTableScan(ctx, startTS, tbl, columns, 1)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)
